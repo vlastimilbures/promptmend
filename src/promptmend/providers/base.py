@@ -364,6 +364,20 @@ TRUNCATED_NOTE = "\n\n[promptmend: the reply hit the model's output limit and is
 FILTERED_NOTE = (
     "\n\n[promptmend: the model stopped early ({reason}); the rewrite may be incomplete]"
 )
+_STOP_NOTE = re.compile(
+    f"(?:{re.escape(TRUNCATED_NOTE)}"
+    f"|{re.escape(FILTERED_NOTE).replace(re.escape('{reason}'), '[a-z_]+')})\\Z"
+)
+
+
+def split_stop_note(result: str) -> tuple[str, str]:
+    """(rewrite, note) for a result that may end with a stop note above; note is "" when the
+    reply ended normally, else the bare marker. The CLI and the bench both split with it."""
+    match = _STOP_NOTE.search(result)
+    if match is None:
+        return result, ""
+    return result[: match.start()], match.group().lstrip("\n")
+
 
 # Stop reasons (OpenRouter finish_reason, Anthropic stop_reason, Ollama done_reason) for a
 # reply that did not end normally.

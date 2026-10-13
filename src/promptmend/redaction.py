@@ -397,6 +397,13 @@ def redact_words(text: str) -> str:
     )
 
 
+def redact_message(text: str) -> str:
+    """redact_words(), and the whole ``text`` described when what is left still holds a
+    secret spread over several words (``Bearer …``, ``password: …``, a spaced card number)."""
+    text = redact_words(text)
+    return f"<redacted, {len(text)} chars>" if scan(text, _user_patterns) else text
+
+
 # Single tokens that are not secrets: a URL, an email, a path, a UUID, a lower-case slug
 # (owner/model), host or file name (example.com:8080, notes2026.md), a version, a date or a
 # hex hash. Case-sensitive, so a mixed-case secret that merely contains '/' or '.' (half of
