@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Fixed
+- `improve --copy` no longer loses the rewrite when the copy fails: the error marker is
+  followed by the rewrite, as with `PROMPT_OUTPUT=clipboard`, and the history records
+  `clipboard_failed`.
+- A reply in a code fence that the model then cut off (output limit) or stopped early now
+  has its fence removed too, when the closing fence arrived before the stop; the note that it
+  stopped early stays at the end. `--copy` copies the rewrite without that note, as
+  `PROMPT_OUTPUT=clipboard` does.
+- An unexpected error's marker, or a library's `ValueError`, no longer pastes a key its
+  message quotes: such a word is described (`<redacted, N chars>`) instead, and the whole
+  message when the secret spans several words (`Bearer …`, `password: …`, a spaced card
+  number). A failed copy's message is treated the same way.
+- `improve --source stdin` reads at most one character past the 50,000-character limit, so
+  piping a huge file is refused at once (`Input is too long (over 50000 chars)`) instead of
+  being loaded whole first.
+
 ## 0.24.0 - 2026-10-08
 
 ### Added

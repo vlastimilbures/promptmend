@@ -249,7 +249,7 @@ def test_malformed_reply_is_validation_failed(
     assert _outcome(history_rows) == "validation_failed"
 
 
-# --copy fails after a charged reply: the marker is pasted, and the charge is kept.
+# --copy fails after a charged reply: the marker and the rewrite are pasted, the charge kept.
 def test_clipboard_failure_after_charged_reply(
     monkeypatch: pytest.MonkeyPatch, cloud: None, fake_http: FakeHttp, history_rows: HistoryRows
 ) -> None:
@@ -258,7 +258,10 @@ def test_clipboard_failure_after_charged_reply(
 
     monkeypatch.setattr(pyperclip, "copy", broken)
     fake_http.reply(REPLY)
-    assert _run([*CLOUD, "--copy"]) == "[promptmend: Clipboard unavailable: no clipboard]"
+    assert _run([*CLOUD, "--copy"]) == (
+        "[promptmend: Clipboard unavailable: no clipboard; the rewrite is pasted instead]"
+        "\n\nrewrite"
+    )
     assert _outcome(history_rows) == "clipboard_failed"
     ((at),) = history_rows("attempts")
     assert at["charged_amount"] == "0.0002"
