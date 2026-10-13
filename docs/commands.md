@@ -41,7 +41,7 @@ promptmend improve --tier pro --source clipboard   # the reasoning model behind 
 | `--source` | `clipboard` | `clipboard`, `stdin` or `argument` |
 | `--text` | — | The draft, with `--source argument` |
 | `--output` | `PROMPT_OUTPUT` (`paste`) | `paste` prints the rewrite; `clipboard` copies it and prints only markers (see [clipboard output](usage.md#output-paste-or-clipboard)) |
-| `--copy` | off | With `paste` output, also copy the result to the clipboard (no effect with `clipboard`) |
+| `--copy` | off | With `paste` output, also copy the result to the clipboard (no effect with `clipboard`); if the copy fails, the result is still printed after the error marker |
 | `--allow-flagged` | off | Send this one draft despite soft findings of the gate (what `-iok-` passes; see [overriding a block](privacy.md#overriding-a-block)) |
 
 `--tier pro` and `--effort` (other than `default`) with any provider but OpenRouter are
