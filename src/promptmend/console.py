@@ -270,7 +270,7 @@ POLICY: dict[tuple[str, ...], Rule] = {
     ("improve",): Rule(
         REFUSE,
         why="the Espanso triggers run it, and it reads the clipboard; "
-        "to try a rewrite, use the Try tab (7) of `promptmend ui`",
+        "to try a rewrite, use the Try tab (7)",
     ),
     ("persona",): Rule(REFUSE, why="the -p- trigger runs it"),
     ("ui",): Rule(REFUSE, why="this is the interface"),

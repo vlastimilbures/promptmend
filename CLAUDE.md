@@ -337,7 +337,8 @@ Rules for agents:
   completion (`words_for()`, `suggest()`) and `describe()` as the bottom bar; without a TTY
   exit 3. `plan(line)` runs everything the parser reads as a command except what
   `console.decide()` refuses (`POLICY`; the shell runs `ui` but refuses `shell` itself;
-  DIALOG and TERMINAL run here as typed; their `--help` only when the strict parse succeeds), a
+  DIALOG and TERMINAL run here as typed; a refused command's `--help` only when the strict
+  parse succeeds), a
   key-like line (`holds_a_key()`) and `refused_secret()` (also on a whitespace split when
   shlex fails; it covers `config set|get|unset <key name> VALUE` too); a leaf's `--help`
   counts only as the parser read it. `Editor` wraps the default buffer's accept handler (so every

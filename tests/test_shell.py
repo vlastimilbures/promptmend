@@ -144,14 +144,30 @@ def test_lines_that_are_refused(line: str, message: str) -> None:
     assert not shell.runs_here(line.split())
 
 
+# Leaves whose bare line misses a required argument: a usage error, nothing runs.
+NEEDS_ARGUMENTS = {
+    ("config", "get"),
+    ("config", "set"),
+    ("config", "unset"),
+    ("config", "retire"),
+    ("secrets", "set"),
+    ("secrets", "remove"),
+}
+
+
 @pytest.mark.parametrize("path", list(console.POLICY), ids=" ".join)
 def test_the_shell_follows_the_interface_policy(path: tuple[str, ...]) -> None:
     # One table (#239): what the interface refuses the shell refuses, except `ui`, and the
-    # shell itself; a dialog or terminal command runs here (or misses its arguments).
+    # shell itself; a dialog or terminal command runs here as typed.
+    line = " ".join(path)
     refuses = console.POLICY[path].kind == console.REFUSE
-    refused = path == ("shell",) or (path != ("ui",) and refuses)
-    kind = shell.plan(" ".join(path)).kind
-    assert kind == shell.REFUSE if refused else kind in (shell.RUN, shell.ERROR)
+    if path == ("shell",) or (path != ("ui",) and refuses):
+        assert shell.plan(line).kind == shell.REFUSE
+        assert shell.plan(f"{line} --help") == shell.Plan(shell.RUN, (*path, "--help"))
+    elif path in NEEDS_ARGUMENTS:
+        assert shell.plan(line).kind == shell.ERROR
+    else:
+        assert shell.plan(line) == shell.Plan(shell.RUN, path)
 
 
 @pytest.mark.parametrize(

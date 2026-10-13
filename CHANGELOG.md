@@ -7,9 +7,7 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 ### Changed
-- `promptmend shell` now refuses exactly what the interface's command line refuses (one
-  table), except that it runs `ui` and never starts itself; the `improve` refusal in both
-  names the Try tab (7) of `promptmend ui`.
+- The `improve` refusal in `promptmend shell` now names the Try tab (7) of `promptmend ui`.
 
 ### Fixed
 - `improve --copy` no longer loses the rewrite when the copy fails: the error marker is
