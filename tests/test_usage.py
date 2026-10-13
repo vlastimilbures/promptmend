@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import ssl
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 from types import SimpleNamespace
@@ -350,6 +351,19 @@ def test_refused_connection_records_each_attempt(fake_http: FakeHttp) -> None:
     with pytest.raises(ProviderError, match="refused"):
         _remote_ollama(records).generate("d", "s")
     assert [(r.attempt, r.error_kind) for r in records] == [(1, "refused"), (2, "refused")]
+
+
+# A certificate failure (httpx reports it as a ConnectError) fails the same way again, so it
+# is reported at once: one request, one record, the same marker text.
+def test_tls_failure_is_not_retried(fake_http: FakeHttp) -> None:
+    records: list[AttemptUsage] = []
+    failure = httpx.ConnectError("certificate verify failed")
+    failure.__context__ = ssl.SSLCertVerificationError("certificate verify failed")
+    fake_http.queue(failure, {"json_data": _OLLAMA_BODY})
+    with pytest.raises(ProviderError, match=r"^Ollama request failed: certificate verify"):
+        _remote_ollama(records).generate("d", "s")
+    assert len(fake_http.requests) == 1
+    assert [(r.attempt, r.error_kind) for r in records] == [(1, "refused")]
 
 
 # Usage reaches the observer before the content is finalised, so a 200 whose content is then

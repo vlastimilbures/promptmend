@@ -15,6 +15,9 @@ All notable changes to this project are documented here. The format follows
   `rollback`, `retire`, `profiles migrate` and `history prune` a one-line summary; each
   command's own `--help` keeps the full text (#247).
 ### Fixed
+- A TLS certificate failure (a corporate proxy, a self-signed endpoint) is reported at once
+  instead of being retried a second later: the retry could not succeed, delayed the marker
+  and added a second record to the usage history (#247).
 - Setup's Done step no longer says "Match files: not installed" when the only files that
   differ are ones you edited and kept, which the Espanso step already says it leaves alone;
   it says how many of them were kept.

@@ -257,6 +257,20 @@ def _attempt(
             outcome.observer_seconds = time.monotonic() - ended
 
 
+def _tls_failure(exc: BaseException) -> bool:
+    """Whether an ``ssl.SSLError`` (a certificate failure, say) caused ``exc``."""
+    import ssl  # httpx has loaded it already
+
+    seen: set[int] = set()
+    cause: BaseException | None = exc
+    while cause is not None and id(cause) not in seen:
+        if isinstance(cause, ssl.SSLError):
+            return True
+        seen.add(id(cause))
+        cause = cause.__cause__ or cause.__context__
+    return False
+
+
 def _exchange(
     label: str,
     url: str,
@@ -304,9 +318,9 @@ def _exchange(
         outcome.error_kind = "refused"
         refused = ProviderError(f"{label} request failed: {exc}", transient=True)
         refused.__cause__ = exc  # kept when post_json re-raises it after the retry
-        # A local server that refuses the connection is not running; a second try a second
-        # later only delays the marker.
-        if is_loopback(url):
+        # A local server that refuses the connection is not running, and a certificate
+        # failure fails the same way again: a second try a second later only delays the marker.
+        if is_loopback(url) or _tls_failure(exc):
             raise refused from exc
         raise _Retry(refused) from exc
     except httpx.HTTPError as exc:
