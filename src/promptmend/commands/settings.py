@@ -340,7 +340,9 @@ def config_migrate(
 
 
 @config_app.command(
-    "rollback", short_help="Undo `config migrate`: put each .env back, with config.toml set aside."
+    "rollback",
+    short_help="Undo `config migrate`: put each .env back, with config.toml and the secret store"
+    " set aside.",
 )
 @guard
 def config_rollback(

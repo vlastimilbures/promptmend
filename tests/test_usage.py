@@ -353,17 +353,37 @@ def test_refused_connection_records_each_attempt(fake_http: FakeHttp) -> None:
     assert [(r.attempt, r.error_kind) for r in records] == [(1, "refused"), (2, "refused")]
 
 
+def _tls_connect_error(cause: ssl.SSLError) -> httpx.ConnectError:
+    """A ConnectError chained as httpx raises it: from httpcore's ConnectError, from ssl."""
+    middle = OSError("httpcore.ConnectError")
+    middle.__cause__ = cause
+    failure = httpx.ConnectError(cause.args[-1])
+    failure.__cause__ = middle
+    return failure
+
+
 # A certificate failure (httpx reports it as a ConnectError) fails the same way again, so it
-# is reported at once: one request, one record, the same marker text.
-def test_tls_failure_is_not_retried(fake_http: FakeHttp) -> None:
+# is reported at once and not as transient: one request, one record, the same marker text.
+def test_certificate_failure_is_not_retried(fake_http: FakeHttp) -> None:
     records: list[AttemptUsage] = []
-    failure = httpx.ConnectError("certificate verify failed")
-    failure.__context__ = ssl.SSLCertVerificationError("certificate verify failed")
-    fake_http.queue(failure, {"json_data": _OLLAMA_BODY})
-    with pytest.raises(ProviderError, match=r"^Ollama request failed: certificate verify"):
+    cause = ssl.SSLCertVerificationError("certificate verify failed")
+    fake_http.queue(_tls_connect_error(cause), {"json_data": _OLLAMA_BODY})
+    with pytest.raises(
+        ProviderError, match=r"^Ollama request failed: certificate verify"
+    ) as caught:
         _remote_ollama(records).generate("d", "s")
+    assert caught.value.transient is False
     assert len(fake_http.requests) == 1
     assert [(r.attempt, r.error_kind) for r in records] == [(1, "refused")]
+
+
+# A handshake the network dropped may pass on a second try, so it keeps its retry.
+def test_dropped_handshake_is_retried(fake_http: FakeHttp) -> None:
+    records: list[AttemptUsage] = []
+    cause = ssl.SSLEOFError("EOF occurred in violation of protocol")
+    fake_http.queue(_tls_connect_error(cause), {"json_data": _OLLAMA_BODY})
+    assert _remote_ollama(records).generate("d", "s") == "ok"
+    assert len(fake_http.requests) == 2
 
 
 # Usage reaches the observer before the content is finalised, so a 200 whose content is then

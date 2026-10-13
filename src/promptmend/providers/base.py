@@ -258,13 +258,15 @@ def _attempt(
 
 
 def _tls_failure(exc: BaseException) -> bool:
-    """Whether an ``ssl.SSLError`` (a certificate failure, say) caused ``exc``."""
+    """Whether a certificate failure (``ssl.SSLCertVerificationError``: an untrusted or
+    self-signed certificate, a hostname mismatch) caused ``exc``. Other TLS errors, such as
+    a handshake the network dropped (``SSLEOFError``), may pass on a second try."""
     import ssl  # httpx has loaded it already
 
     seen: set[int] = set()
     cause: BaseException | None = exc
     while cause is not None and id(cause) not in seen:
-        if isinstance(cause, ssl.SSLError):
+        if isinstance(cause, ssl.SSLCertVerificationError):
             return True
         seen.add(id(cause))
         cause = cause.__cause__ or cause.__context__
@@ -316,11 +318,12 @@ def _exchange(
         ) from exc
     except httpx.ConnectError as exc:
         outcome.error_kind = "refused"
-        refused = ProviderError(f"{label} request failed: {exc}", transient=True)
+        tls = _tls_failure(exc)
+        refused = ProviderError(f"{label} request failed: {exc}", transient=not tls)
         refused.__cause__ = exc  # kept when post_json re-raises it after the retry
         # A local server that refuses the connection is not running, and a certificate
         # failure fails the same way again: a second try a second later only delays the marker.
-        if is_loopback(url) or _tls_failure(exc):
+        if is_loopback(url) or tls:
             raise refused from exc
         raise _Retry(refused) from exc
     except httpx.HTTPError as exc:
