@@ -283,10 +283,11 @@ class HomePane(Pane):
         self.rows = tuple(home_rows(state))
         self.query_one("#home-headline", Static).update(home_headline(self.rows))
         self.query_one("#home-rows", Static).update(home_table(self.rows))
-        # Only when there is something to show (#222): a checkout found, a copy whose `.env` is
-        # not retired yet, or why looking failed. The offer itself opens by itself once.
-        found = state.previous.candidates or state.previous.pending or state.previous_error
-        self.query_one("#home-previous", Button).display = bool(found)
+        # While a previous install could still be copied (not gated: "Enter a path…" finds
+        # one detection missed or the user skipped, #237), or there is one to show (#222).
+        found = state.previous
+        shown = not found.gated or found.candidates or found.pending or state.previous_error
+        self.query_one("#home-previous", Button).display = bool(shown)
 
     def setup(self) -> None:
         self.query_one("#home-copy", Button).disabled = not self.manage.session
@@ -941,7 +942,42 @@ class ProfilesPane(Pane):
     def _migrate(self) -> None:
         # The earlier checkout detection found (#110), else this editable install's own.
         root = previous_root(self.state.previous) if self.state else None
+        if root is None:
+            try:
+                profiles_cmd._checkout(None)
+            except common.CommandError:
+                # Not an editable install and no checkout found: ask where it is (#237).
+                self.app.push_screen(
+                    FormModal("Which checkout has your profiles?", [CHECKOUT_FIELD], submit="Look"),
+                    self._entered,
+                )
+                return
         copy_profiles(self, root)
+
+    def _entered(self, values: dict[str, str] | None) -> None:
+        root = checkout_path(self, values)
+        if root is not None:
+            copy_profiles(self, root)
+
+
+CHECKOUT_FIELD = Field("previous-path", "The checkout's folder", placeholder="~/Projects/…")
+
+
+def checkout_path(owner: Reporter, values: dict[str, str] | None) -> Path | None:
+    """The folder typed into CHECKOUT_FIELD, or None (and why) for none or a key."""
+    if values is None:
+        return None
+    # A pasted path may keep its quotes (Windows "Copy as path").
+    text = values[CHECKOUT_FIELD.id].strip().strip("\"'").strip()
+    try:
+        common.no_key(text, "the path")
+    except EXPECTED as exc:
+        owner.report(_error(exc), error=True)
+        return None
+    if not text:
+        owner.report("No path entered.", error=True)
+        return None
+    return Path(text).expanduser()
 
 
 def previous_root(found: previous_install.Detection) -> Path | None:
@@ -962,15 +998,27 @@ class Reporter(Protocol):
 
 def copy_profiles(owner: Reporter, root: Path | None) -> None:
     """Preview the profiles added or edited in the checkout at ``root`` (None: this editable
-    install's), then copy them on Yes, as `profiles migrate --checkout` does."""
-    try:
-        root = profiles_cmd._checkout(None if root is None else str(root))
-        source = root / profile_service.prompts_path(root)
-        pristine = profile_service.git_pristine_profiles(root)
-        changed = profile_service.changed_profiles(source, pristine)
-    except EXPECTED as exc:
-        owner.report(f"error: {exc}", error=True)
-        return
+    install's), then copy them on Yes, as `profiles migrate --checkout` does. The preview
+    runs git, so it is read in a thread."""
+    widget = cast("Widget", owner)
+
+    def look() -> None:
+        try:
+            checkout = profiles_cmd._checkout(None if root is None else str(root))
+            source = checkout / profile_service.prompts_path(checkout)
+            pristine = profile_service.git_pristine_profiles(checkout)
+            changed = profile_service.changed_profiles(source, pristine)
+        except Exception as exc:
+            widget.app.call_from_thread(owner.report, _error(exc), error=True)
+            return
+        widget.app.call_from_thread(_offer_copy, owner, checkout, source, pristine, changed)
+
+    widget.run_worker(look, thread=True, group="copy-profiles", exclusive=True, exit_on_error=False)
+
+
+def _offer_copy(
+    owner: Reporter, root: Path, source: Path, pristine: dict[str, str], changed: dict[str, str]
+) -> None:
     if not changed:
         owner.report(profile_service.NOTHING_CHANGED)
         return
