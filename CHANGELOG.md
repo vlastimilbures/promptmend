@@ -8,7 +8,6 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 - The `improve` refusal in `promptmend shell` now names the Try tab (7) of `promptmend ui`.
-
 - The interface reloads faster after each change: it asks Espanso for its folder and runs
   each launcher-lookup command once per reload instead of up to three times (#242).
 ### Fixed
