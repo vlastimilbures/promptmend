@@ -84,7 +84,7 @@ The text after each hint is the provider's own reason.
 | `[promptmend: Blocked call to the local server …]` | `PROMPT_GATE_LOCAL=true` and the gate matched a `-il-`/`-ilm-` draft. Remove the content, or set `PROMPT_GATE_LOCAL=false` if your `localhost` server runs the model itself (not a relay to a cloud API) |
 | `-il-` or `-ilm-` says `Blocked cloud call` | `OLLAMA_BASE_URL` / `LMSTUDIO_BASE_URL` points at another machine, or the Ollama model is a cloud model, so the gate applies. Use a model on `localhost` for sensitive drafts |
 | `[promptmend: sent despite: …]` at the top of a rewrite | You used `-iok-`; the draft was sent despite those findings. Delete the line |
-| `[promptmend: Input is too long …]` | The clipboard holds more than 50,000 characters. Copy just the draft |
+| `[promptmend: Input is too long …]` | The input (the clipboard, stdin or `--text`) holds more than 50,000 characters. Copy just the draft |
 
 ## Output problems
 

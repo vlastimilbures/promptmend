@@ -36,8 +36,8 @@ from .prompt_builder import (
     strip_outer_fence,
     system_prompt,
 )
-from .providers.base import FILTERED_NOTE, TRUNCATED_NOTE, ProviderError
-from .redaction import DEFAULT_IGNORABLE, redact_words
+from .providers.base import ProviderError, split_stop_note
+from .redaction import DEFAULT_IGNORABLE, redact_message, redact_words
 
 if TYPE_CHECKING:
     from typer._click import Command, Context
@@ -296,23 +296,6 @@ def _sent_despite_note(built: object) -> str:
     return ""
 
 
-# The notes a provider appends to a reply that stopped early (providers/base.py). In clipboard
-# mode they are split off: the clipboard gets the partial rewrite, stdout the note.
-_STOP_NOTE = re.compile(
-    f"(?:{re.escape(TRUNCATED_NOTE)}"
-    f"|{re.escape(FILTERED_NOTE).replace(re.escape('{reason}'), '[a-z_]+')})\\Z"
-)
-
-
-def _split_stop_note(result: str) -> tuple[str, str]:
-    """(rewrite, note) for a result that may end with a provider's stop note; note is ""
-    when the reply ended normally, else the bare marker."""
-    match = _STOP_NOTE.search(result)
-    if match is None:
-        return result, ""
-    return result[: match.start()], match.group().lstrip("\n")
-
-
 def _copy_failed(text: str, rec: recorder.Recorder) -> str:
     """Copy ``text`` (the rewrite) for clipboard output and --copy: "" on success, else the
     marker to print before the rewrite, which is then pasted rather than lost (outcome
@@ -324,7 +307,7 @@ def _copy_failed(text: str, rec: recorder.Recorder) -> str:
         reason = (
             str(exc)
             if isinstance(exc, ClipboardUnavailable)
-            else f"Clipboard unavailable: {redact_words(str(exc))}"
+            else f"Clipboard unavailable: {redact_message(str(exc))}"
         )
         return f"[promptmend: {reason}; the rewrite is pasted instead]\n\n"
     return ""
@@ -334,8 +317,9 @@ def _deliver(result: str, note: str, rec: recorder.Recorder) -> str:
     """Clipboard output (#134): copy the rewrite and return what to print, which is only the
     markers (the sent-despite ``note``, a stop note), so a plain success prints nothing and
     Espanso just erases the trigger. If the copy fails, the rewrite is printed after the
-    error marker instead (_copy_failed())."""
-    rewrite, stop = _split_stop_note(result)
+    error marker instead (_copy_failed()). The stop note (split_stop_note()) is printed, never
+    copied."""
+    rewrite, stop = split_stop_note(result)
     error = _copy_failed(rewrite, rec)
     if error:
         return f"{note}{error}{result}"
@@ -406,7 +390,7 @@ def rewrite(
     # wrapped in one code fence would be pasted with the fence (flash-lite wrapped 16 of 36
     # with the old general profile). A stop note is split off first, since it would leave the
     # fence short of the reply's end.
-    body, stop = _split_stop_note(_clean(built.generate(draft, system)))
+    body, stop = split_stop_note(_clean(built.generate(draft, system)))
     body = strip_outer_fence(body)
     if TEMPLATE_MARKER in system:
         body = repair_template_tags(body)
@@ -415,10 +399,13 @@ def rewrite(
 
 def marker(exc: Exception) -> str:
     """The bracketed marker printed in place of a rewrite that failed with ``exc``."""
-    if isinstance(exc, ProviderError | ValueError):
+    # Pasted into the focused app: a Python message can quote the value that caused it. Our
+    # ProviderErrors word their own text; a ValueError may come from a library.
+    if isinstance(exc, ProviderError):
         return f"[promptmend: {exc}]"
-    # Pasted into the focused app: a Python message can quote the value that caused it.
-    return f"[promptmend: unexpected error: {redact_words(str(exc))}]"
+    if isinstance(exc, ValueError):
+        return f"[promptmend: {redact_message(str(exc))}]"
+    return f"[promptmend: unexpected error: {redact_message(str(exc))}]"
 
 
 # Set only by the managed Espanso matches, each to its own literal value; hidden from --help.
@@ -516,7 +503,8 @@ def improve(
     if cfg.output == CLIPBOARD:
         _emit(_deliver(result, note, rec))
     else:
-        _emit(note + (_copy_failed(result, rec) if copy else "") + result)
+        # Like clipboard output, the stop note is printed but not copied.
+        _emit(note + (_copy_failed(split_stop_note(result)[0], rec) if copy else "") + result)
     rec.emitted()
     rec.finish()
 

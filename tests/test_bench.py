@@ -1300,8 +1300,8 @@ def test_main_profile(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch, tmp_
     assert _system(fake_http) == system_prompt("general")
 
 
-# A truncated reply keeps its fence, as the CLI pastes it with the truncation note.
-def test_run_one_truncated_reply_is_not_unfenced(
+# A truncated reply loses its fence, as the CLI splits the note off before the strip.
+def test_run_one_truncated_reply_is_unfenced(
     fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
@@ -1315,7 +1315,7 @@ def test_run_one_truncated_reply_is_not_unfenced(
     result = bench.run_one(
         Settings(), "a/b", "injection", 1, tmp_path, bench.Budget(1.0), PROFILES["general"]
     )
-    assert not result.fenced
+    assert result.fenced
     assert "struct: truncated" in result.failed
 
 

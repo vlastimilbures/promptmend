@@ -112,6 +112,13 @@ def test_too_long_stdin_is_read_bounded(monkeypatch: pytest.MonkeyPatch) -> None
     assert result.stdout == "[promptmend: Input is too long (over 50000 chars)]"
 
 
+# A draft of exactly the limit on stdin is still accepted.
+def test_stdin_at_the_limit_is_accepted(stub_provider: StubProvider) -> None:
+    result = improve("--source", "stdin", input="x" * 50_000)
+    assert result.stdout == "improved"
+    assert len(stub_provider.calls[0]["prompt"]) == 50_000
+
+
 # CLI output has no trailing newline, since Espanso inserts stdout verbatim.
 def test_output_has_no_trailing_newline(stub_provider: StubProvider) -> None:
     stub_provider.result = "clean output"
@@ -293,6 +300,43 @@ def test_unexpected_error_redacts_a_key(stub_provider: StubProvider) -> None:
     result = improve("--source", "argument", "--text", "draft")
     assert FAKE_KEY not in result.stdout
     assert result.stdout.startswith("[promptmend: unexpected error: bad value <redacted, ")
+
+
+# A secret spread over several words is not caught word by word, so the whole message is
+# described instead; a ValueError (which may come from a library) gets the same treatment.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "auth failed: " + "Bearer " + "abcDEF123456ghiJKL789xyz",
+        "bad pass" + "word: Hunter2Hunter2!",
+        "card " + " ".join(["4111"] + ["1111"] * 3) + " rejected",
+        '{"client' + 'Secret": "' + "Zx9Kq2" + "Lm8Np4Rt6Vw1Yb3" + '"}',
+    ],
+    ids=["bearer", "password", "spaced-card", "json-secret"],
+)
+@pytest.mark.parametrize(
+    ("kind", "prefix"), [(RuntimeError, "unexpected error: "), (ValueError, "")]
+)
+def test_error_marker_redacts_multi_word_secrets(
+    stub_provider: StubProvider, text: str, kind: type[Exception], prefix: str
+) -> None:
+    stub_provider.exc = kind(text)
+    result = improve("--source", "argument", "--text", "draft")
+    assert result.stdout == f"[promptmend: {prefix}<redacted, {len(text)} chars>]"
+
+
+# A failed copy that is not pyperclip's own error is redacted too, and the rewrite still pasted.
+def test_copy_failure_message_redacts_a_key(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
+) -> None:
+    def locked(text: str) -> None:
+        raise RuntimeError(f"locked by {FAKE_KEY}")
+
+    monkeypatch.setattr(pyperclip, "copy", locked)
+    result = improve("--copy", "--source", "argument", "--text", "draft")
+    assert FAKE_KEY not in result.stdout
+    assert result.stdout.startswith("[promptmend: Clipboard unavailable: locked by <redacted, ")
+    assert result.stdout.endswith("; the rewrite is pasted instead]\n\nimproved")
 
 
 # --copy writes the result to the clipboard and still prints it.
@@ -705,11 +749,31 @@ def test_fenced_reply_is_pasted_unfenced(stub_provider: StubProvider) -> None:
     assert result.stdout == "Write a haiku about Monday mornings."
 
 
-# A reply that stopped early keeps its stop note, and its fence is still stripped.
-def test_fenced_reply_with_stop_note_is_unfenced(stub_provider: StubProvider) -> None:
+# A reply that stopped early keeps its stop note, and its fence is still stripped; --copy
+# copies the rewrite without the note, as clipboard output does.
+def test_fenced_reply_with_stop_note_is_unfenced(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
+) -> None:
+    copied: list[str] = []
+    monkeypatch.setattr(pyperclip, "copy", copied.append)
     stub_provider.result = "```\nhello\n```" + TRUNCATED_NOTE
-    result = improve("--profile", "general", "--source", "argument", "--text", "draft")
+    result = improve("--copy", "--profile", "general", "--source", "argument", "--text", "d")
     assert result.stdout == "hello" + TRUNCATED_NOTE
+    assert copied == ["hello"]
+
+
+# Clipboard output: the unfenced rewrite is copied and only the stop note is printed.
+def test_clipboard_output_fenced_reply_with_stop_note(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
+) -> None:
+    copied: list[str] = []
+    monkeypatch.setattr(pyperclip, "copy", copied.append)
+    stub_provider.result = "```\nhello\n```" + TRUNCATED_NOTE
+    result = improve(
+        "--output", "clipboard", "--profile", "general", "--source", "argument", "--text", "d"
+    )
+    assert result.stdout == TRUNCATED_NOTE.lstrip("\n")
+    assert copied == ["hello"]
 
 
 # An invisible character before the fence cannot hide it, and an empty fenced reply is
