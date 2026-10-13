@@ -40,6 +40,14 @@ All notable changes to this project are documented here. The format follows
 - `improve --source stdin` reads at most one character past the 50,000-character limit, so
   piping a huge file is refused at once (`Input is too long (over 50000 chars)`) instead of
   being loaded whole first.
+- `promptmend config rollback` puts each `.env` back before it moves `config.toml` and
+  `secrets.toml` into the backup, so a trigger that fires during the rollback, or a `.env`
+  that cannot be put back, still runs on the saved settings and keys instead of the defaults
+  (#238).
+- When `promptmend config migrate` fails and cannot undo one of its own writes, the error
+  now names the reason the migration failed, then `could not undo: <file>`, instead of only
+  the error of the undo step. The migration record is then kept, and the message asks to
+  run `promptmend config rollback`, which removes what the migration left (#238).
 
 ## 0.24.0 - 2026-10-08
 

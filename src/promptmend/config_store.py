@@ -10,6 +10,7 @@ settings and files but never repeat a secret.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from collections.abc import Mapping
@@ -347,6 +348,23 @@ def _read_env(path: Path) -> tuple[bytes, dict[str, str]]:
     return data, _env_pairs(path, data, str(path))
 
 
+def _classify(
+    key: str, raw: str, taken: bool
+) -> Literal["skip", "kept", "secret", "default", "setting"]:
+    """Where a .env's ``key`` (a setting) goes: a secret whose value is empty is skipped,
+    one ``taken`` (set here already, so today's value wins) is kept, else a secret goes to
+    the secret store, and a setting is left out when it equals its default. A bad value
+    raises ValueError, also when it is taken."""
+    if key in secret_names():
+        if not raw.strip():
+            return "skip"
+        return "kept" if taken else "secret"
+    value = _toml_value(key, raw)
+    if taken:
+        return "kept"
+    return "default" if value == _toml_value(key, _FIELDS[key].metadata["default"]) else "setting"
+
+
 def plan_migration(
     environ: Mapping[str, str] | None = None, *, source: Path | None = None
 ) -> MigrationPlan:
@@ -411,18 +429,17 @@ def plan_migration(
     for key, raw in (pairs or {}).items():
         if key not in _FIELDS:
             ignored.append(safe_repr(key))
-        elif key in secrets:
-            if raw.strip() and not stored.get(key):
-                secret_values[key] = raw.strip()
-        else:
-            try:
-                same = _toml_value(key, raw) == _toml_value(key, _FIELDS[key].metadata["default"])
-            except ValueError as exc:
-                raise MigrationError(f"fix the .env first: {exc}") from None
-            if same:
-                defaults.append(key)
-            else:
-                settings[key] = raw
+            continue
+        try:
+            kind = _classify(key, raw, key in secrets and bool(stored.get(key)))
+        except ValueError as exc:
+            raise MigrationError(f"fix the .env first: {exc}") from None
+        if kind == "secret":
+            secret_values[key] = raw.strip()
+        elif kind == "default":
+            defaults.append(key)
+        elif kind == "setting":
+            settings[key] = raw
 
     copy: EnvSource | None = None
     copied: list[str] = []
@@ -439,24 +456,18 @@ def plan_migration(
                 continue
             # Set here already (the .env in use, the store, a real variable): today's wins.
             taken = key in settings or key in secret_values or bool(stored.get(key))
-            if key in secrets:
-                if not raw.strip():
-                    continue
-                if taken or before[key].source != DEFAULT_SOURCE:
-                    kept.append(key)
-                else:
-                    secret_values[key] = raw.strip()
-                    copied.append(key)
-                continue
             try:
-                value = _toml_value(key, raw)
+                kind = _classify(key, raw, taken or before[key].source != DEFAULT_SOURCE)
             except ValueError as exc:
                 raise MigrationError(f"fix {foreign} first: {exc}") from None
-            if taken or before[key].source != DEFAULT_SOURCE:
+            if kind == "kept":
                 kept.append(key)
-            elif value == _toml_value(key, _FIELDS[key].metadata["default"]):
+            elif kind == "secret":
+                secret_values[key] = raw.strip()
+                copied.append(key)
+            elif kind == "default":
                 defaults.append(key)
-            else:
+            elif kind == "setting":
                 settings[key] = raw
                 copied.append(key)
     token = _token(
@@ -471,16 +482,16 @@ def plan_migration(
     )
     return MigrationPlan(
         "ready",
-        tuple(sources),
-        settings,
-        secret_values,
-        tuple(defaults),
-        tuple(ignored),
-        token,
-        copy,
-        tuple(copied),
-        tuple(kept),
-        tuple(copy_ignored),
+        sources=tuple(sources),
+        settings=settings,
+        secret_values=secret_values,
+        defaults=tuple(defaults),
+        ignored=tuple(ignored),
+        token=token,
+        copy=copy,
+        copied=tuple(copied),
+        kept=tuple(kept),
+        copy_ignored=tuple(copy_ignored),
     )
 
 
@@ -614,7 +625,8 @@ def apply_migration(
         # rollback can undo whatever happened after it, even a run cut short.
         _write_marker(directory, record)
     except (OSError, SecretStoreError) as exc:
-        _marker(directory).unlink(missing_ok=True)
+        with contextlib.suppress(OSError):  # never hides ``exc``
+            _marker(directory).unlink(missing_ok=True)
         raise MigrationError(f"nothing was migrated: {exc}") from None
 
     try:
@@ -626,8 +638,22 @@ def apply_migration(
         config_files.write_atomic(settings_path, config_files.dump_toml(table), private=False)
         after = _effective(env)
     except (ValueError, OSError, SecretStoreError) as exc:
-        _undo(directory, settings_path, secrets_path, secrets_copy)
-        raise MigrationError(f"nothing was migrated: {exc}") from None
+        raise _undo(directory, settings_path, secrets_path, secrets_copy, str(exc)) from None
+    wrong = _verify(plan, before, after)
+    if wrong:
+        reason = f"reloading changed {', '.join(wrong)}"
+        raise _undo(directory, settings_path, secrets_path, secrets_copy, reason)
+    moved, left = _move_sources(record, targets)
+    return MigrationResult(backup, moved, tuple(left), plan.copy.path if plan.copy else None)
+
+
+def _verify(
+    plan: MigrationPlan,
+    before: Mapping[str, tuple[Any, str]],
+    after: Mapping[str, tuple[Any, str]],
+) -> list[str]:
+    """The settings whose reloaded value is not the planned one, else those still read from
+    a .env; empty when the migration's writes check out."""
     env_sources = {f"file:{s.path}" for s in (*plan.sources, *filter(None, [plan.copy]))}
     # Only the copied keys change; a .env value a real variable shadows stays shadowed.
     values = {**plan.settings, **plan.secret_values}
@@ -635,12 +661,14 @@ def apply_migration(
     expected = {k: planned.get(k, value) for k, (value, _) in before.items()}
     changed = sorted(k for k in before if expected[k] != after[k][0])
     still = sorted(k for k, (_, source) in after.items() if source in env_sources)
-    if changed or still:
-        _undo(directory, settings_path, secrets_path, secrets_copy)
-        raise MigrationError(
-            f"nothing was migrated: reloading changed {', '.join(changed or still)}"
-        )
+    return changed or still
 
+
+def _move_sources(
+    record: Mapping[str, Any], targets: Mapping[Path, Path]
+) -> tuple[dict[Path, Path], list[Path]]:
+    """Move each migrated .env into the backup (else rename it in place); a copied one stays.
+    Returns what moved where and what was left."""
     moved: dict[Path, Path] = {}
     left: list[Path] = []
     for entry in record["sources"]:
@@ -656,22 +684,52 @@ def apply_migration(
             moved[env_file] = in_place
         else:
             left.append(env_file)
-    return MigrationResult(backup, moved, tuple(left), plan.copy.path if plan.copy else None)
+    return moved, left
 
 
 def _undo(
-    directory: Path, settings_path: Path, secrets_path: Path, secrets_copy: Path | None
-) -> None:
-    """Undo a migration's own writes after a failure: config.toml was not a file before
-    (plan_migration requires that), secrets.toml gets its old bytes back (or is removed when
-    there was none), and the marker goes."""
-    if config_files.is_file(settings_path):
-        _unlink_real(settings_path)
-    if secrets_copy is not None:
-        config_files.write_atomic(secrets_path, secrets_copy.read_bytes(), private=True)
-    elif config_files.is_file(secrets_path):
-        _unlink_real(secrets_path)
-    _marker(directory).unlink(missing_ok=True)
+    directory: Path,
+    settings_path: Path,
+    secrets_path: Path,
+    secrets_copy: Path | None,
+    reason: str,
+) -> MigrationError:
+    """Undo a migration's own writes after it failed for ``reason`` and return the error to
+    raise: config.toml was not a file before (plan_migration requires that), secrets.toml gets
+    its old bytes back (or is removed when there was none), and the marker goes. Each step
+    runs even when an earlier one failed, and a failure never hides ``reason``. When a file
+    cannot be undone the marker stays, so `promptmend config rollback` can finish the job."""
+
+    def settings() -> None:
+        if config_files.is_file(settings_path):
+            _unlink_real(settings_path)
+
+    def secrets() -> None:
+        if secrets_copy is not None:
+            config_files.write_atomic(secrets_path, secrets_copy.read_bytes(), private=True)
+        elif config_files.is_file(secrets_path):
+            _unlink_real(secrets_path)
+
+    failed: list[str] = []
+    for name, step in (
+        (config_files.SETTINGS_FILE, settings),
+        (config_files.SECRETS_FILE, secrets),
+    ):
+        try:
+            step()
+        except (OSError, SecretStoreError):
+            failed.append(name)
+    if not failed:  # else the marker stays for the rollback
+        try:
+            _marker(directory).unlink(missing_ok=True)
+        except OSError:
+            failed.append(MARKER_FILE)
+    if failed:
+        return MigrationError(
+            f"migration failed: {reason}; could not undo: {', '.join(failed)}; "
+            "run `promptmend config rollback`"
+        )
+    return MigrationError(f"nothing was migrated: {reason}")
 
 
 @dataclass(frozen=True)
@@ -750,15 +808,18 @@ def plan_rollback(environ: Mapping[str, str] | None = None) -> RollbackPlan:
         config_files.digest(data),
         _file_digest(config.settings_file(env)),
         _file_digest(directory / config_files.SECRETS_FILE),
+        [(str(stored), str(original)) for stored, original in restores],
     )
     return RollbackPlan(Path(record["backup"]), tuple(restores), token, tuple(unread))
 
 
 def apply_rollback(environ: Mapping[str, str] | None = None, *, consent: str) -> None:
-    """Restore the state before the migration: config.toml and secrets.toml are moved into
-    the backup directory (never deleted; a symlinked one is copied there and stays a link),
-    a secrets.toml that existed before gets its exact old bytes back, each .env is moved back
-    to where it was, and the marker is removed. ``consent`` must be the token of the
+    """Restore the state before the migration: each .env is moved back to where it was
+    first (ignored while config.toml exists, so a trigger in between still runs on the saved
+    settings, and a failed restore stops before anything else changed), then config.toml and
+    secrets.toml are moved into the backup directory (never deleted; a symlinked one is
+    copied there and stays a link), a secrets.toml that existed before gets its exact old
+    bytes back, and the marker is removed. ``consent`` must be the token of the
     plan_rollback() preview."""
     env = _env(environ)
     plan = plan_rollback(env)
@@ -767,6 +828,9 @@ def apply_rollback(environ: Mapping[str, str] | None = None, *, consent: str) ->
     directory = config_dir(env)
     record, _ = _read_marker(directory)
     stamp = _stamp()
+    for stored, original in plan.restores:
+        if not _move(stored, original):
+            raise MigrationError(f"could not move {stored} back to {original}; rollback stopped")
     for path in (config.settings_file(env), directory / config_files.SECRETS_FILE):
         if not config_files.is_file(path):
             continue
@@ -785,9 +849,6 @@ def apply_rollback(environ: Mapping[str, str] | None = None, *, consent: str) ->
     if record.get("secrets_backup"):
         old = (plan.backup / record["secrets_backup"]).read_bytes()
         config_files.write_atomic(directory / config_files.SECRETS_FILE, old, private=True)
-    for stored, original in plan.restores:
-        if not _move(stored, original):
-            raise MigrationError(f"could not move {stored} back to {original}; rollback stopped")
     _marker(directory).unlink()
 
 
