@@ -335,14 +335,16 @@ Rules for agents:
   REPL (imported only once it opens; `prompt_toolkit` and `promptmend.console` are in
   `doctor.HEAVY_MODULES` and the trigger contract's FORBIDDEN) over `promptmend/console.py`'s
   completion (`words_for()`, `suggest()`) and `describe()` as the bottom bar; without a TTY
-  exit 3. `plan(line)` runs everything the parser reads as a command except `improve`,
-  `persona` and `shell` (`REFUSED`; their `--help` only when the strict parse succeeds), a
+  exit 3. `plan(line)` runs everything the parser reads as a command except what
+  `console.decide()` refuses (`POLICY`; the shell runs `ui` but refuses `shell` itself;
+  DIALOG and TERMINAL run here as typed; a refused command's `--help` only when the strict
+  parse succeeds), a
   key-like line (`holds_a_key()`) and `refused_secret()` (also on a whitespace split when
   shlex fails; it covers `config set|get|unset <key name> VALUE` too); a leaf's `--help`
   counts only as the parser read it. `Editor` wraps the default buffer's accept handler (so every
   accept key: Enter, Meta-Enter, Ctrl-O, a search's Enter) to replace a `secret_line()` with
   `<value withheld>` before the prompt exits (`read()` returns the original to plan). `run_here()`
-  re-checks `runs_here(argv)`, then starts `[*entry.self_command(), *argv]` with the terminal's stdio (no capture, no timeout, waits through Ctrl-C); `doctor`
+  re-checks `runs_here(argv)` (a fresh `plan()` runs exactly that argv), then starts `[*entry.self_command(), *argv]` with the terminal's stdio (no capture, no timeout, waits through Ctrl-C); `doctor`
   is not forced to `--no-clipboard`. The in-memory history keeps only lines `kept()` allows: those that plan to RUN.
   `load_settings()` (repair mode, never fatal) runs at start and after each run, so
   `holds_a_key()` sees `PROMPT_EXTRA_PATTERNS`: `common.looks_like_a_key()` scans with

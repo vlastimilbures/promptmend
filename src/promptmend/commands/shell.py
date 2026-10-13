@@ -35,13 +35,6 @@ EXIT = "exit"
 EXITS = ("exit", "quit")
 HELPS = ("help", "?")
 PROMPT = "promptmend> "
-# Triggers and the shell itself: what a line here never runs, and why.
-REFUSED: dict[tuple[str, ...], str] = {
-    ("improve",): "the Espanso triggers run it, and it reads the clipboard; to try a "
-    "rewrite, use the Try tab of `promptmend ui`",
-    ("persona",): "the -p- trigger runs it",
-    ("shell",): "this is the shell",
-}
 WITHHELD_NOTE = (
     "That line looked like it holds a key: nothing ran, and it was not kept. "
     "Keys are typed hidden: secrets set OPENROUTER_API_KEY"
@@ -83,6 +76,7 @@ def plan(line: str) -> Plan:
         return Plan(HELP)
     argv = tuple(words)
     found: Resolved | None
+    strict = True
     try:
         found = console.resolve(words)
     except UsageError as exc:
@@ -91,24 +85,27 @@ def plan(line: str) -> Plan:
         found = _help_only(words)
         if found is None:
             return Plan(ERROR, message=console.error_text(exc.format_message()).plain)
-        if found.path in REFUSED:
-            # A trigger's --help only when its whole line parses (`improve --help --profile`
-            # would start a trigger that prints nothing and exits 2).
-            return _refusal(found.path, argv)
+        strict = False
     if isinstance(found.command, TyperGroup):
         decision = console.decide(found, words)
         if decision.kind == console.RUN:
             return Plan(RUN, argv)
         return Plan(ERROR, message=console.error_text(decision.message).plain)
-    if found.values.get("help") is True:
-        return Plan(RUN, argv)
-    if found.path in REFUSED:
-        return _refusal(found.path, argv)
+    # The interface's refusals (POLICY), except that a terminal runs `ui` and not the shell; a
+    # dialog or terminal command runs as typed, and asks here.
+    rule = console.POLICY[found.path]
+    why = rule.why if rule.kind == console.REFUSE else ""
+    here: dict[tuple[str, ...], str] = {
+        ("ui",): "",
+        ("shell",): "this is the shell",
+        ("improve",): f"{why} of `promptmend ui`",
+    }
+    why = here.get(found.path, why)
+    # A refused command's --help only when its whole line parses (`improve --help --profile`
+    # would start a trigger that prints nothing and exits 2).
+    if why and not (strict and found.values.get("help") is True):
+        return Plan(REFUSE, argv, f"Not from the shell: {why}.")
     return Plan(RUN, argv)
-
-
-def _refusal(path: tuple[str, ...], argv: tuple[str, ...]) -> Plan:
-    return Plan(REFUSE, argv, f"Not from the shell: {REFUSED[path]}.")
 
 
 def _words(line: str) -> list[str]:
