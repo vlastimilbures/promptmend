@@ -196,7 +196,7 @@ def history_export(
 AGE = re.compile(r"(\d{1,6})d?")
 
 
-@history_app.command("prune")
+@history_app.command("prune", short_help="Delete the records older than the given age.")
 @guard
 def history_prune(
     older_than: str | None = typer.Option(
