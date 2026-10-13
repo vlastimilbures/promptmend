@@ -388,7 +388,9 @@ Rules for agents:
   Textual honours `NO_COLOR`; exit is `sys.exit(app.return_code or 0)`. `tui/previous.py`'s
   `PreviousInstallScreen` (#110) opens by itself once per session when `State.previous`
   (`previous_install.detect()`) has a candidate or an unskipped pending copy, and from Home's
-  "Previous install…" (always shown, so "Enter a path…" stays reachable, #237;
+  "Previous install…" (shown while `State.previous` is not gated, so "Enter a path…" stays
+  reachable after a skip or with nothing found, #237, or with a candidate, a pending copy or
+  `previous_error`, #222;
   tests open it with `app.open_previous()`): four steps (copy via `plan_migration(source=)`, profiles via
   `panes.copy_profiles()`, deploy via `TriggersPane.start_deploy()`, retire via
   `plan_retire()` in a worker, enabled only once no launcher points into the checkout and

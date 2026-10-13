@@ -34,8 +34,9 @@ call button, which runs `improve` against a stub on `127.0.0.1` with a placehold
 a Try tab run you confirm.
 
 When it finds an earlier checkout install, it opens a "Previous install" checklist once per
-session (also on Home's "Previous install…", always there, whose "Enter a path…" finds a
-checkout it did not, or one you skipped): copy the settings, copy the profiles, deploy,
+session (also on Home's "Previous install…", there until your settings are saved in
+`config.toml`, or while one is found; its "Enter a path…" finds a checkout it did not, or one
+you skipped): copy the settings, copy the profiles, deploy,
 retire the old `.env`. See [From a checkout install](install.md#from-a-checkout-install).
 
 ## Setup
@@ -58,8 +59,9 @@ time.
 
 Next and Back (or Escape) move between the steps; Enter on a list picks and moves on. Each
 change is made through the same code as its command and shows that command. With
-`PROMPTMEND_ENV` set, settings stay in that file: Next moves on without saving a provider or
-profile and says so. With `--plain`,
+`PROMPTMEND_ENV` set, settings and keys stay in that file: Next moves on without saving a
+provider or profile and says so, the API keys step only says to add each key to that file, and
+Done names that file for a missing key. With `--plain`,
 or any of `--provider`, `--profile`, `--migrate-from`, `--deploy`/`--no-deploy` or
 `--no-smoke-test`, `setup` asks line by line instead (see [Commands](commands.md#management-commands)).
 

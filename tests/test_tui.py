@@ -1185,6 +1185,9 @@ def test_profiles_migrate_without_a_checkout_asks_for_one(
         assert "is it a checkout of this project?" in profiles.last_message
         assert "--checkout" not in profiles.last_message
         await press(app, pilot, "#migrate-profiles")
+        await fill(app, pilot, previous_path="sk-or-v1-" + "ab12" * 16)
+        assert "looks like a key" in profiles.last_message
+        await press(app, pilot, "#migrate-profiles")
         await fill(app, pilot, previous_path=f'"{elsewhere}"')
         assert f"From {elsewhere}:" in _dialog(app).preview
         assert "mine.md (added)" in _dialog(app).preview
@@ -2687,3 +2690,21 @@ def test_command_line_migrate_and_detach_dialogs(saved: Path, espanso: FakeRunne
         assert app.main.query_one(TabbedContent).active == "home"
 
     drive(scenario)
+
+
+def test_home_previous_install_hidden_once_settings_are_saved(
+    saved: Path, espanso: FakeRunner
+) -> None:
+    """Shown while a previous install could still be copied, even with nothing found (#237);
+    hidden once config.toml exists, since a copy is then refused (D-MIG-4)."""
+
+    async def shown(app: ManageApp, pilot: Pilot[int]) -> None:
+        assert app.main.query_one("#home-previous", Button).display
+
+    drive(shown)
+    config_store.save_settings(config_store.read_settings(), {"PROMPT_TIMEOUT_SECONDS": "45"})
+
+    async def hidden(app: ManageApp, pilot: Pilot[int]) -> None:
+        assert not app.main.query_one("#home-previous", Button).display
+
+    drive(hidden)

@@ -8,13 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 - Setup's Done step no longer says "Match files: not installed" when the only files that
-  differ are ones you edited and kept, which the Espanso step already says it leaves alone.
-- Setup's Next no longer gets stuck on the provider and profile steps while `PROMPTMEND_ENV`
-  is set: it says the choice is not saved (settings stay in that file) and moves on.
+  differ are ones you edited and kept, which the Espanso step already says it leaves alone;
+  it says how many of them were kept.
+- Setup's Next no longer gets stuck on the provider, profile and API keys steps while
+  `PROMPTMEND_ENV` is set: it says the choice is not saved (settings stay in that file) and
+  moves on; the keys step and the Done checklist say to add each key to that file.
 - Setup logs `config unset` when picking the default removed the setting, instead of a
   `config set` it did not run.
-- Home's "Previous install…" is always shown, so "Enter a path…" works after "Skip this
-  checkout" and when nothing was found.
+- Home's "Previous install…" stays shown until your settings are saved in `config.toml`, so
+  "Enter a path…" works after "Skip this checkout" and when nothing was found.
 - The Profiles tab's "Migrate from checkout" asks for the checkout's folder when none was
   found, instead of naming a `--checkout` flag the interface cannot pass.
 

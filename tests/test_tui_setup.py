@@ -166,6 +166,14 @@ def test_wizard_moves_on_in_legacy_env_mode(espanso: FakeRunner) -> None:
         assert wizard.at == "profile"
         await _pick(app, pilot, "#setup-profiles", "default")  # unchanged: no note
         assert wizard.at == "keys"
+        # Keys go in that file too: no fields to type into, and Next moves on.
+        assert "add each one there" in _text(app, "#setup-keys-intro")
+        field = app.screen.query_one("#setup-key-OPENROUTER_API_KEY", Input)
+        assert not field.display
+        assert not app.screen.query_one("#setup-save-keys", Button).display
+        field.value = KEY
+        await press(app, pilot, "#setup-next-step")
+        assert wizard.at == "espanso"
 
     app = drive(scenario, setup=_options(espanso))
     assert notes == [
@@ -173,7 +181,9 @@ def test_wizard_moves_on_in_legacy_env_mode(espanso: FakeRunner) -> None:
         f"{common.legacy_env()}; edit that file instead."
     ]
     assert app.session == []
-    assert common.load_layers()[1].provider == "openrouter"
+    layers, settings = common.load_layers()
+    assert settings.provider == "openrouter"
+    assert layers.entries["OPENROUTER_API_KEY"].value != KEY
 
 
 def test_wizard_back_and_escape(saved: Path, espanso: FakeRunner) -> None:
