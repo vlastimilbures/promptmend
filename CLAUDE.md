@@ -377,10 +377,12 @@ Rules for agents:
   the interface opens; `tests/test_trigger_contract.py` checks neither the triggers nor `--help`,
   `doctor`, `config show` and the other headless commands load it. Seven tabs (Home, Settings
   (`2 Settings`, tab id `settings`, was `2 Providers` before #199; all seven fit at 80
-  columns), Profiles, Triggers, History, Diagnostics, Try) show one `tui/state.State`, which `gather()`
+  columns), Profiles, Triggers, History, Diagnostics, Try; one module each, `tui/<tab>_pane.py`,
+  over `tui/base.py`'s `Pane` and shared flows, #243) show one `tui/state.State`, which `gather()`
   reads again in a worker thread after every change (a generation number drops an older load
   that finishes late); each action calls the same services as the
-  headless command (`commands/settings.save_setting()` is shared with `config set`) and adds no
+  headless command (`commands/settings.save_setting()` is shared with `config set`, `store_key()` with
+  `secrets set`; the .env migration is `base.confirm_migration()`) and adds no
   logic. Keys appear only as set/not set; destructive actions (key removal, deploy, detach,
   migrate, history prune/reset) go through a dialog whose Cancel has the focus, and deploy keeps
   an edited file unless a conflict choice says otherwise. Only one deploy/detach dialog opens at a
@@ -395,8 +397,8 @@ Rules for agents:
   "Previous install…" (shown while `State.previous` is not gated, so "Enter a path…" stays
   reachable after a skip or with nothing found, #237, or with a candidate, a pending copy or
   `previous_error`, #222;
-  tests open it with `app.open_previous()`): four steps (copy via `plan_migration(source=)`, profiles via
-  `panes.copy_profiles()`, deploy via `TriggersPane.start_deploy()`, retire via
+  tests open it with `app.open_previous()`): four steps (copy via `base.confirm_migration(source=)`, profiles via
+  `base.copy_profiles()`, deploy via `TriggersPane.start_deploy()`, retire via
   `plan_retire()` in a worker, enabled only once no launcher points into the checkout and
   refused without `espanso path config`'s answer), none opening while `TriggersPane.busy`;
   digits 1-4 as keys,
@@ -421,7 +423,7 @@ Rules for agents:
   the Settings tab (`CHANGE_OUTPUT`, #198). The Settings help line and the Diagnostics
   tables show a settings file under the home folder as `~/…` via `common.short_label()`
   (display only; headless `config show` keeps `source_label()`). The Settings tab (#199) is
-  `panes.SettingsPane` over `tui/settings_model.py` (pure, no Textual;
+  `settings_pane.SettingsPane` over `tui/settings_model.py` (pure, no Textual;
   `tests/test_tui_settings_model.py`): `SETTINGS` gives every `env_names()` key exactly once
   a group (`GROUPS`: Output, Keys, Privacy, Models, History, Interface; `PROMPT_PROVIDER` is in
   Models, its help naming a bare `improve` and the Try tab, #217), a kind (`bool`,
@@ -455,7 +457,7 @@ Rules for agents:
   `brand.runtime()`, which the snapshots pin, the config and data dirs, licence, repo).
   Every action names its headless command (#111 stage 1, `tui/teach.py`, no Textual):
   `teach.BUTTONS` maps each button id to its commands (placeholders like `<NAME>`), shown as
-  the tooltip by `_buttons()`; a button with none goes in `teach.NO_COMMAND`
+  the tooltip by `base.button_row()`; a button with none goes in `teach.NO_COMMAND`
   (`test_every_button_has_its_command_as_tooltip` fails otherwise). `Pane.report(...,
   command=teach.equivalent(...))` (and `attempt(command=)`, `PreviousInstallScreen.report`)
   shows a muted `$ promptmend …` above the result and appends to `ManageApp.session`,
@@ -622,7 +624,7 @@ Rules for agents:
   `OLLAMA_BASE_URL/api/tags` or `LMSTUDIO_BASE_URL/models` (`TIMEOUT` 0.5 s, own
   `HTTPTransport`, any HTTP answer is True), never another host (None); conftest stubs
   `_get` to refuse, `tests/test_local_probe.py` restores `REAL_GET` under `fake_http`. The
-  Triggers tab reads that check's data (`panes._servers_down()`, no second probe) and shows
+  Triggers tab reads that check's data (`triggers_pane._servers_down()`, no second probe) and shows
   `needs Ollama`/`needs LM Studio` as State for a deployed active local trigger (`missing`
   stays). The deploy never changes for it: `-il-`/`-ilm-` stay active, `-ic-` commented out.
   The `cli` check shows `<argv0>.exe` on Windows when argv[0] has no suffix and the exe

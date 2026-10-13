@@ -12,7 +12,7 @@ from .common import guard
 
 app = typer.Typer(name="doctor", add_completion=False)
 
-_LABEL = {
+LABEL = {
     service.OK: ("ok", "green"),
     service.WARN: ("warn", "yellow"),
     service.FAIL: ("FAIL", "red"),
@@ -50,7 +50,7 @@ def doctor(
         common.json_dump(report.to_json())
     else:
         for check in report.checks:
-            label, color = _LABEL[check.status]
+            label, color = LABEL[check.status]
             typer.echo(f"[{common.paint(f'{label:^4}', color)}] {check.id}: {check.message}")
             if check.id == "match_files":
                 for item in check.data.get("files", []):
