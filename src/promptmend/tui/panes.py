@@ -24,7 +24,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, DataTable, Input, OptionList, RichLog, Select, Static
 from textual.widgets.option_list import Option
 
-from .. import config_store, deploy, doctor, history, previous_install, smoke
+from .. import config, config_store, deploy, doctor, history, previous_install, smoke
 from .. import profiles as profile_service
 from ..commands import common, usage
 from ..commands import doctor as doctor_cmd
@@ -283,14 +283,9 @@ class HomePane(Pane):
         self.rows = tuple(home_rows(state))
         self.query_one("#home-headline", Static).update(home_headline(self.rows))
         self.query_one("#home-rows", Static).update(home_table(self.rows))
-        # Only when there is something to show (#222): a checkout found, a copy whose `.env` is
-        # not retired yet, or why looking failed. The offer itself opens by itself once.
-        found = state.previous.candidates or state.previous.pending or state.previous_error
-        self.query_one("#home-previous", Button).display = bool(found)
 
     def setup(self) -> None:
         self.query_one("#home-copy", Button).disabled = not self.manage.session
-        self.query_one("#home-previous", Button).display = False
 
     def show_session(self, entries: Sequence[teach.Entry]) -> None:
         self.query_one("#home-session", Static).update(session_text(entries))
@@ -941,7 +936,40 @@ class ProfilesPane(Pane):
     def _migrate(self) -> None:
         # The earlier checkout detection found (#110), else this editable install's own.
         root = previous_root(self.state.previous) if self.state else None
+        own = config._PROJECT_ROOT
+        if root is None and not (own / profile_service.prompts_path(own)).is_dir():
+            # Not an editable install and no checkout found: ask where it is (#237).
+            self.app.push_screen(
+                FormModal("Which checkout has your profiles?", [CHECKOUT_FIELD], submit="Look"),
+                self._entered,
+            )
+            return
         copy_profiles(self, root)
+
+    def _entered(self, values: dict[str, str] | None) -> None:
+        root = checkout_path(self, values)
+        if root is not None:
+            copy_profiles(self, root)
+
+
+CHECKOUT_FIELD = Field("previous-path", "The checkout's folder", placeholder="~/Projects/…")
+
+
+def checkout_path(owner: Reporter, values: dict[str, str] | None) -> Path | None:
+    """The folder typed into CHECKOUT_FIELD, or None (and why) for none or a key."""
+    if values is None:
+        return None
+    # A pasted path may keep its quotes (Windows "Copy as path").
+    text = values[CHECKOUT_FIELD.id].strip().strip("\"'").strip()
+    try:
+        common.no_key(text, "the path")
+    except EXPECTED as exc:
+        owner.report(_error(exc), error=True)
+        return None
+    if not text:
+        owner.report("No path entered.", error=True)
+        return None
+    return Path(text).expanduser()
 
 
 def previous_root(found: previous_install.Detection) -> Path | None:

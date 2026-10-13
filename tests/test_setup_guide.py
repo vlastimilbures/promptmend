@@ -104,3 +104,11 @@ def test_deploy_summary_and_done_rows(tmp_path: Path) -> None:
     rows = setup_guide.done_rows(_settings(), [], None, False)
     assert rows[1].text == "Espanso's folder was not found"
     assert rows[2].text.startswith("failed")
+
+
+def test_done_rows_count_a_kept_edited_file_as_installed(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    plan.steps = [dataclasses.replace(s, state=deploy.MODIFIED) for s in plan.steps]
+    assert setup_guide.deploy_summary(plan).startswith("Nothing to write")
+    match = setup_guide.done_rows(_settings(), [], plan, None)[1]
+    assert (match.ok, match.text) == (True, f"installed in {tmp_path / 'match'}")

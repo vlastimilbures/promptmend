@@ -1164,11 +1164,30 @@ def test_run_editor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     assert seen == [["myeditor", "-w", str(tmp_path / "mine.md")]]
 
 
-def test_profiles_migrate_without_a_checkout(espanso: FakeRunner) -> None:
+def test_profiles_migrate_without_a_checkout_asks_for_one(
+    espanso: FakeRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No checkout found and no editable install: the button asks for the folder instead
+    of naming a --checkout flag the interface cannot pass (#237)."""
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / profile_service.PROMPTS_PATH).mkdir(parents=True)
+    (elsewhere / profile_service.PROMPTS_PATH / "mine.md").write_text("Mine.", "utf-8")
+    monkeypatch.setattr(profile_service, "git_pristine_profiles", lambda root, rev=None: {})
+
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        profiles = pane(app, "profiles")
         await pilot.press("3")
         await press(app, pilot, "#migrate-profiles")
-        assert "no src/promptmend/prompts" in pane(app, "profiles").last_message
+        await fill(app, pilot, previous_path="  ")
+        assert profiles.last_message == "No path entered."
+        await press(app, pilot, "#migrate-profiles")
+        await fill(app, pilot, previous_path=str(tmp_path / "nothing"))
+        assert "is it a checkout of this project?" in profiles.last_message
+        assert "--checkout" not in profiles.last_message
+        await press(app, pilot, "#migrate-profiles")
+        await fill(app, pilot, previous_path=f'"{elsewhere}"')
+        assert f"From {elsewhere}:" in _dialog(app).preview
+        assert "mine.md (added)" in _dialog(app).preview
 
     drive(scenario)
 
@@ -2116,9 +2135,9 @@ def test_previous_install_shown_once_skip_and_home_reopens(previous: Path) -> No
 
     async def second(app: ManageApp, pilot: Pilot[int]) -> None:
         assert not isinstance(app.screen, PreviousInstallScreen)
-        # Nothing left to offer: Home hides the button (#222).
-        assert not app.main.query_one("#home-previous", Button).display
-        app.open_previous()
+        # Nothing left to offer, yet the button stays: it is the way to enter a path (#237).
+        assert app.main.query_one("#home-previous", Button).display
+        await press(app, pilot, "#home-previous")
         await settle(pilot)
         assert "No previous install found" in _found(app)
         assert _disabled(app, "skip")
@@ -2138,9 +2157,7 @@ def test_previous_install_entered_path(
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         assert not isinstance(app.screen, PreviousInstallScreen)
-        assert not app.main.query_one("#home-previous", Button).display
-        app.open_previous()
-        await settle(pilot)
+        await press(app, pilot, "#home-previous")
         assert "No previous install found" in _found(app)
         await press(app, pilot, "#previous-enter")
         await fill(app, pilot, previous_path=str(root))

@@ -204,10 +204,14 @@ def file_rows(plan: deploy.Plan) -> list[tuple[str, str]]:
     return [(s.name, FILE_STATES.get(s.state, s.state)) for s in plan.steps]
 
 
+def _writes(plan: deploy.Plan) -> list[deploy.FileStep]:
+    return [s for s in plan.steps if s.state in (deploy.MISSING, deploy.STALE)]
+
+
 def deploy_summary(plan: deploy.Plan) -> str:
     if plan.is_noop or plan.only_forgets:
         return "Every match file is up to date; nothing to install."
-    writes = [s for s in plan.steps if s.state in (deploy.MISSING, deploy.STALE)]
+    writes = _writes(plan)
     if not writes:
         return "Nothing to write: the files that differ are yours and stay as they are."
     return f"Install writes {len(writes)} file(s) and then restarts Espanso."
@@ -229,7 +233,7 @@ def done_rows(
             rows.append(DoneRow(False, key.name, f"not set: `promptmend secrets set {key.name}`"))
     if plan is None:
         rows.append(DoneRow(False, "Match files", "Espanso's folder was not found"))
-    elif all(s.state == deploy.IN_SYNC for s in plan.steps):
+    elif not _writes(plan):
         rows.append(DoneRow(True, "Match files", f"installed in {plan.espanso_dir / 'match'}"))
     else:
         rows.append(DoneRow(False, "Match files", "not installed: `promptmend espanso deploy`"))
