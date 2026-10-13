@@ -10,6 +10,7 @@ settings and files but never repeat a secret.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from collections.abc import Mapping
@@ -350,10 +351,10 @@ def _read_env(path: Path) -> tuple[bytes, dict[str, str]]:
 def _classify(
     key: str, raw: str, taken: bool
 ) -> Literal["skip", "kept", "secret", "default", "setting"]:
-    """Where a .env's ``key`` (a setting) goes: an empty key is skipped, one ``taken`` (set
-    here already, so today's value wins) is kept, else a key goes to the secret store, and a
-    setting is left out when it equals its default. A bad value raises ValueError, also when
-    it is taken."""
+    """Where a .env's ``key`` (a setting) goes: a secret whose value is empty is skipped,
+    one ``taken`` (set here already, so today's value wins) is kept, else a secret goes to
+    the secret store, and a setting is left out when it equals its default. A bad value
+    raises ValueError, also when it is taken."""
     if key in secret_names():
         if not raw.strip():
             return "skip"
@@ -624,7 +625,8 @@ def apply_migration(
         # rollback can undo whatever happened after it, even a run cut short.
         _write_marker(directory, record)
     except (OSError, SecretStoreError) as exc:
-        _marker(directory).unlink(missing_ok=True)
+        with contextlib.suppress(OSError):  # never hides ``exc``
+            _marker(directory).unlink(missing_ok=True)
         raise MigrationError(f"nothing was migrated: {exc}") from None
 
     try:
@@ -636,12 +638,11 @@ def apply_migration(
         config_files.write_atomic(settings_path, config_files.dump_toml(table), private=False)
         after = _effective(env)
     except (ValueError, OSError, SecretStoreError) as exc:
-        undone = _undo(directory, settings_path, secrets_path, secrets_copy)
-        raise MigrationError(f"nothing was migrated: {exc}{undone}") from None
+        raise _undo(directory, settings_path, secrets_path, secrets_copy, str(exc)) from None
     wrong = _verify(plan, before, after)
     if wrong:
-        undone = _undo(directory, settings_path, secrets_path, secrets_copy)
-        raise MigrationError(f"nothing was migrated: reloading changed {', '.join(wrong)}{undone}")
+        reason = f"reloading changed {', '.join(wrong)}"
+        raise _undo(directory, settings_path, secrets_path, secrets_copy, reason)
     moved, left = _move_sources(record, targets)
     return MigrationResult(backup, moved, tuple(left), plan.copy.path if plan.copy else None)
 
@@ -687,13 +688,17 @@ def _move_sources(
 
 
 def _undo(
-    directory: Path, settings_path: Path, secrets_path: Path, secrets_copy: Path | None
-) -> str:
-    """Undo a migration's own writes after a failure: config.toml was not a file before
-    (plan_migration requires that), secrets.toml gets its old bytes back (or is removed when
-    there was none), and the marker goes. Each step runs even when an earlier one failed, and
-    a failure never hides the error being undone: the result is ``""``, or a
-    ``"; could not undo: <files>"`` suffix for its message."""
+    directory: Path,
+    settings_path: Path,
+    secrets_path: Path,
+    secrets_copy: Path | None,
+    reason: str,
+) -> MigrationError:
+    """Undo a migration's own writes after it failed for ``reason`` and return the error to
+    raise: config.toml was not a file before (plan_migration requires that), secrets.toml gets
+    its old bytes back (or is removed when there was none), and the marker goes. Each step
+    runs even when an earlier one failed, and a failure never hides ``reason``. When a file
+    cannot be undone the marker stays, so `promptmend config rollback` can finish the job."""
 
     def settings() -> None:
         if config_files.is_file(settings_path):
@@ -705,17 +710,26 @@ def _undo(
         elif config_files.is_file(secrets_path):
             _unlink_real(secrets_path)
 
-    failed = []
+    failed: list[str] = []
     for name, step in (
         (config_files.SETTINGS_FILE, settings),
         (config_files.SECRETS_FILE, secrets),
-        (MARKER_FILE, lambda: _marker(directory).unlink(missing_ok=True)),
     ):
         try:
             step()
         except (OSError, SecretStoreError):
             failed.append(name)
-    return f"; could not undo: {', '.join(failed)}" if failed else ""
+    if not failed:  # else the marker stays for the rollback
+        try:
+            _marker(directory).unlink(missing_ok=True)
+        except OSError:
+            failed.append(MARKER_FILE)
+    if failed:
+        return MigrationError(
+            f"migration failed: {reason}; could not undo: {', '.join(failed)}; "
+            "run `promptmend config rollback`"
+        )
+    return MigrationError(f"nothing was migrated: {reason}")
 
 
 @dataclass(frozen=True)
@@ -794,6 +808,7 @@ def plan_rollback(environ: Mapping[str, str] | None = None) -> RollbackPlan:
         config_files.digest(data),
         _file_digest(config.settings_file(env)),
         _file_digest(directory / config_files.SECRETS_FILE),
+        [(str(stored), str(original)) for stored, original in restores],
     )
     return RollbackPlan(Path(record["backup"]), tuple(restores), token, tuple(unread))
 

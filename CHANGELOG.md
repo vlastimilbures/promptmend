@@ -29,8 +29,9 @@ All notable changes to this project are documented here. The format follows
   that cannot be put back, still runs on the saved settings and keys instead of the defaults
   (#238).
 - When `promptmend config migrate` fails and cannot undo one of its own writes, the error
-  now names the reason the migration failed, followed by `could not undo: <file>`, instead of
-  only the error of the undo step (#238).
+  now names the reason the migration failed, then `could not undo: <file>`, instead of only
+  the error of the undo step. The migration record is then kept, and the message asks to
+  run `promptmend config rollback`, which removes what the migration left (#238).
 
 ## 0.24.0 - 2026-10-08
 
