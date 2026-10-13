@@ -318,7 +318,7 @@ def _one_key(
             typer.echo(f"  {name} is set (from {common.source_label(entry.source)}).")
         return
     try:
-        config_store.save_secret(name, value)
+        settings_cmd.store_key(name, value)
     except (ValueError, config_files.SecretStoreError) as exc:
         steps.fail("key", str(exc))
         return

@@ -713,11 +713,7 @@ class SettingsPane(Pane):
             return
 
         def save() -> str:
-            common.refuse_in_legacy_mode("the secret store")
-            config_store.save_secret(name, value)
-            note = settings_cmd.env_override(name)
-            saved = f"{name} saved in the secret store ({config_store.config_dir()})"
-            return f"{saved}; {note}" if note else saved
+            return "; ".join([settings_cmd.store_key(name, value), *settings_cmd.after_save(name)])
 
         self.attempt(save, command=teach.for_setting("set-key", name))
 
@@ -772,32 +768,7 @@ class SettingsPane(Pane):
 
     def migrate_env(self) -> None:
         """Preview the .env migration, then apply it on Yes (`config migrate`)."""
-        try:
-            plan = config_store.plan_migration()
-        except EXPECTED as exc:
-            self.report(f"error: {exc}", error=True)
-            return
-        if plan.status != "ready":
-            self.report("\n".join(plan.describe()))
-            return
-        preview = "\n".join(
-            [*plan.describe(), "", "A backup is kept; `promptmend config rollback` undoes it."]
-        )
-
-        def done(yes: bool | None) -> None:
-            if yes:
-                self.attempt(
-                    lambda: self._apply_migration(plan.token),
-                    command=teach.equivalent("config", "migrate"),
-                )
-
-        self.app.push_screen(ConfirmModal("Migrate the .env?", preview, confirm="Migrate"), done)
-
-    def _apply_migration(self, token: str) -> str:
-        result = config_store.apply_migration(consent=token)
-        lines = [f"Migrated. Backup: {result.backup}"]
-        lines += [f"{source} was not moved; it is no longer read" for source in result.left]
-        return "\n".join(lines)
+        confirm_migration(self)
 
     @on(Button.Pressed, "#smoke")
     def _smoke(self) -> None:
@@ -991,9 +962,49 @@ def previous_root(found: previous_install.Detection) -> Path | None:
 class Reporter(Protocol):
     def report(self, message: str, *, error: bool = False, command: str | None = None) -> None: ...
 
-    def attempt(
-        self, action: Callable[[], str], *, reload: bool = True, command: str | None = None
-    ) -> None: ...
+    def attempt(self, action: Callable[[], str], *, command: str | None = None) -> object: ...
+
+
+ROLLBACK_NOTE = "A backup is kept; `promptmend config rollback` undoes it."
+
+
+def _migrated(result: config_store.MigrationResult) -> str:
+    lines = [f"Migrated. Backup: {result.backup}"]
+    lines += [f"{source} was not moved; it is no longer read" for source in result.left]
+    return "\n".join(lines)
+
+
+def confirm_migration(
+    owner: Reporter,
+    source: Path | None = None,
+    *,
+    title: str = "Migrate the .env?",
+    confirm: str = "Migrate",
+    note: str = ROLLBACK_NOTE,
+    done: Callable[[config_store.MigrationResult], str] = _migrated,
+) -> None:
+    """Preview the .env migration (with ``source``, the copy from that earlier checkout),
+    then apply it on Yes, as `config migrate [--from]` does. The dialog's words and the
+    message ``done`` makes of the result are the caller's."""
+    try:
+        plan = config_store.plan_migration(source=source)
+    except EXPECTED as exc:
+        owner.report(_error(exc), error=True)
+        return
+    if plan.status != "ready":
+        owner.report("\n".join(plan.describe()))
+        return
+    argv = ("config", "migrate", *(("--from", str(source)) if source is not None else ()))
+
+    def apply() -> str:
+        return done(config_store.apply_migration(source=source, consent=plan.token))
+
+    def answered(yes: bool | None) -> None:
+        if yes:
+            owner.attempt(apply, command=teach.equivalent(*argv))
+
+    preview = "\n".join([*plan.describe(), "", note])
+    cast("Widget", owner).app.push_screen(ConfirmModal(title, preview, confirm=confirm), answered)
 
 
 def copy_profiles(owner: Reporter, root: Path | None) -> None:

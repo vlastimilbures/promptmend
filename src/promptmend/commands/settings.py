@@ -132,6 +132,15 @@ def save_setting(name: str, value: str) -> config_store.SavedSettings:
     return config_store.save_settings(config_store.read_settings(), {name: value})
 
 
+def store_key(name: str, value: str) -> str:
+    """`secrets set` without the printing, shared with setup and the interface: refuse legacy
+    mode (CommandError), save ``value`` in the secret store and say so. after_save() gives the
+    warnings to show with it."""
+    common.refuse_in_legacy_mode("the secret store")
+    config_store.save_secret(name, value)
+    return f"{name} saved in the secret store ({config_store.config_dir()})"
+
+
 # --- config -------------------------------------------------------------------------------
 
 
@@ -392,10 +401,9 @@ def secrets_set(
 ) -> None:
     """Save an API key in the secret store (asks with hidden input, or reads --stdin)."""
     _secret(name)
-    common.refuse_in_legacy_mode("the secret store")
+    common.refuse_in_legacy_mode("the secret store")  # before asking for a key it cannot save
     value = common.read_secret(name, from_stdin=stdin)
-    config_store.save_secret(name, value)
-    typer.echo(f"{name} saved in the secret store ({config_store.config_dir()})")
+    typer.echo(store_key(name, value))
     _warn_after_save(name)
 
 

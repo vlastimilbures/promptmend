@@ -26,6 +26,7 @@ from .panes import (
     TriggersPane,
     _error,
     checkout_path,
+    confirm_migration,
     copy_profiles,
     previous_root,
     result_text,
@@ -260,28 +261,16 @@ class PreviousInstallScreen(Screen[None]):
         best = previous_install.best(self.found.candidates)
         if best is None or self.busy():
             return
-        root = best.root
-        try:
-            plan = config_store.plan_migration(source=root)
-        except EXPECTED as exc:
-            self.report(_error(exc), error=True)
-            return
-        if plan.status != "ready":
-            self.report("\n".join(plan.describe()))
-            return
-        preview = "\n".join(
-            [*plan.describe(), "", "A backup is kept; `promptmend config rollback` undoes it."]
-        )
-
-        def apply() -> str:
-            result = config_store.apply_migration(source=root, consent=plan.token)
-            return (
+        confirm_migration(
+            self,
+            best.root,
+            title=f"Copy the settings of {best.root}?",
+            confirm="Copy",
+            done=lambda result: (
                 f"Copied; backup in {result.backup}. Next: deploy the match files (step 3), "
                 "so the triggers use these settings."
-            )
-
-        command = teach.equivalent("config", "migrate", "--from", str(root))
-        self._ask(f"Copy the settings of {root}?", preview, "Copy", apply, command)
+            ),
+        )
 
     @on(Button.Pressed, "#previous-profiles")
     def _profiles(self) -> None:

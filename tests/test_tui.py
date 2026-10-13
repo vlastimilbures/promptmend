@@ -545,7 +545,7 @@ def test_an_unexpected_error_is_shown_not_raised(
 def test_settings_migrate_reports_a_refusal(
     saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def refused(environ: Mapping[str, str] | None = None) -> None:
+    def refused(environ: Mapping[str, str] | None = None, *, source: Path | None = None) -> None:
         raise config_store.MigrationError("the marker is damaged")
 
     monkeypatch.setattr(config_store, "plan_migration", refused)

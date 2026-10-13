@@ -33,8 +33,7 @@ from ..commands import settings as settings_cmd
 from ..commands import setup as setup_cmd
 from ..config import secret_names
 from . import teach
-from .modals import ConfirmModal
-from .panes import EXPECTED, _error, _plan_digest, result_text
+from .panes import EXPECTED, _error, _plan_digest, confirm_migration, result_text
 from .previous import wants_offer
 from .state import State
 
@@ -377,12 +376,10 @@ class SetupScreen(Screen[None]):
             return True
 
         def save() -> str:
-            common.refuse_in_legacy_mode("the secret store")
             saved = []
             for name, value in typed:
-                config_store.save_secret(name, value)
-                note = settings_cmd.env_override(name)
-                saved.append(f"{name} saved" + (f"; {note}" if note else ""))
+                settings_cmd.store_key(name, value)
+                saved.append("; ".join([f"{name} saved", *settings_cmd.after_save(name)]))
             return "; ".join(saved)
 
         command = "; ".join(teach.for_setting("set-key", name) for name, _ in typed)
@@ -398,25 +395,15 @@ class SetupScreen(Screen[None]):
 
     @on(Button.Pressed, "#setup-migrate-env")
     def _migrate_env(self) -> None:
-        try:
-            plan = config_store.plan_migration()
-        except EXPECTED as exc:
-            self.report(_error(exc), error=True)
-            return
-        if plan.status != "ready":
-            self.report("\n".join(plan.describe()))
-            return
-
-        def done(yes: bool | None) -> None:
-            if yes:
-                self.attempt(apply, command=teach.equivalent("config", "migrate"))
-
-        def apply() -> str:
-            result = config_store.apply_migration(consent=plan.token)
-            return f"Moved; backup in {result.backup}. `promptmend config rollback` undoes it."
-
-        preview = "\n".join([*plan.describe(), "", "A backup is kept."])
-        self.app.push_screen(ConfirmModal("Move the .env settings?", preview, confirm="Move"), done)
+        confirm_migration(
+            self,
+            title="Move the .env settings?",
+            confirm="Move",
+            note="A backup is kept.",
+            done=lambda result: (
+                f"Moved; backup in {result.backup}. `promptmend config rollback` undoes it."
+            ),
+        )
 
     @on(Button.Pressed, "#setup-previous")
     def _previous(self) -> None:
