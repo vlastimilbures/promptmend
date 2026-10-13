@@ -72,27 +72,27 @@ def disclosure(settings: Settings) -> list[str]:
     ]
 
 
-def _money(amounts: dict[str, Decimal]) -> str:
+def money(amounts: dict[str, Decimal]) -> str:
     return ", ".join(f"{amount.normalize():f} {unit}" for unit, amount in sorted(amounts.items()))
 
 
-def _tokens(row: history.StatsRow) -> tuple[int | None, int | None]:
+def tokens(row: history.StatsRow) -> tuple[int | None, int | None]:
     inputs = [row.tokens.get(n) for n in ("input_uncached", "cache_read", "cache_write")]
     known = [n for n in inputs if n is not None]
     return (sum(known) if known else None), row.tokens.get("output")
 
 
-def _ms(value: float | None) -> str:
+def ms(value: float | None) -> str:
     return "-" if value is None else f"{value:.0f}"
 
 
 def _row_text(row: history.StatsRow) -> list[str]:
-    tokens_in, tokens_out = _tokens(row)
+    tokens_in, tokens_out = tokens(row)
     cost = []
     if row.reported:
-        cost.append(f"reported {_money(dict(row.reported))}")
+        cost.append(f"reported {money(dict(row.reported))}")
     if row.estimated:
-        cost.append(f"estimated {_money(dict(row.estimated))}")
+        cost.append(f"estimated {money(dict(row.estimated))}")
     if row.unknown_cost_attempts:
         cost.append(f"{row.unknown_cost_attempts} attempt(s) with an unknown cost")
     if row.not_applicable_attempts:
@@ -100,7 +100,7 @@ def _row_text(row: history.StatsRow) -> list[str]:
     return [
         f"{row.key or NO_TRIGGER}: {row.operations} call(s), {row.attempts} request(s), last "
         f"{row.last_used_utc[:19]}Z",
-        f"    latency p50 {_ms(row.latency_p50_ms)} ms, p95 {_ms(row.latency_p95_ms)} ms; tokens "
+        f"    latency p50 {ms(row.latency_p50_ms)} ms, p95 {ms(row.latency_p95_ms)} ms; tokens "
         f"in {'-' if tokens_in is None else tokens_in}, out "
         f"{'-' if tokens_out is None else tokens_out}",
         f"    cost: {'; '.join(cost) or 'none recorded'}",
@@ -193,7 +193,7 @@ def history_export(
     typer.echo(f"Exported {count} call(s) to {path}")
 
 
-_AGE = re.compile(r"(\d{1,6})d?")
+AGE = re.compile(r"(\d{1,6})d?")
 
 
 @history_app.command("prune", short_help="Delete the records older than the given age.")
@@ -211,7 +211,7 @@ def history_prune(
     PROMPT_HISTORY_RETENTION_DAYS asks first (--yes skips)."""
     age = None
     if older_than is not None:
-        found = _AGE.fullmatch(older_than.strip())
+        found = AGE.fullmatch(older_than.strip())
         if found is None:
             raise typer.BadParameter(
                 f"--older-than must be a number of days, got {safe_repr(older_than)}"

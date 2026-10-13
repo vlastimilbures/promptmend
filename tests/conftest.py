@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
+from promptmend import config
 from promptmend.config import Settings, env_names
 from promptmend.providers import base
 
@@ -298,3 +299,13 @@ def seed_history(monkeypatch: pytest.MonkeyPatch) -> SeedHistory:
         return store
 
     return seed
+
+
+def read_env_file(path: Path) -> dict[str, str] | None:
+    """KEY=VALUE pairs of a .env file, as the settings loader parses them, or None when it is
+    missing or unreadable."""
+    try:
+        raw_text = config._env_text(path.read_bytes())
+    except (OSError, UnicodeDecodeError):
+        return None
+    return config._parse_env_text(raw_text)[0]

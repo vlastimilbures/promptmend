@@ -173,15 +173,6 @@ def _cut_value_error(key: str) -> str:
     return f"the value of {key} was cut at ' #' (a comment); quote the value"
 
 
-def read_env_file(path: Path) -> dict[str, str] | None:
-    """KEY=VALUE pairs of a .env file, or None when it is missing or unreadable."""
-    try:
-        raw_text = _env_text(path.read_bytes())
-    except (OSError, UnicodeDecodeError):
-        return None
-    return _parse_env_text(raw_text)[0]
-
-
 def _find_env_file(
     environ: Mapping[str, str],
     note: Callable[[str, str], None],
@@ -239,8 +230,8 @@ def _saved_layer(
             note(source, f"{name} is not a file; it was ignored")
         return None
     table = loaded[0]
-    version = table.get(VERSION_KEY, CONFIG_VERSION)
-    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+    version = config_files.config_version(table)
+    if version is None:
         fail(source, f"{VERSION_KEY} in {name} must be a whole number above 0")
     elif version > CONFIG_VERSION:
         note(
@@ -280,8 +271,8 @@ def _secrets_layer(
     except SecretStoreError as exc:
         fail(store.source, str(exc))
         return None
-    path = getattr(store, "path", None)
-    if not strict and path and config_files.lexists(path) and not config_files.is_file(path):
+    path = store.path
+    if not strict and config_files.lexists(path) and not config_files.is_file(path):
         note(store.source, f"{path.name} is not a file; it was ignored")
     if not values:
         return None
@@ -289,8 +280,7 @@ def _secrets_layer(
     for key in values:
         if key not in secrets:
             note(store.source, f"{safe_repr(key)} is not a secret setting; it was ignored")
-    exposed = getattr(store, "exposed", None)
-    if not strict and exposed is not None and exposed():
+    if not strict and store.exposed():
         note(store.source, "the secrets file can be read by other users; make it private (600)")
     return Layer(store.source, {k: v for k, v in values.items() if k in secrets})
 

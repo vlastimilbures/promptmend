@@ -41,7 +41,7 @@ def profiles_list() -> None:
         typer.echo(f"  {profile.name}: {profile.status}")
 
 
-def _checkout(path: str | None) -> Path:
+def find_checkout(path: str | None) -> Path:
     root = config._PROJECT_ROOT if path is None else Path(path).expanduser()
     source = root / service.prompts_path(root)
     if not source.is_dir():
@@ -69,7 +69,7 @@ def profiles_migrate(
     profile folder, where an upgrade cannot replace them. Copies only, never overwrites."""
     common.no_key(checkout, "--checkout")
     common.no_key(rev, "--rev")
-    root = _checkout(checkout)
+    root = find_checkout(checkout)
     source = root / service.prompts_path(root)
     pristine = service.git_pristine_profiles(root, rev)
     changed = service.changed_profiles(source, pristine)

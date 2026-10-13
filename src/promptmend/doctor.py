@@ -564,15 +564,11 @@ def _history_checks(settings: config.Settings) -> tuple[Check, Check]:
         count = health.operations if health.operations is not None else 0
         history = Check("history", OK, f"{count} call(s) recorded in {health.path}", data)
     version = health.sqlite_version
-    try:
-        tuple(int(p) for p in version.split("."))
-        known = True
-    except ValueError:
-        known = False
+    safe = wal_is_safe(version)
     # wal_reset_bug: the library is older than history.WAL_FIXED (3.51.3).
-    old = known and not wal_is_safe(version)
+    old = safe is False
     sqlite_data = {"version": version, "wal_reset_bug": old, "journal_mode": journal}
-    if not known:
+    if safe is None:
         sqlite = Check("sqlite", INFO, f"SQLite version {version}", sqlite_data)
     elif not old:
         sqlite = Check("sqlite", OK, f"SQLite {version}", sqlite_data)

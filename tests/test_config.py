@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import pytest
+from conftest import read_env_file
 
 from promptmend import config
 from promptmend.config import ConfigLayers, Finding, Settings, env_names, split_model_spec
@@ -818,7 +819,7 @@ def test_env_with_byte_order_mark(tmp_path: Path) -> None:
     path.write_bytes(b"\xef\xbb\xbfPROMPT_EXTRA_PATTERNS=CUST-\\d{6}\nOLLAMA_MODEL=m\n")
     assert Settings.load().extra_patterns == r"CUST-\d{6}"
     assert ConfigLayers.resolve(strict=False).findings == ()
-    assert config.read_env_file(path) == {
+    assert read_env_file(path) == {
         "PROMPT_EXTRA_PATTERNS": r"CUST-\d{6}",
         "OLLAMA_MODEL": "m",
     }

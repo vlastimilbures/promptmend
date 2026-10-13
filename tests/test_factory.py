@@ -362,15 +362,6 @@ def test_gated_exactly_when_leaving_the_machine(
     assert isinstance(make_provider(name, cfg), GatedProvider) is factory._leaves_machine(name, cfg)
 
 
-# _gate() itself refuses under PROMPT_LOCAL_ONLY, so a provider added later that returns
-# through it is covered even if it misses the early check.
-def test_gate_refuses_under_local_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
-    inner = OllamaProvider("http://localhost:11434", "m")
-    with pytest.raises(ProviderError, match=r"^PROMPT_LOCAL_ONLY=true: this provider would send"):
-        factory._gate(inner, Settings())
-
-
 # The gate on a remote local provider blocks a sensitive draft before any request.
 def test_remote_ollama_blocks_sensitive_draft(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp

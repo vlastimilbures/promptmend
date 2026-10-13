@@ -19,18 +19,19 @@ from textual.widgets import Button, Footer, Header, Static
 from .. import config_store, deploy, previous_install
 from ..profiles import prompts_path
 from . import teach
-from .modals import ConfirmModal, FormModal
-from .panes import (
+from .base import (
     CHECKOUT_FIELD,
     EXPECTED,
-    TriggersPane,
-    _error,
     checkout_path,
+    confirm_migration,
     copy_profiles,
+    error_message,
     previous_root,
     result_text,
 )
+from .modals import ConfirmModal, FormModal
 from .state import State
+from .triggers_pane import TriggersPane
 
 if TYPE_CHECKING:
     from .app import ManageApp
@@ -221,7 +222,7 @@ class PreviousInstallScreen(Screen[None]):
         try:
             message = action()
         except Exception as exc:
-            self.report(_error(exc), error=True, command=command)
+            self.report(error_message(exc), error=True, command=command)
             return
         self.report(message, command=command)
         if reload:
@@ -260,28 +261,16 @@ class PreviousInstallScreen(Screen[None]):
         best = previous_install.best(self.found.candidates)
         if best is None or self.busy():
             return
-        root = best.root
-        try:
-            plan = config_store.plan_migration(source=root)
-        except EXPECTED as exc:
-            self.report(_error(exc), error=True)
-            return
-        if plan.status != "ready":
-            self.report("\n".join(plan.describe()))
-            return
-        preview = "\n".join(
-            [*plan.describe(), "", "A backup is kept; `promptmend config rollback` undoes it."]
-        )
-
-        def apply() -> str:
-            result = config_store.apply_migration(source=root, consent=plan.token)
-            return (
+        confirm_migration(
+            self,
+            best.root,
+            title=f"Copy the settings of {best.root}?",
+            confirm="Copy",
+            done=lambda result: (
                 f"Copied; backup in {result.backup}. Next: deploy the match files (step 3), "
                 "so the triggers use these settings."
-            )
-
-        command = teach.equivalent("config", "migrate", "--from", str(root))
-        self._ask(f"Copy the settings of {root}?", preview, "Copy", apply, command)
+            ),
+        )
 
     @on(Button.Pressed, "#previous-profiles")
     def _profiles(self) -> None:
@@ -337,7 +326,7 @@ class PreviousInstallScreen(Screen[None]):
             folder = found.path
             plan = config_store.plan_retire(root, espanso_dir=folder)
         except Exception as exc:
-            self.app.call_from_thread(self.report, _error(exc), error=True)
+            self.app.call_from_thread(self.report, error_message(exc), error=True)
             return
         self.app.call_from_thread(self._ask_retire, root, folder, plan)
 
@@ -375,7 +364,7 @@ class PreviousInstallScreen(Screen[None]):
             for root in roots:
                 previous_install.skip(root)
         except OSError as exc:
-            self.report(_error(exc), error=True)
+            self.report(error_message(exc), error=True)
             return
         self.app.notify(
             "Skipped. To see that checkout again: Home > Previous install… > Enter a path…",

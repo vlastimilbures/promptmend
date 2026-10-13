@@ -240,7 +240,8 @@ def test_pro_triggers_pass_no_profile() -> None:
 def test_only_iok_allows_flagged(stub_provider: StubProvider, trigger: str) -> None:
     _replay(stub_provider, trigger)
     assert [o["allow_flagged"] for o in stub_provider.options] == [trigger == "-iok-"]
-    assert set(stub_provider.options[0]) == {"allow_flagged", "observer"}
+    assert set(stub_provider.options[0]) == {"allow_flagged", "observer", "force_remote"}
+    assert stub_provider.options[0]["force_remote"] is False
 
 
 # Each trigger's real command is recorded once in the usage history, as that trigger.

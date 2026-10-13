@@ -219,8 +219,8 @@ def test_schema_matches_allowlist(store: HistoryStore) -> None:
 @pytest.mark.parametrize(
     ("version", "safe"),
     [
-        ("unknown", False),
-        ("", False),
+        ("unknown", None),
+        ("", None),
         ("3.50.4", False),
         ("3.51.2", False),
         ("3.51.3", True),
@@ -228,7 +228,7 @@ def test_schema_matches_allowlist(store: HistoryStore) -> None:
         ("4.0", True),
     ],
 )
-def test_wal_is_safe(version: str, safe: bool) -> None:
+def test_wal_is_safe(version: str, safe: bool | None) -> None:
     assert history.wal_is_safe(version) is safe
 
 

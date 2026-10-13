@@ -238,8 +238,15 @@ def _is_stable(path: Path) -> bool:
     return not any(part in ("Cellar", ".venv") or _VERSIONED.fullmatch(part) for part in path.parts)
 
 
-def _inside(path: Path, parent: Path) -> bool:
-    return path.resolve().is_relative_to(parent.resolve())
+def resolved(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path.absolute()
+
+
+def inside(path: Path, parent: Path) -> bool:
+    return resolved(path).is_relative_to(resolved(parent))
 
 
 # WinGet's package id (#185) and where it puts a portable package: the zip unpacked under
@@ -338,7 +345,7 @@ def resolve_launcher(
     exe = "promptmend.exe" if windows else "promptmend"
 
     tool_dir = output(runner(["uv", "tool", "dir"]))
-    if tool_dir and _inside(prefix, Path(tool_dir.strip())):
+    if tool_dir and inside(prefix, Path(tool_dir.strip())):
         bin_dir = output(runner(["uv", "tool", "dir", "--bin"]))
         if bin_dir and (Path(bin_dir.strip()) / exe).is_file():
             return Launcher(Path(bin_dir.strip()) / exe, "uv")
@@ -511,6 +518,7 @@ def is_gone(entry: Entry) -> bool:
     return False
 
 
+# Not config_files.write_atomic(): that one writes through a symlink (#236), this must replace it.
 def _write(path: Path, text: str) -> None:
     """Write UTF-8 with the text's own newlines, through a new temp file in the same folder
     and an atomic rename. mkstemp creates the temp file exclusively, so a planted link there
