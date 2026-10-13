@@ -34,7 +34,9 @@ call button, which runs `improve` against a stub on `127.0.0.1` with a placehold
 a Try tab run you confirm.
 
 When it finds an earlier checkout install, it opens a "Previous install" checklist once per
-session (also on Home's "Previous install…", shown only while there is one): copy the settings, copy the profiles, deploy,
+session (also on Home's "Previous install…", there until your settings are saved in
+`config.toml`, or while one is found; its "Enter a path…" finds a checkout it did not, or one
+you skipped): copy the settings, copy the profiles, deploy,
 retire the old `.env`. See [From a checkout install](install.md#from-a-checkout-install).
 
 ## Setup
@@ -56,7 +58,10 @@ time.
 | Done | A checklist of what is set and what is left, with the command for each, and how to try `-i-` |
 
 Next and Back (or Escape) move between the steps; Enter on a list picks and moves on. Each
-change is made through the same code as its command and shows that command. With `--plain`,
+change is made through the same code as its command and shows that command. With
+`PROMPTMEND_ENV` set, settings and keys stay in that file: Next moves on without saving a
+provider or profile and says so, the API keys step only says to add each key to that file, and
+Done names that file for a missing key. With `--plain`,
 or any of `--provider`, `--profile`, `--migrate-from`, `--deploy`/`--no-deploy` or
 `--no-smoke-test`, `setup` asks line by line instead (see [Commands](commands.md#management-commands)).
 
@@ -68,7 +73,7 @@ or any of `--provider`, `--profile`, `--migrate-from`, `--deploy`/`--no-deploy` 
 |-----|-----|------------------------|
 | `1` | Home | Whether you are ready, the most urgent problem, the session log and the command line |
 | `2` | Settings | Every setting and key in one list: switch, pick, edit or reset a setting, set or remove a key, migrate a `.env`, run the Test call (see [Settings tab](#settings-tab)) |
-| `3` | Profiles | Built-in and your own profiles; pick the default profile, edit a profile in `$VISUAL` or `$EDITOR`, copy a checkout's profiles |
+| `3` | Profiles | Built-in and your own profiles; pick the default profile, edit a profile in `$VISUAL` or `$EDITOR`, copy a checkout's profiles (it asks for the checkout's folder when none was found) |
 | `4` | Triggers | The match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
 | `5` | History | Usage statistics by trigger, provider, model or day; export, prune, reset |
 | `6` | Diagnostics | Each provider's model, base URL, key and whether the draft leaves this machine; every setting's source; the `doctor` checks, and an import-time check of the CLI |
