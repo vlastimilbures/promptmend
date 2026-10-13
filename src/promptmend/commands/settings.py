@@ -144,7 +144,7 @@ def store_key(name: str, value: str) -> str:
 # --- config -------------------------------------------------------------------------------
 
 
-def _layers_lines(layers: ConfigLayers, raw: bool) -> list[str]:
+def layers_lines(layers: ConfigLayers, raw: bool) -> list[str]:
     lines = ["Read from, lowest precedence first:"]
     for layer in layers.layers:
         label = common.source_label(layer.source)
@@ -172,7 +172,7 @@ def config_show(
     """Each setting's effective value and where it comes from. Keys and the persona are shown
     only as set or not set; `overrides` names the files whose value lost to it."""
     layers, _ = common.load_layers()
-    for line in _layers_lines(layers, raw):
+    for line in layers_lines(layers, raw):
         typer.echo(line)
     typer.echo("")
     width = max(len(n) for n in env_names())

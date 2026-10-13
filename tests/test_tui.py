@@ -24,7 +24,15 @@ from textual.worker import WorkerCancelled
 from promptmend import config, config_store, deploy, doctor, history, smoke
 from promptmend import profiles as profile_service
 from promptmend.history import HistoryStore
-from promptmend.tui import panes, settings_model
+from promptmend.tui import (
+    base,
+    history_pane,
+    home_pane,
+    profiles_pane,
+    settings_model,
+    settings_pane,
+    triggers_pane,
+)
 from promptmend.tui.app import HIGH_CONTRAST, ManageApp
 from promptmend.tui.home import pill
 from promptmend.tui.modals import ConfirmModal, EditModal, FormModal, PickModal, TextModal
@@ -150,8 +158,8 @@ def test_gather_asks_each_command_once(
     assert calls.count("uv tool dir") == 1
 
 
-def pane(app: ManageApp, tab: str) -> panes.Pane:
-    return app.main.query_one(f"#{tab}-pane", panes.Pane)
+def pane(app: ManageApp, tab: str) -> base.Pane:
+    return app.main.query_one(f"#{tab}-pane", base.Pane)
 
 
 def table_rows(app: ManageApp, tab: str, selector: str) -> dict[str, list[str]]:
@@ -180,23 +188,23 @@ async def fill(app: ManageApp, pilot: Pilot[int], **values: str) -> None:
     await press(app, pilot, "#submit")
 
 
-def settings_pane(app: ManageApp) -> panes.SettingsPane:
-    return app.main.query_one("#settings-pane", panes.SettingsPane)
+def settings_tab(app: ManageApp) -> settings_pane.SettingsPane:
+    return app.main.query_one("#settings-pane", settings_pane.SettingsPane)
 
 
 def settings_rows(app: ManageApp) -> dict[str, settings_model.Row]:
-    return settings_pane(app).rows
+    return settings_tab(app).rows
 
 
 async def on_row(app: ManageApp, pilot: Pilot[int], name: str, *keys: str) -> None:
     """Open Settings, put the list's cursor on ``name`` and press ``keys`` there."""
     await pilot.press("2")
     await settle(pilot)
-    listing = settings_pane(app).query_one(panes.SettingsList)
+    listing = settings_tab(app).query_one(settings_pane.SettingsList)
     assert listing.has_focus
     listing.highlighted = listing.get_option_index(name)
     await pilot.pause()
-    assert settings_pane(app).cursor == name
+    assert settings_tab(app).cursor == name
     if keys:
         await pilot.press(*keys)
         await settle(pilot)
@@ -381,7 +389,7 @@ def test_home_shows_doctor_and_checks_again(espanso: FakeRunner) -> None:
         return gather(group_by)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        home = app.main.query_one("#home-pane", panes.HomePane)
+        home = app.main.query_one("#home-pane", home_pane.HomePane)
         rows = {row.label: row for row in home.rows}
         assert rows["Triggers"].text.endswith("Espanso running")
         assert (rows["Rewrites"].status, rows["Rewrites"].detail) == ("fail", "key not set")
@@ -422,8 +430,8 @@ def test_home_warns_of_a_persona_matching_the_patterns(
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         home = _rendered(pane(app, "home"), "#home-rows")
-        home_pane = app.main.query_one("#home-pane", panes.HomePane)
-        checks = {row.label: row for row in home_pane.rows}["Checks"]
+        home_tab = app.main.query_one("#home-pane", home_pane.HomePane)
+        checks = {row.label: row for row in home_tab.rows}["Checks"]
         assert checks.status == "fail"  # the missing key; the persona is the warning
         assert " 0 warn" not in checks.text
         everything = str(pane(app, "diagnostics").query_one("#all-checks").render())
@@ -569,7 +577,7 @@ def test_settings_space_toggles_history(saved: Path, espanso: FakeRunner) -> Non
         assert app.session[-1].command == "promptmend config set PROMPT_HISTORY false"
         assert pane(app, "settings").last_message.startswith("PROMPT_HISTORY saved in ")
         # The cursor stays on the row after the reload; Enter on a switch toggles it too.
-        assert settings_pane(app).cursor == "PROMPT_HISTORY"
+        assert settings_tab(app).cursor == "PROMPT_HISTORY"
         await pilot.press("enter")
         await settle(pilot)
         assert _state(app).settings.history
@@ -599,7 +607,7 @@ def test_settings_enter_picks_the_output_and_u_resets_it(saved: Path, espanso: F
         assert (row.value, row.on, row.source) == ("clipboard", True, "config.toml")
         assert app.session[-1].command == "promptmend config set PROMPT_OUTPUT clipboard"
         # Home's Output row says it, and where to change it (#198).
-        rows = {r.label: r for r in app.main.query_one("#home-pane", panes.HomePane).rows}
+        rows = {r.label: r for r in app.main.query_one("#home-pane", home_pane.HomePane).rows}
         assert (rows["Output"].text, rows["Output"].detail) == (
             "copy to the clipboard",
             "change: 2 Settings",
@@ -673,7 +681,7 @@ def test_settings_ignore_a_second_change_until_the_first_is_read_back(
         blocking.clear()
         release.set()
         await settle(pilot)
-        assert not settings_pane(app).pending
+        assert not settings_tab(app).pending
         assert settings_rows(app)["PROMPT_HISTORY"].value == "off"
         await pilot.press("space")
         await settle(pilot)
@@ -698,7 +706,7 @@ def test_settings_a_withheld_value_is_kept_by_an_empty_save(
         screen = app.screen
         assert isinstance(screen, EditModal)
         assert screen.query_one("#edit-value", Input).value == ""
-        assert panes.WITHHELD_CURRENT in screen.preview
+        assert settings_pane.WITHHELD_CURRENT in screen.preview
         assert KEY not in screen.preview
         await press(app, pilot, "#submit")
         assert not isinstance(app.screen, EditModal)
@@ -707,7 +715,7 @@ def test_settings_a_withheld_value_is_kept_by_an_empty_save(
         await edit_to(app, pilot, "PROMPT_TEMPERATURE", "")
         assert _state(app).settings.temperature is None
         await on_row(app, pilot, "OLLAMA_NUM_CTX", "enter")
-        assert panes.WITHHELD_CURRENT not in app.screen.preview  # type: ignore[attr-defined]
+        assert settings_pane.WITHHELD_CURRENT not in app.screen.preview  # type: ignore[attr-defined]
 
     drive(scenario)
     assert f'OLLAMA_MODEL = "{KEY}"' in toml.read_text("utf-8")  # kept, not wiped
@@ -814,11 +822,11 @@ def test_settings_never_show_the_persona(
 
 def test_settings_filter(espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        settings = settings_pane(app)
+        settings = settings_tab(app)
         count = settings.query_one("#settings-count", Static)
         assert str(count.render()) == f"{len(settings_model.SETTINGS)} settings"
         await on_row(app, pilot, "PROMPT_OUTPUT", "slash")
-        assert settings.query_one(panes.FilterInput).has_focus
+        assert settings.query_one(settings_pane.FilterInput).has_focus
         await pilot.press(*"hist")
         await settle(pilot)
         assert list(settings.rows) == ["PROMPT_HISTORY", "PROMPT_HISTORY_RETENTION_DAYS"]
@@ -826,12 +834,12 @@ def test_settings_filter(espanso: FakeRunner) -> None:
         assert settings.cursor == "PROMPT_HISTORY"
         # A group's name matches too; Enter and Down go back to the list, keeping the filter.
         await pilot.press("enter")
-        assert settings.query_one(panes.SettingsList).has_focus
+        assert settings.query_one(settings_pane.SettingsList).has_focus
         await pilot.press("slash", *"keys")  # the filter's text is selected: typing replaces it
         await settle(pilot)
         assert list(settings.rows) == ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]
         await pilot.press("down")
-        assert settings.query_one(panes.SettingsList).has_focus
+        assert settings.query_one(settings_pane.SettingsList).has_focus
         await pilot.press("slash", *"zzz")
         await settle(pilot)
         assert settings.rows == {}
@@ -844,7 +852,7 @@ def test_settings_filter(espanso: FakeRunner) -> None:
         # Escape clears it and goes back to the list.
         await pilot.press("escape")
         await settle(pilot)
-        assert settings.query_one(panes.SettingsList).has_focus
+        assert settings.query_one(settings_pane.SettingsList).has_focus
         assert len(settings.rows) == len(settings_model.SETTINGS)
 
     drive(scenario)
@@ -1034,7 +1042,7 @@ def test_profiles_set_default_and_edit_in_editor(
         edited.append(target)
         return 0
 
-    monkeypatch.setattr(panes, "run_editor", editor)
+    monkeypatch.setattr(profiles_pane, "run_editor", editor)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         from contextlib import nullcontext
@@ -1063,7 +1071,7 @@ def test_profiles_editor_unsupported_terminal(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _user_profile()
-    monkeypatch.setattr(panes, "run_editor", lambda target: pytest.fail("editor ran"))
+    monkeypatch.setattr(profiles_pane, "run_editor", lambda target: pytest.fail("editor ran"))
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         from textual.widgets import DataTable
@@ -1081,10 +1089,10 @@ def test_editor_command() -> None:
     def nowhere(name: str) -> None:
         return None
 
-    assert panes.editor_command({}, windows=False, which=nowhere) == ["vi"]
-    assert panes.editor_command({}, windows=True, which=nowhere) == ["notepad"]
+    assert profiles_pane.editor_command({}, windows=False, which=nowhere) == ["vi"]
+    assert profiles_pane.editor_command({}, windows=True, which=nowhere) == ["notepad"]
     both = {"VISUAL": "vim", "EDITOR": "code --wait"}
-    assert panes.editor_command(both, windows=False, which=nowhere) == ["vim"]
+    assert profiles_pane.editor_command(both, windows=False, which=nowhere) == ["vim"]
 
 
 def test_profiles_migrate_copies_after_confirming(
@@ -1147,7 +1155,7 @@ def test_profiles_editor_that_cannot_start(
     def missing(target: Path) -> int:
         raise FileNotFoundError("no-such-editor")
 
-    monkeypatch.setattr(panes, "run_editor", missing)
+    monkeypatch.setattr(profiles_pane, "run_editor", missing)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         from contextlib import nullcontext
@@ -1178,7 +1186,7 @@ def test_run_editor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
     monkeypatch.setenv("VISUAL", "myeditor -w")
     monkeypatch.setattr(subprocess, "run", run)
-    assert panes.run_editor(tmp_path / "mine.md") == 0
+    assert profiles_pane.run_editor(tmp_path / "mine.md") == 0
     assert seen == [["myeditor", "-w", str(tmp_path / "mine.md")]]
 
 
@@ -1504,9 +1512,9 @@ def test_cost_badges() -> None:
         estimated={"USD": Decimal("0.5")},
         unknown_cost_attempts=1,
     )
-    assert panes._cost(row) == "[estimated] 0.5 USD; [unknown] 1"
+    assert history_pane._cost(row) == "[estimated] 0.5 USD; [unknown] 1"
     row = history.StatsRow("m", 1, 1, "2026-10-04T09:12:31.000000Z", None, None, {})
-    assert panes._cost(row) == "none recorded"
+    assert history_pane._cost(row) == "none recorded"
 
 
 def test_history_export_needs_a_path(espanso: FakeRunner) -> None:
@@ -1599,7 +1607,7 @@ def test_files_under_home_show_as_tilde(
         assert (row.source, row.where) == ("environment", "environment")
         await on_row(app, pilot, "PROMPT_HISTORY")
         await on_row(app, pilot, "OPENROUTER_API_KEY")
-        help_line = str(settings_pane(app).query_one("#settings-help").render())
+        help_line = str(settings_tab(app).query_one("#settings-help").render())
         assert "From environment · secrets set OPENROUTER_API_KEY" in help_line
         monkeypatch.delenv("PROMPT_PROFILE")
         monkeypatch.delenv("OPENROUTER_API_KEY")
@@ -1993,7 +2001,7 @@ def test_prune_enter_does_not_prune(espanso: FakeRunner, monkeypatch: pytest.Mon
 )
 def test_editor_command_forms(windows: bool, value: str, expected: list[str]) -> None:
     found = {"code": "/bin/code"} if not windows else {"code": "C:/bin/code.cmd"}
-    command = panes.editor_command(
+    command = profiles_pane.editor_command(
         {"EDITOR": value}, windows=windows, which=lambda name: found.get(name)
     )
     assert command == expected
@@ -2226,7 +2234,7 @@ def test_previous_install_detect_failure_is_shown(
 
 def test_previous_install_steps_wait_for_a_deploy(previous: Path) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        app.main.query_one("#triggers-pane", panes.TriggersPane).busy = True
+        app.main.query_one("#triggers-pane", triggers_pane.TriggersPane).busy = True
         for step in ("copy", "profiles", "deploy", "enter"):
             await press(app, pilot, f"#previous-{step}")
             assert not isinstance(app.screen, ConfirmModal | FormModal), step
@@ -2538,7 +2546,7 @@ def test_copy_last_takes_another_tabs_entry_withheld(
         assert copy.disabled
         # The edit dialog refuses a key-like value; behind it, save_setting() refuses too.
         await on_row(app, pilot, "PROMPT_PROFILE")
-        settings_pane(app).save("PROMPT_PROFILE", KEY)
+        settings_tab(app).save("PROMPT_PROFILE", KEY)
         await settle(pilot)
         assert app.session[-1].error
         await pilot.press("1")
@@ -2563,7 +2571,7 @@ def test_results_show_their_command_and_home_keeps_the_session(
         result = _rendered(pane(app, "settings"), ".result")
         assert result.startswith("$ promptmend config set PROMPT_TIMEOUT_SECONDS 45\n")
         # A value that looks like a key is never shown, even refused.
-        settings_pane(app).save("PROMPT_PROFILE", KEY)
+        settings_tab(app).save("PROMPT_PROFILE", KEY)
         await settle(pilot)
         await pilot.press("5")
         await press(app, pilot, "#reset")
@@ -2587,14 +2595,13 @@ def test_results_show_their_command_and_home_keeps_the_session(
 
 
 def test_session_log_keeps_the_latest(espanso: FakeRunner) -> None:
-    from promptmend.tui import panes as panes_module
-    from promptmend.tui import teach
+    from promptmend.tui import home_pane, teach
 
     entries = [teach.Entry(f"promptmend doctor {n}", f"done {n}") for n in range(9)]
-    text = panes_module.session_text(entries).plain
+    text = home_pane.session_text(entries).plain
     assert "doctor 2\n" not in text
-    assert text.count("$ promptmend doctor") == panes_module.SESSION_LINES
-    failed = panes_module.session_text([teach.Entry("c", "boom", error=True)]).plain
+    assert text.count("$ promptmend doctor") == home_pane.SESSION_LINES
+    failed = home_pane.session_text([teach.Entry("c", "boom", error=True)]).plain
     assert "    error: boom" in failed
 
 

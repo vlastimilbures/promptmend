@@ -19,19 +19,19 @@ from textual.widgets import Button, Footer, Header, Static
 from .. import config_store, deploy, previous_install
 from ..profiles import prompts_path
 from . import teach
-from .modals import ConfirmModal, FormModal
-from .panes import (
+from .base import (
     CHECKOUT_FIELD,
     EXPECTED,
-    TriggersPane,
-    _error,
     checkout_path,
     confirm_migration,
     copy_profiles,
+    error_message,
     previous_root,
     result_text,
 )
+from .modals import ConfirmModal, FormModal
 from .state import State
+from .triggers_pane import TriggersPane
 
 if TYPE_CHECKING:
     from .app import ManageApp
@@ -222,7 +222,7 @@ class PreviousInstallScreen(Screen[None]):
         try:
             message = action()
         except Exception as exc:
-            self.report(_error(exc), error=True, command=command)
+            self.report(error_message(exc), error=True, command=command)
             return
         self.report(message, command=command)
         if reload:
@@ -326,7 +326,7 @@ class PreviousInstallScreen(Screen[None]):
             folder = found.path
             plan = config_store.plan_retire(root, espanso_dir=folder)
         except Exception as exc:
-            self.app.call_from_thread(self.report, _error(exc), error=True)
+            self.app.call_from_thread(self.report, error_message(exc), error=True)
             return
         self.app.call_from_thread(self._ask_retire, root, folder, plan)
 
@@ -364,7 +364,7 @@ class PreviousInstallScreen(Screen[None]):
             for root in roots:
                 previous_install.skip(root)
         except OSError as exc:
-            self.report(_error(exc), error=True)
+            self.report(error_message(exc), error=True)
             return
         self.app.notify(
             "Skipped. To see that checkout again: Home > Previous install… > Enter a path…",

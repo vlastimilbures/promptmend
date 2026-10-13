@@ -33,7 +33,7 @@ from ..commands import settings as settings_cmd
 from ..commands import setup as setup_cmd
 from ..config import secret_names
 from . import teach
-from .panes import EXPECTED, _error, _plan_digest, confirm_migration, result_text
+from .base import EXPECTED, confirm_migration, error_message, plan_digest, result_text
 from .previous import wants_offer
 from .state import State
 
@@ -228,7 +228,7 @@ class SetupScreen(Screen[None]):
             migration = config_store.plan_migration()
         except EXPECTED as exc:
             migration = None
-            lines.append(_error(exc))
+            lines.append(error_message(exc))
         ready = migration is not None and migration.status == "ready"
         if ready and migration is not None:
             lines.append(
@@ -297,7 +297,7 @@ class SetupScreen(Screen[None]):
         try:
             message = action()
         except Exception as exc:
-            self.report(_error(exc), error=True, command=command)
+            self.report(error_message(exc), error=True, command=command)
             return False
         if message:
             self.report(message, command=command)
@@ -358,7 +358,7 @@ class SetupScreen(Screen[None]):
             message, argv = setup_cmd.save_choice(name, value)
         except Exception as exc:
             command = teach.equivalent("config", *setup_cmd.choice_command(name, value))
-            self.report(_error(exc), error=True, command=command)
+            self.report(error_message(exc), error=True, command=command)
             return False
         if message:
             self.report(message, command=teach.equivalent("config", *argv))
@@ -419,7 +419,7 @@ class SetupScreen(Screen[None]):
         try:
             plan, fallback = make_plan(options)
         except Exception as exc:
-            self.app.call_from_thread(self._show_plan, None, None, _error(exc))
+            self.app.call_from_thread(self._show_plan, None, None, error_message(exc))
             return
         self.app.call_from_thread(self._show_plan, plan, fallback, None)
 
@@ -457,7 +457,7 @@ class SetupScreen(Screen[None]):
     def _apply(self, shown: deploy.Plan, options: SetupOptions) -> None:
         try:
             plan, _ = make_plan(options)
-            if _plan_digest(plan) != _plan_digest(shown):
+            if plan_digest(plan) != plan_digest(shown):
                 raise deploy.DeployError(
                     "the match files changed since they were read; nothing was written. "
                     "Look at the new list and install again"
@@ -475,7 +475,7 @@ class SetupScreen(Screen[None]):
                 lines.append("Files you edited were kept: the Triggers tab lets you choose.")
             message, error = "\n".join(lines) or "Nothing to write.", False
         except Exception as exc:
-            message, error = _error(exc), True
+            message, error = error_message(exc), True
         self.app.call_from_thread(self._applied, message, error)
 
     def _applied(self, message: str, error: bool) -> None:
@@ -500,7 +500,7 @@ class SetupScreen(Screen[None]):
             result = smoke.run(provider)
             ok, message = result.ok, result.message
         except Exception as exc:
-            ok, message = False, _error(exc)
+            ok, message = False, error_message(exc)
         self.app.call_from_thread(self._tested, provider, ok, message)
 
     def _tested(self, provider: str, ok: bool, message: str) -> None:

@@ -613,7 +613,7 @@ class HistoryStore:
                 _attempt_row(op_id, seq, at, self._price_table(), extra)
                 for seq, at in enumerate(attempts, start=1)
             ]
-            cutoff = self._cutoff(timedelta(days=self.retention_days)) if prune else None
+            cutoff = self.cutoff(timedelta(days=self.retention_days)) if prune else None
         except Exception:
             self._mark_lost(sidecar_deadline)
             return False
@@ -648,7 +648,7 @@ class HistoryStore:
         return len(spooled)
 
     @staticmethod
-    def _cutoff(age: timedelta) -> str:
+    def cutoff(age: timedelta) -> str:
         # A longer age would overflow the date arithmetic; nothing is that old anyway.
         age = min(age, timedelta(days=MAX_RETENTION_DAYS))
         return (datetime.now(UTC) - age).strftime(_TIME_FORMAT)
@@ -1124,7 +1124,7 @@ class HistoryStore:
             raise ValueError("older_than must not be negative")
         if not self.path.is_file():
             return 0
-        cutoff = self._cutoff(age)
+        cutoff = self.cutoff(age)
         with self._service() as conn:
             conn.execute("BEGIN IMMEDIATE")
             deleted = conn.execute(

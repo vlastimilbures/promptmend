@@ -31,8 +31,8 @@ from ..config import TIERS, ConfigLayers, Settings, openrouter_only
 from ..factory import PROVIDER_NAMES, _leaves_machine, check_base_url
 from ..prompt_builder import ADDED, PROFILES
 from . import teach
+from .base import Pane, button_row
 from .modals import ConfirmModal
-from .panes import Pane, _buttons
 
 if TYPE_CHECKING:
     from ..providers.usage import AttemptUsage
@@ -151,7 +151,7 @@ class TryPane(Pane):
                 with Vertical(classes="try-option"):
                     yield Label(label)
                     yield Select(options, value=value, allow_blank=False, id=id_)
-        yield _buttons(("try-run", "Run"))
+        yield button_row(("try-run", "Run"))
         yield Static("No run yet.", id="try-usage", markup=False)
         yield TextArea("", id="try-result", read_only=True, soft_wrap=True)
         yield self.result()

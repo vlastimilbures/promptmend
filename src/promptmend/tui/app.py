@@ -16,20 +16,18 @@ from textual.widgets import Footer, Header, Input, TabbedContent, TabPane
 
 from .. import __version__
 from . import brand, teach
+from .base import Pane
+from .diagnostics_pane import DiagnosticsPane
+from .history_pane import HistoryPane
 from .home import TAB_LABELS, pill
+from .home_pane import HomePane
 from .intro import AboutScreen, IntroScreen
-from .panes import (
-    DiagnosticsPane,
-    HistoryPane,
-    HomePane,
-    Pane,
-    ProfilesPane,
-    SettingsPane,
-    TriggersPane,
-)
 from .previous import PreviousInstallScreen, wants_offer
+from .profiles_pane import ProfilesPane
+from .settings_pane import SettingsPane
 from .setup_wizard import SetupOptions, SetupScreen, needs_setup
 from .state import State, gather
+from .triggers_pane import TriggersPane
 from .try_pane import TryPane
 
 DEFAULT_THEME = "textual-dark"

@@ -20,7 +20,7 @@ from typer.core import TyperArgument, TyperGroup, TyperOption
 
 from promptmend import config, console, prompt_builder, smoke
 from promptmend.tui import console as tui_console
-from promptmend.tui import panes, teach
+from promptmend.tui import home_pane, teach
 from promptmend.tui.app import ManageApp
 from promptmend.tui.modals import FormModal, PickModal
 
@@ -706,8 +706,8 @@ def _output(app: ManageApp) -> str:
     return "\n".join(strip.text for strip in log.lines)
 
 
-def _home(app: ManageApp) -> panes.HomePane:
-    return app.main.query_one("#home-pane", panes.HomePane)
+def _home(app: ManageApp) -> home_pane.HomePane:
+    return app.main.query_one("#home-pane", home_pane.HomePane)
 
 
 def test_a_run_shows_its_output_logs_it_and_reloads() -> None:
