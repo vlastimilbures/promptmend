@@ -64,6 +64,7 @@ def gather(group_by: str = "trigger") -> State:
     raised."""
     layers, settings = common.load_layers()
     update = update_check.check_configured()
+    # Only read-only commands may go through it: a cached `espanso restart` would be skipped.
     run = _once(deploy.run_command)
     report = doctor.run(clipboard=False, update=update, runner=run)
     plan: deploy.Plan | None = None
