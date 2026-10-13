@@ -1,6 +1,5 @@
 Usage: promptmend [OPTIONS] COMMAND [ARGS]...
-Espanso-invoked prompt rewriter. Keeps ``improve`` as an explicit subcommand so the Espanso match
-files and docs (``promptmend improve ...``) resolve.
+Rewrite a draft into a clearer prompt, and set up and manage PromptMend.
 Options
 --version Print the installed version and exit
 --help Show this message and exit.
