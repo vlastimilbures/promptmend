@@ -1009,6 +1009,11 @@ def test_setup_needs_a_terminal_or_non_interactive(espanso: Path) -> None:
     result = _setup(espanso)
     assert result.exit_code == common.NEEDS_TERMINAL
     assert "--non-interactive" in result.stderr
+    # The wizard needs stdout too: piped, it is refused, never asked line by line (#244).
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(common, "stdin_is_tty", lambda: True)
+        result = _setup(espanso, "--provider", "ollama")
+    assert result.exit_code == common.NEEDS_TERMINAL
 
 
 def test_setup_deploy_applies(
@@ -1031,33 +1036,17 @@ def test_setup_smoke_failure_exits_1(
     assert "smoke test failed" in result.stderr
 
 
-def test_setup_offers_migration_and_writes_nothing_without_consent(
-    saved: Path, espanso: Path, fake_run: FakeRunner, tty: None, monkeypatch: pytest.MonkeyPatch
+def test_setup_offers_migration_and_writes_nothing(
+    saved: Path, espanso: Path, fake_run: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(smoke, "run", lambda p: smoke.SmokeResult(True, smoke.REPLY, 1, "ok"))
     env = _dotenv(saved)
-    result = _setup(espanso, "--provider", "openrouter", "--profile", "default", input="n\nn\n")
+    # --plain is --non-interactive (#244): it only offers it.
+    result = _setup(espanso, "--plain", "--provider", "openrouter", "--profile", "default")
     assert result.exit_code == 0, result.output
     assert "config migrate" in result.stdout
     assert env.is_file()
     assert not (saved / "config.toml").exists()
-    # --non-interactive only offers it.
-    result = _setup(espanso, "--non-interactive")
-    assert env.is_file()
-    assert not (saved / "config.toml").exists()
-
-
-def test_setup_interactive_migrates_with_consent(
-    saved: Path, espanso: Path, fake_run: FakeRunner, tty: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(smoke, "run", lambda p: smoke.SmokeResult(True, smoke.REPLY, 1, "ok"))
-    monkeypatch.setattr(common, "_getpass", lambda prompt: "")
-    env = _dotenv(saved)
-    # Migrate: yes; provider and profile: defaults; key already set: keep; deploy: no.
-    result = _setup(espanso, input="y\n\n\nn\nn\n")
-    assert result.exit_code == 0, result.output
-    assert not env.exists()
-    assert (saved / "config.toml").is_file()
 
 
 def test_setup_in_legacy_mode_writes_no_settings(
@@ -1288,61 +1277,11 @@ def test_setup_reports_a_set_key_without_showing_it(
     assert KEY not in result.output
 
 
-def test_setup_interactive_replaces_the_key(
-    saved: Path,
-    espanso: Path,
-    fake_run: FakeRunner,
-    smoke_ok: list[str],
-    tty: None,
-    monkeypatch: pytest.MonkeyPatch,
+def test_setup_deploys_then_finds_the_files_in_sync(
+    saved: Path, espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
 ) -> None:
-    config_store_secret(saved, "-".join(("old", "key")))
-    monkeypatch.setattr(common, "_getpass", lambda prompt: KEY)
-    # Provider and profile: the defaults; replace the key: yes; deploy: no.
-    result = _setup(espanso, input="\n\ny\nn\n")
-    assert result.exit_code == 0, result.output
-    assert KEY in (saved / "secrets.toml").read_text("utf-8")
-
-
-def test_setup_interactive_skips_an_empty_key(
-    saved: Path,
-    espanso: Path,
-    fake_run: FakeRunner,
-    smoke_ok: list[str],
-    tty: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(common, "_getpass", lambda prompt: "")
-    result = _setup(espanso, input="\n\nn\n")
-    assert result.exit_code == 0, result.output
-    assert "to do: OPENROUTER_API_KEY not set" in result.stdout
-
-
-def test_setup_interactive_asks_again_for_a_bad_provider(
-    saved: Path,
-    espanso: Path,
-    fake_run: FakeRunner,
-    smoke_ok: list[str],
-    tty: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(common, "_getpass", lambda prompt: "")
-    result = _setup(espanso, input="nope\nollama\n\nn\n")
-    assert result.exit_code == 0, result.output
-    assert "Choose one of" in result.stdout
-    assert smoke_ok == ["ollama"]
-
-
-def test_setup_interactive_deploys_on_yes(
-    saved: Path,
-    espanso: Path,
-    fake_run: FakeRunner,
-    smoke_ok: list[str],
-    tty: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(common, "_getpass", lambda prompt: "")
-    result = _setup(espanso, "--provider", "ollama", "--profile", "general", input="y\n")
+    args = ("--provider", "ollama", "--profile", "general")
+    result = _setup(espanso, "--non-interactive", "--deploy", *args)
     assert result.exit_code == 0, result.output
     assert len(list((espanso / "match").iterdir())) == 3
     # A second run finds nothing to deploy.
@@ -1406,7 +1345,10 @@ def test_setup_no_deploy_and_no_smoke(
 def test_setup_option_errors(
     saved: Path, espanso: Path, tty: None, monkeypatch: pytest.MonkeyPatch, fake_run: FakeRunner
 ) -> None:
+    monkeypatch.setattr(common, "stdout_is_tty", lambda: True)
     assert _setup(espanso, "--api-key-stdin").exit_code == 2
+    # On a terminal too, a bad --profile is refused before the wizard opens.
+    assert _setup(espanso, "--profile", "nosuch").exit_code == 2
     assert _setup(espanso, "--non-interactive", "--profile", "nosuch").exit_code == 2
     monkeypatch.setenv("PROMPT_PROVIDER", "nope")
     # The error panel wraps at the terminal width, which differs on CI runners.

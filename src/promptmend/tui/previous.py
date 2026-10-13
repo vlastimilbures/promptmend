@@ -76,10 +76,11 @@ class PreviousInstallScreen(Screen[None]):
 
     last_message = ""
 
-    def __init__(self) -> None:
+    def __init__(self, entered: Path | None = None) -> None:
         super().__init__()
-        # The path typed into "Enter a path…": detected again with it on every refresh.
-        self.entered: Path | None = None
+        # The path typed into "Enter a path…" (or setup's --migrate-from): detected again
+        # with it on every refresh.
+        self.entered = entered
         self.found = previous_install.Detection()
 
     def compose(self) -> ComposeResult:

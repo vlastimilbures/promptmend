@@ -5,10 +5,14 @@ triggers and every other command never load it."""
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
 import typer
 
 from . import common
+
+if TYPE_CHECKING:
+    from ..tui.setup_wizard import SetupOptions
 
 app = typer.Typer(name="ui", add_completion=False)
 
@@ -46,13 +50,11 @@ def ui(
     sys.exit(interface.return_code or 0)
 
 
-def open_setup(*, espanso_dir: str | None, launcher: str | None, no_restart: bool) -> None:
+def open_setup(options: SetupOptions) -> None:
     """`setup` on a terminal: the interface opened on its setup wizard, which quits when done
     (Open PromptMend stays in the interface)."""
     from ..tui.app import ManageApp
-    from ..tui.setup_wizard import SetupOptions
 
-    options = SetupOptions(espanso_dir, launcher, no_restart, standalone=True)
     interface = ManageApp(intro=False, setup=options)
     interface.run()
     sys.exit(interface.return_code or 0)

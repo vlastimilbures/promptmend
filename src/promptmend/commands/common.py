@@ -119,11 +119,6 @@ def confirm(question: str, *, yes: bool, hint: str = "pass --yes") -> None:
         fail("not confirmed; nothing was changed")
 
 
-def ask(question: str, default: str) -> str:
-    require_terminal(question, "pass the value as an option")
-    return str(typer.prompt(question, default=default)).strip()
-
-
 def color_enabled() -> bool:
     """Colour only on a terminal, and never with NO_COLOR set (https://no-color.org)."""
     return not os.environ.get("NO_COLOR") and stdout_is_tty()

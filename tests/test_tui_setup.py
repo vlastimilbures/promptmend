@@ -284,21 +284,92 @@ def test_setup_on_a_terminal_opens_the_wizard(
 
     from promptmend.cli import app
 
-    opened: list[dict[str, object]] = []
+    opened: list[SetupOptions] = []
     monkeypatch.setattr(common, "stdin_is_tty", lambda: True)
     monkeypatch.setattr(common, "stdout_is_tty", lambda: True)
-    monkeypatch.setattr(ui_cmd, "open_setup", lambda **kw: opened.append(kw))
+    monkeypatch.setattr(ui_cmd, "open_setup", opened.append)
     result = CliRunner().invoke(app, ["setup", "--espanso-dir", "/x", "--no-restart"])
     assert result.exit_code == 0, result.output
-    assert opened == [{"espanso_dir": "/x", "launcher": None, "no_restart": True}]
-    # --plain, or an option the wizard does not take, asks line by line instead.
+    assert opened == [SetupOptions("/x", None, True, standalone=True)]
+    # The other options prefill the wizard rather than switch to another mode (#244).
+    args = ["--provider", "ollama", "--profile", "general", "--migrate-from", "~/old"]
+    result = CliRunner().invoke(app, ["setup", *args, "--deploy", "--no-smoke-test"])
+    assert result.exit_code == 0, result.output
+    assert opened[1] == SetupOptions(
+        standalone=True,
+        provider="ollama",
+        profile="general",
+        migrate_from=Path("~/old").expanduser(),
+        deploy=True,
+        smoke_test=False,
+    )
+    # --plain is --non-interactive: it prints the steps and opens nothing.
     monkeypatch.setattr(setup_cmd, "_deploy_step", lambda *a, **k: None)
     monkeypatch.setattr(smoke, "run", lambda p: smoke.SmokeResult(True, "", 1, "ok"))
-    monkeypatch.setattr(common, "_getpass", lambda prompt: "")
-    result = CliRunner().invoke(app, ["setup", "--plain"], input="\n\n")
+    result = CliRunner().invoke(app, ["setup", "--plain"])
     assert result.exit_code == 0, result.output
-    assert "Provider (" in result.stdout
-    assert len(opened) == 1
+    assert "Provider: openrouter; profile: default" in result.stdout
+    assert len(opened) == 2
+
+
+def test_wizard_options_prefill_and_skip_steps(
+    saved: Path, espanso: FakeRunner, smoke_ok: list[str]
+) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        assert wizard.order == ["welcome", "provider", "profile", "keys", "done"]
+        await press(app, pilot, "#setup-next-step")
+        assert wizard.at == "provider"
+        # Preselected, not saved: Next saves it, as for a pick.
+        assert config_store.read_settings().values == {}
+        await press(app, pilot, "#setup-next-step")
+        assert wizard.at == "profile"
+        await press(app, pilot, "#setup-next-step")
+        assert config_store.read_settings().values == {
+            "PROMPT_PROVIDER": "ollama",
+            "PROMPT_PROFILE": "general",
+        }
+
+    drive(
+        scenario,
+        setup=_options(
+            espanso, provider="ollama", profile="general", deploy=False, smoke_test=False
+        ),
+    )
+    assert smoke_ok == []
+
+
+def test_wizard_deploy_option_focuses_install_but_writes_nothing(
+    saved: Path, espanso: FakeRunner
+) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        wizard.go("espanso")
+        await settle(pilot)
+        assert app.focused is app.screen.query_one("#setup-deploy", Button)
+        assert list((espanso.root / "match").iterdir()) == []
+
+    drive(scenario, setup=_options(espanso, deploy=True))
+
+
+def test_wizard_migrate_from_opens_the_earlier_install_with_that_path(
+    saved: Path, espanso: FakeRunner, tmp_path: Path
+) -> None:
+    from promptmend.tui.previous import PreviousInstallScreen
+
+    old = tmp_path / "old"
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        assert "earlier" in wizard.order
+        assert f"looks at {old}" in _text(app, "#setup-earlier-text")
+        await press(app, pilot, "#setup-previous")
+        screen = app.screen
+        assert isinstance(screen, PreviousInstallScreen)
+        # Detected with that path: here not a checkout, which the screen says.
+        assert f"{old} is not a checkout" in str(screen.query_one(".result", Static).render())
+
+    drive(scenario, setup=_options(espanso, migrate_from=old))
 
 
 def test_needs_setup_false_without_a_plan(saved: Path, espanso: FakeRunner) -> None:

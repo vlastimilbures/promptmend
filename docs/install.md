@@ -240,7 +240,7 @@ After any install, run one of these in a terminal:
   `config.toml`), paste each API key the triggers need (hidden, saved in `secrets.toml`),
   install the match files after seeing what changes, and run a smoke test of `improve`
   against a stub on `127.0.0.1` (never a paid call, never your real key). It ends with what
-  is left to do and how to try `-i-`. `promptmend setup --plain` asks the same line by line.
+  is left to do and how to try `-i-`. `promptmend setup --non-interactive` prints the same steps and asks nothing.
 - `promptmend` opens the [full-screen interface](interface.md), which does the same through
   its tabs.
 

@@ -5,6 +5,7 @@ and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import ClassVar
 
 from textual import on, work
@@ -291,8 +292,9 @@ class ManageApp(App[int]):
         if not any(isinstance(s, SetupScreen) for s in self.screen_stack):
             self.push_screen(SetupScreen())
 
-    def open_previous(self) -> None:
-        """Show the switch from an earlier checkout install, unless it is already open."""
+    def open_previous(self, entered: Path | None = None) -> None:
+        """Show the switch from an earlier checkout install, unless it is already open; with
+        ``entered`` (`setup --migrate-from`), detected with that path."""
         self.offered = True
         if not any(isinstance(s, PreviousInstallScreen) for s in self.screen_stack):
-            self.push_screen(PreviousInstallScreen())
+            self.push_screen(PreviousInstallScreen(entered))
