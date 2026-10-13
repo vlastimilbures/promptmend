@@ -401,6 +401,60 @@ def test_save_and_delete_secret(saved_mode: Path) -> None:
     assert OPENROUTER_VALUE not in str(exc.value)
 
 
+def _link(link: Path, target: Path | str) -> None:
+    try:
+        link.symlink_to(target)
+    except OSError:  # Windows without the symlink privilege
+        pytest.skip("cannot create symlinks here")
+
+
+def _dotfiles(saved_mode: Path, tmp_path: Path, *, relative: bool = False) -> Path:
+    """Link config.toml and secrets.toml to a dotfiles folder holding neither (dangling)."""
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    for name in ("config.toml", "secrets.toml"):
+        target = dotfiles / name
+        _link(saved_mode / name, os.path.relpath(target, saved_mode) if relative else target)
+    return dotfiles
+
+
+# A config.toml or secrets.toml kept as a symlink (into a dotfiles repo) is written through
+# to its target; the link stays a link (#236). A dangling link creates its target, and a
+# relative link resolves from the link's folder.
+@pytest.mark.parametrize("relative", [False, True], ids=["absolute", "relative"])
+def test_saving_writes_through_a_symlink(saved_mode: Path, tmp_path: Path, relative: bool) -> None:
+    dotfiles = _dotfiles(saved_mode, tmp_path, relative=relative)
+    (dotfiles / "config.toml").write_text("config_version = 1\n", "utf-8")
+
+    config_store.save_settings(config_store.read_settings(), {"OPENROUTER_MODEL": "x/m"})
+    config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
+
+    assert (saved_mode / "config.toml").is_symlink()
+    assert (saved_mode / "secrets.toml").is_symlink()
+    assert 'OPENROUTER_MODEL = "x/m"' in (dotfiles / "config.toml").read_text("utf-8")
+    if os.name != "nt":
+        assert stat.S_IMODE((dotfiles / "secrets.toml").stat().st_mode) == 0o600
+    settings = Settings.load()
+    assert (settings.openrouter_model, settings.openrouter_api_key) == ("x/m", OPENROUTER_VALUE)
+    assert sorted(p.name for p in dotfiles.iterdir()) == ["config.toml", "secrets.toml"]
+
+
+# A link into a missing folder fails (no folder tree is created elsewhere), and a link to a
+# folder is refused by name, not with a raw error from the rename.
+def test_saving_through_a_bad_symlink_fails(saved_mode: Path, tmp_path: Path) -> None:
+    _link(saved_mode / "secrets.toml", tmp_path / "missing" / "secrets.toml")
+    with pytest.raises(SecretStoreError, match=r"could not write secrets\.toml"):
+        config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
+    assert not (tmp_path / "missing").exists()
+
+    (tmp_path / "folder").mkdir()
+    (saved_mode / "secrets.toml").unlink()
+    _link(saved_mode / "secrets.toml", tmp_path / "folder")
+    with pytest.raises(SecretStoreError, match="it is a folder, not a file"):
+        config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
+    assert list((tmp_path / "folder").iterdir()) == []
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
 def test_secrets_file_is_mode_600_from_creation(saved_mode: Path) -> None:
     old = os.umask(0)  # even with no umask, the file is never group or world readable
@@ -678,6 +732,55 @@ def test_failed_verification_undoes_everything(
     assert secrets.read_bytes() == old_secrets
     assert not (saved_mode / "config.toml").exists()
     assert not (saved_mode / "migration.json").exists()
+
+
+# A failed migration through dangling config.toml/secrets.toml links removes the files it
+# created at their targets (one with the key in it) and keeps the links (#236).
+def test_failed_migration_through_symlinks_cleans_targets(
+    saved_mode: Path, project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dotfiles = _dotfiles(saved_mode, tmp_path)
+    _write(project / ".env", _example_env())
+    plan = config_store.plan_migration()
+    real = config_store._effective
+    calls = []
+
+    def effective(environ: Mapping[str, str]) -> dict[str, tuple[Any, str]]:
+        calls.append(1)
+        result = real(environ)
+        if len(calls) == 2:
+            result["OLLAMA_MODEL"] = ("other", "default")
+        return result
+
+    monkeypatch.setattr(config_store, "_effective", effective)
+    with pytest.raises(MigrationError, match="nothing was migrated"):
+        config_store.apply_migration(consent=plan.token)
+
+    assert list(dotfiles.iterdir()) == []
+    assert (saved_mode / "config.toml").is_symlink()
+    assert (saved_mode / "secrets.toml").is_symlink()
+
+
+# A rollback copies a linked config.toml/secrets.toml into the backup (a regular file),
+# keeps the links and writes secrets.toml's exact old bytes through its link (#236).
+def test_rollback_keeps_symlinks(saved_mode: Path, project: Path, tmp_path: Path) -> None:
+    dotfiles = _dotfiles(saved_mode, tmp_path)
+    old = f'ANTHROPIC_API_KEY = "{ANTHROPIC_VALUE}"\n'.encode()
+    (dotfiles / "secrets.toml").write_bytes(old)
+    _write(project / ".env", _example_env())
+    config_store.apply_migration(consent=config_store.plan_migration().token)
+    assert (dotfiles / "config.toml").exists()
+
+    config_store.apply_rollback(consent=config_store.plan_rollback().token)
+
+    assert (saved_mode / "config.toml").is_symlink()
+    assert (saved_mode / "secrets.toml").is_symlink()
+    assert sorted(p.name for p in dotfiles.iterdir()) == ["secrets.toml"]
+    assert (dotfiles / "secrets.toml").read_bytes() == old
+    kept = list((saved_mode / "backups").rglob("rolled-back-*"))
+    assert {p.name.rsplit("-", 1)[-1] for p in kept} == {"config.toml", "secrets.toml"}
+    assert all(p.is_file() and not p.is_symlink() for p in kept)
+    assert (project / ".env").exists()
 
 
 # A store that fails mid-migration also undoes the writes.

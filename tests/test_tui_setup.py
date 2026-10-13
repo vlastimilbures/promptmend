@@ -146,9 +146,44 @@ def test_wizard_default_choice_is_removed_not_pinned(saved: Path, espanso: FakeR
         await press(app, pilot, "#setup-next-step")
         await _pick(app, pilot, "#setup-providers", "openrouter")
 
-    drive(scenario, setup=_options(espanso))
+    app = drive(scenario, setup=_options(espanso))
     assert "PROMPT_PROVIDER" not in config_store.read_settings().table
     assert common.load_layers()[1].provider == "openrouter"
+    # The log names the command that ran, not a `config set` (#237).
+    assert [entry.command for entry in app.session] == ["promptmend config unset PROMPT_PROVIDER"]
+
+
+def test_wizard_moves_on_in_legacy_env_mode(espanso: FakeRunner) -> None:
+    """PROMPTMEND_ENV set (conftest's default): nothing can be saved, so Next says why and
+    moves on instead of refusing on every step (#237)."""
+    notes: list[str] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        app.notify = lambda message, **kw: notes.append(message)  # type: ignore[method-assign]
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-providers", "ollama")
+        assert wizard.at == "profile"
+        await _pick(app, pilot, "#setup-profiles", "default")  # unchanged: no note
+        assert wizard.at == "keys"
+        # Keys go in that file too: no fields to type into, and Next moves on.
+        assert "add each one there" in _text(app, "#setup-keys-intro")
+        field = app.screen.query_one("#setup-key-OPENROUTER_API_KEY", Input)
+        assert not field.display
+        assert not app.screen.query_one("#setup-save-keys", Button).display
+        field.value = KEY
+        await press(app, pilot, "#setup-next-step")
+        assert wizard.at == "espanso"
+
+    app = drive(scenario, setup=_options(espanso))
+    assert notes == [
+        f"PROMPT_PROVIDER not saved: PROMPTMEND_ENV is set, so settings stay in "
+        f"{common.legacy_env()}; edit that file instead."
+    ]
+    assert app.session == []
+    layers, settings = common.load_layers()
+    assert settings.provider == "openrouter"
+    assert layers.entries["OPENROUTER_API_KEY"].value != KEY
 
 
 def test_wizard_back_and_escape(saved: Path, espanso: FakeRunner) -> None:

@@ -123,7 +123,12 @@ class SetupScreen(Screen[None]):
                         yield Static(setup_guide.PROFILE_INTRO, classes="note", markup=False)
                         yield OptionList(id="setup-profiles")
                     with VerticalScroll(id="setup-keys"):
-                        yield Static(setup_guide.KEYS_INTRO, classes="note", markup=False)
+                        yield Static(
+                            setup_guide.KEYS_INTRO,
+                            id="setup-keys-intro",
+                            classes="note",
+                            markup=False,
+                        )
                         for name in secret_names():
                             yield Static("", id=f"setup-line-{name}", markup=False)
                             yield Input(
@@ -203,6 +208,14 @@ class SetupScreen(Screen[None]):
             setup_guide.profile_choices(state.settings, state.profiles),
         )
         self.keys = setup_guide.key_rows(state.layers, state.settings, state.triggers)
+        legacy = common.legacy_env()
+        self.query_one("#setup-keys-intro", Static).update(
+            setup_guide.legacy_keys_intro(legacy) if legacy else setup_guide.KEYS_INTRO
+        )
+        # Nothing to save while PROMPTMEND_ENV is set: no fields, so Next always moves on.
+        for name in secret_names():
+            self.query_one(f"#setup-key-{name}", Input).display = not legacy
+        self.query_one("#setup-save-keys", Button).display = not legacy
         for row in self.keys:
             self.query_one(f"#setup-line-{row.name}", Static).update(setup_guide.key_line(row))
         servers = next((c for c in state.report.checks if c.id == "local_servers"), None)
@@ -331,10 +344,27 @@ class SetupScreen(Screen[None]):
         if option is None or option.id is None:
             return True
         value = option.id
-        return self.attempt(
-            lambda: setup_cmd.save_choice(name, value),
-            command=teach.equivalent("config", "set", name, value),
-        )
+        legacy = common.legacy_env()
+        if legacy:
+            # Nothing can be saved (as headless setup's writable=False): say so and move on.
+            if setup_cmd.current_choice(name) != value:
+                self.app.notify(
+                    f"{name} not saved: {config.env_file_var()} is set, so settings stay in "
+                    f"{legacy}; edit that file instead.",
+                    severity="warning",
+                    markup=False,
+                )
+            return True
+        try:
+            message, argv = setup_cmd.save_choice(name, value)
+        except Exception as exc:
+            command = teach.equivalent("config", *setup_cmd.choice_command(name, value))
+            self.report(_error(exc), error=True, command=command)
+            return False
+        if message:
+            self.report(message, command=teach.equivalent("config", *argv))
+            self.manage.reload()
+        return True
 
     def _save_keys(self) -> bool:
         """Save every key field typed into; an empty one keeps what is there."""
@@ -343,7 +373,7 @@ class SetupScreen(Screen[None]):
             for name in secret_names()
             if (field := self.query_one(f"#setup-key-{name}", Input)).value.strip()
         ]
-        if not typed:
+        if not typed or common.legacy_env():
             return True
 
         def save() -> str:
@@ -499,7 +529,9 @@ class SetupScreen(Screen[None]):
         if state is None:
             return
         summary = Text()
-        for row in setup_guide.done_rows(state.settings, self.keys, self.plan, self.tested):
+        for row in setup_guide.done_rows(
+            state.settings, self.keys, self.plan, self.tested, common.legacy_env()
+        ):
             summary.append("✓ " if row.ok else "✗ ", style="green" if row.ok else "yellow")
             summary.append(f"{row.label}: ", style="bold")
             summary.append(f"{row.text}\n")

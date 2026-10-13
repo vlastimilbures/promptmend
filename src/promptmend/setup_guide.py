@@ -66,6 +66,16 @@ KEYS_INTRO = (
     "config.toml, and are never shown again. Leave a field empty to keep what is there."
 )
 
+
+def legacy_keys_intro(env_file: str) -> str:
+    """KEYS_INTRO while PROMPTMEND_ENV names ``env_file``: that file alone is read, so a key
+    goes there and the step has nothing to save."""
+    return (
+        f"PROMPTMEND_ENV is set, so keys are read only from {env_file}: add each one there "
+        "as NAME=value (this setup cannot save them)."
+    )
+
+
 ESPANSO_INTRO = (
     "Espanso runs PromptMend when you type a trigger. Its match files tell it which trigger "
     "runs what; installing them writes only PromptMend's own files into Espanso's match "
@@ -204,10 +214,14 @@ def file_rows(plan: deploy.Plan) -> list[tuple[str, str]]:
     return [(s.name, FILE_STATES.get(s.state, s.state)) for s in plan.steps]
 
 
+def _writes(plan: deploy.Plan) -> list[deploy.FileStep]:
+    return [s for s in plan.steps if s.state in (deploy.MISSING, deploy.STALE)]
+
+
 def deploy_summary(plan: deploy.Plan) -> str:
     if plan.is_noop or plan.only_forgets:
         return "Every match file is up to date; nothing to install."
-    writes = [s for s in plan.steps if s.state in (deploy.MISSING, deploy.STALE)]
+    writes = _writes(plan)
     if not writes:
         return "Nothing to write: the files that differ are yours and stay as they are."
     return f"Install writes {len(writes)} file(s) and then restarts Espanso."
@@ -218,7 +232,10 @@ def done_rows(
     keys: Sequence[KeyRow],
     plan: deploy.Plan | None,
     test: bool | None,
+    legacy: str | None = None,
 ) -> list[DoneRow]:
+    """What is set and what is left; ``legacy`` is the .env PROMPTMEND_ENV names, where a
+    missing key then goes."""
     rows = [DoneRow(True, "Provider", f"{settings.provider}; profile {settings.profile}")]
     for key in keys:
         if not key.needed:
@@ -226,11 +243,17 @@ def done_rows(
         if key.set:
             rows.append(DoneRow(True, key.name, "set"))
         else:
-            rows.append(DoneRow(False, key.name, f"not set: `promptmend secrets set {key.name}`"))
+            fix = (
+                f"add {key.name}= to {legacy}" if legacy else f"`promptmend secrets set {key.name}`"
+            )
+            rows.append(DoneRow(False, key.name, f"not set: {fix}"))
     if plan is None:
         rows.append(DoneRow(False, "Match files", "Espanso's folder was not found"))
-    elif all(s.state == deploy.IN_SYNC for s in plan.steps):
-        rows.append(DoneRow(True, "Match files", f"installed in {plan.espanso_dir / 'match'}"))
+    elif not _writes(plan):
+        text = f"installed in {plan.espanso_dir / 'match'}"
+        if plan.conflicts:
+            text += f"; {len(plan.conflicts)} file(s) you changed were kept"
+        rows.append(DoneRow(True, "Match files", text))
     else:
         rows.append(DoneRow(False, "Match files", "not installed: `promptmend espanso deploy`"))
     if test is None:

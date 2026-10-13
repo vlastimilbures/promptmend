@@ -17,14 +17,15 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Static
 
 from .. import config_store, deploy, previous_install
-from ..commands import common
 from ..profiles import prompts_path
 from . import teach
-from .modals import ConfirmModal, Field, FormModal
+from .modals import ConfirmModal, FormModal
 from .panes import (
+    CHECKOUT_FIELD,
     EXPECTED,
     TriggersPane,
     _error,
+    checkout_path,
     copy_profiles,
     previous_root,
     result_text,
@@ -354,26 +355,16 @@ class PreviousInstallScreen(Screen[None]):
     def _enter(self) -> None:
         if self.busy():
             return
-        fields = [Field("previous-path", "The checkout's folder", placeholder="~/Projects/…")]
         self.app.push_screen(
-            FormModal("Where did you run it from?", fields, submit="Look"), self._entered
+            FormModal("Where did you run it from?", [CHECKOUT_FIELD], submit="Look"),
+            self._entered,
         )
 
     def _entered(self, values: dict[str, str] | None) -> None:
-        if values is None:
-            return
-        # A pasted path may keep its quotes (Windows "Copy as path").
-        text = values["previous-path"].strip().strip("\"'").strip()
-        try:
-            common.no_key(text, "the path")
-        except EXPECTED as exc:
-            self.report(_error(exc), error=True)
-            return
-        if not text:
-            self.report("No path entered.", error=True)
-            return
-        self.entered = Path(text).expanduser()
-        self._detect(self.entered)
+        entered = checkout_path(self, values)
+        if entered is not None:
+            self.entered = entered
+            self._detect(entered)
 
     @on(Button.Pressed, "#previous-skip")
     def _skip(self) -> None:

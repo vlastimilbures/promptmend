@@ -60,7 +60,7 @@ from promptmend.prompt_builder import (
     repair_template_tags,
     strip_outer_fence,
 )
-from promptmend.providers.base import TRUNCATED_NOTE, ProviderError
+from promptmend.providers.base import ProviderError, split_stop_note
 from promptmend.providers.usage import AttemptUsage
 
 MODELS: list[str] = [
@@ -1357,13 +1357,11 @@ def _run_one(
         finish_reason = ""
 
     # Truncation is reported once, from finish_reason; the pasted note is not scored. The CLI
-    # pastes a truncated reply with its note, so its fence is never stripped.
-    reply = text
-    text = reply.removesuffix(TRUNCATED_NOTE)
-    truncated = text != reply
+    # splits the note off the same way before it strips the fence (#235).
+    text = split_stop_note(text)[0]
     # Score what the CLI would paste, and count the fence strips and repairs separately.
     raw = text
-    text = text if truncated else strip_outer_fence(text)
+    text = strip_outer_fence(text)
     fenced = text != raw
     unfenced = text
     # A candidate shaped like the template is scored as one, even if it lost the marker the

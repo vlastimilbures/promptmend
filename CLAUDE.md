@@ -99,8 +99,10 @@ Rules for agents:
   `PROMPT_OUTPUT=clipboard` (or `--output clipboard`, through `with_overrides()`; #134) makes
   `_deliver()` copy the finished rewrite and print only markers: nothing on success, the
   sent-despite note without its blank line, and a provider's cut-off/filtered note, split off
-  the rewrite by `_split_stop_note()`. A failed copy (any exception) prints the marker and then
-  the rewrite (outcome `clipboard_failed`); success stays `ok`. `--copy` is ignored there;
+  the rewrite by `providers.base.split_stop_note()` (which `rewrite()` and the bench also use
+  before the fence strip). `_copy_failed()` copies for it and for `--copy` (both without the
+  stop note): a failed copy (any exception) prints the marker and then the rewrite (outcome
+  `clipboard_failed`); success stays `ok`. `--copy` is ignored there;
   `persona` never reads the setting.
 - `clipboard_guard.py` — `is_concealed()` asks the clipboard (ctypes: NSPasteboard types on
   macOS, user32 formats on Windows) whether a password manager marked the item, without reading
@@ -388,7 +390,9 @@ Rules for agents:
   Textual honours `NO_COLOR`; exit is `sys.exit(app.return_code or 0)`. `tui/previous.py`'s
   `PreviousInstallScreen` (#110) opens by itself once per session when `State.previous`
   (`previous_install.detect()`) has a candidate or an unskipped pending copy, and from Home's
-  "Previous install…" (shown only with a candidate, a pending copy or `previous_error`, #222;
+  "Previous install…" (shown while `State.previous` is not gated, so "Enter a path…" stays
+  reachable after a skip or with nothing found, #237, or with a candidate, a pending copy or
+  `previous_error`, #222;
   tests open it with `app.open_previous()`): four steps (copy via `plan_migration(source=)`, profiles via
   `panes.copy_profiles()`, deploy via `TriggersPane.start_deploy()`, retire via
   `plan_retire()` in a worker, enabled only once no launcher points into the checkout and
@@ -529,7 +533,7 @@ Rules for agents:
   import (#223); `promptmend/__init__.py` gives `__version__` through a module `__getattr__`,
   so importing the package never loads `importlib.metadata`. Start-up budget (#223):
   `providers/base.py` imports httpx only inside `_encode_headers()`/`_exchange()` (type-only
-  at module level) and `cli.py` imports pyperclip only in `_clipboard(op)` and `_deliver()`
+  at module level) and `cli.py` imports pyperclip only in `_clipboard(op)`, which `_copy_failed()` calls
   (tests patch the `pyperclip` module, never `cli.pyperclip`).
   `tests/test_trigger_contract.py`'s `test_version_startup_budget` and
   `test_improve_startup_budget` (fresh interpreter through `entry.main()`, the latter

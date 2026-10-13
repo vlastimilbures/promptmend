@@ -9,6 +9,36 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 - The interface reloads faster after each change: it asks Espanso for its folder and runs
   each launcher-lookup command once per reload instead of up to three times (#242).
+### Fixed
+- Setup's Done step no longer says "Match files: not installed" when the only files that
+  differ are ones you edited and kept, which the Espanso step already says it leaves alone;
+  it says how many of them were kept.
+- Setup's Next no longer gets stuck on the provider, profile and API keys steps while
+  `PROMPTMEND_ENV` is set: it says the choice is not saved (settings stay in that file) and
+  moves on; the keys step and the Done checklist say to add each key to that file.
+- Setup logs `config unset` when picking the default removed the setting, instead of a
+  `config set` it did not run.
+- Home's "Previous install…" stays shown until your settings are saved in `config.toml`, so
+  "Enter a path…" works after "Skip this checkout" and when nothing was found.
+- The Profiles tab's "Migrate from checkout" asks for the checkout's folder when none was
+  found, instead of naming a `--checkout` flag the interface cannot pass.
+- Saving a setting or a key no longer replaces a symlinked `config.toml` or `secrets.toml`
+  with a plain file: the file the link points to is written, so a copy kept in a dotfiles
+  repo keeps getting the changes (#236).
+- `improve --copy` no longer loses the rewrite when the copy fails: the error marker is
+  followed by the rewrite, as with `PROMPT_OUTPUT=clipboard`, and the history records
+  `clipboard_failed`.
+- A reply in a code fence that the model then cut off (output limit) or stopped early now
+  has its fence removed too, when the closing fence arrived before the stop; the note that it
+  stopped early stays at the end. `--copy` copies the rewrite without that note, as
+  `PROMPT_OUTPUT=clipboard` does.
+- An unexpected error's marker, or a library's `ValueError`, no longer pastes a key its
+  message quotes: such a word is described (`<redacted, N chars>`) instead, and the whole
+  message when the secret spans several words (`Bearer …`, `password: …`, a spaced card
+  number). A failed copy's message is treated the same way.
+- `improve --source stdin` reads at most one character past the 50,000-character limit, so
+  piping a huge file is refused at once (`Input is too long (over 50000 chars)`) instead of
+  being loaded whole first.
 
 ## 0.24.0 - 2026-10-08
 
