@@ -395,7 +395,7 @@ Rules for agents:
   "Previous install…" (shown while `State.previous` is not gated, so "Enter a path…" stays
   reachable after a skip or with nothing found, #237, or with a candidate, a pending copy or
   `previous_error`, #222;
-  tests open it with `app.open_previous()`): four steps (copy via `plan_migration(source=)`, profiles via
+  tests open it with `app.open_previous()`): four steps (copy via `base.confirm_migration(source=)`, profiles via
   `base.copy_profiles()`, deploy via `TriggersPane.start_deploy()`, retire via
   `plan_retire()` in a worker, enabled only once no launcher points into the checkout and
   refused without `espanso path config`'s answer), none opening while `TriggersPane.busy`;

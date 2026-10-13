@@ -177,7 +177,7 @@ class Reporter(Protocol):
     def attempt(self, action: Callable[[], str], *, command: str | None = None) -> object: ...
 
 
-ROLLBACK_NOTE = "A backup is kept; `promptmend config rollback` undoes it."
+_ROLLBACK_NOTE = "A backup is kept; `promptmend config rollback` undoes it."
 
 
 def _migrated(result: config_store.MigrationResult) -> str:
@@ -192,7 +192,7 @@ def confirm_migration(
     *,
     title: str = "Migrate the .env?",
     confirm: str = "Migrate",
-    note: str = ROLLBACK_NOTE,
+    note: str = _ROLLBACK_NOTE,
     done: Callable[[config_store.MigrationResult], str] = _migrated,
 ) -> None:
     """Preview the .env migration (with ``source``, the copy from that earlier checkout),

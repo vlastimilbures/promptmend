@@ -319,7 +319,7 @@ def _one_key(
         return
     try:
         settings_cmd.store_key(name, value)
-    except (ValueError, config_files.SecretStoreError) as exc:
+    except (common.CommandError, ValueError, config_files.SecretStoreError) as exc:
         steps.fail("key", str(exc))
         return
     typer.echo(f"  {name} saved in the secret store.")

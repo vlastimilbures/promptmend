@@ -22,7 +22,7 @@ from ..config import secret_names
 from ..console import shown_arg
 from ..factory import PROVIDER_NAMES
 from . import settings_model, teach
-from .base import EXPECTED, Pane, button_row, confirm_migration
+from .base import EXPECTED, Pane, button_row, confirm_migration, error_message
 from .modals import ConfirmModal, EditModal, Field, FormModal, PickModal
 from .state import State
 
@@ -340,7 +340,7 @@ class SettingsPane(Pane):
             common.refuse_in_legacy_mode("the secret store")
             saved = config_store.saved_secret_names()
         except EXPECTED as exc:
-            self.report(f"error: {exc}", error=True)
+            self.report(error_message(exc), error=True)
             return
         if not saved:
             self.report("The secret store holds no key; nothing to do.")
