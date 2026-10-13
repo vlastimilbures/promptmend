@@ -3,6 +3,7 @@ moment. It is read again after every change, so no screen keeps a stale value (#
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from .. import assets, deploy, doctor, history, previous_install, update_check
@@ -33,12 +34,27 @@ class State:
     update: update_check.UpdateStatus = field(default_factory=update_check.UpdateStatus)
 
 
-def current_plan() -> deploy.Plan:
+def current_plan(runner: deploy.Runner | None = None) -> deploy.Plan:
     """The deploy plan as `espanso status` and `espanso deploy` make it, with no --launcher
     or --espanso-dir: this install's launcher and `espanso path config`."""
-    launcher = deploy.resolve_launcher()
-    target = deploy.espanso_dir().resolve()
+    launcher = deploy.resolve_launcher(runner=runner)
+    target = deploy.espanso_dir(runner).resolve()
     return deploy.plan(target, deploy.launcher_text(launcher.path), deploy.Manifest.load())
+
+
+def _once(runner: deploy.Runner) -> deploy.Runner:
+    """``runner``, asking each command (`espanso path config`, the launcher lookup) once: doctor,
+    the plan and the previous-install lookup all ask, and a reload blocks the Settings list
+    (#242). Read-only commands only, so one answer per reload is the same moment."""
+    answers: dict[tuple[str, ...], str | deploy.CommandFailure | None] = {}
+
+    def run(argv: Sequence[str]) -> str | deploy.CommandFailure | None:
+        key = tuple(argv)
+        if key not in answers:
+            answers[key] = runner(argv)
+        return answers[key]
+
+    return run
 
 
 def gather(group_by: str = "trigger") -> State:
@@ -48,11 +64,12 @@ def gather(group_by: str = "trigger") -> State:
     raised."""
     layers, settings = common.load_layers()
     update = update_check.check_configured()
-    report = doctor.run(clipboard=False, update=update)
+    run = _once(deploy.run_command)
+    report = doctor.run(clipboard=False, update=update, runner=run)
     plan: deploy.Plan | None = None
     plan_error = None
     try:
-        plan = current_plan()
+        plan = current_plan(run)
     except (deploy.DeployError, OSError, ValueError) as exc:
         plan_error = str(exc)
     stats: list[history.StatsRow] = []
@@ -64,7 +81,7 @@ def gather(group_by: str = "trigger") -> State:
     previous = previous_install.Detection()
     previous_error = None
     try:
-        previous = previous_install.detect()
+        previous = previous_install.detect(runner=run)
     except (deploy.DeployError, OSError, ValueError) as exc:
         previous_error = str(exc) or type(exc).__name__
     return State(

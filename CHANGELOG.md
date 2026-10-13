@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Changed
+- The interface reloads faster after each change: one reload asks Espanso for its folder,
+  and looks up this install's launcher, once instead of three times (#242).
+
 ## 0.24.0 - 2026-10-08
 
 ### Added

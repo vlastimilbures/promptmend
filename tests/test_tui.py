@@ -132,6 +132,26 @@ def _plan() -> deploy.Plan:
     return plan
 
 
+def test_gather_asks_each_command_once(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#242: doctor, the plan and the previous-install lookup share one answer per reload."""
+    launcher = deploy.resolve_launcher()
+    lookups: list[str] = []
+
+    def resolve(*, runner: deploy.Runner, **_: Any) -> deploy.Launcher:
+        lookups.append("launcher")
+        runner(["uv", "tool", "dir", "--bin"])
+        return launcher
+
+    monkeypatch.setattr(deploy, "resolve_launcher", resolve)
+    assert gather().plan is not None
+    calls = [" ".join(call) for call in espanso.calls]
+    assert calls.count("espanso path config") == 1
+    assert calls.count("uv tool dir --bin") == 1
+    assert len(lookups) >= 2  # doctor and the plan both look it up
+
+
 def pane(app: ManageApp, tab: str) -> panes.Pane:
     return app.main.query_one(f"#{tab}-pane", panes.Pane)
 
