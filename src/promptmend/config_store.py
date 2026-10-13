@@ -626,8 +626,8 @@ def apply_migration(
         config_files.write_atomic(settings_path, config_files.dump_toml(table), private=False)
         after = _effective(env)
     except (ValueError, OSError, SecretStoreError) as exc:
-        _undo(directory, settings_path, secrets_path, secrets_copy)
-        raise MigrationError(f"nothing was migrated: {exc}") from None
+        undone = _undo(directory, settings_path, secrets_path, secrets_copy)
+        raise MigrationError(f"nothing was migrated: {exc}{undone}") from None
     env_sources = {f"file:{s.path}" for s in (*plan.sources, *filter(None, [plan.copy]))}
     # Only the copied keys change; a .env value a real variable shadows stays shadowed.
     values = {**plan.settings, **plan.secret_values}
@@ -636,9 +636,9 @@ def apply_migration(
     changed = sorted(k for k in before if expected[k] != after[k][0])
     still = sorted(k for k, (_, source) in after.items() if source in env_sources)
     if changed or still:
-        _undo(directory, settings_path, secrets_path, secrets_copy)
+        undone = _undo(directory, settings_path, secrets_path, secrets_copy)
         raise MigrationError(
-            f"nothing was migrated: reloading changed {', '.join(changed or still)}"
+            f"nothing was migrated: reloading changed {', '.join(changed or still)}{undone}"
         )
 
     moved: dict[Path, Path] = {}
@@ -661,17 +661,34 @@ def apply_migration(
 
 def _undo(
     directory: Path, settings_path: Path, secrets_path: Path, secrets_copy: Path | None
-) -> None:
+) -> str:
     """Undo a migration's own writes after a failure: config.toml was not a file before
     (plan_migration requires that), secrets.toml gets its old bytes back (or is removed when
-    there was none), and the marker goes."""
-    if config_files.is_file(settings_path):
-        _unlink_real(settings_path)
-    if secrets_copy is not None:
-        config_files.write_atomic(secrets_path, secrets_copy.read_bytes(), private=True)
-    elif config_files.is_file(secrets_path):
-        _unlink_real(secrets_path)
-    _marker(directory).unlink(missing_ok=True)
+    there was none), and the marker goes. Each step runs even when an earlier one failed, and
+    a failure never hides the error being undone: the result is ``""``, or a
+    ``"; could not undo: <files>"`` suffix for its message."""
+
+    def settings() -> None:
+        if config_files.is_file(settings_path):
+            _unlink_real(settings_path)
+
+    def secrets() -> None:
+        if secrets_copy is not None:
+            config_files.write_atomic(secrets_path, secrets_copy.read_bytes(), private=True)
+        elif config_files.is_file(secrets_path):
+            _unlink_real(secrets_path)
+
+    failed = []
+    for name, step in (
+        (config_files.SETTINGS_FILE, settings),
+        (config_files.SECRETS_FILE, secrets),
+        (MARKER_FILE, lambda: _marker(directory).unlink(missing_ok=True)),
+    ):
+        try:
+            step()
+        except (OSError, SecretStoreError):
+            failed.append(name)
+    return f"; could not undo: {', '.join(failed)}" if failed else ""
 
 
 @dataclass(frozen=True)
@@ -755,10 +772,12 @@ def plan_rollback(environ: Mapping[str, str] | None = None) -> RollbackPlan:
 
 
 def apply_rollback(environ: Mapping[str, str] | None = None, *, consent: str) -> None:
-    """Restore the state before the migration: config.toml and secrets.toml are moved into
-    the backup directory (never deleted; a symlinked one is copied there and stays a link),
-    a secrets.toml that existed before gets its exact old bytes back, each .env is moved back
-    to where it was, and the marker is removed. ``consent`` must be the token of the
+    """Restore the state before the migration: each .env is moved back to where it was
+    first (ignored while config.toml exists, so a trigger in between still runs on the saved
+    settings, and a failed restore stops before anything else changed), then config.toml and
+    secrets.toml are moved into the backup directory (never deleted; a symlinked one is
+    copied there and stays a link), a secrets.toml that existed before gets its exact old
+    bytes back, and the marker is removed. ``consent`` must be the token of the
     plan_rollback() preview."""
     env = _env(environ)
     plan = plan_rollback(env)
@@ -767,6 +786,9 @@ def apply_rollback(environ: Mapping[str, str] | None = None, *, consent: str) ->
     directory = config_dir(env)
     record, _ = _read_marker(directory)
     stamp = _stamp()
+    for stored, original in plan.restores:
+        if not _move(stored, original):
+            raise MigrationError(f"could not move {stored} back to {original}; rollback stopped")
     for path in (config.settings_file(env), directory / config_files.SECRETS_FILE):
         if not config_files.is_file(path):
             continue
@@ -785,9 +807,6 @@ def apply_rollback(environ: Mapping[str, str] | None = None, *, consent: str) ->
     if record.get("secrets_backup"):
         old = (plan.backup / record["secrets_backup"]).read_bytes()
         config_files.write_atomic(directory / config_files.SECRETS_FILE, old, private=True)
-    for stored, original in plan.restores:
-        if not _move(stored, original):
-            raise MigrationError(f"could not move {stored} back to {original}; rollback stopped")
     _marker(directory).unlink()
 
 

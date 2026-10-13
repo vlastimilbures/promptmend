@@ -114,7 +114,8 @@ An existing `.env` can be moved to `config.toml` and `secrets.toml`:
 3. Values equal to their default are left out, and the `.env` is moved into `backups/` in the
    config folder rather than deleted.
 
-`promptmend config rollback` restores the `.env` exactly, after the same preview. To copy an
+`promptmend config rollback` restores the `.env` exactly, after the same preview; it puts the
+`.env` back first and only then moves `config.toml` and `secrets.toml` into the backup. To copy an
 earlier checkout's `.env`, see [From a checkout install](install.md#from-a-checkout-install).
 
 The repository's `.env.example` sets only the key and the persona and shows every other

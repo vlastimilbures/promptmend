@@ -800,6 +800,60 @@ def test_migration_store_failure_undoes(
     assert (project / ".env").exists()
 
 
+# An undo step that fails never hides the error being undone; the other steps still run and
+# the message names what was not undone (#238).
+def test_failed_undo_keeps_the_original_error(
+    saved_mode: Path, project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(project / ".env", _example_env())
+    secrets = _write(saved_mode / "secrets.toml", f'ANTHROPIC_API_KEY = "{ANTHROPIC_VALUE}"\n')
+    old_secrets = secrets.read_bytes()
+    plan = config_store.plan_migration()
+
+    def broken(self: FileSecretStore, name: str, value: str) -> None:
+        raise SecretStoreError("disk full")
+
+    monkeypatch.setattr(FileSecretStore, "set", broken)
+    real_write = config_files.write_atomic
+
+    def write(path: Path, data: bytes, *, private: bool) -> None:
+        if path == secrets:
+            raise OSError(28, "No space left on device")
+        real_write(path, data, private=private)
+
+    monkeypatch.setattr(config_files, "write_atomic", write)
+    with pytest.raises(MigrationError) as caught:
+        config_store.apply_migration(consent=plan.token)
+
+    # config.toml was never written, so only the secrets.toml restore failed.
+    assert str(caught.value) == "nothing was migrated: disk full; could not undo: secrets.toml"
+    assert secrets.read_bytes() == old_secrets
+    assert not (saved_mode / "migration.json").exists()
+
+
+# A rollback puts each .env back before it moves config.toml away: a failed restore leaves
+# config.toml in place, the settings unchanged, and the rollback can be run again (#238).
+def test_failed_env_restore_keeps_saved_settings(
+    saved_mode: Path, project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_env = _write(project / ".env", _example_env())
+    before = Settings.load()
+    config_store.apply_migration(consent=config_store.plan_migration().token)
+    real_move = config_store._move
+    monkeypatch.setattr(config_store, "_move", lambda s, t: False)
+
+    with pytest.raises(MigrationError, match=r"could not move .* back to"):
+        config_store.apply_rollback(consent=config_store.plan_rollback().token)
+
+    assert (saved_mode / "config.toml").exists()
+    assert not repo_env.exists()
+    assert Settings.load() == before
+    monkeypatch.setattr(config_store, "_move", real_move)
+    config_store.apply_rollback(consent=config_store.plan_rollback().token)
+    assert repo_env.read_text("utf-8") == _example_env()
+    assert not (saved_mode / "config.toml").exists()
+
+
 @pytest.mark.parametrize(
     ("env_text", "error"),
     [
