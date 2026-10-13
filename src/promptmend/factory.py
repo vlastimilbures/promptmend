@@ -69,24 +69,21 @@ def _require(value: str | None, env_name: str) -> str:
     return value
 
 
-def _require_https(url: str, env_name: str) -> str:
-    """Refuse to send an API key over plaintext HTTP; a loopback proxy is the exception."""
-    scheme = urlsplit(url).scheme
-    if scheme == "https" or (scheme == "http" and is_loopback(url)):
-        return url
-    raise GateBlocked(f"{env_name} must be an https:// URL")
-
-
-# The providers make_provider() builds through _require_https(): they send a key.
+# The providers whose base URL must be https: they send a key.
 _HTTPS_ONLY = {"openrouter": "OPENROUTER_BASE_URL", "anthropic": "ANTHROPIC_BASE_URL"}
 
 
 def check_base_url(name: str, cfg: Settings) -> None:
-    """The base-URL check make_provider() applies to ``name``, without building anything: the
-    Try tab's stub runs check the real URL before pointing the settings at the stub."""
+    """Refuse to send an API key over plaintext HTTP; a loopback proxy is the exception.
+    make_provider() applies it; the Try tab's stub runs check the real URL with it before
+    pointing the settings at the stub."""
     setting = _HTTPS_ONLY.get(name)
-    if setting is not None:
-        _require_https(getattr(cfg, f"{name}_base_url"), setting)
+    if setting is None:
+        return
+    url = getattr(cfg, f"{name}_base_url")
+    scheme = urlsplit(url).scheme
+    if not (scheme == "https" or (scheme == "http" and is_loopback(url))):
+        raise GateBlocked(f"{setting} must be an https:// URL")
 
 
 def _is_ollama_cloud(model: str) -> bool:
@@ -153,20 +150,9 @@ def routes(cfg: Settings) -> list[Route]:
 
 
 def _gate(
-    inner: Provider,
-    cfg: Settings,
-    allow_flagged: bool = False,
-    name: str = "openrouter",
-    *,
-    remote: bool = True,
+    inner: Provider, cfg: Settings, allow_flagged: bool, name: str, *, remote: bool
 ) -> GatedProvider:
-    # make_provider refuses earlier with a clearer message; this keeps the guarantee for any
-    # provider added later that returns through _gate(). ``remote=False`` is only for a
-    # loopback provider gated by PROMPT_GATE_LOCAL, which PROMPT_LOCAL_ONLY allows.
-    if remote and cfg.local_only:
-        raise GateBlocked(
-            "PROMPT_LOCAL_ONLY=true: this provider would send the draft off this machine"
-        )
+    # ``remote=False`` is only for a loopback provider gated by PROMPT_GATE_LOCAL.
     return GatedProvider(
         inner,
         allow_override=cfg.allow_cloud_override,
@@ -220,8 +206,10 @@ def make_provider(
     remote = _leaves_machine(name, cfg) or force_remote
     if remote and cfg.local_only:
         raise GateBlocked(f"PROMPT_LOCAL_ONLY=true: {name} would send the draft off this machine")
+    check_base_url(name, cfg)
+    provider: Provider
     if name == "ollama":
-        ollama = OllamaProvider(
+        provider = OllamaProvider(
             base_url=cfg.ollama_base_url,
             model=cfg.ollama_model,
             timeout=cfg.timeout,
@@ -232,11 +220,8 @@ def make_provider(
             observer=observer,
             local=not remote,
         )
-        if remote or cfg.gate_local:
-            return _gate(ollama, cfg, allow_flagged, name, remote=remote)
-        return ollama
-    if name == "lmstudio":
-        lmstudio = OpenAICompatibleProvider(
+    elif name == "lmstudio":
+        provider = OpenAICompatibleProvider(
             base_url=cfg.lmstudio_base_url,
             model=cfg.lmstudio_model,
             timeout=cfg.timeout,
@@ -247,42 +232,33 @@ def make_provider(
             name=name,
             local=not remote,
         )
-        if remote or cfg.gate_local:
-            return _gate(lmstudio, cfg, allow_flagged, name, remote=remote)
-        return lmstudio
-    if name == "openrouter":
-        return _gate(
-            OpenAICompatibleProvider(
-                base_url=_require_https(cfg.openrouter_base_url, "OPENROUTER_BASE_URL"),
-                model=cfg.openrouter_model,
-                api_key=_require(cfg.openrouter_api_key, "OPENROUTER_API_KEY"),
-                timeout=cfg.timeout,
-                max_tokens=cfg.openrouter_max_tokens,
-                temperature=cfg.temperature,
-                extra_headers={"X-Title": title},
-                label="OpenRouter",
-                extra_body={**openrouter_body(cfg), **(extra_body or {})},
-                on_response=on_response,
-                observer=observer,
-                name=name,
-            ),
-            cfg,
-            allow_flagged,
-            name,
+    elif name == "openrouter":
+        provider = OpenAICompatibleProvider(
+            base_url=cfg.openrouter_base_url,
+            model=cfg.openrouter_model,
+            api_key=_require(cfg.openrouter_api_key, "OPENROUTER_API_KEY"),
+            timeout=cfg.timeout,
+            max_tokens=cfg.openrouter_max_tokens,
+            temperature=cfg.temperature,
+            extra_headers={"X-Title": title},
+            label="OpenRouter",
+            extra_body={**openrouter_body(cfg), **(extra_body or {})},
+            on_response=on_response,
+            observer=observer,
+            name=name,
         )
-    if name == "anthropic":
-        return _gate(
-            AnthropicProvider(
-                base_url=_require_https(cfg.anthropic_base_url, "ANTHROPIC_BASE_URL"),
-                model=cfg.anthropic_model,
-                api_key=_require(cfg.anthropic_api_key, "ANTHROPIC_API_KEY"),
-                timeout=cfg.timeout,
-                max_tokens=cfg.anthropic_max_tokens,
-                temperature=cfg.temperature,
-                observer=observer,
-            ),
-            cfg,
-            allow_flagged,
-            name,
+    elif name == "anthropic":
+        provider = AnthropicProvider(
+            base_url=cfg.anthropic_base_url,
+            model=cfg.anthropic_model,
+            api_key=_require(cfg.anthropic_api_key, "ANTHROPIC_API_KEY"),
+            timeout=cfg.timeout,
+            max_tokens=cfg.anthropic_max_tokens,
+            temperature=cfg.temperature,
+            observer=observer,
         )
-    raise ProviderError(f"Unknown provider {safe_repr(name)}. Use {', '.join(PROVIDER_NAMES)}.")
+    else:
+        raise ProviderError(f"Unknown provider {safe_repr(name)}. Use {', '.join(PROVIDER_NAMES)}.")
+    if remote or cfg.gate_local:
+        return _gate(provider, cfg, allow_flagged, name, remote=remote)
+    return provider

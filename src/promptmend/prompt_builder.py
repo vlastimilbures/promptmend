@@ -94,6 +94,11 @@ def render(template: str, persona: str = "") -> str:
     return re.sub("|".join(map(re.escape, values)), lambda m: values[m.group()], template)
 
 
+def resolve_profile_name(profile: str) -> str:
+    """The profile name ``profile`` stands for: itself, or the built-in a retired alias names."""
+    return profile if profile in PROFILES else ALIASES.get(profile, profile)
+
+
 def system_prompt(profile: str, persona: str = "", overrides: Collection[str] = ()) -> str:
     """The rendered profile: a built-in, or `<name>.md` in user_profiles_dir() for a name
     that is not built in. A user file named like a built-in replaces it only when the name is
@@ -103,7 +108,7 @@ def system_prompt(profile: str, persona: str = "", overrides: Collection[str] = 
 
 def template(profile: str, overrides: Collection[str] = ()) -> str:
     """system_prompt()'s profile before render(), its tokens unfilled."""
-    name = profile if profile in PROFILES else ALIASES.get(profile, profile)
+    name = resolve_profile_name(profile)
     text = None
     if name not in PROFILES or name in overrides:
         text = _read_user_profile(name)

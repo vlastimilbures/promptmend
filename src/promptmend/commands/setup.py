@@ -22,7 +22,7 @@ from .. import (
     smoke,
 )
 from ..config import setting_fields
-from ..factory import PROVIDER_NAMES
+from ..factory import PROVIDER_KEYS, PROVIDER_NAMES
 from ..prompt_builder import PROFILES, system_prompt, user_profiles
 from ..redaction import safe_repr
 from . import common
@@ -32,8 +32,6 @@ from .usage import disclosure
 
 app = typer.Typer(name="setup", add_completion=False)
 
-# The key each provider needs.
-PROVIDER_KEYS = {"openrouter": "OPENROUTER_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 _DEFAULTS = {f.metadata["env"]: f.metadata["default"] for f in setting_fields()}
 
 

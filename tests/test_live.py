@@ -16,10 +16,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 from bench_module import GOOD, bench
+from conftest import read_env_file
 from typer.testing import CliRunner
 
 from promptmend.cli import app
-from promptmend.config import ENV_FILE_VARS, read_env_file
+from promptmend.config import ENV_FILE_VARS
 
 if TYPE_CHECKING:
     from conftest import FakeHttp

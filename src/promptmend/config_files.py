@@ -17,7 +17,7 @@ import re
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 SETTINGS_FILE = "config.toml"
 SECRETS_FILE = "secrets.toml"
@@ -25,6 +25,15 @@ SECRETS_FILE = "secrets.toml"
 # written, since this version cannot know what a rewrite would lose.
 VERSION_KEY = "config_version"
 CONFIG_VERSION = 1
+
+
+def config_version(table: Mapping[str, Any]) -> int | None:
+    """config.toml's config_version (a missing one is the current version); None when it is
+    not a whole number above 0."""
+    version = table.get(VERSION_KEY, CONFIG_VERSION)
+    valid = isinstance(version, int) and not isinstance(version, bool) and version >= 1
+    return version if valid else None
+
 
 _WINDOWS = os.name == "nt"
 
@@ -402,27 +411,10 @@ def write_atomic(path: Path, data: bytes, *, private: bool) -> None:
                 os.close(dir_fd)
 
 
-class SecretStore(Protocol):
-    """Where API keys are saved. Reads and writes raise SecretStoreError, never fall back to
-    another store."""
-
-    @property
-    def source(self) -> str:
-        """Provenance label for ConfigLayers, e.g. ``file:<path>``."""
-        ...
-
-    def read(self) -> dict[str, str]:
-        """Every saved secret by env var name; empty when nothing is saved."""
-        ...
-
-    def set(self, name: str, value: str) -> None: ...
-
-    def delete(self, name: str) -> None: ...
-
-
 class FileSecretStore:
     """Secrets in a TOML file (``NAME = "value"``) private to the user: mode 600 on POSIX, a
-    user-only ACL on Windows. Never part of config.toml."""
+    user-only ACL on Windows. Never part of config.toml. Reads and writes raise
+    SecretStoreError, never fall back to another store."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -466,12 +458,13 @@ class FileSecretStore:
             self._write(values)
 
 
-def secret_store(directory: Path) -> SecretStore:
+def secret_store(directory: Path) -> FileSecretStore:
     """The secret store for the config dir ``directory``.
 
     TODO(D-CFG-3): an opt-in KeyringSecretStore, once it has been tested from an
     Espanso-launched (non-TTY) process on macOS, including after the interpreter path changes,
     and on Windows. It must raise SecretStoreError on any keyring failure; it must never fall
-    back to this file. Import keyring lazily (it is forbidden on the trigger path).
+    back to this file. Import keyring lazily (it is forbidden on the trigger path). Bring
+    back a SecretStore Protocol then, for the two stores.
     """
     return FileSecretStore(directory / SECRETS_FILE)

@@ -81,9 +81,7 @@ class SavedSettings:
     @property
     def version(self) -> int | None:
         """The config_version (a missing one is the current version); None when invalid."""
-        version = self.table.get(VERSION_KEY, CONFIG_VERSION)
-        valid = isinstance(version, int) and not isinstance(version, bool) and version >= 1
-        return version if valid else None
+        return config_files.config_version(self.table)
 
     @property
     def read_only(self) -> bool:

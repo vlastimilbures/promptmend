@@ -245,13 +245,13 @@ class InvalidRecord(ValueError):
 _Spooled = tuple[tuple[object, ...], list[tuple[object, ...]]]
 
 
-def wal_is_safe(version: str) -> bool:
-    """Whether SQLite ``version`` (``sqlite3.sqlite_version``) is WAL_FIXED or later. An
-    unparsable version is not."""
+def wal_is_safe(version: str) -> bool | None:
+    """Whether SQLite ``version`` (``sqlite3.sqlite_version``) is WAL_FIXED or later; None
+    for an unparsable version (callers that must choose treat it as not safe)."""
     try:
         parts = tuple(int(part) for part in version.split("."))
     except ValueError:
-        return False
+        return None
     return parts >= WAL_FIXED
 
 
@@ -757,6 +757,8 @@ class HistoryStore:
         except ValueError:
             count = 0
         payload = json.dumps({"lost_writes": count + dropped, "last_lost_utc": _now()})
+        # Not config_files.write_atomic(): its fsync and private-folder chmod do not fit
+        # record()'s budget, and relocate moves this `.<pid>.tmp` name as a companion.
         temp = self.lost_path.with_name(f"{LOST_NAME}.{os.getpid()}.tmp")
         temp.write_text(payload, encoding="utf-8")
         os.replace(temp, self.lost_path)
@@ -791,6 +793,7 @@ class HistoryStore:
         payload = json.dumps({"version": _SPOOL_VERSION, "records": records})
         if len(payload.encode("utf-8")) > _SPOOL_BYTES:
             raise ValueError("history spool is full")
+        # Written like the lost marker, not by write_atomic() (see _count_lost()).
         temp = self.spool_path.with_name(f"{SPOOL_NAME}.{os.getpid()}.tmp")
         temp.write_text(payload, encoding="utf-8")
         os.replace(temp, self.spool_path)
@@ -884,6 +887,7 @@ class HistoryStore:
                         entries = []
                     if len(entries) >= _SPOOL_LIMIT:
                         raise ValueError("history spool is full")
+                    # Written like the lost marker, not by write_atomic() (see _count_lost()).
                     entry = {
                         "operation": dict(zip(OPERATION_COLUMNS, op, strict=True)),
                         "attempts": [dict(zip(ATTEMPT_COLUMNS, row, strict=True)) for row in rows],

@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
 from . import config, config_files, deploy
+from .deploy import inside
+from .deploy import resolved as resolved  # config_store uses previous_install.resolved
 from .profiles import prompts_path
 
 PROJECT_NAME = "promptmend"
@@ -120,13 +122,6 @@ def _project_name(root: Path) -> str | None:
     return name if isinstance(name, str) else None
 
 
-def resolved(path: Path) -> Path:
-    try:
-        return path.resolve()
-    except (OSError, RuntimeError):
-        return path.absolute()
-
-
 def is_checkout(root: Path) -> bool:
     """``root`` holds a pyproject.toml naming this project (by its new or its old name)."""
     return config_files.is_file(root / "pyproject.toml") and _project_name(root) in PROJECT_NAMES
@@ -210,10 +205,6 @@ def skip(root: Path, environ: Mapping[str, str] | None = None) -> None:
 # --- Shadowed CLI -------------------------------------------------------------------------
 
 
-def _inside(path: Path, parent: Path) -> bool:
-    return resolved(path).is_relative_to(resolved(parent))
-
-
 def shadow(
     environ: Mapping[str, str],
     runner: deploy.Runner,
@@ -251,7 +242,7 @@ def shadow(
 
 def _shadow_hint(environ: Mapping[str, str], found: Path, launcher: Path) -> str:
     venv = environ.get("VIRTUAL_ENV")
-    if venv and _inside(found, Path(venv)):
+    if venv and inside(found, Path(venv)):
         return "a virtual environment is active: run `deactivate`"
     if ".venv" in found.parts:
         return f"remove {found.parent} from PATH"

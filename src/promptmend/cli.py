@@ -29,10 +29,9 @@ from .entry import TRIGGER_COMMANDS
 from .factory import PROVIDER_NAMES, make_provider
 from .gate import GateBlocked, GatedProvider
 from .prompt_builder import (
-    ALIASES,
-    PROFILES,
     TEMPLATE_MARKER,
     repair_template_tags,
+    resolve_profile_name,
     strip_outer_fence,
     system_prompt,
 )
@@ -112,10 +111,6 @@ PROGRAM = "promptmend"
 LEGACY_PROGRAM = "prompt-workflow"
 DEPRECATED_ALIAS = "`prompt-workflow` is deprecated; use `promptmend` (removed in 1.0.0)"
 
-# The commands Espanso runs (entry.py keeps their stderr empty): they never move a folder
-# (config.folder_in_use() keeps them on the legacy one until a management command has moved it).
-_TRIGGER_COMMANDS = TRIGGER_COMMANDS
-
 
 def _management_command(group: _LazyGroup, ctx: Context) -> bool:
     """A management command or the interface is about to run: not a trigger, completion or a
@@ -124,7 +119,7 @@ def _management_command(group: _LazyGroup, ctx: Context) -> bool:
     return not (
         ctx.resilient_parsing
         or not args
-        or args[0] in _TRIGGER_COMMANDS
+        or args[0] in TRIGGER_COMMANDS  # Espanso's: they never move a folder
         or args[0] not in group.list_commands(ctx)
         or {"--help", "-h"} & set(args)
     )
@@ -326,6 +321,10 @@ def _deliver(result: str, note: str, rec: recorder.Recorder) -> str:
     return "\n\n".join(marker for marker in (note.rstrip("\n"), stop) if marker)
 
 
+# The failures a marker words as expected; anything else is an unexpected error.
+_EXPECTED_ERRORS = (ProviderError, ValueError)
+
+
 def _failure(exc: Exception, rec: recorder.Recorder) -> str:
     """The history outcome of a run that printed a marker for ``exc``."""
     if isinstance(exc, ConcealedClipboard):
@@ -334,7 +333,7 @@ def _failure(exc: Exception, rec: recorder.Recorder) -> str:
         return recorder.CLIPBOARD_FAILED
     if isinstance(exc, GateBlocked):
         return recorder.GATE_BLOCKED
-    if not isinstance(exc, ProviderError | ValueError):
+    if not isinstance(exc, _EXPECTED_ERRORS):
         return recorder.UNEXPECTED_ERROR
     # Providers raise after their HTTP call returned only when the reply's content is bad.
     if isinstance(exc, ProviderError) and rec.answered:
@@ -378,13 +377,10 @@ def rewrite(
     # machine in GatedProvider, so it cannot be bypassed.
     name = profile or cfg.profile
     system = system_prompt(name, cfg.persona, cfg.profile_overrides)
-    ran.profile_id = name if name in PROFILES else ALIASES.get(name, name)
-    if not force_remote:  # improve: built exactly as it always has been
-        built = make_provider(provider, cfg, allow_flagged=allow_flagged, observer=observer)
-    else:
-        built = make_provider(
-            provider, cfg, allow_flagged=allow_flagged, observer=observer, force_remote=True
-        )
+    ran.profile_id = resolve_profile_name(name)
+    built = make_provider(
+        provider, cfg, allow_flagged=allow_flagged, observer=observer, force_remote=force_remote
+    )
     ran.built = built
     # Cleaned first, so an invisible character cannot hide a fence from the strip. A reply
     # wrapped in one code fence would be pasted with the fence (flash-lite wrapped 16 of 36
