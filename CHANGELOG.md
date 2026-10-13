@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 ### Fixed
+- Saving a setting or a key no longer replaces a symlinked `config.toml` or `secrets.toml`
+  with a plain file: the file the link points to is written, so a copy kept in a dotfiles
+  repo keeps getting the changes (#236).
 - `improve --copy` no longer loses the rewrite when the copy fails: the error marker is
   followed by the rewrite, as with `PROMPT_OUTPUT=clipboard`, and the history records
   `clipboard_failed`.

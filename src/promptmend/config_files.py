@@ -10,6 +10,7 @@ only when something is written.
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import os
 import re
@@ -367,8 +368,15 @@ def write_atomic(path: Path, data: bytes, *, private: bool) -> None:
     The temporary file is created with mode 600 on POSIX (mkstemp), so a ``private`` file is
     never readable by others, not even for a moment. On Windows a ``private`` file gets a
     user-only ACL while still empty, before any secret is written into it.
+
+    A symlinked ``path`` (a config.toml kept in a dotfiles repo) is written through to the
+    file it points to, so the link stays a link (#236).
     """
     make_private_dir(path.parent)
+    # Only the folder the caller named is created: a dangling link to a missing folder fails.
+    path = Path(os.path.realpath(path))
+    if path.is_dir():
+        raise IsADirectoryError(errno.EISDIR, "it is a folder, not a file", str(path))
     fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     temp = Path(name)
     try:

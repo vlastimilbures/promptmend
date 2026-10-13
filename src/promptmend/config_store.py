@@ -532,6 +532,11 @@ def _move(source: Path, target: Path) -> bool:
     return True
 
 
+def _unlink_real(path: Path) -> None:
+    """Remove the file at ``path``; a symlink stays and the file it points to goes (#236)."""
+    Path(os.path.realpath(path)).unlink()
+
+
 def _label(path: Path) -> str:
     return "repository" if path.parent == config._PROJECT_ROOT else "user-config"
 
@@ -661,11 +666,11 @@ def _undo(
     (plan_migration requires that), secrets.toml gets its old bytes back (or is removed when
     there was none), and the marker goes."""
     if config_files.is_file(settings_path):
-        settings_path.unlink()
+        _unlink_real(settings_path)
     if secrets_copy is not None:
         config_files.write_atomic(secrets_path, secrets_copy.read_bytes(), private=True)
     elif config_files.is_file(secrets_path):
-        secrets_path.unlink()
+        _unlink_real(secrets_path)
     _marker(directory).unlink(missing_ok=True)
 
 
@@ -751,9 +756,10 @@ def plan_rollback(environ: Mapping[str, str] | None = None) -> RollbackPlan:
 
 def apply_rollback(environ: Mapping[str, str] | None = None, *, consent: str) -> None:
     """Restore the state before the migration: config.toml and secrets.toml are moved into
-    the backup directory (never deleted), a secrets.toml that existed before gets its exact
-    old bytes back, each .env is moved back to where it was, and the marker is removed.
-    ``consent`` must be the token of the plan_rollback() preview."""
+    the backup directory (never deleted; a symlinked one is copied there and stays a link),
+    a secrets.toml that existed before gets its exact old bytes back, each .env is moved back
+    to where it was, and the marker is removed. ``consent`` must be the token of the
+    plan_rollback() preview."""
     env = _env(environ)
     plan = plan_rollback(env)
     if not consent or consent != plan.token:
@@ -762,9 +768,19 @@ def apply_rollback(environ: Mapping[str, str] | None = None, *, consent: str) ->
     record, _ = _read_marker(directory)
     stamp = _stamp()
     for path in (config.settings_file(env), directory / config_files.SECRETS_FILE):
-        if config_files.is_file(path) and not _move(
-            path, plan.backup / f"rolled-back-{stamp}-{path.name}"
-        ):
+        if not config_files.is_file(path):
+            continue
+        stored = plan.backup / f"rolled-back-{stamp}-{path.name}"
+        if path.is_symlink():  # keep the link (#236): copy its bytes, then remove its target
+            try:
+                config_files.write_atomic(stored, path.read_bytes(), private=True)
+                _unlink_real(path)
+            except OSError as exc:
+                raise MigrationError(
+                    f"could not copy {path} into the backup ({exc.strerror or exc}); "
+                    "rollback stopped"
+                ) from None
+        elif not _move(path, stored):
             raise MigrationError(f"could not move {path} into the backup; rollback stopped")
     if record.get("secrets_backup"):
         old = (plan.backup / record["secrets_backup"]).read_bytes()
