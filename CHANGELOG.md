@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Changed
+- The interface reloads faster after each change: it asks Espanso for its folder and runs
+  each launcher-lookup command once per reload instead of up to three times (#242).
 ### Fixed
 - Setup's Done step no longer says "Match files: not installed" when the only files that
   differ are ones you edited and kept, which the Espanso step already says it leaves alone;

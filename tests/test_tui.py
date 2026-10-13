@@ -132,6 +132,24 @@ def _plan() -> deploy.Plan:
     return plan
 
 
+def test_gather_asks_each_command_once(
+    espanso: FakeRunner, saved: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#242: doctor, the plan and the previous-install lookup (gate open: saved mode, nothing
+    saved yet) share one answer per command per reload."""
+    launcher = deploy.resolve_launcher()
+
+    def resolve(*, runner: deploy.Runner | None = None, **_: Any) -> deploy.Launcher:
+        (runner or deploy.run_command)(["uv", "tool", "dir"])
+        return launcher
+
+    monkeypatch.setattr(deploy, "resolve_launcher", resolve)
+    assert gather().plan is not None
+    calls = [" ".join(call) for call in espanso.calls]
+    assert calls.count("espanso path config") == 1
+    assert calls.count("uv tool dir") == 1
+
+
 def pane(app: ManageApp, tab: str) -> panes.Pane:
     return app.main.query_one(f"#{tab}-pane", panes.Pane)
 
