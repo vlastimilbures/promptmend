@@ -60,7 +60,8 @@ other project cannot change its endpoint or switch off the gate. Only the settin
 
 On Windows `XDG_CONFIG_HOME` and `XDG_DATA_HOME` are ignored. `config.toml` holds plain TOML
 with the same names (`OPENROUTER_MODEL = "…"`, `OLLAMA_THINK = true`) and a `config_version`;
-it never holds a key. Releases up to 0.18.0 used folders named `prompt-workflow`; see
+it never holds a key. A `config.toml` or `secrets.toml` that is a symlink (into a dotfiles
+repo, say) stays one: saving writes the file it points to. Releases up to 0.18.0 used folders named `prompt-workflow`; see
 [The folders' new name](install.md#the-folders-new-name).
 
 ## Change a setting

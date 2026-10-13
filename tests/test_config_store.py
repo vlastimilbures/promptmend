@@ -401,6 +401,28 @@ def test_save_and_delete_secret(saved_mode: Path) -> None:
     assert OPENROUTER_VALUE not in str(exc.value)
 
 
+# A config.toml or secrets.toml kept as a symlink (into a dotfiles repo) is written through
+# to its target; the link stays a link (#236). A dangling link creates its target.
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need a privilege on Windows")
+def test_saving_writes_through_a_symlink(saved_mode: Path, tmp_path: Path) -> None:
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    (dotfiles / "config.toml").write_text("config_version = 1\n", "utf-8")
+    (saved_mode / "config.toml").symlink_to(dotfiles / "config.toml")
+    (saved_mode / "secrets.toml").symlink_to(dotfiles / "secrets.toml")  # dangling
+
+    config_store.save_settings(config_store.read_settings(), {"OPENROUTER_MODEL": "x/m"})
+    config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
+
+    assert (saved_mode / "config.toml").is_symlink()
+    assert (saved_mode / "secrets.toml").is_symlink()
+    assert 'OPENROUTER_MODEL = "x/m"' in (dotfiles / "config.toml").read_text("utf-8")
+    assert stat.S_IMODE((dotfiles / "secrets.toml").stat().st_mode) == 0o600
+    settings = Settings.load()
+    assert (settings.openrouter_model, settings.openrouter_api_key) == ("x/m", OPENROUTER_VALUE)
+    assert sorted(p.name for p in dotfiles.iterdir()) == ["config.toml", "secrets.toml"]
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
 def test_secrets_file_is_mode_600_from_creation(saved_mode: Path) -> None:
     old = os.umask(0)  # even with no umask, the file is never group or world readable

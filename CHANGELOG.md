@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Fixed
+- Saving a setting or a key no longer replaces a symlinked `config.toml` or `secrets.toml`
+  with a plain file: the file the link points to is written, so a copy kept in a dotfiles
+  repo keeps getting the changes (#236).
+
 ## 0.24.0 - 2026-10-08
 
 ### Added
