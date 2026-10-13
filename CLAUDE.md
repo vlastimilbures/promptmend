@@ -699,8 +699,8 @@ It also requires `https` cloud base URLs (plain `http` only to loopback).
 `providers.base.post_json()` (the only HTTP call) gives a loopback URL its own `HTTPTransport`,
 which makes httpx skip env and system proxies for it; every other URL keeps the proxy.
 `scripts/bench_models.py` builds through it too. A new provider that can leave the machine must
-return through `_gate()` and be listed in `_leaves_machine()`. `PROMPT_LOCAL_ONLY=true` makes
-`make_provider()` refuse such a provider before building it (and `_gate()` refuses too), so it
+be listed in `_leaves_machine()` (make_provider()'s one `_gate()` tail then wraps it).
+`PROMPT_LOCAL_ONLY=true` makes `make_provider()` refuse such a provider before building it, so it
 overrides any `--provider` a trigger passes; `PROMPT_PROVIDER` only sets the bare CLI's default.
 
 ### Espanso integration contract
