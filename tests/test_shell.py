@@ -106,6 +106,8 @@ def test_shell_is_listed_and_documented() -> None:
         ("--version", ("--version",)),
         ("ui", ("ui",)),
         ("setup", ("setup",)),
+        ("espanso deploy --espanso-dir e", ("espanso", "deploy", "--espanso-dir", "e")),
+        ("history reset", ("history", "reset")),
     ],
     ids=lambda v: v if isinstance(v, str) else "",
 )
@@ -119,7 +121,7 @@ def test_lines_that_run(line: str, argv: tuple[str, ...]) -> None:
     [
         ("improve", "Not from the shell: the Espanso triggers run it"),
         ("improve --profile --help", "Not from the shell: the Espanso triggers run it"),
-        ("improve --source argument --text hi", "use the Try tab of `promptmend ui`"),
+        ("improve --source argument --text hi", "use the Try tab (7) of `promptmend ui`"),
         ("persona", "Not from the shell: the -p- trigger runs it"),
         ("shell", "Not from the shell: this is the shell"),
         (f"secrets set OPENROUTER_API_KEY {KEY}", "holds a key"),
@@ -140,6 +142,16 @@ def test_lines_that_are_refused(line: str, message: str) -> None:
     assert message in decided.message
     assert KEY not in decided.message
     assert not shell.runs_here(line.split())
+
+
+@pytest.mark.parametrize("path", list(console.POLICY), ids=" ".join)
+def test_the_shell_follows_the_interface_policy(path: tuple[str, ...]) -> None:
+    # One table (#239): what the interface refuses the shell refuses, except `ui`, and the
+    # shell itself; a dialog or terminal command runs here (or misses its arguments).
+    refuses = console.POLICY[path].kind == console.REFUSE
+    refused = path == ("shell",) or (path != ("ui",) and refuses)
+    kind = shell.plan(" ".join(path)).kind
+    assert kind == shell.REFUSE if refused else kind in (shell.RUN, shell.ERROR)
 
 
 @pytest.mark.parametrize(
