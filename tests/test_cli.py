@@ -18,7 +18,7 @@ import promptmend.cli as cli
 from promptmend.cli import _read_input, app
 from promptmend.config import Settings
 from promptmend.prompt_builder import system_prompt
-from promptmend.providers.base import ProviderError
+from promptmend.providers.base import TRUNCATED_NOTE, ProviderError
 from promptmend.redaction import DEFAULT_IGNORABLE
 
 if TYPE_CHECKING:
@@ -90,9 +90,26 @@ def test_empty_input_reports_inline() -> None:
 
 # An oversized draft (an accidental copy of a log or document) is refused inline.
 def test_too_long_input_reports_inline() -> None:
-    result = improve("--provider", "ollama", "--source", "stdin", input="x" * 50_001)
+    result = improve("--provider", "ollama", "--source", "argument", "--text", "x" * 50_001)
     assert result.exit_code == 0
     assert result.stdout == "[promptmend: Input is too long (50001 chars, max 50000)]"
+
+
+# stdin is read only up to one character past the limit, so a huge pipe is never loaded whole.
+def test_too_long_stdin_is_read_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    sizes: list[int] = []
+
+    class Huge:
+        def read(self, size: int = -1) -> str:
+            sizes.append(size)
+            return "x" * (size if size >= 0 else 10**6)
+
+    monkeypatch.setattr(sys, "stdin", Huge())
+    with pytest.raises(ProviderError, match=r"^Input is too long \(over 50000 chars\)$"):
+        _read_input("stdin", None)
+    assert sizes == [50_001]
+    result = improve("--provider", "ollama", "--source", "stdin", input="x" * 50_001)
+    assert result.stdout == "[promptmend: Input is too long (over 50000 chars)]"
 
 
 # CLI output has no trailing newline, since Espanso inserts stdout verbatim.
@@ -270,6 +287,14 @@ def test_unexpected_error_reports_inline(stub_provider: StubProvider) -> None:
     assert result.stdout == "[promptmend: unexpected error: 'kaboom']"
 
 
+# An unexpected error's text is pasted into the focused app, so a key it quotes is redacted.
+def test_unexpected_error_redacts_a_key(stub_provider: StubProvider) -> None:
+    stub_provider.exc = RuntimeError(f"bad value {FAKE_KEY}")
+    result = improve("--source", "argument", "--text", "draft")
+    assert FAKE_KEY not in result.stdout
+    assert result.stdout.startswith("[promptmend: unexpected error: bad value <redacted, ")
+
+
 # --copy writes the result to the clipboard and still prints it.
 def test_copy_writes_clipboard(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
@@ -281,13 +306,14 @@ def test_copy_writes_clipboard(
     assert copied == ["improved"]
 
 
-# A clipboard failure on --copy surfaces inline instead of a traceback.
+# A clipboard failure on --copy surfaces inline, and the paid rewrite is still pasted after it.
 def test_copy_clipboard_unavailable_reports_inline(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
 ) -> None:
     monkeypatch.setattr(pyperclip, "copy", _no_clipboard)
     result = improve("--copy", "--source", "argument", "--text", "draft")
     assert result.stdout.startswith("[promptmend: Clipboard unavailable")
+    assert result.stdout.endswith("; the rewrite is pasted instead]\n\nimproved")
 
 
 # --source stdin reads the draft from standard input.
@@ -677,6 +703,13 @@ def test_fenced_reply_is_pasted_unfenced(stub_provider: StubProvider) -> None:
     stub_provider.result = "```markdown\nWrite a haiku about Monday mornings.\n```"
     result = improve("--profile", "general", "--source", "argument", "--text", "draft")
     assert result.stdout == "Write a haiku about Monday mornings."
+
+
+# A reply that stopped early keeps its stop note, and its fence is still stripped.
+def test_fenced_reply_with_stop_note_is_unfenced(stub_provider: StubProvider) -> None:
+    stub_provider.result = "```\nhello\n```" + TRUNCATED_NOTE
+    result = improve("--profile", "general", "--source", "argument", "--text", "draft")
+    assert result.stdout == "hello" + TRUNCATED_NOTE
 
 
 # An invisible character before the fence cannot hide it, and an empty fenced reply is

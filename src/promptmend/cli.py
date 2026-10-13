@@ -278,7 +278,11 @@ def _read_input(source: str, text: str | None) -> str:
             )
         return str(_clipboard("paste"))
     if source == "stdin":
-        return sys.stdin.read()
+        # Bounded, so a piped multi-gigabyte file is never loaded whole just to be refused.
+        draft = sys.stdin.read(MAX_DRAFT_CHARS + 1)
+        if len(draft) > MAX_DRAFT_CHARS:
+            raise ProviderError(f"Input is too long (over {MAX_DRAFT_CHARS} chars)")
+        return draft
     if source == "argument":
         return text or ""
     raise ProviderError("source must be clipboard, stdin, or argument")
@@ -309,20 +313,32 @@ def _split_stop_note(result: str) -> tuple[str, str]:
     return result[: match.start()], match.group().lstrip("\n")
 
 
+def _copy_failed(text: str, rec: recorder.Recorder) -> str:
+    """Copy ``text`` (the rewrite) for clipboard output and --copy: "" on success, else the
+    marker to print before the rewrite, which is then pasted rather than lost (outcome
+    clipboard_failed)."""
+    try:
+        _clipboard("copy", text)
+    except Exception as exc:  # any failure: this runs after improve's guard, and must not lose it
+        rec.outcome = recorder.CLIPBOARD_FAILED
+        reason = (
+            str(exc)
+            if isinstance(exc, ClipboardUnavailable)
+            else f"Clipboard unavailable: {redact_words(str(exc))}"
+        )
+        return f"[promptmend: {reason}; the rewrite is pasted instead]\n\n"
+    return ""
+
+
 def _deliver(result: str, note: str, rec: recorder.Recorder) -> str:
     """Clipboard output (#134): copy the rewrite and return what to print, which is only the
     markers (the sent-despite ``note``, a stop note), so a plain success prints nothing and
     Espanso just erases the trigger. If the copy fails, the rewrite is printed after the
-    error marker instead, so it is pasted rather than lost (outcome clipboard_failed)."""
-    import pyperclip
-
+    error marker instead (_copy_failed())."""
     rewrite, stop = _split_stop_note(result)
-    try:
-        pyperclip.copy(rewrite)
-    except Exception as exc:  # any failure: this runs after improve's guard, and must not lose it
-        rec.outcome = recorder.CLIPBOARD_FAILED
-        error = f"[promptmend: Clipboard unavailable: {exc}; the rewrite is pasted instead]"
-        return f"{note}{error}\n\n{result}"
+    error = _copy_failed(rewrite, rec)
+    if error:
+        return f"{note}{error}{result}"
     return "\n\n".join(marker for marker in (note.rstrip("\n"), stop) if marker)
 
 
@@ -386,20 +402,23 @@ def rewrite(
             provider, cfg, allow_flagged=allow_flagged, observer=observer, force_remote=True
         )
     ran.built = built
-    result = built.generate(draft, system)
     # Cleaned first, so an invisible character cannot hide a fence from the strip. A reply
     # wrapped in one code fence would be pasted with the fence (flash-lite wrapped 16 of 36
-    # with the old general profile).
-    result = strip_outer_fence(_clean(result))
+    # with the old general profile). A stop note is split off first, since it would leave the
+    # fence short of the reply's end.
+    body, stop = _split_stop_note(_clean(built.generate(draft, system)))
+    body = strip_outer_fence(body)
     if TEMPLATE_MARKER in system:
-        result = repair_template_tags(result)
-    return result
+        body = repair_template_tags(body)
+    return f"{body}\n\n{stop}" if stop else body
 
 
 def marker(exc: Exception) -> str:
     """The bracketed marker printed in place of a rewrite that failed with ``exc``."""
-    expected = isinstance(exc, ProviderError | ValueError)
-    return f"[promptmend: {'' if expected else 'unexpected error: '}{exc}]"
+    if isinstance(exc, ProviderError | ValueError):
+        return f"[promptmend: {exc}]"
+    # Pasted into the focused app: a Python message can quote the value that caused it.
+    return f"[promptmend: unexpected error: {redact_words(str(exc))}]"
 
 
 # Set only by the managed Espanso matches, each to its own literal value; hidden from --help.
@@ -481,9 +500,6 @@ def improve(
         result = rewrite(
             raw, provider, cfg, profile, ran, allow_flagged=allow_flagged, observer=rec.observer
         )
-        clipboard_output = cfg.output == CLIPBOARD
-        if copy and not clipboard_output:
-            _clipboard("copy", result)
     except Exception as exc:
         # Nothing may traceback or exit nonzero: Espanso cannot surface stderr, so emit a
         # visible bracketed marker instead of a blank expansion.
@@ -497,7 +513,10 @@ def improve(
 
     rec.profile_id = ran.profile_id
     note = _sent_despite_note(ran.built)
-    _emit(_deliver(result, note, rec) if clipboard_output else note + result)
+    if cfg.output == CLIPBOARD:
+        _emit(_deliver(result, note, rec))
+    else:
+        _emit(note + (_copy_failed(result, rec) if copy else "") + result)
     rec.emitted()
     rec.finish()
 
