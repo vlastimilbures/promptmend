@@ -399,7 +399,7 @@ def marker(exc: Exception) -> str:
     # ProviderErrors word their own text; a ValueError may come from a library.
     if isinstance(exc, ProviderError):
         return f"[promptmend: {exc}]"
-    if isinstance(exc, _EXPECTED_ERRORS):
+    if isinstance(exc, ValueError):
         return f"[promptmend: {redact_message(str(exc))}]"
     return f"[promptmend: unexpected error: {redact_message(str(exc))}]"
 
