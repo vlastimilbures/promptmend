@@ -50,7 +50,10 @@ def _checkout(path: str | None) -> Path:
     return root
 
 
-@app.command("migrate")
+@app.command(
+    "migrate",
+    short_help="Copy the profiles you added or edited in a checkout to your profile folder.",
+)
 @guard
 def profiles_migrate(
     checkout: str | None = typer.Option(

@@ -155,7 +155,7 @@ def _layers_lines(layers: ConfigLayers, raw: bool) -> list[str]:
     return lines
 
 
-@config_app.command("show")
+@config_app.command("show", short_help="Each setting's effective value and where it comes from.")
 @guard
 def config_show(
     raw: bool = typer.Option(False, "--raw", help="Also list what each settings file sets"),
@@ -294,7 +294,9 @@ def _checkout(path: str | None, option: str) -> Path | None:
     return Path(path).expanduser() if path else None
 
 
-@config_app.command("migrate")
+@config_app.command(
+    "migrate", short_help="Move the .env in use to config.toml and its keys to the secret store."
+)
 @guard
 def config_migrate(
     dry_run: bool = _DRY_RUN,
@@ -337,7 +339,9 @@ def config_migrate(
     typer.echo("Undo with `promptmend config rollback`.")
 
 
-@config_app.command("rollback")
+@config_app.command(
+    "rollback", short_help="Undo `config migrate`: put each .env back, with config.toml set aside."
+)
 @guard
 def config_rollback(
     dry_run: bool = _DRY_RUN, yes: bool = _YES, preview_token: str = _TOKEN
@@ -352,7 +356,10 @@ def config_rollback(
     typer.echo("Rolled back: the .env is read again." if plan.read_again else "Rolled back.")
 
 
-@config_app.command("retire")
+@config_app.command(
+    "retire",
+    short_help="Move an earlier checkout's .env, once its settings are copied, into the backup.",
+)
 @guard
 def config_retire(
     source: str = typer.Option(

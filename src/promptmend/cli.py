@@ -234,8 +234,9 @@ def _main(
         help="Print the installed version and exit",
     ),
 ) -> None:
-    """Espanso-invoked prompt rewriter. Keeps ``improve`` as an explicit subcommand
-    so the Espanso match files and docs (``promptmend improve ...``) resolve."""
+    """Rewrite a draft into a clearer prompt, and set up and manage PromptMend."""
+    # This callback keeps ``improve`` an explicit subcommand, so the Espanso match files
+    # and the docs (``promptmend improve ...``) resolve.
     # A piped stdout uses the ANSI code page on Windows, which lacks many letters (Czech ř,
     # Vietnamese ố): printing such a rewrite would crash into a blank expansion.
     for stream in (sys.stdin, sys.stdout):

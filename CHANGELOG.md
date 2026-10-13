@@ -10,6 +10,10 @@ All notable changes to this project are documented here. The format follows
 - The `improve` refusal in `promptmend shell` now names the Try tab (7) of `promptmend ui`.
 - The interface reloads faster after each change: it asks Espanso for its folder and runs
   each launcher-lookup command once per reload instead of up to three times (#242).
+- `promptmend --help` describes the tool in one sentence instead of a developer note, and
+  the `config`, `profiles` and `history` command lists give `config show`, `migrate`,
+  `rollback`, `retire`, `profiles migrate` and `history prune` a one-line summary; each
+  command's own `--help` keeps the full text (#247).
 ### Fixed
 - Setup's Done step no longer says "Match files: not installed" when the only files that
   differ are ones you edited and kept, which the Espanso step already says it leaves alone;
