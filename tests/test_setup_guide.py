@@ -117,6 +117,14 @@ def test_done_rows_count_a_kept_edited_file_as_installed(tmp_path: Path) -> None
     )
 
 
+def test_done_rows_say_a_skipped_step_is_skipped() -> None:
+    rows = setup_guide.done_rows(_settings(), [], None, None, skipped=["espanso", "test"])
+    assert [(r.ok, r.label, r.text) for r in rows[1:]] == [
+        (True, "Match files", "skipped (--no-deploy)"),
+        (True, "Test", "skipped (--no-smoke-test)"),
+    ]
+
+
 def test_done_rows_point_a_missing_key_at_the_legacy_env_file() -> None:
     key = setup_guide.KeyRow("OPENROUTER_API_KEY", False, None, ("-i-",), True)
     rows = setup_guide.done_rows(_settings(), [key], None, None, "/x/.env")

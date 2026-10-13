@@ -3,6 +3,7 @@ detach dialogs (`espanso deploy|detach`)."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from textual import on
@@ -103,12 +104,13 @@ class TriggersPane(Pane):
     def _deploy(self) -> None:
         self.start_deploy()
 
-    def start_deploy(self) -> None:
+    def start_deploy(self, plan_of: Callable[[], deploy.Plan] | None = None) -> None:
         """Read the plan in a worker, then preview it in a dialog (also the previous install
-        screen's step 3)."""
+        screen's step 3, whose ``plan_of`` is setup's --espanso-dir/--launcher plan)."""
+        read = plan_of or current_plan
         if self.claim():
             self.report("Reading the match files…")
-            self.background(lambda: self.app.call_from_thread(self._ask_deploy, current_plan()))
+            self.background(lambda: self.app.call_from_thread(self._ask_deploy, read(), read))
 
     def claim(self) -> bool:
         """Start a deploy or detach unless one is already open: a second dialog would apply
@@ -119,14 +121,14 @@ class TriggersPane(Pane):
         self.busy = True
         return True
 
-    def _ask_deploy(self, plan: deploy.Plan) -> None:
+    def _ask_deploy(self, plan: deploy.Plan, read: Callable[[], deploy.Plan]) -> None:
         if plan.is_noop:
             self.busy = False
             self.report("Nothing to do: every match file is in sync.")
             return
         if plan.only_forgets:  # the manifest only: no file is written, so nothing to ask
             self.report("Forgetting deploy records of files that are gone…")
-            self.background(lambda: self._apply(plan, {}))
+            self.background(lambda: self._apply(plan, {}, read))
             return
         lines = [f"{s.state:<9} {s.name}" for s in plan.steps]
         if plan.legacy is not None:
@@ -152,15 +154,20 @@ class TriggersPane(Pane):
                 return
             choices = {s.name: values[f"choice-{i}"] for i, s in enumerate(conflicts)}
             self.report("Deploying…")
-            self.background(lambda: self._apply(plan, choices))
+            self.background(lambda: self._apply(plan, choices, read))
 
         self.app.push_screen(
             FormModal("Deploy the match files", fields, submit="Deploy", preview=preview), done
         )
 
-    def _apply(self, plan: deploy.Plan, choices: dict[str, str]) -> None:
+    def _apply(
+        self,
+        plan: deploy.Plan,
+        choices: dict[str, str],
+        read: Callable[[], deploy.Plan],
+    ) -> None:
         """In the worker: apply the plan the person saw, unless the files changed since."""
-        if plan_digest(current_plan()) != plan_digest(plan):
+        if plan_digest(read()) != plan_digest(plan):
             raise deploy.DeployError(
                 "the match files or the deploy record changed since the preview; nothing was "
                 "written. Press Deploy again to see the new plan"

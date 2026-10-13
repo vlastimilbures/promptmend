@@ -1,7 +1,9 @@
-"""`setup`: the first-run flow. Settings and the default profile, the API key, a deploy
-preview (applied only when you agree or pass --deploy), and a smoke test against a stub on
-127.0.0.1, never a paid call. A .env in use is migrated only with your consent, and so are
-the settings and profiles of an earlier checkout install (#110)."""
+"""`setup`: the first-run flow. On a terminal it opens the wizard (tui/setup_wizard.py), its
+options prefilling the steps (#244). With --non-interactive (or --plain) it asks nothing:
+settings and the default profile from the options, the API key from --api-key-stdin, a deploy
+preview (applied with --deploy), and a smoke test against a stub on 127.0.0.1, never a paid
+call. A .env migration and an earlier checkout install's settings, profiles and .env (#110)
+are only listed there, with their commands: the wizard applies them, with consent."""
 
 from __future__ import annotations
 
@@ -348,8 +350,8 @@ def setup(
     deploy_files: bool | None = typer.Option(
         None,
         "--deploy/--no-deploy",
-        help="Write the match files, or skip the deploy step; default: preview only (on a "
-        "terminal --deploy puts the focus on Install and --no-deploy skips the step)",
+        help="--non-interactive: write the match files, or skip the step (default: a "
+        "preview). On a terminal: focus Install (still a press), or leave the step out",
         show_default=False,
     ),
     espanso_dir: str | None = typer.Option(
@@ -365,7 +367,8 @@ def setup(
     migrate_from: str | None = typer.Option(
         None,
         "--migrate-from",
-        help="An earlier checkout to copy settings and profiles from; default: the one "
+        help="An earlier checkout to take settings and profiles from (the wizard's earlier "
+        "install step looks there; --non-interactive lists the commands); default: the one "
         "the match files, the deploy manifest or uv name",
         metavar="PATH",
     ),
@@ -377,14 +380,14 @@ def setup(
 ) -> None:
     """First run: settings, the API keys, the Espanso match files and a smoke test against a
     stub on 127.0.0.1 (never a paid call). On a terminal it opens full screen, one step at a
-    time: --provider and --profile preselect a choice, --migrate-from opens the earlier
-    install with that path, and --no-deploy or --no-smoke-test skip a step. With
+    time: --provider and --profile preselect a choice, --migrate-from adds the earlier
+    settings step, which looks at that path, and --no-deploy or --no-smoke-test skip a step. With
     --non-interactive (or --plain) it asks nothing. Re-run it any time; it changes only what
     you choose."""
     interactive = not (non_interactive or plain)
     if interactive and not ui_cmd.on_a_terminal():
         common.fail(
-            "setup needs an answer, but this is not a terminal; run it in a terminal or pass "
+            "setup needs a terminal (stdin and stdout); run it in a terminal or pass "
             "--non-interactive",
             common.NEEDS_TERMINAL,
         )
@@ -425,7 +428,8 @@ def setup(
     common.show_findings(layers)
     typer.echo(
         "PromptMend setup: settings, API keys, Espanso's match files and a test on a local "
-        "stub. Nothing changes unless you say yes; re-run it any time."
+        "stub. Asks nothing: it uses the options and the current settings, and lists what "
+        "is left with its command; re-run it any time."
     )
 
     steps.heading("Usage history")
@@ -459,12 +463,12 @@ def setup(
         _profiles_step(steps, previous.root)
     if writable:
         layers, settings = common.load_layers()
-    chosen = provider or settings.provider
+    chosen = provider if provider is not None else settings.provider
     if chosen not in PROVIDER_NAMES:
         raise typer.BadParameter(
             f"PROMPT_PROVIDER {safe_repr(chosen)} is not a provider; pass --provider"
         )
-    picked = profile or settings.profile
+    picked = profile if profile is not None else settings.profile
     _check_profile(picked, settings.profile_overrides)
     typer.echo(f"  Provider: {chosen}; profile: {picked}")
     if writable:

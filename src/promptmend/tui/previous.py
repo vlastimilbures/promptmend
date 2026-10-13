@@ -76,11 +76,22 @@ class PreviousInstallScreen(Screen[None]):
 
     last_message = ""
 
-    def __init__(self, entered: Path | None = None) -> None:
+    def __init__(
+        self,
+        entered: Path | None = None,
+        *,
+        espanso_dir: Path | None = None,
+        launcher: Path | None = None,
+        plan_of: Callable[[], deploy.Plan] | None = None,
+    ) -> None:
         super().__init__()
         # The path typed into "Enter a path…" (or setup's --migrate-from): detected again
         # with it on every refresh.
         self.entered = entered
+        # setup's --espanso-dir and --launcher: detection, the deploy and the retire use them.
+        self.espanso_dir = espanso_dir
+        self.launcher = launcher
+        self.plan_of = plan_of
         self.found = previous_install.Detection()
 
     def compose(self) -> ComposeResult:
@@ -114,23 +125,29 @@ class PreviousInstallScreen(Screen[None]):
 
     def show(self, state: State) -> None:
         """Fill the screen from a fresh State; with an entered path, detect again with it."""
-        if self.entered is None:
+        if self.entered is None and self.espanso_dir is None and self.launcher is None:
             self.render_found(state.previous, state.previous_error)
         else:
             self._detect(self.entered)
 
     @work(thread=True, group="previous", exclusive=True, exit_on_error=False)
-    def _detect(self, entered: Path) -> None:
+    def _detect(self, entered: Path | None) -> None:
         try:
-            found = previous_install.detect(entered=entered)
+            found = previous_install.detect(
+                entered=entered, espanso_dir=self.espanso_dir, launcher=self.launcher
+            )
         except EXPECTED as exc:
             self.app.call_from_thread(self.render_found, previous_install.Detection(), str(exc))
             return
         self.app.call_from_thread(self._show_entered, entered, found)
 
-    def _show_entered(self, entered: Path, found: previous_install.Detection) -> None:
+    def _show_entered(self, entered: Path | None, found: previous_install.Detection) -> None:
         self.render_found(found, None)
-        if found.gated or any(previous_install.ENTERED in c.signals for c in found.candidates):
+        if (
+            entered is None
+            or found.gated
+            or any(previous_install.ENTERED in c.signals for c in found.candidates)
+        ):
             return
         # Not a checkout: say so, and stop looking there on every reload.
         self.entered = None
@@ -286,12 +303,12 @@ class PreviousInstallScreen(Screen[None]):
             return
         best = previous_install.best(self.found.candidates)
         if best is None or best.env_file is None or self.found.pending is not None:
-            triggers.start_deploy()
+            triggers.start_deploy(self.plan_of)
             return
 
         def done(yes: bool | None) -> None:
             if yes:
-                triggers.start_deploy()
+                triggers.start_deploy(self.plan_of)
 
         # As setup's deploy step (#110): deploying before the copy leaves the triggers with
         # neither the old settings nor the new ones.
@@ -318,6 +335,11 @@ class PreviousInstallScreen(Screen[None]):
         """`espanso path config` may take a while: asked here, in a worker, never on the UI
         thread. Without its answer retire is refused, as in `config retire --from`."""
         try:
+            if self.espanso_dir is not None:
+                folder = self.espanso_dir
+                plan = config_store.plan_retire(root, espanso_dir=folder)
+                self.app.call_from_thread(self._ask_retire, root, folder, plan)
+                return
             found = deploy.locate_espanso_dir()
             if found.fallback:
                 raise config_store.MigrationError(

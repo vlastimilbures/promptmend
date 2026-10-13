@@ -5,6 +5,7 @@ logged as that command. What each step says comes from setup_guide.py (no Textua
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
-from .. import config, config_files, config_store, deploy, setup_guide, smoke
+from .. import config, config_files, config_store, deploy, previous_install, setup_guide, smoke
 from ..commands import common
 from ..commands import settings as settings_cmd
 from ..commands import setup as setup_cmd
@@ -174,12 +175,28 @@ class SetupScreen(Screen[None]):
                 )
         yield Footer()
 
+    @property
+    def skipped(self) -> list[str]:
+        """The steps `setup --no-deploy`/`--no-smoke-test` leave out."""
+        return [
+            step
+            for step, skip in (
+                ("espanso", self.options.deploy is False),
+                ("test", not self.options.smoke_test),
+            )
+            if skip
+        ]
+
+    def _named(self) -> Path | None:
+        """`setup --migrate-from`'s path, unless detection would not run (PROMPTMEND_ENV,
+        or settings or a key already saved)."""
+        if self.options.migrate_from is None or previous_install.gate(os.environ):
+            return None
+        return self.options.migrate_from
+
     def _steps(self, earlier: bool) -> list[str]:
-        skipped = {"espanso"} if self.options.deploy is False else set()
-        if not self.options.smoke_test:
-            skipped.add("test")
-        earlier = earlier or self.options.migrate_from is not None
-        return [s for s in setup_guide.steps(earlier) if s not in skipped]
+        earlier = earlier or self._named() is not None
+        return [s for s in setup_guide.steps(earlier) if s not in self.skipped]
 
     @staticmethod
     def _button(id_: str, label: str) -> Button:
@@ -253,9 +270,10 @@ class SetupScreen(Screen[None]):
                 "lets this setup and the interface change them:"
             )
             lines += [f"  {line}" for line in migration.describe()]
-        offer = wants_offer(state.previous) or self.options.migrate_from is not None
-        if self.options.migrate_from is not None:
-            lines.append(f"Earlier install… looks at {self.options.migrate_from}.")
+        named = self._named()
+        offer = wants_offer(state.previous) or named is not None
+        if named is not None:
+            lines.append(f"Earlier install… looks at {named}.")
         elif offer:
             lines.append(
                 "An earlier install ran from a checkout of this project. Earlier install… "
@@ -432,7 +450,7 @@ class SetupScreen(Screen[None]):
 
     @on(Button.Pressed, "#setup-previous")
     def _previous(self) -> None:
-        self.manage.open_previous(self.options.migrate_from)
+        self.manage.open_previous(self._named(), self.options)
 
     # The Espanso step.
 
@@ -542,7 +560,7 @@ class SetupScreen(Screen[None]):
             return
         summary = Text()
         for row in setup_guide.done_rows(
-            state.settings, self.keys, self.plan, self.tested, common.legacy_env()
+            state.settings, self.keys, self.plan, self.tested, common.legacy_env(), self.skipped
         ):
             summary.append("✓ " if row.ok else "✗ ", style="green" if row.ok else "yellow")
             summary.append(f"{row.label}: ", style="bold")

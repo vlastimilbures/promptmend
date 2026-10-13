@@ -329,6 +329,11 @@ def test_wizard_options_prefill_and_skip_steps(
             "PROMPT_PROVIDER": "ollama",
             "PROMPT_PROFILE": "general",
         }
+        wizard.go("done")
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "✓ Match files: skipped (--no-deploy)" in summary
+        assert "✓ Test: skipped (--no-smoke-test)" in summary
 
     drive(
         scenario,
@@ -370,6 +375,46 @@ def test_wizard_migrate_from_opens_the_earlier_install_with_that_path(
         assert f"{old} is not a checkout" in str(screen.query_one(".result", Static).render())
 
     drive(scenario, setup=_options(espanso, migrate_from=old))
+
+
+def test_wizard_passes_its_folder_and_launcher_to_the_earlier_install(
+    saved: Path, espanso: FakeRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from promptmend import previous_install
+    from promptmend.tui.previous import PreviousInstallScreen
+
+    named = tmp_path / "named"
+    (named / "match").mkdir(parents=True)
+    old = tmp_path / "old"
+    asked: list[dict[str, object]] = []
+    real = previous_install.detect
+
+    def detect(*args: object, **kwargs: object) -> previous_install.Detection:
+        asked.append(kwargs)
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(previous_install, "detect", detect)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await press(app, pilot, "#setup-previous")
+        screen = app.screen
+        assert isinstance(screen, PreviousInstallScreen)
+        assert screen.espanso_dir == named
+        assert screen.launcher == Path("/bin/pm")
+        assert screen.plan_of is not None
+        assert screen.plan_of().espanso_dir == named.resolve()
+        assert asked[-1] == {"entered": old, "espanso_dir": named, "launcher": Path("/bin/pm")}
+
+    options = SetupOptions(str(named), "/bin/pm", standalone=True, migrate_from=old)
+    drive(scenario, setup=options)
+
+
+def test_wizard_ignores_migrate_from_while_the_gate_is_closed(espanso: FakeRunner) -> None:
+    # PROMPTMEND_ENV is set (conftest): detection never runs, so no earlier settings step.
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        assert "earlier" not in _wizard(app).order
+
+    drive(scenario, setup=_options(espanso, migrate_from=Path("/old")))
 
 
 def test_needs_setup_false_without_a_plan(saved: Path, espanso: FakeRunner) -> None:

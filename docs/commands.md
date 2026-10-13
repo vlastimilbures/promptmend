@@ -156,7 +156,7 @@ ordinary exit codes.
 | 0 | Done |
 | 1 | Failed or refused, or you declined a confirmation |
 | 2 | Usage error: an unknown option, setting or value |
-| 3 | An answer was needed but stdin is not a terminal, or `ui` or `shell` ran without a terminal |
+| 3 | An answer was needed but stdin is not a terminal, or `ui`, `shell` or `setup` (without `--non-interactive`) ran without a terminal |
 | 4 | `doctor` or `config validate` found a problem |
 
 `improve` and `persona` always exit 0 (see [Scripting contract](#scripting-contract)).

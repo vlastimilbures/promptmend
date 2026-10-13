@@ -26,7 +26,7 @@ from .intro import AboutScreen, IntroScreen
 from .previous import PreviousInstallScreen, wants_offer
 from .profiles_pane import ProfilesPane
 from .settings_pane import SettingsPane
-from .setup_wizard import SetupOptions, SetupScreen, needs_setup
+from .setup_wizard import SetupOptions, SetupScreen, make_plan, needs_setup
 from .state import State, gather
 from .triggers_pane import TriggersPane
 from .try_pane import TryPane
@@ -292,9 +292,24 @@ class ManageApp(App[int]):
         if not any(isinstance(s, SetupScreen) for s in self.screen_stack):
             self.push_screen(SetupScreen())
 
-    def open_previous(self, entered: Path | None = None) -> None:
+    def open_previous(
+        self, entered: Path | None = None, options: SetupOptions | None = None
+    ) -> None:
         """Show the switch from an earlier checkout install, unless it is already open; with
-        ``entered`` (`setup --migrate-from`), detected with that path."""
+        ``entered`` (`setup --migrate-from`), detected with that path, and with the wizard's
+        ``options``, its --espanso-dir and --launcher for detection, deploy and retire."""
         self.offered = True
-        if not any(isinstance(s, PreviousInstallScreen) for s in self.screen_stack):
+        if any(isinstance(s, PreviousInstallScreen) for s in self.screen_stack):
+            return
+        if options is None or (options.espanso_dir is None and options.launcher is None):
             self.push_screen(PreviousInstallScreen(entered))
+            return
+        named = options
+        self.push_screen(
+            PreviousInstallScreen(
+                entered,
+                espanso_dir=Path(named.espanso_dir).expanduser() if named.espanso_dir else None,
+                launcher=Path(named.launcher).expanduser() if named.launcher else None,
+                plan_of=lambda: make_plan(named)[0],
+            )
+        )

@@ -8,7 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 - `setup` on a terminal always opens the full-screen wizard: `--provider` and `--profile`
-  preselect that choice, `--migrate-from` shows the earlier install with that path,
+  preselect that choice, `--migrate-from` adds the earlier settings step, which looks at that path,
   `--deploy` puts the focus on the install button, and `--no-deploy` and `--no-smoke-test`
   leave out those steps, instead of switching to a line-by-line mode (#244). `--plain` is now
   the same as `--non-interactive`; line-by-line questions are gone, and without a terminal

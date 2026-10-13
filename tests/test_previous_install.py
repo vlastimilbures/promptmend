@@ -1148,20 +1148,6 @@ def test_setup_non_interactive_offers_the_copy_and_writes_nothing(
     assert (root / ".env").is_file()
 
 
-def _interactive(
-    monkeypatch: pytest.MonkeyPatch, answers: dict[str, str] | None = None
-) -> FakeRunner:
-    from promptmend import smoke
-    from promptmend.commands import common
-
-    fake = FakeRunner({"espanso restart": "", **(answers or {})})
-    monkeypatch.setattr(deploy, "run_command", fake)
-    monkeypatch.setattr(common, "stdin_is_tty", lambda: True)
-    monkeypatch.setattr(common, "_getpass", lambda prompt: "")
-    monkeypatch.setattr(smoke, "run", lambda p: smoke.SmokeResult(True, smoke.REPLY, 1, "ok"))
-    return fake
-
-
 def test_setup_warns_before_deploying_ahead_of_the_copy(
     tmp_path: Path, espanso: Path, env: MutableMapping[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1169,7 +1155,10 @@ def test_setup_warns_before_deploying_ahead_of_the_copy(
     old = str(venv_launcher(root))
     deploy_old(espanso, old)
     before = {p.name: p.read_bytes() for p in (espanso / "match").iterdir()}
-    _interactive(monkeypatch)
+    from promptmend import smoke
+
+    monkeypatch.setattr(deploy, "run_command", FakeRunner({"espanso restart": ""}))
+    monkeypatch.setattr(smoke, "run", lambda p: smoke.SmokeResult(True, smoke.REPLY, 1, "ok"))
     result = _cli("setup", "--non-interactive", "--espanso-dir", str(espanso), "--launcher", UV_BIN)
     assert result.exit_code == 0, result.output
     assert "are not copied yet" in result.stderr

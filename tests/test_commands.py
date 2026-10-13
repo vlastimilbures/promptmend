@@ -1345,10 +1345,16 @@ def test_setup_no_deploy_and_no_smoke(
 def test_setup_option_errors(
     saved: Path, espanso: Path, tty: None, monkeypatch: pytest.MonkeyPatch, fake_run: FakeRunner
 ) -> None:
+    from promptmend.commands import ui as ui_cmd
+
     monkeypatch.setattr(common, "stdout_is_tty", lambda: True)
+    opened: list[object] = []
+    monkeypatch.setattr(ui_cmd, "open_setup", opened.append)
     assert _setup(espanso, "--api-key-stdin").exit_code == 2
-    # On a terminal too, a bad --profile is refused before the wizard opens.
+    # On a terminal too, a bad --provider or --profile is refused before the wizard opens.
+    assert _setup(espanso, "--provider", "nope").exit_code == 2
     assert _setup(espanso, "--profile", "nosuch").exit_code == 2
+    assert opened == []
     assert _setup(espanso, "--non-interactive", "--profile", "nosuch").exit_code == 2
     monkeypatch.setenv("PROMPT_PROVIDER", "nope")
     # The error panel wraps at the terminal width, which differs on CI runners.
