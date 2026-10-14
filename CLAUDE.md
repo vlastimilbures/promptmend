@@ -16,17 +16,8 @@ a REPL (`promptmend shell`).
 
 ## Commands
 
-Contributor install (`uv tool install --editable --compile-bytecode` constrained to `uv.lock`,
-then `promptmend espanso deploy --yes`, which substitutes the absolute CLI path into the match
-files, since GUI-launched Espanso does not inherit shell PATH):
-
-```bash
-./scripts/install_macos.sh      # macOS
-.\scripts\install_windows.ps1   # Windows
-```
-
-Users install a release instead (docs/install.md: `uv tool install promptmend -c
-<constraints.txt>`, the Homebrew tap, WinGet, or the Release's `install.ps1`).
+Contributor install: `scripts/install_macos.sh` / `scripts/install_windows.ps1` (an editable
+`uv tool install` plus `espanso deploy`; agents never run them, see below).
 
 Checks (CONTRIBUTING "Checks"; CI runs `uv sync --locked`, then these, with `pytest --cov`
 held to `fail_under = 95`):
@@ -36,7 +27,6 @@ uv run pytest --cov                             # unit tests, offline
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                                     # strict: src, scripts, tests, packaging
 uv run pre-commit run --all-files               # also YAML checks, gitleaks and zizmor
-UPDATE_SNAPSHOTS=1 uv run pytest tests/test_tui_snapshots.py  # after a tui/ screen change
 ```
 
 ## Rules for agents
@@ -56,12 +46,17 @@ UPDATE_SNAPSHOTS=1 uv run pytest tests/test_tui_snapshots.py  # after a tui/ scr
   or the relevant docs/ page.
 - After editing `espanso/match/`, rerun `scripts/update_match_history.py` (it regenerates
   `match_history.KNOWN_SOURCES`; `tests/test_deploy.py` checks it).
-- A change to a system prompt in `src/promptmend/prompts/` must keep the wordings that
-  `scripts/bench_models.py` and `tests/test_bench.py` match; change them together, and ask
-  the owner to re-run the benchmark (`--suite all --system-prompt-file`) on both default
-  models before shipping it. Known weaknesses are in CONTRIBUTING.md.
-- After a `tui/` screen change, regenerate the snapshots (`UPDATE_SNAPSHOTS=1`); the Home and
-  Try snapshots are also `docs/interface.svg` and `docs/try.svg`.
+- The variant wordings in `prompts/default.md`, the `-p-` template in
+  `espanso/match/prompts-template.yml`, `scripts/bench_models.py` and `tests/test_bench.py`
+  change together. Before shipping a `default` change, ask the owner to re-run the benchmark
+  (`--suite all --system-prompt-file`) on both default models. `general.md` is scored with
+  `--profile general` and pinned by `tests/test_prompts.py::test_general_profile_contract`.
+  Known weaknesses are in CONTRIBUTING.md.
+- After a `tui/` screen change, run `UPDATE_SNAPSHOTS=1 uv run pytest
+  tests/test_tui_snapshots.py`; the Home and Try snapshots are also `docs/interface.svg` and
+  `docs/try.svg`.
+- A test that runs `entry.main()` for `improve`/`persona` in process patches
+  `entry.discard_stderr`; never let it point pytest's own fd 2 at the null device.
 - Never tag, release, publish to PyPI, push the Homebrew formula or submit WinGet manifests
   (see Releases).
 
@@ -79,11 +74,8 @@ against `config.env_names()`), `profiles`, `privacy`, `interface`, `troubleshoot
 `benchmark` (the only home of benchmark numbers). Each page: `# Title`, an intro paragraph,
 sections, `## See also` last.
 
-`tests/test_docs.py` (`DOC_PAGES`, a fixed list; `docs/prompt-candidates/` is an archived
-record and stays out) checks every `promptmend …` invocation in README, the docs pages and the
-CHANGELOG's Unreleased and newest release notes, and every standalone `--flag` span (not in
-benchmark.md), against the Click tree; every repo link and `#anchor` resolves; README is
-PyPI-safe; each page has the skeleton.
+`tests/test_docs.py` checks every `promptmend …` invocation and `--flag` against the Click
+tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC_PAGES`).
 
 ## Espanso integration contract
 
@@ -96,9 +88,7 @@ PyPI-safe; each page has the skeleton.
   stderr empty (`entry.main()`'s `quiet_trigger()` silences warnings and points fd 2 at the
   null device before importing the CLI), catch every failure, print a `[promptmend: ...]`
   marker on stdout and exit 0. Never `ignore_error: true`: a crash must still fail visibly.
-- Everything the triggers print goes through `cli._emit()` (strips control and invisible
-  format characters, no trailing newline, UTF-8 on every OS); the draft gets the same cleaning.
-  Markers are pasted into the focused app, so an error that quotes a value goes through
+- Everything printed goes through `cli._emit()`. Markers are pasted into the focused app, so an error that quotes a value goes through
   `redaction.safe_repr()` / `redact_words()`.
 - `tests/test_yaml.py` enforces, for every match (commented-out ones too): `force_mode:
   clipboard` on every CLI match, its own `label:` (`PromptMend: …`), `left_word: true`, and a
@@ -107,9 +97,8 @@ PyPI-safe; each page has the skeleton.
 - The `-if-` form's fields stay fixed choices, each a whole args item (no free text reaches
   the CLI), each list starting with and defaulting to `default`, timeouts at most 120 s.
 - `espanso/match/prompts-core.yml` holds static snippets (no CLI call); `-ic-` (Anthropic)
-  stays commented out. `tests/test_triggers.py` replays every match's real args as a process
-  against `smoke`'s stub (exit 0, empty stderr; Windows too) and checks provider, profile,
-  tier and what is recorded.
+  stays commented out. `tests/test_triggers.py` replays every match's args as a real process
+  against `smoke`'s stub.
 - Nothing is ever deployed to Espanso's `config/`; `deploy` writes only into
   `<espanso>/match/`, never overwrites a file the user edited without an explicit choice, and
   routes every external command through `deploy.run_command`.
@@ -129,7 +118,9 @@ PyPI-safe; each page has the skeleton.
 - Cloud base URLs must be `https` (plain `http` only to loopback). `PROMPT_LOCAL_ONLY=true`
   refuses any remote provider, whatever `--provider` a trigger passes. `PROMPT_GATE_LOCAL=true`
   gates loopback providers too without making them count as remote.
-- `providers.base.post_json()` is the only HTTP call; a loopback URL bypasses env/system
+- The smoke and Try-tab stub runs get `smoke.PLACEHOLDER_KEY`, never the real key.
+- `providers.base.post_json()` is the only HTTP call that carries a draft (doctor's PyPI and
+  local-server checks make their own GETs); a loopback URL bypasses env/system
   proxies. The gate is a heuristic, not a guarantee (say so in docs).
 
 ## Settings
@@ -144,17 +135,18 @@ PyPI-safe; each page has the skeleton.
   `os.environ`, and takes only `env_names()` keys (a `.env` cannot set `HTTPS_PROXY` or
   anything else). Strict mode (the triggers, the Try tab) fails closed with a marker; repair
   mode (`strict=False`, the management commands) reports findings and falls back a layer.
-- Adding a setting: give it a field and parser in `config.py`, a row in docs/configuration.md
-  and a place in `tui/settings_model.SETTINGS`; tests fail on any of the three missing.
+- Legacy mode: with `PROMPTMEND_ENV` set (the conftest default) there is no `config.toml` and
+  no secret store, and `config set`/`secrets set` refuse.
+- Adding a setting: a field and parser in `config.py`, a row in docs/configuration.md, a line
+  in `.env.example` and an entry in `tui/settings_model.SETTINGS`; `tests/test_docs.py` and
+  `tests/test_tui_settings_model.py` fail without the last three.
 - File writes go through `config_files.write_atomic()` (mode 600 / owner-only DACL, no
   plaintext fallback). Migrations and rollbacks back up and rename, never delete.
 
 ## Trigger-path import contract
 
 `improve` and `persona` start on every keystroke trigger, so their import set is pinned by
-`tests/test_trigger_contract.py`: `FORBIDDEN` modules (commands, doctor, config_store, deploy,
-console, textual, prompt_toolkit, tomli_w, …; history/sqlite3 only when history is on), lazy imports of httpx and
-pyperclip, and module-count ceilings (`VERSION_CEILING`, `IMPROVE_CEILING`). New heavy imports
+`tests/test_trigger_contract.py` (`FORBIDDEN`, ceilings). New heavy imports
 go inside the function that needs them; `cli._LAZY_COMMANDS` loads a management command only
 when it runs. `entry.self_command()` is the argv prefix for any child that runs the CLI again.
 
@@ -163,7 +155,6 @@ when it runs. `entry.self_command()` is the argv prefix for any child that runs 
 - Local SQLite (`history.py`), **metadata only**: never prompt, response, body or key text.
   Columns are exactly `OPERATION_COLUMNS` and `ATTEMPT_COLUMNS`; `tests/test_history.py`
   holds the allowlist. Add a column only through a new `_MIGRATIONS` step (forward only).
-  Every text column has a shape check and a secret-looking value is rejected.
 - Money is exact decimal text plus a unit, never REAL; a missing cost is `unknown`, never 0.
 - `record()` never raises and stays within `_BUDGET`; recording never changes stdout, the exit
   code or a retry. With `PROMPT_HISTORY=false` the trigger path never imports `history` or
@@ -180,22 +171,24 @@ when it runs. `entry.self_command()` is the argv prefix for any child that runs 
   <token printed by the preview>`.
 - `tests/test_commands.py` walks the whole command tree (no secret-named option, no key saved
   from a value, no traceback on broken config): add a new command to its `_commands()`.
-- `doctor` is read-only apart from replaying the history spool; `doctor --json` keeps
+- `doctor` changes nothing except replaying the history spool and refreshing the
+  update-check cache; `doctor --json` keeps
   `schema_version` 1 (only add check ids/keys).
 
 ## Interface (`tui/`) and shell
 
-- `textual` is imported only under `tui/`, reached only through `commands/ui.py`;
-  `prompt_toolkit` only by `commands/shell.py`. `promptmend/console.py` (shared by both) must
-  not import textual.
+- `textual` is imported only under `tui/` (except `tui/teach.py`, which has no Textual and is
+  shared with `promptmend/console.py` and the shell), reached only through `commands/ui.py`;
+  `prompt_toolkit` only by `commands/shell.py`. `promptmend/console.py` must not import textual.
 - Each action calls the same service as its headless command and adds no logic. Keys show only
   as set/not set. Destructive actions go through a dialog whose Cancel has the focus.
 - No provider call except the explicit "Test call" and a confirmed Try tab run; the Try tab
   never touches the clipboard.
 - Every button names its headless command: `tui/teach.BUTTONS` (or `NO_COMMAND`);
-  `tests/test_tui_teach.py` parses each against the Click tree. The command line and the shell
-  run a command only when `console.POLICY` says RUN; `improve`, `persona` and key-like lines
-  are refused.
+  `tests/test_tui_teach.py` parses each against the Click tree. The interface's command line runs only
+  what `console.POLICY` marks RUN (dialog and terminal rules are redirected); `promptmend shell`
+  runs everything POLICY does not refuse (plus `ui`, minus `shell`). Both refuse `improve`,
+  `persona` and key-like lines.
 
 ## Releases
 
