@@ -169,6 +169,10 @@ when it runs. `entry.self_command()` is the argv prefix for any child that runs 
   an option or argument; `config set` refuses secret names and key-like values.
 - `config migrate|rollback` apply only with an interactive yes or `--yes --preview-token
   <token printed by the preview>`.
+- `setup` on a terminal opens the wizard (its flags only prefill or skip steps; nothing is
+  written without a press); `--non-interactive`/`--plain` asks nothing, lists a migration,
+  copy or retire as a to-do, deploys only with `--deploy`, and always discloses the usage
+  history (D-HIST-0).
 - `tests/test_commands.py` walks the whole command tree (no secret-named option, no key saved
   from a value, no traceback on broken config): add a new command to its `_commands()`.
 - `doctor` changes nothing except replaying the history spool and refreshing the

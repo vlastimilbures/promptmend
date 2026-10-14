@@ -1,7 +1,9 @@
-"""`setup`: the first-run flow. Settings and the default profile, the API key, a deploy
-preview (applied only when you agree or pass --deploy), and a smoke test against a stub on
-127.0.0.1, never a paid call. A .env in use is migrated only with your consent, and so are
-the settings and profiles of an earlier checkout install (#110)."""
+"""`setup`: the first-run flow. On a terminal it opens the wizard (tui/setup_wizard.py), its
+options prefilling the steps (#244). With --non-interactive (or --plain) it asks nothing:
+settings and the default profile from the options, the API key from --api-key-stdin, a deploy
+preview (applied with --deploy), and a smoke test against a stub on 127.0.0.1, never a paid
+call. A .env migration and an earlier checkout install's settings, profiles and .env (#110)
+are only listed there, with their commands: the wizard applies them, with consent."""
 
 from __future__ import annotations
 
@@ -23,10 +25,11 @@ from .. import (
 )
 from ..config import setting_fields
 from ..factory import PROVIDER_KEYS, PROVIDER_NAMES
-from ..prompt_builder import PROFILES, system_prompt, user_profiles
+from ..prompt_builder import system_prompt
 from ..redaction import safe_repr
 from . import common
 from . import settings as settings_cmd
+from . import ui as ui_cmd
 from .common import guard
 from .usage import disclosure
 
@@ -87,12 +90,12 @@ def _previous_install(
 
 
 def _settings_writable(
-    steps: _Steps, interactive: bool, copy_from: Path | None = None, *, detected: bool = False
+    steps: _Steps, copy_from: Path | None = None, *, detected: bool = False
 ) -> bool:
-    """Whether setup may write config.toml and the secret store. A .env in use is migrated
-    first, with consent; without it nothing is written, since config.toml would make the
-    .env unread. With ``copy_from``, an earlier checkout's .env is copied in the same step
-    (copy mode): declined, nothing is written either, so the offer comes back next time."""
+    """Whether setup may write config.toml and the secret store. A .env in use is not
+    migrated here (`config migrate` or the wizard does that, with consent), so nothing is
+    written, since config.toml would make the .env unread. With ``copy_from``, an earlier
+    checkout's .env would be copied (copy mode); it is left as a to-do the same way."""
     if common.legacy_env():
         steps.later(
             f"{config.env_file_var()} is set, so settings and keys stay in that file; setup "
@@ -132,22 +135,13 @@ def _settings_writable(
     for line in plan.describe():
         typer.echo(f"    {line}")
     what = f"copy the settings of {root}" if plan.copy is not None else "move the .env settings"
-    if not interactive:
-        steps.later(f"{what}: `{command}` (setup changed nothing)")
-        return False
-    question = "Copy" if plan.copy is not None else "Migrate"
-    if not typer.confirm(
-        f"  {question} now (with a backup; `config rollback` undoes it)?", default=False
-    ):
-        steps.later(f"settings stay in the .env; run `{command}` later")
-        return False
-    result = config_store.apply_migration(source=copy_from, consent=plan.token)
-    typer.echo(f"  {'Copied' if plan.copy is not None else 'Migrated'}; backup in {result.backup}")
-    return True
+    steps.later(f"{what}: `{command}` (setup changed nothing)")
+    return False
 
 
-def _profiles_step(steps: _Steps, root: Path, interactive: bool) -> None:
-    """Offer to copy the profiles added or edited in an earlier checkout (copy only)."""
+def _profiles_step(steps: _Steps, root: Path) -> None:
+    """List the profiles added or edited in an earlier checkout, and the command that copies
+    them."""
     source = root / profiles.prompts_path(root)
     command = f"promptmend profiles migrate --checkout {root}"
     try:
@@ -162,23 +156,12 @@ def _profiles_step(steps: _Steps, root: Path, interactive: bool) -> None:
     typer.echo(f"  Profiles added or edited in {root}:")
     for name, change in changed.items():
         typer.echo(f"    {name}.md ({change})")
-    what = f"copy the profiles added or edited in {root}"
-    if not interactive:
-        steps.later(f"{what}: `{command}`")
-        return
-    if not typer.confirm("  Copy them to your profile folder (never overwrites)?", default=False):
-        steps.later(f"{what} later: `{command}`")
-        return
-    for item in profiles.migrate_profiles(source, pristine):
-        typer.echo(f"    {item.name}.md: {item.status}")
-    hint = profiles.overrides_hint(changed, common.load_layers()[1].profile_overrides)
-    if hint:
-        typer.echo(f"  {hint}")
+    steps.later(f"copy the profiles added or edited in {root}: `{command}`")
 
 
-def _retire_step(steps: _Steps, espanso_dir: str | None, interactive: bool) -> None:
-    """Once its settings were copied, offer to retire an earlier checkout's .env; refused
-    (and left as a to-do) while a match file still runs that checkout's CLI."""
+def _retire_step(steps: _Steps, espanso_dir: str | None) -> None:
+    """Once its settings were copied, say how to retire an earlier checkout's .env; refused
+    while a match file still runs that checkout's CLI."""
     copied = previous_install.copied_env(os.environ)
     if copied is None:
         return
@@ -193,20 +176,7 @@ def _retire_step(steps: _Steps, espanso_dir: str | None, interactive: bool) -> N
         return
     for line in plan.describe():
         typer.echo(f"  {line}")
-    if not interactive:
-        steps.later(f"retire the old .env: `{command}`")
-        return
-    if not typer.confirm("  Retire it now?", default=False):
-        steps.later(f"retire the old .env later: `{command}`")
-        return
-    place = config_store.apply_retire(root, espanso_dir=folder, consent=plan.token)
-    typer.echo(f"  Retired: {env_file} -> {place}")
-
-
-def _choose(option: str | None, question: str, current: str, interactive: bool) -> str:
-    if option is not None:
-        return option
-    return common.ask(question, current) if interactive else current
+    steps.later(f"retire the old .env: `{command}`")
 
 
 # The setting each choice is, and its Settings field.
@@ -266,9 +236,7 @@ def _save_choices(steps: _Steps, provider: str, profile: str) -> None:
     typer.echo(f"  Saved in {saved.path}")
 
 
-def _key_step(
-    steps: _Steps, provider: str, *, writable: bool, from_stdin: bool, interactive: bool
-) -> None:
+def _key_step(steps: _Steps, provider: str, *, writable: bool, from_stdin: bool) -> None:
     """With --api-key-stdin, the provider's key; else every key the triggers or the provider
     need (an Ollama default still leaves -i- on OpenRouter)."""
     if from_stdin:
@@ -276,7 +244,7 @@ def _key_step(
         if name is None:
             steps.fail("key", f"--api-key-stdin was given, but {provider} takes no key")
             return
-        _one_key(steps, name, writable=writable, from_stdin=True, interactive=interactive)
+        _one_key(steps, name, writable=writable, from_stdin=True)
         return
     layers, settings = common.load_layers()
     rows = [r for r in setup_guide.key_rows(layers, settings, assets.triggers()) if r.needed]
@@ -286,35 +254,23 @@ def _key_step(
     for row in rows:
         typer.echo(f"  {setup_guide.key_line(row)}")
     for row in rows:
-        _one_key(steps, row.name, writable=writable, from_stdin=False, interactive=interactive)
+        _one_key(steps, row.name, writable=writable, from_stdin=False)
 
 
-def _one_key(
-    steps: _Steps, name: str, *, writable: bool, from_stdin: bool, interactive: bool
-) -> None:
+def _one_key(steps: _Steps, name: str, *, writable: bool, from_stdin: bool) -> None:
     layers, _ = common.load_layers()
     entry = layers.entries[name]
     if not writable:
         if from_stdin:
             steps.fail("key", "the key was not saved: the settings cannot be written (see above)")
         return
-    if from_stdin:
-        value = common.read_secret(name, from_stdin=True)
-    elif interactive:
-        if entry.value:
-            where = common.source_label(entry.source)
-            if not typer.confirm(f"  {name} is set (from {where}). Replace it?", default=False):
-                return
-        value = common._getpass(f"  {name} (input hidden, empty to skip): ").strip()
-        if not value:
-            steps.later(f"{name} not set; `promptmend secrets set {name}` sets it")
-            return
-    else:
+    if not from_stdin:
         if not entry.value:
             steps.later(f"{name} is not set; `promptmend secrets set {name} --stdin` sets it")
         else:
             typer.echo(f"  {name} is set (from {common.source_label(entry.source)}).")
         return
+    value = common.read_secret(name, from_stdin=True)
     try:
         settings_cmd.store_key(name, value)
     except (common.CommandError, ValueError, config_files.SecretStoreError) as exc:
@@ -327,8 +283,6 @@ def _deploy_step(
     steps: _Steps,
     *,
     apply: bool | None,
-    ask_default: bool = True,
-    interactive: bool,
     espanso_dir: str | None,
     launcher: str | None,
     no_restart: bool,
@@ -354,14 +308,8 @@ def _deploy_step(
                 typer.echo(f"  {line}")
         typer.echo("  Every match file is in sync.")
         return
-    if apply is None and interactive:
-        typer.echo(f"  {setup_guide.deploy_summary(the_plan)}")
-        apply = typer.confirm("  Install them now?", default=ask_default)
-        if not apply:
-            typer.echo("  Not installed; nothing was written.")
-    elif not apply:
-        typer.echo("  Dry run: nothing was written.")
     if not apply:
+        typer.echo("  Dry run: nothing was written.")
         steps.later("deploy the match files: `promptmend espanso deploy`")
         return
     try:
@@ -375,6 +323,13 @@ def _deploy_step(
         _restart(no_restart)
     if outcome.kept:
         steps.later("files you edited were kept: `promptmend espanso deploy` to choose")
+
+
+def _check_profile(name: str, overrides: tuple[str, ...]) -> None:
+    try:
+        system_prompt(name, "", overrides)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
 
 
 @app.command(
@@ -395,8 +350,8 @@ def setup(
     deploy_files: bool | None = typer.Option(
         None,
         "--deploy/--no-deploy",
-        help="Write the match files without asking, or skip the deploy step; default: ask "
-        "(--non-interactive: preview only)",
+        help="--non-interactive: write the match files, or skip the step (default: a "
+        "preview). On a terminal: focus Install (still a press), or leave the step out",
         show_default=False,
     ),
     espanso_dir: str | None = typer.Option(
@@ -412,24 +367,30 @@ def setup(
     migrate_from: str | None = typer.Option(
         None,
         "--migrate-from",
-        help="An earlier checkout to copy settings and profiles from; default: the one "
+        help="An earlier checkout to take settings and profiles from (the wizard's earlier "
+        "install step looks there; --non-interactive lists the commands); default: the one "
         "the match files, the deploy manifest or uv name",
         metavar="PATH",
     ),
     plain: bool = typer.Option(
         False,
         "--plain",
-        help="Ask line by line instead of opening the full-screen setup",
+        help="The same as --non-interactive: print each step, ask nothing",
     ),
 ) -> None:
     """First run: settings, the API keys, the Espanso match files and a smoke test against a
     stub on 127.0.0.1 (never a paid call). On a terminal it opens full screen, one step at a
-    time; with --plain, or any of --provider, --profile, --migrate-from, --deploy/--no-deploy
-    or --no-smoke-test, it asks line by line. Re-run it any time; it changes only what you
-    choose."""
-    interactive = not non_interactive
-    if interactive:
-        common.require_terminal("setup", "run it in a terminal or pass --non-interactive")
+    time: --provider and --profile preselect a choice, --migrate-from adds the earlier
+    settings step, which looks at that path, and --no-deploy or --no-smoke-test skip a step. With
+    --non-interactive (or --plain) it asks nothing. Re-run it any time; it changes only what
+    you choose."""
+    interactive = not (non_interactive or plain)
+    if interactive and not ui_cmd.on_a_terminal():
+        common.fail(
+            "setup needs a terminal (stdin and stdout); run it in a terminal or pass "
+            "--non-interactive",
+            common.NEEDS_TERMINAL,
+        )
     if api_key_stdin and interactive:
         raise typer.BadParameter("--api-key-stdin needs --non-interactive (stdin holds the key)")
     if provider is not None and provider not in PROVIDER_NAMES:
@@ -443,20 +404,32 @@ def setup(
         (migrate_from, "--migrate-from"),
     ):
         common.no_key(value, option)
-    line_by_line = plain or any(
-        (provider, profile, migrate_from, deploy_files is not None, not smoke_test)
-    )
-    if interactive and not line_by_line and common.stdout_is_tty():
-        from .ui import open_setup
+    if interactive:
+        from ..tui.setup_wizard import SetupOptions
 
-        open_setup(espanso_dir=espanso_dir, launcher=launcher, no_restart=no_restart)
+        if profile is not None:
+            _check_profile(profile, common.load_layers()[1].profile_overrides)
+        ui_cmd.open_setup(
+            SetupOptions(
+                espanso_dir,
+                launcher,
+                no_restart,
+                standalone=True,
+                provider=provider,
+                profile=profile,
+                migrate_from=Path(migrate_from).expanduser() if migrate_from else None,
+                deploy=deploy_files,
+                smoke_test=smoke_test,
+            )
+        )
         return
     steps = _Steps()
     layers, settings = common.load_layers()
     common.show_findings(layers)
     typer.echo(
         "PromptMend setup: settings, API keys, Espanso's match files and a test on a local "
-        "stub. Nothing changes unless you say yes; re-run it any time."
+        "stub. Asks nothing: it uses the options and the current settings, and lists what "
+        "is left with its command; re-run it any time."
     )
 
     steps.heading("Usage history")
@@ -476,7 +449,6 @@ def setup(
         copy_from = entered
     writable = _settings_writable(
         steps,
-        interactive,
         copy_from,
         detected=previous is not None and previous_install.ENTERED not in previous.signals,
     )
@@ -488,35 +460,16 @@ def setup(
         and previous_install.copied_env(os.environ) is None
     )
     if previous is not None and previous.profiles_dir is not None:
-        _profiles_step(steps, previous.root, interactive)
+        _profiles_step(steps, previous.root)
     if writable:
         layers, settings = common.load_layers()
-    if provider is None and interactive:
-        typer.echo(f"  {setup_guide.PROVIDER_INTRO}")
-        for choice in setup_guide.provider_choices(settings, assets.triggers()):
-            typer.echo(f"    {choice.value:<10} {choice.detail}")
-    chosen = _choose(
-        provider, f"  Provider ({', '.join(PROVIDER_NAMES)})", settings.provider, interactive
-    )
-    while chosen not in PROVIDER_NAMES:
-        if not interactive:
-            raise typer.BadParameter(
-                f"PROMPT_PROVIDER {safe_repr(chosen)} is not a provider; pass --provider"
-            )
-        typer.echo(f"  Choose one of {', '.join(PROVIDER_NAMES)}.")
-        chosen = common.ask("  Provider", settings.provider)
-    choices = ", ".join(PROFILES)
-    if profile is None and interactive:
-        typer.echo(f"  {setup_guide.PROFILE_INTRO}")
-        for choice in setup_guide.profile_choices(settings, user_profiles(())):
-            typer.echo(f"    {choice.value:<10} {choice.detail}")
-    picked = _choose(
-        profile, f"  Default profile ({choices}, or one of yours)", settings.profile, interactive
-    )
-    try:
-        system_prompt(picked, "", settings.profile_overrides)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from None
+    chosen = provider if provider is not None else settings.provider
+    if chosen not in PROVIDER_NAMES:
+        raise typer.BadParameter(
+            f"PROMPT_PROVIDER {safe_repr(chosen)} is not a provider; pass --provider"
+        )
+    picked = profile if profile is not None else settings.profile
+    _check_profile(picked, settings.profile_overrides)
     typer.echo(f"  Provider: {chosen}; profile: {picked}")
     if writable:
         _save_choices(steps, chosen, picked)
@@ -524,7 +477,7 @@ def setup(
         steps.later(f"set PROMPT_PROVIDER={chosen} and PROMPT_PROFILE={picked} yourself")
 
     steps.heading("API keys")
-    _key_step(steps, chosen, writable=writable, from_stdin=api_key_stdin, interactive=interactive)
+    _key_step(steps, chosen, writable=writable, from_stdin=api_key_stdin)
 
     steps.heading("Espanso match files")
     if deploy_files is False:
@@ -538,15 +491,13 @@ def setup(
         _deploy_step(
             steps,
             apply=deploy_files,
-            ask_default=not uncopied,
-            interactive=interactive,
             espanso_dir=espanso_dir,
             launcher=launcher,
             no_restart=no_restart,
         )
 
     if not common.legacy_env():
-        _retire_step(steps, espanso_dir, interactive)
+        _retire_step(steps, espanso_dir)
 
     steps.heading("Smoke test (a stub on 127.0.0.1; no provider is called)")
     if smoke_test:

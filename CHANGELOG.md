@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 ### Changed
+- `setup` on a terminal always opens the full-screen wizard: `--provider` and `--profile`
+  preselect that choice, `--migrate-from` adds the earlier settings step, which looks at that path,
+  `--deploy` puts the focus on the install button, and `--no-deploy` and `--no-smoke-test`
+  leave out those steps, instead of switching to a line-by-line mode (#244). `--plain` is now
+  the same as `--non-interactive`; line-by-line questions are gone, and without a terminal
+  (stdin or stdout) `setup` exits 3 unless one of them is given.
 - The `improve` refusal in `promptmend shell` now names the Try tab (7) of `promptmend ui`.
 - The interface reloads faster after each change: it asks Espanso for its folder and runs
   each launcher-lookup command once per reload instead of up to three times (#242).

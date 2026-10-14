@@ -1148,34 +1148,21 @@ def test_setup_non_interactive_offers_the_copy_and_writes_nothing(
     assert (root / ".env").is_file()
 
 
-def _interactive(
-    monkeypatch: pytest.MonkeyPatch, answers: dict[str, str] | None = None
-) -> FakeRunner:
-    from promptmend import smoke
-    from promptmend.commands import common
-
-    fake = FakeRunner({"espanso restart": "", **(answers or {})})
-    monkeypatch.setattr(deploy, "run_command", fake)
-    monkeypatch.setattr(common, "stdin_is_tty", lambda: True)
-    monkeypatch.setattr(common, "_getpass", lambda prompt: "")
-    monkeypatch.setattr(smoke, "run", lambda p: smoke.SmokeResult(True, smoke.REPLY, 1, "ok"))
-    return fake
-
-
-def test_setup_does_not_redeploy_by_default_after_a_declined_copy(
+def test_setup_warns_before_deploying_ahead_of_the_copy(
     tmp_path: Path, espanso: Path, env: MutableMapping[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = old_checkout(tmp_path)
     old = str(venv_launcher(root))
     deploy_old(espanso, old)
     before = {p.name: p.read_bytes() for p in (espanso / "match").iterdir()}
-    _interactive(monkeypatch)
-    # Copy: no; then Enter for every other question, the deploy included.
-    result = _cli(
-        "setup", "--espanso-dir", str(espanso), "--launcher", UV_BIN, input="n\n" + "\n" * 6
-    )
+    from promptmend import smoke
+
+    monkeypatch.setattr(deploy, "run_command", FakeRunner({"espanso restart": ""}))
+    monkeypatch.setattr(smoke, "run", lambda p: smoke.SmokeResult(True, smoke.REPLY, 1, "ok"))
+    result = _cli("setup", "--non-interactive", "--espanso-dir", str(espanso), "--launcher", UV_BIN)
     assert result.exit_code == 0, result.output
     assert "are not copied yet" in result.stderr
+    assert f"config migrate --from {root.resolve()}" in result.stdout
     assert {p.name: p.read_bytes() for p in (espanso / "match").iterdir()} == before
     assert not config.settings_file().exists()
 
@@ -1200,33 +1187,22 @@ def test_setup_carries_on_past_a_broken_env_it_found_itself(
     assert result.exit_code == 1
 
 
-def test_setup_copies_with_consent_then_offers_retire_after_the_deploy(
+def test_setup_after_a_copy_offers_the_retire_once_deployed(
     tmp_path: Path, espanso: Path, env: MutableMapping[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from promptmend import smoke
-    from promptmend.commands import common
 
     root = old_checkout(tmp_path)
+    _copy(root)
     monkeypatch.setattr(deploy, "run_command", FakeRunner({"espanso restart": ""}))
-    monkeypatch.setattr(common, "stdin_is_tty", lambda: True)
-    monkeypatch.setattr(common, "_getpass", lambda prompt: "")
     monkeypatch.setattr(smoke, "run", lambda p: smoke.SmokeResult(True, smoke.REPLY, 1, "ok"))
-    # Copy: yes; provider and profile: defaults; key already set: keep; deploy: yes; retire: yes.
-    result = _cli(
-        "setup",
-        "--espanso-dir",
-        str(espanso),
-        "--launcher",
-        UV_BIN,
-        "--migrate-from",
-        str(root),
-        input="y\n\n\nn\ny\ny\n",
-    )
+    args = ["--espanso-dir", str(espanso), "--launcher", UV_BIN, "--migrate-from", str(root)]
+    result = _cli("setup", "--non-interactive", "--deploy", *args)
     assert result.exit_code == 0, result.output
-    assert "Copied; backup in" in result.stdout
-    assert "Retired:" in result.stdout
-    assert not (root / ".env").exists()
-    assert Settings.load().openrouter_api_key == COPIED_KEY
+    assert f"to do: retire the old .env: `promptmend config retire --from {root.resolve()}`" in (
+        result.stdout
+    )
+    assert (root / ".env").exists()
     assert COPIED_KEY not in result.output
 
 
