@@ -336,7 +336,7 @@ def compile_extra(spec: str) -> tuple[re.Pattern[str], ...]:
 # that render as nothing, assigned or not. Format characters (Cf) are only part of it; it also
 # holds the combining grapheme joiner, Hangul fillers, Mongolian and other variation
 # selectors, and unassigned blocks such as U+E0080-E0FFF. A character class body, shared
-# with cli._clean().
+# with cli.clean().
 DEFAULT_IGNORABLE = (
     "\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e"
     "\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8"

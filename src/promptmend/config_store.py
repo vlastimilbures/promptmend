@@ -115,7 +115,7 @@ def _toml_value(name: str, raw: str) -> Any:
     a number or text. Raises the same ValueError a bad value in a .env does. A value that
     parses to None (an empty PROMPT_TEMPERATURE) is saved as the empty text, since None
     means "remove the setting" to save_settings()."""
-    value = config._parse_setting(name, _FIELDS[name].metadata["parse"], raw)
+    value = config.parse_setting(name, _FIELDS[name].metadata["parse"], raw)
     return raw if value is None else value
 
 

@@ -339,8 +339,8 @@ def test_local_only_allows_loopback_providers(monkeypatch: pytest.MonkeyPatch, n
     assert not isinstance(make_provider(name, Settings()), GatedProvider)
 
 
-# make_provider gates exactly the providers _leaves_machine reports, so PROMPT_LOCAL_ONLY
-# (which follows _leaves_machine) refuses everything the gate would scan.
+# make_provider gates exactly the providers leaves_machine reports, so PROMPT_LOCAL_ONLY
+# (which follows leaves_machine) refuses everything the gate would scan.
 @pytest.mark.parametrize("name", PROVIDER_NAMES)
 @pytest.mark.parametrize(
     "env",
@@ -359,7 +359,7 @@ def test_gated_exactly_when_leaving_the_machine(
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     cfg = Settings()
-    assert isinstance(make_provider(name, cfg), GatedProvider) is factory._leaves_machine(name, cfg)
+    assert isinstance(make_provider(name, cfg), GatedProvider) is factory.leaves_machine(name, cfg)
 
 
 # The gate on a remote local provider blocks a sensitive draft before any request.
@@ -552,7 +552,7 @@ def test_gate_local_wraps_loopback_providers(monkeypatch: pytest.MonkeyPatch, na
     # still local: cost not_applicable, routes() says it stays here
     assert isinstance(provider._inner, (OllamaProvider, OpenAICompatibleProvider))
     assert provider._inner.local is True
-    assert not factory._leaves_machine(name, cfg)
+    assert not factory.leaves_machine(name, cfg)
     assert not {r.name: r for r in factory.routes(cfg)}[name].remote
 
 

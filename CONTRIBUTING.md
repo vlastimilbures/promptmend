@@ -443,7 +443,7 @@ Snippets that need no model go in `espanso/match/prompts-core.yml`, as plain Esp
    `observer` and, when it is set, pass `post_json(..., meter=Meter(...))` with a parser in
    `providers/usage.py` that maps the body's tokens and cost (a missing cost stays `None`).
 2. Add it to `PROVIDER_NAMES` and `make_provider()` in `factory.py`, passing `observer`. If it can send data off the
-   machine, return it through `_gate()`, as the other providers do, and make `_leaves_machine()`
+   machine, return it through `_gate()`, as the other providers do, and make `leaves_machine()`
    report it, so the gate and `PROMPT_LOCAL_ONLY` both cover it.
 3. Add wire-format and error-path cases to `tests/test_providers.py`, and a factory test.
 

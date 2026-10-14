@@ -99,7 +99,7 @@ def _is_ollama_cloud(model: str) -> bool:
     return tag == "cloud" or tag.endswith("-cloud")
 
 
-def _leaves_machine(name: str, cfg: Settings) -> bool:
+def leaves_machine(name: str, cfg: Settings) -> bool:
     """Whether the named provider can send the draft off this machine: the cloud providers
     always, Ollama or LM Studio when the base URL is not loopback or (Ollama) the model is a
     cloud model. The gate and PROMPT_LOCAL_ONLY both follow this one decision."""
@@ -117,7 +117,7 @@ PROVIDER_KEYS = {"openrouter": "OPENROUTER_API_KEY", "anthropic": "ANTHROPIC_API
 @dataclass(frozen=True)
 class Route:
     """Where a provider would send a draft, as the settings say: for a screen to show, not
-    to call. ``remote`` is _leaves_machine(); ``refused`` is PROMPT_LOCAL_ONLY refusing it."""
+    to call. ``remote`` is leaves_machine(); ``refused`` is PROMPT_LOCAL_ONLY refusing it."""
 
     name: str
     # The settings that hold the model and the base URL, so a screen can show their values
@@ -135,7 +135,7 @@ def routes(cfg: Settings) -> list[Route]:
     found = []
     for name in PROVIDER_NAMES:
         prefix = name.upper()
-        remote = _leaves_machine(name, cfg)
+        remote = leaves_machine(name, cfg)
         found.append(
             Route(
                 name,
@@ -176,7 +176,7 @@ def make_provider(
     force_remote: bool = False,
 ) -> Provider:
     """Build the named provider from settings. Anything that can send the draft off this
-    machine (see _leaves_machine) comes wrapped in the data-protection gate, and with
+    machine (see leaves_machine) comes wrapped in the data-protection gate, and with
     PROMPT_LOCAL_ONLY=true it is refused before anything is built. Nothing built here can
     skip either.
 
@@ -197,13 +197,13 @@ def make_provider(
     ``force_remote`` treats the provider as leaving this machine even when ``cfg`` says it
     stays: the interface's Try tab builds against the stub on 127.0.0.1 (``cfg`` points
     there) but gates, and refuses under PROMPT_LOCAL_ONLY, as the real settings would (it
-    passes _leaves_machine() of those). It only ever adds the gate, never removes it; every
+    passes leaves_machine() of those). It only ever adds the gate, never removes it; every
     other caller leaves it False.
 
     The ``-> Provider`` return type is also what makes mypy check that every provider class
     conforms to the Provider protocol.
     """
-    remote = _leaves_machine(name, cfg) or force_remote
+    remote = leaves_machine(name, cfg) or force_remote
     if remote and cfg.local_only:
         raise GateBlocked(f"PROMPT_LOCAL_ONLY=true: {name} would send the draft off this machine")
     check_base_url(name, cfg)

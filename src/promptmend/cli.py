@@ -197,7 +197,7 @@ def _keep_run(match: re.Match[str]) -> str:
     return run
 
 
-def _clean(text: str) -> str:
+def clean(text: str) -> str:
     text = _UNSAFE_CHARS.sub("", text.replace("\r\n", "\n").translate(_LINE_BREAKS))
     if not text.isascii():  # ASCII holds no format characters
         text = "".join(c for c in text if c in _KEEP_CF or unicodedata.category(c) != "Cf")
@@ -208,7 +208,7 @@ def _clean(text: str) -> str:
 def _emit(text: str) -> None:
     """The only way anything reaches Espanso: unsafe characters stripped, and no trailing
     newline, since Espanso inserts stdout verbatim."""
-    typer.echo(_clean(text), nl=False)
+    typer.echo(clean(text), nl=False)
 
 
 def _show_version(value: bool) -> None:
@@ -284,7 +284,7 @@ def _read_input(source: str, text: str | None) -> str:
     raise ProviderError("source must be clipboard, stdin, or argument")
 
 
-def _sent_despite_note(built: object) -> str:
+def sent_despite_note(built: object) -> str:
     """A draft the gate let through with --allow-flagged says so where it is pasted, even when
     the call failed after the gate, naming only the findings."""
     if isinstance(built, GatedProvider) and built.sent_despite:
@@ -326,7 +326,7 @@ def _deliver(result: str, note: str, rec: recorder.Recorder) -> str:
 _EXPECTED_ERRORS = (ProviderError, ValueError)
 
 
-def _failure(exc: Exception, rec: recorder.Recorder) -> str:
+def failure_outcome(exc: Exception, rec: recorder.Recorder) -> str:
     """The history outcome of a run that printed a marker for ``exc``."""
     if isinstance(exc, ConcealedClipboard):
         return recorder.CONCEALED_REFUSED
@@ -370,7 +370,7 @@ def rewrite(
     # Checked before cleaning, which would otherwise run over a pasted multi-megabyte log.
     if len(raw) > MAX_DRAFT_CHARS:
         raise ProviderError(f"Input is too long ({len(raw)} chars, max {MAX_DRAFT_CHARS})")
-    draft = _clean(raw)
+    draft = clean(raw)
     if not draft.strip():
         raise ProviderError("Input is empty")
 
@@ -387,7 +387,7 @@ def rewrite(
     # wrapped in one code fence would be pasted with the fence (flash-lite wrapped 16 of 36
     # with the old general profile). A stop note is split off first, since it would leave the
     # fence short of the reply's end.
-    body, stop = split_stop_note(_clean(built.generate(draft, system)))
+    body, stop = split_stop_note(clean(built.generate(draft, system)))
     body = strip_outer_fence(body)
     if TEMPLATE_MARKER in system:
         body = repair_template_tags(body)
@@ -487,16 +487,16 @@ def improve(
     except Exception as exc:
         # Nothing may traceback or exit nonzero: Espanso cannot surface stderr, so emit a
         # visible bracketed marker instead of a blank expansion.
-        _emit(_sent_despite_note(ran.built) + marker(exc))
+        _emit(sent_despite_note(ran.built) + marker(exc))
         rec.emitted()
         rec.profile_id = ran.profile_id
-        rec.outcome = _failure(exc, rec)
+        rec.outcome = failure_outcome(exc, rec)
         # After the paste text is out, so history can never change it (see recorder.py).
         rec.finish()
         raise typer.Exit(0) from None
 
     rec.profile_id = ran.profile_id
-    note = _sent_despite_note(ran.built)
+    note = sent_despite_note(ran.built)
     if cfg.output == CLIPBOARD:
         _emit(_deliver(result, note, rec))
     else:

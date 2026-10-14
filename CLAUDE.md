@@ -107,11 +107,11 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
 
 - `factory.make_provider()` is the only place providers are built (the CLI, the interface and
   `scripts/bench_models.py` all use it). It wraps everything that can send the draft off the
-  machine (`_leaves_machine()`: OpenRouter and Anthropic always; Ollama/LM Studio on a
+  machine (`leaves_machine()`: OpenRouter and Anthropic always; Ollama/LM Studio on a
   non-loopback URL or an Ollama `cloud` model) in `gate.GatedProvider`, which runs
   `redaction.scan_draft()` and blocks a flagged draft unless `ALLOW_CLOUD_OVERRIDE=true`.
 - **A new provider that can leave the machine must return through `_gate()` and be listed in
-  `_leaves_machine()`.**
+  `leaves_machine()`.**
 - `--allow-flagged` (the `-iok-` trigger) lets one call through only when every finding is in
   `redaction.SOFT_FINDINGS`; the output then starts with a `sent despite` marker naming the
   findings (names only, never the text).
