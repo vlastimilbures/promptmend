@@ -157,7 +157,7 @@ def default(name: str) -> str:
 def parse(name: str, raw: str) -> Any:
     """``raw`` read as the CLI reads ``name``; ValueError naming the setting otherwise."""
     field = next(f for f in setting_fields() if f.metadata["env"] == name)
-    return config._parse_setting(name, field.metadata["parse"], raw)
+    return config.parse_setting(name, field.metadata["parse"], raw)
 
 
 def choices(meta: Meta, state: State | None) -> tuple[str, ...]:

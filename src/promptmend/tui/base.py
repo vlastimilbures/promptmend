@@ -26,8 +26,13 @@ from .state import State
 
 if TYPE_CHECKING:
     from textual.widget import Widget
+    from textual.widget import Widget as _Mixin
 
     from .app import ManageApp
+else:
+    # A plain mixin at run time: as a Widget subclass it would bring Widget's default CSS
+    # ahead of the container's and change the layout.
+    _Mixin = object
 
 # What a save, a deletion or a deploy may raise for the person to read: the same errors the
 # headless commands turn into `error: …` (commands/common.guard).
@@ -66,38 +71,14 @@ def result_text(message: str, command: str | None) -> Text:
     return shown
 
 
-class Pane(VerticalScroll):
-    """One tab. ``show()`` fills it from a fresh State; ``report()`` shows an action's result
-    on the pane and as a notification."""
+class Reports(_Mixin):
+    """report() and attempt() for a Pane or a screen that has a ``.result`` Static."""
 
     last_message = ""
-    ready = False
-    # A deploy or detach dialog is open or running (TriggersPane).
-    busy = False
-
-    def on_mount(self) -> None:
-        # A State read before this pane was composed is shown now (the load runs in a thread).
-        self.setup()
-        self.ready = True
-        if self.state is not None:
-            self.show(self.state)
-
-    def setup(self) -> None:
-        """Add the table columns; called once the pane's widgets exist."""
 
     @property
     def manage(self) -> ManageApp:
         return cast("ManageApp", self.app)
-
-    @property
-    def state(self) -> State | None:
-        return self.manage.state
-
-    def show(self, state: State) -> None:
-        """Fill the pane from ``state``; each tab has its own."""
-
-    def result(self) -> Static:
-        return Static("", classes="result", markup=False)
 
     def report(self, message: str, *, error: bool = False, command: str | None = None) -> None:
         """Show ``message`` here and as a notification; with ``command`` (the same action in
@@ -120,6 +101,35 @@ class Pane(VerticalScroll):
         self.report(message, command=command)
         if reload:
             self.manage.reload()
+
+
+class Pane(Reports, VerticalScroll):
+    """One tab. ``show()`` fills it from a fresh State; ``report()`` shows an action's result
+    on the pane and as a notification."""
+
+    ready = False
+    # A deploy or detach dialog is open or running (TriggersPane).
+    busy = False
+
+    def on_mount(self) -> None:
+        # A State read before this pane was composed is shown now (the load runs in a thread).
+        self.setup()
+        self.ready = True
+        if self.state is not None:
+            self.show(self.state)
+
+    def setup(self) -> None:
+        """Add the table columns; called once the pane's widgets exist."""
+
+    @property
+    def state(self) -> State | None:
+        return self.manage.state
+
+    def show(self, state: State) -> None:
+        """Fill the pane from ``state``; each tab has its own."""
+
+    def result(self) -> Static:
+        return Static("", classes="result", markup=False)
 
     @work(thread=True, group="action", exit_on_error=False)
     def background(self, job: Callable[[], None]) -> None:

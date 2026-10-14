@@ -497,7 +497,7 @@ def test_clean_drops_every_default_ignorable() -> None:
         c for c in map(chr, range(0xE1000)) if c not in kept and ignorable.fullmatch(c)
     )
     assert len(hidden) > 4000
-    assert cli._clean(f"a{hidden}b") == "ab"
+    assert cli.clean(f"a{hidden}b") == "ab"
 
 
 # Every invisible format character, Hangul filler and stray selector is removed; the
@@ -536,26 +536,26 @@ def test_clean_drops_every_default_ignorable() -> None:
     ids=lambda s: "+".join(f"U+{ord(c):04X}" for c in s),
 )
 def test_clean_drops_invisible_characters(hidden: str) -> None:
-    assert cli._clean(f"pay{hidden}load") == "payload"
+    assert cli.clean(f"pay{hidden}load") == "payload"
 
 
 # A selector or joiner at the start of the text or after a space has nothing to attach to.
 @pytest.mark.parametrize("text", ["\ufe0fx", " \ufe0fx", "\n\u200dx", "\u2800\ufe0fx"])
 def test_clean_drops_selector_without_a_base(text: str) -> None:
-    assert cli._clean(text) == text.replace("\ufe0f", "").replace("\u200d", "")
+    assert cli.clean(text) == text.replace("\ufe0f", "").replace("\u200d", "")
 
 
 # Every other line break becomes a newline instead of joining words or breaking invisibly.
 @pytest.mark.parametrize("brk", ["\r\n", "\r", "\x0b", "\x0c", "\x85", "\u2028", "\u2029"])
 def test_clean_maps_line_breaks_to_newlines(brk: str) -> None:
-    assert cli._clean(f"a{brk}b") == "a\nb"
+    assert cli.clean(f"a{brk}b") == "a\nb"
 
 
 # The visible prepended concatenation marks (Arabic number signs, Kaithi) are format
 # characters that real text needs.
 @pytest.mark.parametrize("mark", sorted(cli._KEEP_CF - {"\u200c", "\u200d"}))
 def test_clean_keeps_prepended_concatenation_marks(mark: str) -> None:
-    assert cli._clean(f"{mark}\u0661\u0662") == f"{mark}\u0661\u0662"
+    assert cli.clean(f"{mark}\u0661\u0662") == f"{mark}\u0661\u0662"
 
 
 # Emoji, Czech, Vietnamese (composed and decomposed), Persian, Hindi and Arabic survive as-is.
@@ -580,7 +580,7 @@ def test_clean_keeps_prepended_concatenation_marks(mark: str) -> None:
     ],
 )
 def test_clean_keeps_real_text(text: str) -> None:
-    assert cli._clean(text) == text
+    assert cli.clean(text) == text
 
 
 # Filtering stays linear on a large clipboard full of selectors and joiners.
@@ -591,7 +591,7 @@ def test_clean_keeps_real_text(text: str) -> None:
 )
 def test_clean_is_fast_on_adversarial_input(text: str) -> None:
     started = time.perf_counter()
-    cli._clean(text)
+    cli.clean(text)
     assert time.perf_counter() - started < 2
 
 

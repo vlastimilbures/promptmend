@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .. import assets, deploy, doctor, history, previous_install, update_check
 from ..commands import common
@@ -57,11 +58,31 @@ def _once(runner: deploy.Runner) -> deploy.Runner:
     return run
 
 
-def gather(group_by: str = "trigger") -> State:
+def detect_previous(
+    *,
+    runner: deploy.Runner | None = None,
+    espanso_dir: Path | None = None,
+    launcher: Path | None = None,
+) -> tuple[previous_install.Detection, str | None]:
+    """previous_install.detect(), or nothing found and why when it could not look."""
+    try:
+        found = previous_install.detect(runner=runner, espanso_dir=espanso_dir, launcher=launcher)
+    except (deploy.DeployError, OSError, ValueError) as exc:
+        return previous_install.Detection(), str(exc) or type(exc).__name__
+    return found, None
+
+
+def gather(
+    group_by: str = "trigger",
+    *,
+    espanso_dir: Path | None = None,
+    launcher: Path | None = None,
+) -> State:
     """Everything the screens show. Read-only: doctor without the clipboard, the deploy plan,
     the profiles, the usage stats, an earlier checkout install and the update check (cached
     for a day, so a reload asks PyPI no more often), each failure kept to show instead of
-    raised."""
+    raised. ``espanso_dir`` and ``launcher`` (setup's options) are where to look for the
+    earlier install."""
     layers, settings = common.load_layers()
     update = update_check.check_configured()
     # Only read-only commands may go through it: a cached `espanso restart` would be skipped.
@@ -79,12 +100,9 @@ def gather(group_by: str = "trigger") -> State:
         stats = store(settings).stats(group_by)
     except (history.HistoryError, OSError, ValueError) as exc:
         stats_error = str(exc) or type(exc).__name__
-    previous = previous_install.Detection()
-    previous_error = None
-    try:
-        previous = previous_install.detect(runner=run)
-    except (deploy.DeployError, OSError, ValueError) as exc:
-        previous_error = str(exc) or type(exc).__name__
+    previous, previous_error = detect_previous(
+        runner=run, espanso_dir=espanso_dir, launcher=launcher
+    )
     return State(
         layers=layers,
         settings=settings,

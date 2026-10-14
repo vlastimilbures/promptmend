@@ -312,7 +312,7 @@ def _merged_line_error(key: str) -> str:
 _UNQUOTED = frozenset({"PROMPT_EXTRA_PATTERNS"})
 
 
-def _parse_setting(name: str, parse: Callable[[str], Any], raw: str) -> Any:
+def parse_setting(name: str, parse: Callable[[str], Any], raw: str) -> Any:
     try:
         return parse(raw)
     except ValueError as exc:
@@ -328,7 +328,7 @@ def _env(
     a traceback or test failure cannot print it."""
 
     def read() -> Any:
-        return _parse_setting(name, parse, os.getenv(name, default))
+        return parse_setting(name, parse, os.getenv(name, default))
 
     metadata = {"env": name, "default": default, "parse": parse, "secret": secret}
     return field(default_factory=read, repr=not secret, metadata=metadata)
@@ -854,7 +854,7 @@ class ConfigLayers:
             for index, layer in enumerate(setters):
                 raw = layer.values[name]
                 try:
-                    _parse_setting(name, f.metadata["parse"], raw)
+                    parse_setting(name, f.metadata["parse"], raw)
                 except ValueError as exc:
                     fail(layer.source, str(exc), (name,))
                     rejected.append(layer.source)
@@ -872,7 +872,7 @@ class ConfigLayers:
         """Settings built from the effective values."""
         return Settings(
             **{
-                f.name: _parse_setting(
+                f.name: parse_setting(
                     f.metadata["env"], f.metadata["parse"], self.entries[f.metadata["env"]].value
                 )
                 for f in setting_fields()

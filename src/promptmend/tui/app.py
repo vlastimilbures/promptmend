@@ -4,6 +4,7 @@ and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself."""
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
@@ -187,6 +188,13 @@ class ManageApp(App[int]):
         self.intro = intro
         # Read here, not at import, so the snapshot tests can pin it and a release changes none.
         self.title = f"{self.TITLE} {__version__}"
+        if loader is gather and setup is not None and setup.espanso_dir:
+            # `setup --espanso-dir`: look for the earlier install deployed in that folder.
+            loader = functools.partial(
+                gather,
+                espanso_dir=Path(setup.espanso_dir).expanduser(),
+                launcher=Path(setup.launcher).expanduser() if setup.launcher else None,
+            )
         self.loader = loader
         self.group_by = "trigger"
         self.state: State | None = None
@@ -299,6 +307,8 @@ class ManageApp(App[int]):
         ``entered`` (`setup --migrate-from`), detected with that path, and with the wizard's
         ``options``, its --espanso-dir and --launcher for detection, deploy and retire."""
         self.offered = True
+        # Every way in (Home's button too) uses setup's folder, as the detection did.
+        options = options or self.setup_options
         if any(isinstance(s, PreviousInstallScreen) for s in self.screen_stack):
             return
         if options is None or not (options.espanso_dir or options.launcher or options.no_restart):

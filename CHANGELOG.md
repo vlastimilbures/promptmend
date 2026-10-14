@@ -21,6 +21,8 @@ All notable changes to this project are documented here. The format follows
   `rollback`, `retire`, `profiles migrate` and `history prune` a one-line summary; each
   command's own `--help` keeps the full text (#247).
 ### Fixed
+- `setup --espanso-dir` offers the earlier settings step for an earlier install whose
+  match files are in that folder, not in Espanso's default one.
 - A TLS certificate failure (a corporate proxy, a self-signed endpoint) is reported at once
   instead of being retried a second later: the retry could not succeed, delayed the marker
   and added a second record to the usage history (#247).

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import ClassVar
 
 from textual import on, work
 from textual.app import ComposeResult
@@ -22,19 +22,16 @@ from . import teach
 from .base import (
     CHECKOUT_FIELD,
     EXPECTED,
+    Reports,
     checkout_path,
     confirm_migration,
     copy_profiles,
     error_message,
     previous_root,
-    result_text,
 )
 from .modals import ConfirmModal, FormModal
 from .state import State
 from .triggers_pane import DeployTarget, TriggersPane
-
-if TYPE_CHECKING:
-    from .app import ManageApp
 
 INTRO = (
     "An earlier install ran from a checkout of this project. This install never reads that "
@@ -67,14 +64,12 @@ STEPS = {
 }
 
 
-class PreviousInstallScreen(Screen[None]):
+class PreviousInstallScreen(Reports, Screen[None]):
     # The digit in each step's label is its key, as on the tabs.
     BINDINGS: ClassVar[list[BindingType]] = [
         *(Binding(str(n), f"step('{step}')", show=False) for n, step in enumerate(STEPS, 1)),
         Binding("escape", "close", "Close"),
     ]
-
-    last_message = ""
 
     def __init__(
         self,
@@ -113,10 +108,6 @@ class PreviousInstallScreen(Screen[None]):
             )
             yield Static("", classes="result", markup=False)
         yield Footer()
-
-    @property
-    def manage(self) -> ManageApp:
-        return cast("ManageApp", self.app)
 
     def on_mount(self) -> None:
         if self.manage.state is not None:
@@ -225,27 +216,6 @@ class PreviousInstallScreen(Screen[None]):
             self.query_one(f"#{id_}", Button).disabled = not enabled
             self.query_one(f"#{id_}-state", Static).update(text)
         self.query_one("#previous-skip", Button).disabled = best is None and pending is None
-
-    def report(self, message: str, *, error: bool = False, command: str | None = None) -> None:
-        """As Pane.report(): with ``command``, shown above and kept in Home's session log."""
-        self.last_message = message
-        self.query_one(".result", Static).update(result_text(message, command))
-        self.app.notify(message, severity="error" if error else "information", markup=False)
-        if command is not None:
-            self.manage.log_action(teach.Entry(command, message, error))
-
-    def attempt(
-        self, action: Callable[[], str], *, reload: bool = True, command: str | None = None
-    ) -> None:
-        """Run a change; show its message, or the error a headless command would print."""
-        try:
-            message = action()
-        except Exception as exc:
-            self.report(error_message(exc), error=True, command=command)
-            return
-        self.report(message, command=command)
-        if reload:
-            self.manage.reload()
 
     # --- Steps ----------------------------------------------------------------------------
 

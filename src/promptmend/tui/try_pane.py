@@ -28,7 +28,7 @@ from textual.widgets import Button, Label, Select, Static, TextArea
 from .. import cli, recorder, smoke
 from ..commands import common
 from ..config import TIERS, ConfigLayers, Settings, openrouter_only
-from ..factory import PROVIDER_NAMES, _leaves_machine, check_base_url
+from ..factory import PROVIDER_NAMES, check_base_url, leaves_machine
 from ..prompt_builder import ADDED, PROFILES
 from . import teach
 from .base import Pane, button_row
@@ -191,7 +191,7 @@ class TryPane(Pane):
             cfg = layers.settings().for_call(tier, provider=provider)
             openrouter_only(provider, tier, None)
         except Exception as exc:
-            self._finish(Outcome(cli._clean(cli.marker(exc)), True, "", None), None)
+            self._finish(Outcome(cli.clean(cli.marker(exc)), True, "", None), None)
             return
         if target == STUB:
             self._start(draft, provider, profile, cfg, None)
@@ -301,7 +301,7 @@ class TryPane(Pane):
                 # Gated (and refused under PROMPT_LOCAL_ONLY) as the real settings would be,
                 # though the stub settings point every provider at 127.0.0.1, and the real
                 # base URL checked first (an http:// cloud URL is refused for real too).
-                remote = _leaves_machine(provider, cfg)
+                remote = leaves_machine(provider, cfg)
                 check_base_url(provider, cfg)
                 with smoke.stub_server() as stub:
                     stub_cfg = smoke.stub_settings(cfg, stub.port)
@@ -331,9 +331,9 @@ class TryPane(Pane):
             error = True
             text = cli.marker(exc)
             if rec is not None:
-                rec.outcome = cli._failure(exc, rec)
+                rec.outcome = cli.failure_outcome(exc, rec)
         # Cleaned as improve's output is (_emit()), the sent-despite note included.
-        shown = cli._clean(cli._sent_despite_note(ran.built) + text)
+        shown = cli.clean(cli.sent_despite_note(ran.built) + text)
         outcome = Outcome(
             shown, error, usage_line(attempts, latency, stub=command is None), requests
         )

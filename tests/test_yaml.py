@@ -139,6 +139,13 @@ def test_cli_matches_paste_via_clipboard() -> None:
         assert match.get("force_mode") == "clipboard", f"{match['trigger']} must set force_mode"
 
 
+# No match, commented out or not, sets ignore_error: a crash of the CLI must still fail the
+# expansion visibly. Raw text, so a var or a block the parsers miss cannot hide it.
+def test_no_match_ignores_errors() -> None:
+    for path in MATCH_FILES:
+        assert "ignore_error" not in path.read_text("utf-8"), path.name
+
+
 # Every match that runs the CLI, the commented-out -ic- included, names itself for the usage
 # history with one literal --trigger-id: its own trigger without the dashes, from the CLI's
 # allowlist. Never a {{form}} value or any other variable, and never shared, so two triggers
