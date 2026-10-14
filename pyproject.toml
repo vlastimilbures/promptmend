@@ -1,6 +1,6 @@
 [project]
 name = "promptmend"
-version = "0.24.0"
+version = "0.25.0"
 description = "PromptMend: Espanso triggers that rewrite rough drafts into precise LLM prompts (OpenRouter, Anthropic, Ollama, LM Studio)"
 readme = "README.md"
 license = "MIT"

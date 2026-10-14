@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.25.0 - 2026-10-14
+
 ### Changed
 - `setup` on a terminal always opens the full-screen wizard: `--provider` and `--profile`
   preselect that choice, `--deploy` puts the focus on the install button, and `--no-deploy`
