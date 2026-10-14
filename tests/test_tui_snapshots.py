@@ -46,7 +46,7 @@ ESPANSO = Path(f"{HOME}/.config/espanso")
 LAUNCHER = f"{HOME}/.local/bin/promptmend"
 # The header's version (#112), pinned so a release regenerates no snapshot: the release that
 # ships the README's screenshots.
-VERSION = "0.20.0"
+VERSION = "0.25.0"
 # The update check (#197), pinned: this is the latest release, so no snapshot asks pypi.org or
 # changes when a newer release comes out.
 UPDATE = update_check.UpdateStatus(update_check.LATEST, VERSION, "2026-10-07T09:00:00+00:00")
@@ -316,7 +316,7 @@ def test_snapshot_about() -> None:
 # A newer release (#197): Home's Version row as `new`, at 80 and 70 columns, and About with
 # the update command for the snapshot's install channel (uv).
 def available_state(group_by: str = "trigger") -> State:
-    newer = update_check.UpdateStatus(update_check.AVAILABLE, "0.21.0", UPDATE.checked_at)
+    newer = update_check.UpdateStatus(update_check.AVAILABLE, "0.26.0", UPDATE.checked_at)
     return dataclasses.replace(fixed_state(group_by), update=newer)
 
 
