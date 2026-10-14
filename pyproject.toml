@@ -37,8 +37,6 @@ classifiers = [
 ]
 dependencies = [
   "httpx>=0.27,<1",
-  # The line editor of `promptmend shell` (#183); imported only by that command.
-  "prompt-toolkit>=3.0.53,<4",
   "pyperclip>=1.9,<2",
   # The full-screen interface (`promptmend` on a terminal, `ui`); imported only there.
   "textual>=8.2.8,<9",

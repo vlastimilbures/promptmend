@@ -19,7 +19,6 @@ from .. import config_store, smoke
 from ..commands import common
 from ..commands import settings as settings_cmd
 from ..config import secret_names
-from ..console import shown_arg
 from ..factory import PROVIDER_NAMES
 from . import settings_model, teach
 from .base import EXPECTED, Pane, button_row, confirm_migration, error_message
@@ -280,7 +279,8 @@ class SettingsPane(Pane):
     def save(self, name: str, value: str) -> None:
         """Save through `config set`'s service; the command is logged (a private or key-like
         value withheld)."""
-        shown_value = teach.WITHHELD if name in common.PRIVATE else shown_arg(value)
+        private = name in common.PRIVATE or common.looks_like_a_key(value)
+        shown_value = teach.WITHHELD if private else value
 
         def save() -> str:
             saved = settings_cmd.save_setting(name, value)

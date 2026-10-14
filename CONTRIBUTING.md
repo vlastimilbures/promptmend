@@ -283,13 +283,10 @@ promptmend/
 │   ├── cli.py                    improve and persona commands, the single output sink;
 │   │                             mounts the management commands lazily
 │   ├── entry.py                  console-script entry: empty stderr for a trigger
-│   ├── commands/                 setup, config, secrets, profiles, stats, history, doctor, ui,
-│   │                             shell: thin Typer wrappers over the services (common.py: exit
-│   │                             codes)
+│   ├── commands/                 setup, config, secrets, profiles, stats, history, doctor, ui:
+│   │                             thin Typer wrappers over the services (common.py: exit codes)
 │   ├── tui/                      the full-screen Textual interface; only `ui` (commands/ui.py,
 │   │                             also a bare promptmend and `setup` on a terminal) loads it
-│   ├── console.py                the command line without a screen: completion, help, POLICY
-│   │                             (Home's command line and `promptmend shell`)
 │   ├── doctor.py                 the doctor report (stable JSON, never a key or persona)
 │   ├── update_check.py           asks PyPI, at most once a day, for a newer release
 │   ├── local_probe.py            asks a loopback Ollama or LM Studio whether it answers

@@ -12,7 +12,7 @@ what you want to do.
 | [Configuration](configuration.md) | Where settings, keys and data live, how to change them, and the complete settings reference |
 | [Profiles](profiles.md) | The built-in profiles, your own profiles and the persona |
 | [Privacy](privacy.md) | What is sent and to whom, the data-protection gate, local-only mode, clipboard safety and the usage history |
-| [Interface](interface.md) | The full-screen interface: tabs, the command line, the Try tab and the keys |
+| [Interface](interface.md) | The full-screen interface: tabs, Home, the Try tab and the keys |
 | [Troubleshooting](troubleshooting.md) | `doctor` first, then each marker and symptom with its fix |
 | [Benchmark](benchmark.md) | How the default models and prompt were chosen, and every result |
 

@@ -5,9 +5,11 @@ argument fails here instead of teaching a command that no longer works."""
 from __future__ import annotations
 
 import pytest
+import typer
+from typer._click import Command, Context
 from typer.core import TyperGroup
 
-from promptmend import console
+from promptmend import cli
 from promptmend.tui import teach
 
 # What a placeholder stands for, so the command can be parsed.
@@ -24,11 +26,21 @@ EXAMPLES = {
 
 
 def parse(argv: tuple[str, ...]) -> None:
-    """Resolve ``argv`` down the Click tree and parse the leaf's arguments and options, as
-    the CLI would before running it (console.resolve(), which the command line on Home uses
-    too); raises on an unknown command, option or argument."""
-    found = console.resolve([EXAMPLES.get(word, word) for word in argv])
-    assert not isinstance(found.command, TyperGroup), f"{argv}: names a group, not a command"
+    """Walk ``argv`` down the Click tree and parse the leaf's arguments and options, as the
+    CLI would before running it, but with no callback run; raises on an unknown command,
+    option or argument, a word left over or a missing required one."""
+    command: Command = typer.main.get_command(cli.app)
+    words = [EXAMPLES.get(word, word) for word in argv]
+    while isinstance(command, TyperGroup):
+        assert words, f"{argv}: names a group, not a command"
+        sub = command.get_command(Context(command), words.pop(0))
+        assert sub is not None, f"{argv}: no such command"
+        assert not sub.hidden, f"{argv}: a hidden command"
+        command = sub
+    values, left, _ = command.make_parser(Context(command)).parse_args(words)
+    assert not left, f"{argv}: {left} left over"
+    for param in command.params:
+        assert not param.required or values.get(param.name or "") is not None, param.name
 
 
 ALL = sorted(
@@ -71,7 +83,13 @@ def test_every_command_parses(argv: tuple[str, ...]) -> None:
 
 
 def test_the_drift_check_catches_a_wrong_command() -> None:
-    for wrong in [("espanso", "deplo"), ("history", "prune", "--days", "3"), ("config",)]:
+    for wrong in [
+        ("espanso", "deplo"),
+        ("history", "prune", "--days", "3"),
+        ("config",),
+        ("secrets", "set"),
+        ("doctor", "x"),
+    ]:
         with pytest.raises(Exception):  # noqa: B017, PT011  an assert or a Click UsageError
             parse(wrong)
 

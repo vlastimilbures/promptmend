@@ -232,13 +232,11 @@ Path(sys.argv[1]).write_text(json.dumps(result), encoding="utf-8")
 """
 
 # Never on the trigger path: the Textual interface (#93), config writers (#84), the keyring
-# and the Espanso deploy service (#86), the management commands and their services (#92),
-# the shell's line editor and the command line's logic (#183).
+# and the Espanso deploy service (#86), the management commands and their services (#92).
 # rich is installed with Typer but not loaded today: Typer imports it only for help and usage
 # errors.
 FORBIDDEN = (
     "textual",
-    "prompt_toolkit",
     "rich.console",
     "tomli_w",
     "tomlkit",
@@ -251,8 +249,6 @@ FORBIDDEN = (
     "promptmend.config_store",
     "promptmend.previous_install",
     "promptmend.relocate",
-    "promptmend.console",
-    "promptmend.commands.shell",
     "promptmend.update_check",
     "promptmend.local_probe",
 )
@@ -397,7 +393,7 @@ Path(out).write_text(json.dumps({"code": code, "added": seen[0]}), encoding="utf
 
 # Never loaded by `--version`, nor by `improve` before its provider call. `--version` reads
 # the installed metadata; `improve` does not need it.
-STARTUP_FORBIDDEN = ("httpx", "pyperclip", "sqlite3", "textual", "prompt_toolkit", *FORBIDDEN)
+STARTUP_FORBIDDEN = ("httpx", "pyperclip", "sqlite3", "textual", *FORBIDDEN)
 VERSION_FORBIDDEN = (*STARTUP_FORBIDDEN, "typer", "click", "rich", "promptmend.cli")
 IMPROVE_FORBIDDEN = (*STARTUP_FORBIDDEN, "importlib.metadata")
 # Modules each run adds to a bare interpreter, macOS, Python 3.12, 2026-10-08: `--version`
@@ -478,7 +474,6 @@ scenarios = [
     ["profiles", "list"],
     ["stats"],
     ["espanso", "status"],
-    ["shell"],
     ["ui"],
 ]
 codes = []
@@ -505,12 +500,11 @@ def test_management_commands_do_not_import_the_interface(tmp_path: Path) -> None
     )
     assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
     data = json.loads(out.read_text(encoding="utf-8"))
-    # Bare without a terminal: help, exit 2. `shell` and `ui` without a terminal: exit 3
-    # (#92's code), before prompt_toolkit or Textual loads.
+    # Bare without a terminal: help, exit 2. `ui` without a terminal: exit 3 (#92's code),
+    # before Textual loads.
     assert data["codes"][0] == 2
-    assert data["codes"][-2:] == [3, 3]  # `shell` too (#183)
+    assert data["codes"][-1] == 3
     loaded = data["loaded"]
     assert "promptmend.commands.ui" in loaded  # --help listed it, so the guard is real
-    assert "promptmend.commands.shell" in loaded
-    for module in ("textual", "promptmend.tui", "prompt_toolkit", "promptmend.console"):
+    for module in ("textual", "promptmend.tui"):
         assert not [m for m in loaded if m == module or m.startswith(module + ".")], module

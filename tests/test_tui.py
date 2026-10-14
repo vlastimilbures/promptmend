@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from textual.pilot import Pilot
-from textual.widgets import Button, Input, OptionList, Select, Static, TabbedContent
+from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
 from promptmend import config, config_store, deploy, doctor, history, smoke
@@ -1762,12 +1762,10 @@ def test_bare_command_without_a_terminal_prints_the_help_as_before(
     assert (bare.exit_code, helped.exit_code) == (2, 0)
     assert bare.stdout_bytes + EOL == helped.stdout_bytes
     assert bare.stderr_bytes == helped.stderr_bytes == b""
-    # The same help as before #93 (tests/golden, captured from it), plus the `ui` row and
-    # the `shell` row (#183).
+    # The same help as before #93 (tests/golden, captured from it), plus the `ui` row.
     ui_row = "ui Open the full-screen interface to set up and manage (a terminal)."
-    shell_row = "shell A command line with completion and live help (a terminal)."
     before = _words(GOLDEN.read_text("utf-8"))
-    assert _words(bare.stdout) == f"{before} {ui_row} {shell_row}"
+    assert _words(bare.stdout) == f"{before} {ui_row}"
 
 
 @pytest.mark.parametrize(("stdin", "stdout"), [(True, False), (False, True)])
@@ -2603,118 +2601,6 @@ def test_session_log_keeps_the_latest(espanso: FakeRunner) -> None:
     assert text.count("$ promptmend doctor") == home_pane.SESSION_LINES
     failed = home_pane.session_text([teach.Entry("c", "boom", error=True)]).plain
     assert "    error: boom" in failed
-
-
-# --- The command line's dialogs (#111) --------------------------------------------------------
-
-
-# A line that would start a real child fails the test (conftest refuses console.run).
-def test_conftest_refuses_the_real_runner_here() -> None:
-    from promptmend import console
-    from promptmend.tui import console as tui_console
-
-    for runner in (console.run, tui_console.run):
-        with pytest.raises(AssertionError, match="a test started a real promptmend"):
-            runner(["--version"])
-
-
-async def enter(app: ManageApp, pilot: Pilot[int], line: str) -> None:
-    """Type ``line`` on Home's command line and press Enter."""
-    await pilot.press("c")
-    app.main.query_one("#home-command", Input).value = line
-    await pilot.pause()
-    await pilot.press("enter")
-    await settle(pilot)
-
-
-def _help(app: ManageApp) -> str:
-    return str(app.main.query_one("#home-command-help", Static).render())
-
-
-def _files(folder: Path) -> list[tuple[Path, bytes]]:
-    return sorted((p, p.read_bytes()) for p in folder.rglob("*") if p.is_file())
-
-
-@pytest.mark.parametrize(
-    ("line", "tab", "modal", "field", "value"),
-    [
-        ("espanso deploy --yes", "triggers", FormModal, None, None),
-        ("history reset -y", "history", ConfirmModal, None, None),
-        ("history prune --older-than 9", "history", FormModal, "#days", "9"),
-        ("secrets set ANTHROPIC_API_KEY", "settings", FormModal, "#key-name", "ANTHROPIC_API_KEY"),
-        ("secrets remove ANTHROPIC_API_KEY", "settings", FormModal, "#key-name", None),
-        ("secrets remove", "settings", FormModal, "#key-name", None),
-    ],
-)
-def test_command_line_opens_the_dialog_and_cancel_writes_nothing(
-    saved: Path,
-    espanso: FakeRunner,
-    line: str,
-    tab: str,
-    modal: type[Widget],
-    field: str | None,
-    value: str | None,
-) -> None:
-    config_store.save_secret("OPENROUTER_API_KEY", KEY)
-    config_store.save_secret("ANTHROPIC_API_KEY", KEY)
-    before = (_files(saved), _files(espanso.root))
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await enter(app, pilot, line)
-        assert isinstance(app.screen, modal)
-        assert app.main.query_one(TabbedContent).active == tab
-        focused = app.focused
-        assert focused is not None
-        assert focused.id == "cancel"
-        if field is not None:
-            widget = app.screen.query_one(field)
-            assert isinstance(widget, Input | Select)
-            if value is not None:
-                assert widget.value == value
-            if line == "secrets remove ANTHROPIC_API_KEY":
-                assert widget.value == "ANTHROPIC_API_KEY"
-            if "secrets set" in line:
-                assert app.screen.query_one("#key-value", Input).password
-        if "--yes" in line or "-y" in line:
-            assert "ignored: the dialog asks" in _help(app)
-        await pilot.press("escape")
-        await settle(pilot)
-        assert not isinstance(app.screen, modal)
-        assert app.session == []
-
-    drive(scenario)
-    assert (_files(saved), _files(espanso.root)) == before
-
-
-def test_command_line_migrate_and_detach_dialogs(saved: Path, espanso: FakeRunner) -> None:
-    saved.mkdir(parents=True)
-    (saved / ".env").write_text("PROMPT_PROFILE=general\n", encoding="utf-8")
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await enter(app, pilot, "config migrate --yes --preview-token abc")
-        assert isinstance(app.screen, ConfirmModal)
-        assert "--yes, --preview-token, abc" not in _help(app)
-        await pilot.press("n")
-        await settle(pilot)
-        assert (saved / ".env").is_file()
-        # Detach: deploy first (through its dialog), then detach with --remove-all picked.
-        await enter(app, pilot, "espanso deploy")
-        await press(app, pilot, "#submit")
-        await enter(app, pilot, "espanso detach --remove-all")
-        assert isinstance(app.screen, FormModal)
-        assert app.screen.query_one("#mode", Select).value == "remove-all"
-        await press(app, pilot, "#cancel")
-        assert (espanso.root / "match" / "prompts-llm.yml").is_file()
-        # A busy deploy opens no second dialog, and the line says so.
-        triggers = pane(app, "triggers")
-        triggers.busy = True
-        await pilot.press("1")
-        await enter(app, pilot, "espanso deploy")
-        assert not isinstance(app.screen, FormModal)
-        assert "already in progress" in _help(app)
-        assert app.main.query_one(TabbedContent).active == "home"
-
-    drive(scenario)
 
 
 def test_home_previous_install_hidden_once_settings_are_saved(

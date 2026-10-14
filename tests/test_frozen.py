@@ -15,8 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from promptmend import console, deploy, doctor, smoke, update_check
-from promptmend.commands import shell
+from promptmend import deploy, doctor, smoke, update_check
 from promptmend.entry import self_command
 
 REPO = Path(__file__).resolve().parents[1]
@@ -31,9 +30,6 @@ else:
     sys.modules["build_windows"] = bw
     _spec.loader.exec_module(bw)
 
-# conftest refuses both in every test; these are the real ones, kept at import.
-REAL_RUN = console.run
-REAL_RUN_HERE = shell.run_here
 PACKAGE = "vlastimilbures.PromptMend_Microsoft.Winget.Source_8wekyb3d8bbwe"
 
 
@@ -65,30 +61,6 @@ def test_the_smoke_test_runs_the_frozen_exe() -> None:
 
     smoke.run("ollama", runner=runner)
     assert seen[0][:2] == [sys.executable, "improve"]
-
-
-@pytest.mark.usefixtures("frozen")
-def test_the_command_line_and_the_shell_run_the_frozen_exe(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen: list[list[str]] = []
-
-    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        seen.append(args)
-        return subprocess.CompletedProcess(args, 0, stdout="")
-
-    class FakePopen:
-        def __init__(self, args: list[str]) -> None:
-            seen.append(args)
-
-        def wait(self) -> int:
-            return 0
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(subprocess, "Popen", FakePopen)
-    REAL_RUN(["stats"])
-    REAL_RUN_HERE(["stats"])
-    assert seen == [[sys.executable, "stats"], [sys.executable, "stats"]]
 
 
 # --- doctor --------------------------------------------------------------------------------------

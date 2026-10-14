@@ -13,13 +13,19 @@ All notable changes to this project are documented here. The format follows
   leave out those steps, instead of switching to a line-by-line mode (#244). `--plain` is now
   the same as `--non-interactive`; line-by-line questions are gone, and without a terminal
   (stdin or stdout) `setup` exits 3 unless one of them is given.
-- The `improve` refusal in `promptmend shell` now names the Try tab (7) of `promptmend ui`.
 - The interface reloads faster after each change: it asks Espanso for its folder and runs
   each launcher-lookup command once per reload instead of up to three times (#242).
 - `promptmend --help` describes the tool in one sentence instead of a developer note, and
   the `config`, `profiles` and `history` command lists give `config show`, `migrate`,
   `rollback`, `retire`, `profiles migrate` and `history prune` a one-line summary; each
   command's own `--help` keeps the full text (#247).
+### Removed
+- The `shell` command, the terminal command line with completion and live help (#239). Run
+  each command in your terminal as it is, or use the interface.
+- Home's command line in the interface (the `c` key) and its Recipes… button (#239). Every
+  button's tooltip and every result still show the command it runs; Home still lists this
+  session's commands and a few useful ones, and Copy last copies the latest.
+- The `prompt-toolkit` dependency, used only by the `shell` command (#239).
 ### Fixed
 - Usage history: a recorded run and `doctor` read `history.spool` and `history.lost` only
   under their lock, so on Windows they can no longer make another run's update of those files

@@ -81,7 +81,6 @@ NOTES = {
 # Buttons with no command of their own: they move around the interface or measure it.
 NO_COMMAND = {
     "import-check": "Imports the CLI in a fresh interpreter and times it; no command.",
-    "home-recipes": "Puts a recipe on the command line below; runs nothing until Enter.",
     "home-copy": "Copy the latest command of this session, as Home's log shows it, to the\n"
     "terminal clipboard (OSC 52); the clipboard is never read.",
     "previous-enter": "",
@@ -126,11 +125,6 @@ def for_setting(action: str, name: str, value: str | None = None) -> str:
     when ``value`` is given (WITHHELD for a value never shown)."""
     filled = {"<NAME>": name} | ({"<VALUE>": value} if value is not None else {})
     return equivalent(*(filled.get(word, word) for word in SETTING_ACTIONS[action]))
-
-
-def line(*argv: str) -> str:
-    """``argv`` as Home's command line takes it: equivalent() without the program name."""
-    return " ".join(_quoted(argv))
 
 
 def _quoted(argv: tuple[str, ...]) -> list[str]:

@@ -47,10 +47,10 @@ and manage it.
 ![The Home tab of the PromptMend interface](https://raw.githubusercontent.com/vlastimilbures/promptmend/main/docs/interface.svg)
 
 Home shows whether you are ready, what each trigger runs, the match files, the history and the
-`doctor` checks, with a command line below.
+`doctor` checks, with this session's commands below.
 
 More: [docs/interface.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/interface.md)
-(every tab, the Try tab, the command line, the keys).
+(every tab, the Try tab, the keys).
 
 ## Example
 
@@ -216,7 +216,6 @@ More: [docs/usage.md](https://github.com/vlastimilbures/promptmend/blob/main/doc
 | Command | What it does |
 |---------|--------------|
 | `promptmend` / `promptmend ui` | Opens the full-screen interface |
-| `promptmend shell` | A command line with completion and live help, run in your terminal |
 | `promptmend setup` | First run: provider, profile, key, match files and a smoke test |
 | `promptmend doctor` | Checks the install, settings, keys, Espanso, match files and history |
 | `promptmend config show` | Every setting, its value and where it comes from |
@@ -310,7 +309,7 @@ More: [docs/benchmark.md](https://github.com/vlastimilbures/promptmend/blob/main
 | [Configuration](https://github.com/vlastimilbures/promptmend/blob/main/docs/configuration.md) | Where settings and keys live, how to change them, the complete settings reference |
 | [Profiles](https://github.com/vlastimilbures/promptmend/blob/main/docs/profiles.md) | The built-in profiles, your own profiles and the persona |
 | [Privacy](https://github.com/vlastimilbures/promptmend/blob/main/docs/privacy.md) | What is sent and to whom, the gate, local-only mode, the usage history |
-| [Interface](https://github.com/vlastimilbures/promptmend/blob/main/docs/interface.md) | The tabs, the command line, the Try tab and the keys |
+| [Interface](https://github.com/vlastimilbures/promptmend/blob/main/docs/interface.md) | The tabs, Home, the Try tab and the keys |
 | [Troubleshooting](https://github.com/vlastimilbures/promptmend/blob/main/docs/troubleshooting.md) | `doctor` first, then each marker and symptom with its fix |
 | [Benchmark](https://github.com/vlastimilbures/promptmend/blob/main/docs/benchmark.md) | How the default models and prompt were chosen, and every result |
 

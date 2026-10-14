@@ -2,8 +2,8 @@
 
 `promptmend` opens a full-screen terminal interface for setting up and managing PromptMend:
 settings and keys, profiles, the Espanso match files, the usage history, diagnostics, and a
-tab to try a rewrite before a trigger pastes one. This page covers its tabs, the command line
-on Home, the Settings and Try tabs and the keys. Everything it does, a headless command does too (see
+tab to try a rewrite before a trigger pastes one. This page covers its tabs, Home, the
+Settings and Try tabs and the keys. Everything it does, a headless command does too (see
 [Commands](commands.md)).
 
 ## Contents
@@ -12,9 +12,8 @@ on Home, the Settings and Try tabs and the keys. Everything it does, a headless 
 - [Setup](#setup)
 - [Tabs](#tabs)
 - [Home](#home)
-- [Command line](#command-line)
 - [Settings tab](#settings-tab)
-- [Recipes and Copy last](#recipes-and-copy-last)
+- [Copy last](#copy-last)
 - [Try tab](#try-tab)
 - [Keys](#keys)
 - [Intro](#intro)
@@ -23,9 +22,7 @@ on Home, the Settings and Try tabs and the keys. Everything it does, a headless 
 ## Open it
 
 Run `promptmend` (or `promptmend ui`) in a terminal. Without a terminal, a bare `promptmend`
-prints the help and `ui` exits 3. For the same command line without the full screen, with
-each command run in your terminal, use `promptmend shell` (see
-[Commands](commands.md#shell)).
+prints the help and `ui` exits 3.
 
 The interface does what the management commands do, through the same code. Keys are shown
 only as set or not set. Removing a key, deploying, detaching, migrating or deleting history
@@ -77,7 +74,7 @@ asks nothing (see [Commands](commands.md#management-commands)).
 
 | Key | Tab | What it shows and does |
 |-----|-----|------------------------|
-| `1` | Home | Whether you are ready, the most urgent problem, the session log and the command line |
+| `1` | Home | Whether you are ready, the most urgent problem and the session log |
 | `2` | Settings | Every setting and key in one list: switch, pick, edit or reset a setting, set or remove a key, migrate a `.env`, run the Test call (see [Settings tab](#settings-tab)) |
 | `3` | Profiles | Built-in and your own profiles; pick the default profile, edit a profile in `$VISUAL` or `$EDITOR`, copy a checkout's profiles (it asks for the checkout's folder when none was found) |
 | `4` | Triggers | The match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
@@ -109,30 +106,6 @@ fixes it. Below, each row has a status word (ok, warn, FAIL) and the tab that fi
 The header shows the same status (`ok`, or `1 problem, 2 warnings`). Home also lists this
 session's commands, or a few useful ones before you have done anything.
 
-## Command line
-
-Press `c` (from any tab) and type a command, such as `espanso status --diff`.
-
-- It completes the word you are typing; Tab or the Right arrow takes the suggestion. It
-  suggests commands, options, setting names after `config set`, key names only after
-  `secrets set` or `secrets remove`, and profile names.
-- It shows the command's usage and help below, or the error the CLI would print.
-- Up and Down go back through what you entered. Escape leaves the line, so the tab keys work
-  again.
-
-Enter acts on the command by what it does:
-
-| Kind | Commands | What Enter does |
-|------|----------|-----------------|
-| Reads, previews, changes a setting or writes an export | `doctor`, `config show\|get\|set\|unset\|validate`, `secrets status`, `profiles list`, `stats`, `espanso status`, `history export`, any `--dry-run` preview, any `--help` and `--version` | Runs it and shows `$ promptmend …`, its output and `exit N` below the line and in the session log. One runs at a time, with no input and at most 120 seconds. `doctor` skips the clipboard check unless you pass `--clipboard` |
-| Asks first | `espanso deploy`, `espanso detach`, `config migrate`, `secrets set NAME`, `secrets remove`, `history prune`, `history reset` | Opens the dialog of the tab that does it (`history prune` with `--older-than` filled in; a key is typed hidden in the dialog). `--yes`, `--on-conflict`, `--no-restart` and `--preview-token` are ignored there: the dialog decides |
-| Asks as it goes | `setup`, `shell`, `config rollback`, `config retire`, `profiles migrate`, and a dialog's command given `--espanso-dir`, `--launcher` or `--from` | Says to quit and run it in a terminal |
-| Refused | `improve`, `persona`, `ui` | Says why: the triggers run `improve` and `persona`, and `improve` reads the clipboard; the Try tab rewrites a typed draft instead |
-
-A line that looks like it holds a key, `secrets set` with anything after the key's name, or
-`config set|get|unset` with a key's name and a value, is never run, shown back or kept: it is cleared, and keys go in Settings. A key in a command's
-output is shown as `<redacted, N chars>`.
-
 ## Settings tab
 
 The Settings tab (`2`) lists every setting and both API keys, grouped (Output, Keys, Privacy,
@@ -162,15 +135,12 @@ store), and shows and logs its command (`$ promptmend config set PROMPT_OUTPUT c
 the persona as `<value withheld>`). An environment variable of the same name still wins, and
 the result says so.
 
-## Recipes and Copy last
+## Copy last
 
-- **Recipes…** lists the useful commands Home suggests. Picking one puts it on the command
-  line; nothing runs until you press Enter there, and Escape or Cancel leaves the line as it
-  was.
-- **Copy last** sends the session's latest command, exactly as the session log shows it
-  (withheld values such as `<value withheld>` and placeholders included), to the terminal's
-  clipboard (OSC 52). Some terminals, tmux or SSH sessions need it allowed, or drop it. The
-  interface never reads the clipboard.
+Home's **Copy last** sends the session's latest command, exactly as the session log shows it
+(withheld values such as `<value withheld>` and placeholders included), to the terminal's
+clipboard (OSC 52). Some terminals, tmux or SSH sessions need it allowed, or drop it. The
+interface never reads the clipboard.
 
 ## Try tab
 
@@ -210,13 +180,12 @@ models, never a made-up 0.
 | Key | Action |
 |-----|--------|
 | `1`-`7` | Switch tabs |
-| `c` | Open Home's command line |
 | `a` | About: version, whether a newer release exists and the command to update, install channel, folders and licence |
 | `r` | Reload |
 | `u` | In the Settings list: back to the default (`config unset`) |
 | `t` | Switch to the high-contrast theme |
 | `q` | Quit |
-| Escape | Leave the command line or the Try tab's draft, so the tab keys work again; clear the Settings filter |
+| Escape | Leave the Try tab's draft, so the tab keys work again; clear the Settings filter |
 | Up, Down, `j`, `k`, Space, Enter, `/` | Move and change in the [Settings list](#settings-tab) |
 
 ## Intro
