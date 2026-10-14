@@ -108,9 +108,8 @@ def test_tooltips() -> None:
     smoke = teach.tooltip("smoke") or ""
     assert smoke.startswith("In a terminal:\n$ promptmend setup\n")
     assert "smoke test" in smoke
-    assert (teach.tooltip("home-previous") or "").count("$ promptmend") == 4
     assert teach.tooltip("home-copy") == teach.NO_COMMAND["home-copy"]
-    assert teach.tooltip("previous-close") is None
+    assert teach.tooltip("setup-back") is None
     assert teach.tooltip("no-such-button") is None
 
 

@@ -17,7 +17,7 @@ WITHHELD = "<value withheld>"
 
 CHECKOUT = "<CHECKOUT>"
 
-# Button id -> the commands it runs, in order (Home's "Previous install…" is four steps).
+# Button id -> the commands it runs, in order.
 BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
     "home-reload": (("doctor",),),
     "home-setup": (("setup",),),
@@ -25,12 +25,6 @@ BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
     "setup-save-keys": (("secrets", "set", "<NAME>"),),
     "setup-deploy": (("espanso", "deploy"),),
     "setup-run-test": (("setup",),),
-    "home-previous": (
-        ("config", "migrate", "--from", CHECKOUT),
-        ("profiles", "migrate", "--checkout", CHECKOUT),
-        ("espanso", "deploy"),
-        ("config", "retire", "--from", CHECKOUT),
-    ),
     "migrate-env": (("config", "migrate"),),
     "smoke": (("setup",),),
     "set-profile": (("config", "set", "PROMPT_PROFILE", "<NAME>"),),
@@ -42,10 +36,6 @@ BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
     "export": (("history", "export", "--format", "json", "-o", "<FILE>"),),
     "prune": (("history", "prune", "--older-than", "<DAYS>"),),
     "reset": (("history", "reset"),),
-    "previous-copy": (("config", "migrate", "--from", CHECKOUT),),
-    "previous-profiles": (("profiles", "migrate", "--checkout", CHECKOUT),),
-    "previous-deploy": (("espanso", "deploy"),),
-    "previous-retire": (("config", "retire", "--from", CHECKOUT),),
     "try-run": (
         (
             "improve",
@@ -82,14 +72,10 @@ NOTES = {
 NO_COMMAND = {
     "home-copy": "Copy the latest command of this session, as Home's log shows it, to the\n"
     "terminal clipboard (OSC 52); the clipboard is never read.",
-    "previous-enter": "",
-    "setup-previous": "Opens the switch from an earlier checkout install, step by step.",
     "setup-back": "",
     "setup-next-step": "",
     "setup-open": "",
     "setup-quit": "",
-    "previous-skip": "",
-    "previous-close": "",
     "about-close": "",
 }
 

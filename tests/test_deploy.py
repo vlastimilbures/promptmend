@@ -153,7 +153,7 @@ def test_rendered_args_start_with_the_launcher(path: str, windows: bool) -> None
 
 
 # The launcher is found in the script args (#18) and in the shell cmd lines every earlier
-# release wrote, so doctor, the previous-install finder and adoption see both.
+# release wrote, so doctor and adoption see both.
 def test_launchers_in_reads_both_shapes() -> None:
     script = 'args: ["/opt/new/promptmend", "improve", "--trigger-id", "i"]'
     shell = 'cmd: "\\"C:/old dir/promptmend.exe\\" improve --trigger-id i"'
@@ -381,18 +381,6 @@ def test_backup_name_never_clobbers(espanso: Path) -> None:
     assert (first.name, second.name) == ("a.yml.bak-20260101000000", "a.yml.bak-20260101000000-1")
 
 
-@pytest.mark.parametrize("command", ["promptmend", "prompt-workflow"])  # either name (#169)
-def test_legacy_base_yml_is_retired(espanso: Path, command: str) -> None:
-    legacy = espanso / "match" / "base.yml"
-    legacy.write_text(f'matches:\n  - trigger: "-p-"\n    # {command}\n', "utf-8")
-    the_plan = _plan(espanso)
-    assert the_plan.legacy == legacy
-    deploy.apply(the_plan)
-    assert not legacy.exists()
-    assert len(list(legacy.parent.glob("base.yml.bak-*"))) == 1
-    assert _plan(espanso).is_noop
-
-
 @pytest.mark.parametrize(
     ("launcher", "legacy"),
     [
@@ -405,12 +393,6 @@ def test_legacy_base_yml_is_retired(espanso: Path, command: str) -> None:
 )
 def test_is_legacy_launcher(launcher: str, legacy: bool) -> None:
     assert deploy.is_legacy_launcher(launcher) is legacy
-
-
-def test_other_base_yml_is_left_alone(espanso: Path) -> None:
-    legacy = espanso / "match" / "base.yml"
-    legacy.write_text('matches:\n  - trigger: ":date"\n', "utf-8")
-    assert _plan(espanso).legacy is None
 
 
 def test_non_utf8_file_is_foreign(espanso: Path) -> None:
@@ -1076,17 +1058,14 @@ def test_cli_resolves_launcher_and_espanso_dir(
     assert f"Espanso match folder: {espanso / 'match'}" in result.stdout
 
 
-def test_cli_status_diff_and_legacy(espanso: Path, fake_run: FakeRunner) -> None:
-    (espanso / "match" / "base.yml").write_text('trigger: "-p-" promptmend', "utf-8")
+def test_cli_status_diff(espanso: Path, fake_run: FakeRunner) -> None:
     result = _cli("status", "--diff", *_where(espanso))
     assert result.exit_code == 0
     assert "+# promptmend" in result.stdout
     # Nothing deployed yet: the header says so instead of "on disk" (#222).
     assert "prompts-llm.yml (missing)" in result.stdout
     assert "(on disk)" not in result.stdout
-    assert "legacy    base.yml" in result.stdout
     assert fake_run.calls == []  # status never restarts or writes
-    assert (espanso / "match" / "base.yml").exists()
 
 
 def test_cli_status_bad_manifest(espanso: Path, fake_run: FakeRunner) -> None:
@@ -1122,11 +1101,13 @@ def test_plan_lists_nothing_without_a_match_folder(tmp_path: Path) -> None:
     assert deploy.plan(tmp_path / "none", LAUNCHER, deploy.Manifest.load()).yours == []
 
 
-def test_legacy_base_is_not_listed_as_yours(espanso: Path) -> None:
-    (espanso / "match" / "base.yml").write_text('trigger: "-p-" promptmend', "utf-8")
-    the_plan = _plan(espanso)
-    assert the_plan.legacy == espanso / "match" / "base.yml"
-    assert the_plan.yours == []
+# The pre-0.9 base.yml is no longer retired (#246): it is the user's, and deploy leaves it.
+def test_pre_0_9_base_yml_is_yours(espanso: Path) -> None:
+    base = espanso / "match" / "base.yml"
+    base.write_text('trigger: "-p-" promptmend', "utf-8")
+    assert _plan(espanso).yours == [base]
+    deploy.apply(_plan(espanso))
+    assert base.read_text("utf-8") == 'trigger: "-p-" promptmend'
 
 
 def test_symlinked_match_file_is_listed_as_yours(tmp_path: Path, espanso: Path) -> None:
@@ -1201,14 +1182,6 @@ def test_in_sync_file_without_manifest_is_adopted(espanso: Path) -> None:
     assert all(line.startswith("adopted") for line in outcome.lines)
     assert _tree(espanso) == before
     assert _plan(espanso).is_noop
-
-
-def test_cli_deploy_retires_legacy(espanso: Path, fake_run: FakeRunner) -> None:
-    (espanso / "match" / "base.yml").write_text('trigger: "-p-" promptmend', "utf-8")
-    result = _cli("deploy", "--yes", *_where(espanso))
-    assert "legacy    base.yml will be retired" in result.stdout
-    assert "retired legacy" in result.stdout
-    assert not (espanso / "match" / "base.yml").exists()
 
 
 # --- Hardening (#104 review) ----------------------------------------------------------------

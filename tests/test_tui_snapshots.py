@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 
-from promptmend import assets, deploy, doctor, previous_install, update_check
+from promptmend import assets, deploy, doctor, update_check
 from promptmend.config import ConfigLayers
 from promptmend.history import StatsRow
 from promptmend.prompt_builder import UserProfile
@@ -65,7 +65,6 @@ _MESSAGES = {
     "sqlite": (doctor.OK, "SQLite 3.51.3"),
     "clipboard": (doctor.INFO, "skipped (--no-clipboard)"),
     "profiles": (doctor.OK, "PROMPT_PROFILE default resolves"),
-    "previous_install": (doctor.OK, "settings are in place; nothing to look for"),
     "local_servers": (
         doctor.INFO,
         "-il- needs Ollama: no answer at OLLAMA_BASE_URL; LM Studio answers (-ilm-)",
@@ -138,7 +137,6 @@ def _stats() -> list[StatsRow]:
 
 def fixed_state(
     group_by: str = "trigger",
-    previous: previous_install.Detection | None = None,
     extra: dict[str, str] | None = None,
 ) -> State:
     environ = {
@@ -163,7 +161,6 @@ def fixed_state(
         ESPANSO,
         LAUNCHER,
         steps,
-        None,
         deploy.Manifest(Path("manifest.json")),
         yours=[ESPANSO / "match" / "base.yml"],
     )
@@ -179,23 +176,8 @@ def fixed_state(
         group_by=group_by,
         stats=_stats(),
         stats_error=None,
-        previous=previous or previous_install.Detection(),
         update=UPDATE,
     )
-
-
-def previous_state(group_by: str = "trigger") -> State:
-    """An earlier checkout install found through the old match files (#110)."""
-    root = Path(f"{HOME}/Projects/promptmend")
-    launcher = f"{root}/.venv/bin/promptmend"
-    candidate = previous_install.Candidate(
-        root=root,
-        signals=frozenset({previous_install.LAUNCHER, previous_install.RECEIPT}),
-        env_file=root / ".env",
-        launchers_in_root=(launcher,),
-        profiles_dir=root / "src" / "promptmend" / "prompts",
-    )
-    return fixed_state(group_by, previous_install.Detection(candidates=(candidate,)))
 
 
 @pytest.fixture(autouse=True)
@@ -314,10 +296,6 @@ def test_snapshot_setup(name: str, steps: int, size: tuple[int, int]) -> None:
 
 def test_snapshot_high_contrast() -> None:
     _check("home-high-contrast", _shoot("1", HIGH_CONTRAST.name))
-
-
-def test_snapshot_previous_install() -> None:
-    _check("previous-install", _shoot(None, loader=previous_state))
 
 
 # Home on the smallest common terminal (#112): a row's text is cut, never wrapped.

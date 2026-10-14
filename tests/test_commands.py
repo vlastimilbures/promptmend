@@ -56,8 +56,7 @@ def fake_run(monkeypatch: pytest.MonkeyPatch) -> FakeRunner:
 
 
 def _changes(calls: list[list[str]]) -> list[list[str]]:
-    """The commands that change something: setup's previous-install lookup reads `uv tool
-    dir` too (#110)."""
+    """The commands that change something: the launcher lookup reads `uv tool dir` too."""
     return [call for call in calls if call != ["uv", "tool", "dir"]]
 
 
@@ -514,36 +513,19 @@ def test_no_command_accepts_a_key_as_an_argument(
 # --- Repair mode: every command runs on a broken config ------------------------------------
 
 
-def _old_checkout(near: Path) -> str:
-    """An earlier checkout with a .env holding a key, for the --from/--migrate-from walks."""
-    root = near.parent / "old-checkout"
-    root.mkdir(exist_ok=True)
-    (root / "pyproject.toml").write_text('[project]\nname = "promptmend"\n', "utf-8")
-    (root / ".env").write_text(f"OLLAMA_MODEL=old\nOPENROUTER_API_KEY={KEY}\n", "utf-8")
-    return str(root)
-
-
 def _commands(espanso: Path) -> dict[tuple[str, ...], list[list[str]]]:
     where = ["--espanso-dir", str(espanso), "--launcher", LAUNCHER]
-    old = _old_checkout(espanso)
     return {
         ("setup",): [
             ["setup", "--non-interactive", "--no-smoke-test", *where],
-            ["setup", "--non-interactive", "--no-smoke-test", "--migrate-from", old, *where],
         ],
         ("config", "show"): [["config", "show"], ["config", "show", "--raw"]],
         ("config", "get"): [["config", "get", "PROMPT_PROFILE"]],
         ("config", "set"): [["config", "set", "PROMPT_PROFILE", "general"]],
         ("config", "unset"): [["config", "unset", "PROMPT_PROFILE"]],
         ("config", "validate"): [["config", "validate"]],
-        ("config", "migrate"): [
-            ["config", "migrate", "--dry-run"],
-            ["config", "migrate", "--dry-run", "--from", old],
-        ],
+        ("config", "migrate"): [["config", "migrate", "--dry-run"]],
         ("config", "rollback"): [["config", "rollback", "--dry-run"]],
-        ("config", "retire"): [
-            ["config", "retire", "--dry-run", "--from", old, "--espanso-dir", str(espanso)]
-        ],
         ("secrets", "set"): [["secrets", "set", "OPENROUTER_API_KEY", "--stdin"]],
         ("secrets", "status"): [["secrets", "status"]],
         ("secrets", "remove"): [["secrets", "remove", "OPENROUTER_API_KEY", "--yes"]],

@@ -8,16 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 - `setup` on a terminal always opens the full-screen wizard: `--provider` and `--profile`
-  preselect that choice, `--migrate-from` adds the earlier settings step, which looks at that path,
-  `--deploy` puts the focus on the install button, and `--no-deploy` and `--no-smoke-test`
-  leave out those steps, instead of switching to a line-by-line mode (#244). `--plain` is now
+  preselect that choice, `--deploy` puts the focus on the install button, and `--no-deploy`
+  and `--no-smoke-test` leave out those steps, instead of switching to a line-by-line mode (#244). `--plain` is now
   the same as `--non-interactive`; line-by-line questions are gone, and without a terminal
   (stdin or stdout) `setup` exits 3 unless one of them is given.
 - The interface reloads faster after each change: it asks Espanso for its folder and runs
   each launcher-lookup command once per reload instead of up to three times (#242).
 - `promptmend --help` describes the tool in one sentence instead of a developer note, and
   the `config`, `profiles` and `history` command lists give `config show`, `migrate`,
-  `rollback`, `retire`, `profiles migrate` and `history prune` a one-line summary; each
+  `rollback`, `profiles migrate` and `history prune` a one-line summary; each
   command's own `--help` keeps the full text (#247).
 ### Removed
 - The `shell` command, the terminal command line with completion and live help (#239). Run
@@ -34,14 +33,21 @@ All notable changes to this project are documented here. The format follows
 - The Diagnostics tab's table of every setting and its source (#245); the Settings tab and
   `promptmend config show` list each setting and where it comes from, and `config show` also
   names what each value overrides.
+- The pre-1.0 migration code (#246): `config retire`, `config migrate --from`,
+  `setup --migrate-from`, the interface's Previous install screen (Home's "Previous install…"
+  and the setup wizard's "Earlier install…"), and doctor's `previous_install` check (with its
+  warning about another `promptmend` first on `PATH`). To move from a checkout install, copy
+  its `.env` into the config folder and run `config migrate`, and copy edited profiles with
+  `profiles migrate --checkout PATH` (docs/install.md, "From a checkout install").
+  `config rollback` still puts back a checkout's `.env` that an earlier `config retire` moved.
+- Deploy no longer retires the `match/base.yml` that versions before 0.9 installed (#246): if
+  it is still there, delete it by hand; `promptmend espanso status` lists it as yours.
 ### Fixed
 - Usage history: a recorded run and `doctor` read `history.spool` and `history.lost` only
   under their lock, so on Windows they can no longer make another run's update of those files
   fail and lose that record, and a run that started before a management command moved the
   old `prompt-workflow` data folder no longer creates that folder again (that run's record is
   dropped) (#241).
-- `setup --espanso-dir` offers the earlier settings step for an earlier install whose
-  match files are in that folder, not in Espanso's default one.
 - A TLS certificate failure (a corporate proxy, a self-signed endpoint) is reported at once
   instead of being retried a second later: the retry could not succeed, delayed the marker
   and added a second record to the usage history (#247).
@@ -53,8 +59,6 @@ All notable changes to this project are documented here. The format follows
   moves on; the keys step and the Done checklist say to add each key to that file.
 - Setup logs `config unset` when picking the default removed the setting, instead of a
   `config set` it did not run.
-- Home's "Previous install…" stays shown until your settings are saved in `config.toml`, so
-  "Enter a path…" works after "Skip this checkout" and when nothing was found.
 - The Profiles tab's "Migrate from checkout" asks for the checkout's folder when none was
   found, instead of naming a `--checkout` flag the interface cannot pass.
 - Saving a setting or a key no longer replaces a symlinked `config.toml` or `secrets.toml`

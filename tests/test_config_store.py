@@ -673,6 +673,46 @@ def test_rollback_restores_exact_state(saved_mode: Path, project: Path) -> None:
         config_store.plan_rollback()
 
 
+# A marker written before #246 by `config migrate --from` (copy mode) and `config retire`:
+# rollback still puts the retired checkout's .env back and leaves a copied-only one alone.
+def test_rollback_of_an_older_copy_and_retire_marker(
+    saved_mode: Path, project: Path, tmp_path: Path
+) -> None:
+    _write(project / ".env", "OLLAMA_MODEL=mine\n")
+    config_store.apply_migration(consent=config_store.plan_migration().token)
+    marker = saved_mode / "migration.json"
+    record = json.loads(marker.read_text("utf-8"))
+    retired_env = _write(tmp_path / "retired" / ".env", "OLLAMA_MODEL=old\n")
+    kept_env = _write(tmp_path / "kept" / ".env", "OLLAMA_MODEL=kept\n")
+    stored = Path(record["backup"]) / "2-checkout.env.inactive"
+    retired_env.rename(stored)
+    for env_file, retired in ((retired_env, True), (kept_env, False)):
+        entry = {
+            "from": str(env_file),
+            "to": None,
+            "in_place": None,
+            "sha256": config_files.digest((stored if retired else env_file).read_bytes()),
+            "copied": True,
+            "root": str(env_file.parent),
+        }
+        if retired:
+            entry |= {"retired_to": str(stored), "retired_in_place": str(env_file) + ".x"}
+        record["sources"].append(entry)
+    record["mode"] = "copy"
+    marker.write_text(json.dumps(record), "utf-8")
+
+    rollback = config_store.plan_rollback()
+    assert (stored, retired_env) in rollback.restores
+    assert rollback.unread == (retired_env.parent, kept_env.parent)
+    assert rollback.read_again
+    assert "migrate --from" not in "\n".join(rollback.describe())
+    config_store.apply_rollback(consent=rollback.token)
+    assert retired_env.read_text("utf-8") == "OLLAMA_MODEL=old\n"
+    assert kept_env.read_text("utf-8") == "OLLAMA_MODEL=kept\n"
+    assert (project / ".env").read_text("utf-8") == "OLLAMA_MODEL=mine\n"
+    assert not marker.exists()
+
+
 # Across file systems the .env is renamed in place instead (still never deleted); rollback
 # finds it there.
 def test_migration_falls_back_to_rename_in_place(

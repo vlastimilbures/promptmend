@@ -4,9 +4,7 @@ and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself."""
 
 from __future__ import annotations
 
-import functools
 from collections.abc import Callable
-from pathlib import Path
 from typing import ClassVar
 
 from textual import on, work
@@ -24,12 +22,11 @@ from .history_pane import HistoryPane
 from .home import TAB_LABELS, pill
 from .home_pane import HomePane
 from .intro import AboutScreen
-from .previous import PreviousInstallScreen, wants_offer
 from .profiles_pane import ProfilesPane
 from .settings_pane import SettingsPane
-from .setup_wizard import SetupOptions, SetupScreen, make_plan, needs_setup
+from .setup_wizard import SetupOptions, SetupScreen, needs_setup
 from .state import State, gather
-from .triggers_pane import DeployTarget, TriggersPane
+from .triggers_pane import TriggersPane
 from .try_pane import TryPane
 
 DEFAULT_THEME = "textual-dark"
@@ -103,10 +100,6 @@ ModalScreen { align: center middle; }
 .dialog-title { text-style: bold; margin-bottom: 1; }
 .preview { height: auto; max-height: 18; border: round $panel-lighten-2; margin-bottom: 1; }
 .dialog Select, .dialog Input { margin-bottom: 1; }
-#previous-found { margin-bottom: 1; }
-#previous-steps, .step { height: auto; }
-.step Button { width: 34; margin-right: 1; }
-.step-state { width: 1fr; padding-top: 1; }
 /* The setup wizard: the steps on the left, one step at a time on the right. */
 #setup { height: 1fr; }
 #setup-rail { width: 20; padding: 1 1 1 2; border-right: tall $panel-lighten-2; }
@@ -174,13 +167,6 @@ class ManageApp(App[int]):
         super().__init__()
         # Read here, not at import, so the snapshot tests can pin it and a release changes none.
         self.title = f"{self.TITLE} {__version__}"
-        if loader is gather and setup is not None and setup.espanso_dir:
-            # `setup --espanso-dir`: look for the earlier install deployed in that folder.
-            loader = functools.partial(
-                gather,
-                espanso_dir=Path(setup.espanso_dir).expanduser(),
-                launcher=Path(setup.launcher).expanduser() if setup.launcher else None,
-            )
         self.loader = loader
         self.group_by = "trigger"
         self.state: State | None = None
@@ -190,8 +176,6 @@ class ManageApp(App[int]):
         self.main = MainScreen()
         # This session's actions as commands (#111), shown on Home.
         self.session: list[teach.Entry] = []
-        # The previous install screen opens by itself once per session (#110).
-        self.offered = False
         # `setup` opens the wizard at once; `first_run` opens it by itself once when nothing
         # is set up yet (a bare `promptmend`; off in the tests).
         self.setup_options = setup
@@ -204,7 +188,6 @@ class ManageApp(App[int]):
         self.reload()
         if self.setup_options is not None:
             self.first_run = False
-            self.offered = True  # its Earlier settings step offers the previous install
             self.push_screen(SetupScreen(self.setup_options))
 
     def action_about(self) -> None:
@@ -256,57 +239,21 @@ class ManageApp(App[int]):
             if pane.ready:
                 pane.show(state)
         for screen in self.screen_stack:
-            if isinstance(screen, (PreviousInstallScreen, SetupScreen)) and screen.is_mounted:
+            if isinstance(screen, SetupScreen) and screen.is_mounted:
                 screen.show(state)
         self._maybe_offer()
 
     def _maybe_offer(self) -> None:
-        """Open the previous install screen by itself, once per session, when the state found
-        one, and not while the setup wizard is open."""
-        if self.state is None:
+        """Open the setup wizard by itself, once, when nothing is set up yet."""
+        if self.state is None or not self.first_run:
             return
         if any(isinstance(s, SetupScreen) for s in self.screen_stack):
             return
-        if self.first_run:
-            self.first_run = False
-            if needs_setup(self.state):
-                self.offered = True  # the wizard's Earlier settings step offers it
-                self.open_setup()
-                return
-        if self.offered or not wants_offer(self.state.previous):
-            return
-        self.open_previous()
+        self.first_run = False
+        if needs_setup(self.state):
+            self.open_setup()
 
     def open_setup(self) -> None:
         """Show the setup wizard over the tabs, unless it is already open."""
         if not any(isinstance(s, SetupScreen) for s in self.screen_stack):
             self.push_screen(SetupScreen())
-
-    def open_previous(
-        self, entered: Path | None = None, options: SetupOptions | None = None
-    ) -> None:
-        """Show the switch from an earlier checkout install, unless it is already open; with
-        ``entered`` (`setup --migrate-from`), detected with that path, and with the wizard's
-        ``options``, its --espanso-dir and --launcher for detection, deploy and retire."""
-        self.offered = True
-        # Every way in (Home's button too) uses setup's folder, as the detection did.
-        options = options or self.setup_options
-        if any(isinstance(s, PreviousInstallScreen) for s in self.screen_stack):
-            return
-        if options is None or not (options.espanso_dir or options.launcher or options.no_restart):
-            self.push_screen(PreviousInstallScreen(entered))
-            return
-        named = options
-        args = [
-            *(("--espanso-dir", named.espanso_dir) if named.espanso_dir else ()),
-            *(("--launcher", named.launcher) if named.launcher else ()),
-            *(("--no-restart",) if named.no_restart else ()),
-        ]
-        self.push_screen(
-            PreviousInstallScreen(
-                entered,
-                espanso_dir=Path(named.espanso_dir).expanduser() if named.espanso_dir else None,
-                launcher=Path(named.launcher).expanduser() if named.launcher else None,
-                target=DeployTarget(lambda: make_plan(named)[0], named.no_restart, tuple(args)),
-            )
-        )

@@ -298,11 +298,6 @@ _DRY_RUN = typer.Option(False, "--dry-run", help="Only show the preview")
 _TOKEN = typer.Option("", "--preview-token", help="The preview's token, required with --yes")
 
 
-def _checkout(path: str | None, option: str) -> Path | None:
-    common.no_key(path, option)
-    return Path(path).expanduser() if path else None
-
-
 @config_app.command(
     "migrate", short_help="Move the .env in use to config.toml and its keys to the secret store."
 )
@@ -311,19 +306,10 @@ def config_migrate(
     dry_run: bool = _DRY_RUN,
     yes: bool = _YES,
     preview_token: str = _TOKEN,
-    source: str | None = typer.Option(
-        None,
-        "--from",
-        help="Also copy the settings of an earlier checkout's .env (it stays in place)",
-        metavar="PATH",
-    ),
 ) -> None:
     """Move the .env in use to config.toml and its keys to the secret store, with a backup.
-    Shows a preview first; applies only once you confirm it (or --yes --preview-token).
-    With --from, an earlier checkout's .env fills the settings still at their default, and
-    stays where it is until `config retire --from`."""
-    checkout = _checkout(source, "--from")
-    plan = config_store.plan_migration(source=checkout)
+    Shows a preview first; applies only once you confirm it (or --yes --preview-token)."""
+    plan = config_store.plan_migration()
     if plan.status != "ready":
         for line in plan.describe():
             typer.echo(line)
@@ -331,16 +317,10 @@ def config_migrate(
     typer.echo("Migration preview:")
     if not _consent(plan.describe(), plan.token, dry_run=dry_run, yes=yes, given=preview_token):
         return
-    result = config_store.apply_migration(source=checkout, consent=plan.token)
+    result = config_store.apply_migration(consent=plan.token)
     typer.echo(f"Migrated. Backup: {result.backup}")
     for moved, target in result.moved.items():
         typer.echo(f"  moved {moved} -> {target}")
-    if result.copied is not None:
-        typer.echo(f"  copied {result.copied} (left in place)")
-        typer.echo(
-            "Next: `promptmend espanso deploy`, then "
-            f"`promptmend config retire --from {result.copied.parent}`."
-        )
     for left in result.left:
         common.warn(
             f"{left} was not moved (edited since the preview, or not movable); it is no longer read"
@@ -364,36 +344,6 @@ def config_rollback(
         return
     config_store.apply_rollback(consent=plan.token)
     typer.echo("Rolled back: the .env is read again." if plan.read_again else "Rolled back.")
-
-
-@config_app.command(
-    "retire",
-    short_help="Move an earlier checkout's .env, once its settings are copied, into the backup.",
-)
-@guard
-def config_retire(
-    source: str = typer.Option(
-        ..., "--from", help="The earlier checkout whose settings were copied", metavar="PATH"
-    ),
-    espanso_dir: str | None = typer.Option(
-        None, "--espanso-dir", help="Default: `espanso path config`"
-    ),
-    dry_run: bool = _DRY_RUN,
-    yes: bool = _YES,
-    preview_token: str = _TOKEN,
-) -> None:
-    """Move an earlier checkout's .env, whose settings `config migrate --from` copied, into
-    the backup. Refused while a match file still runs that checkout's CLI: deploy first.
-    Shows a preview first, like migrate; `config rollback` puts it back."""
-    common.no_key(source, "--from")
-    checkout = Path(source).expanduser()
-    folder = _checkout(espanso_dir, "--espanso-dir")
-    plan = config_store.plan_retire(checkout, espanso_dir=folder)
-    typer.echo("Retire preview:")
-    if not _consent(plan.describe(), plan.token, dry_run=dry_run, yes=yes, given=preview_token):
-        return
-    place = config_store.apply_retire(checkout, espanso_dir=folder, consent=plan.token)
-    typer.echo(f"Retired: {plan.env_file} -> {place}")
 
 
 # --- secrets ------------------------------------------------------------------------------

@@ -613,8 +613,6 @@ def espanso_status(
         typer.echo(f"  {step.state:<9} {step.name}")
         if diff and step.state != deploy.IN_SYNC:
             typer.echo(step.diff(), nl=False)
-    if the_plan.legacy is not None:
-        typer.echo(f"  legacy    {the_plan.legacy.name} (deploy retires it, with a backup)")
     for path in the_plan.yours:
         link = ", a link" if path.is_symlink() else ""
         note = f"not managed{link}; never touched by deploy or detach"
@@ -671,8 +669,6 @@ def espanso_deploy(
             typer.echo(f"  {step.state:<9} {step.name}")
             if step.state not in (deploy.IN_SYNC, deploy.MISSING):
                 typer.echo(step.diff(), nl=False)
-        if the_plan.legacy is not None:
-            typer.echo(f"  legacy    {the_plan.legacy.name} will be retired, with a backup")
         for key in the_plan.orphans:
             typer.echo(f"  forget    {key} (already gone)")
         if dry_run:

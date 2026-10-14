@@ -26,7 +26,6 @@ from .base import (
     button_row,
     checkout_path,
     copy_profiles,
-    previous_root,
 )
 from .modals import Field, FormModal
 from .state import State
@@ -146,19 +145,16 @@ class ProfilesPane(Pane):
 
     @on(Button.Pressed, "#migrate-profiles")
     def _migrate(self) -> None:
-        # The earlier checkout detection found (#110), else this editable install's own.
-        root = previous_root(self.state.previous) if self.state else None
-        if root is None:
-            try:
-                profiles_cmd.find_checkout(None)
-            except common.CommandError:
-                # Not an editable install and no checkout found: ask where it is (#237).
-                self.app.push_screen(
-                    FormModal("Which checkout has your profiles?", [CHECKOUT_FIELD], submit="Look"),
-                    self._entered,
-                )
-                return
-        copy_profiles(self, root)
+        # This editable install's own checkout, else ask where it is (#237).
+        try:
+            profiles_cmd.find_checkout(None)
+        except common.CommandError:
+            self.app.push_screen(
+                FormModal("Which checkout has your profiles?", [CHECKOUT_FIELD], submit="Look"),
+                self._entered,
+            )
+            return
+        copy_profiles(self, None)
 
     def _entered(self, values: dict[str, str] | None) -> None:
         root = checkout_path(self, values)

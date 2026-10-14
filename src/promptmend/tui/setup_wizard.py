@@ -5,7 +5,6 @@ logged as that command. What each step says comes from setup_guide.py (no Textua
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,14 +27,13 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
-from .. import config, config_files, config_store, deploy, previous_install, setup_guide, smoke
+from .. import config, config_files, config_store, deploy, setup_guide, smoke
 from ..commands import common
 from ..commands import settings as settings_cmd
 from ..commands import setup as setup_cmd
 from ..config import secret_names
 from . import teach
 from .base import EXPECTED, confirm_migration, error_message, plan_digest, result_text
-from .previous import wants_offer
 from .state import State
 
 if TYPE_CHECKING:
@@ -46,9 +44,8 @@ if TYPE_CHECKING:
 class SetupOptions:
     """`setup`'s options the wizard honours; ``standalone`` when `setup` opened it (Done then
     quits), else it was opened from Home and closes back to it. ``provider`` and ``profile``
-    preselect a choice, ``migrate_from`` is the earlier install to look at, ``deploy`` True
-    puts the focus on Install (still a press) and False skips that step, as ``smoke_test``
-    False skips the test (#244)."""
+    preselect a choice, ``deploy`` True puts the focus on Install (still a press) and False
+    skips that step, as ``smoke_test`` False skips the test (#244)."""
 
     espanso_dir: str | None = None
     launcher: str | None = None
@@ -56,7 +53,6 @@ class SetupOptions:
     standalone: bool = False
     provider: str | None = None
     profile: str | None = None
-    migrate_from: Path | None = None
     deploy: bool | None = None
     smoke_test: bool = True
 
@@ -79,12 +75,10 @@ def make_plan(options: SetupOptions) -> tuple[deploy.Plan, str | None]:
     return deploy.plan(target, deploy.launcher_text(launcher), deploy.Manifest.load()), fallback
 
 
-def _earlier(state: State) -> bool:
-    """Whether there are settings to take over: a .env to migrate or an earlier checkout."""
+def _earlier() -> bool:
+    """Whether there are settings to take over: a .env to migrate."""
     if common.legacy_env():
         return False
-    if wants_offer(state.previous):
-        return True
     try:
         return config_store.plan_migration().status == "ready"
     except EXPECTED:
@@ -121,7 +115,6 @@ class SetupScreen(Screen[None]):
                         yield Static("", id="setup-earlier-text", markup=False)
                         yield Horizontal(
                             self._button("setup-migrate-env", "Move the .env settings…"),
-                            self._button("setup-previous", "Earlier install…"),
                             classes="buttons",
                         )
                     with VerticalScroll(id="setup-provider"):
@@ -187,15 +180,7 @@ class SetupScreen(Screen[None]):
             if skip
         ]
 
-    def _named(self) -> Path | None:
-        """`setup --migrate-from`'s path, unless detection would not run (PROMPTMEND_ENV,
-        or settings or a key already saved)."""
-        if self.options.migrate_from is None or previous_install.gate(os.environ):
-            return None
-        return self.options.migrate_from
-
     def _steps(self, earlier: bool) -> list[str]:
-        earlier = earlier or self._named() is not None
         return [s for s in setup_guide.steps(earlier) if s not in self.skipped]
 
     @staticmethod
@@ -218,7 +203,7 @@ class SetupScreen(Screen[None]):
 
     def show(self, state: State) -> None:
         """Fill every step from a fresh State (the app calls this after each reload)."""
-        self.order = self._steps(_earlier(state))
+        self.order = self._steps(_earlier())
         if self.at not in self.order:
             self.at = "provider"
         notes = []
@@ -229,7 +214,7 @@ class SetupScreen(Screen[None]):
             )
         notes.append(_history_line(state))
         self.query_one("#setup-welcome-notes", Static).update("\n".join(notes))
-        self._show_earlier(state)
+        self._show_earlier()
         self._fill(
             "#setup-providers",
             setup_guide.provider_choices(state.settings, state.triggers),
@@ -256,7 +241,7 @@ class SetupScreen(Screen[None]):
         self._refresh_plan()
         self.go(self.at)
 
-    def _show_earlier(self, state: State) -> None:
+    def _show_earlier(self) -> None:
         lines = []
         try:
             migration = config_store.plan_migration()
@@ -270,20 +255,10 @@ class SetupScreen(Screen[None]):
                 "lets this setup and the interface change them:"
             )
             lines += [f"  {line}" for line in migration.describe()]
-        named = self._named()
-        offer = wants_offer(state.previous) or named is not None
-        if named is not None:
-            lines.append(f"Earlier install… looks at {named}.")
-        elif offer:
-            lines.append(
-                "An earlier install ran from a checkout of this project. Earlier install… "
-                "copies its settings, keys and profiles, step by step."
-            )
         if not lines:
             lines.append("Nothing to take over.")
         self.query_one("#setup-earlier-text", Static).update("\n".join(lines))
         self.query_one("#setup-migrate-env", Button).display = ready
-        self.query_one("#setup-previous", Button).display = offer
 
     def _fill(self, selector: str, choices: list[setup_guide.Choice], preset: str | None) -> None:
         options = self.query_one(selector, OptionList)
@@ -447,10 +422,6 @@ class SetupScreen(Screen[None]):
                 f"Moved; backup in {result.backup}. `promptmend config rollback` undoes it."
             ),
         )
-
-    @on(Button.Pressed, "#setup-previous")
-    def _previous(self) -> None:
-        self.manage.open_previous(self._named(), self.options)
 
     # The Espanso step.
 

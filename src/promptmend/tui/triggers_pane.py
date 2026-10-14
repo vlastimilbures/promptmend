@@ -144,8 +144,6 @@ class TriggersPane(Pane):
             return
         lines = [f"Into {plan.espanso_dir / 'match'}:"]
         lines += [f"{s.state:<9} {s.name}" for s in plan.steps]
-        if plan.legacy is not None:
-            lines.append(f"legacy    {plan.legacy.name} will be retired, with a backup")
         lines += [f"forget    {key} (already gone)" for key in plan.orphans]
         diffs = [s.diff() for s in plan.steps if s.state not in (deploy.IN_SYNC, deploy.MISSING)]
         preview = "\n".join(lines) + ("\n\n" + "".join(diffs) if diffs else "")

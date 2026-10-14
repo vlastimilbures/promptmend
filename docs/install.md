@@ -244,9 +244,8 @@ After any install, run one of these in a terminal:
 - `promptmend` opens the [full-screen interface](interface.md), which does the same through
   its tabs.
 
-`setup` also offers to migrate a `.env` it finds, and to copy an earlier checkout install's
-settings (see [From a checkout install](#from-a-checkout-install)); it changes nothing unless
-you say yes. In a script, pass the key on stdin and nothing is asked:
+`setup` also offers to migrate a `.env` it finds (for an earlier checkout install, see
+[From a checkout install](#from-a-checkout-install)); it changes nothing unless you say yes. In a script, pass the key on stdin and nothing is asked:
 
 ```bash
 promptmend setup --non-interactive --api-key-stdin --deploy < key.txt
@@ -407,24 +406,19 @@ completion never move anything. Until then the triggers keep using the old folde
 ### From a checkout install
 
 A checkout install is one made with the install scripts (an editable install). The release
-never reads the checkout's `.env` or its profiles, but it can copy them. Leave the checkout and
-its `.env` where they are, so the old triggers keep working until the match files are deployed
-again:
+never reads the checkout's `.env` or its profiles; take them along by hand:
 
-1. Install the release as shown above, then run `promptmend setup`, or open the interface
-   (`promptmend`), which shows a "Previous install" checklist. It finds the checkout through
-   the deployed match files, the deploy manifest or uv's receipt. It offers to copy the
-   settings and key (only those still at their default here) and the profiles you edited,
-   then to deploy the match files.
-2. If it finds nothing (a `--force` install overwrites uv's receipt, and a uv launcher does
-   not point into the checkout), name the checkout: `promptmend setup --migrate-from PATH`.
-   Without setup: `promptmend config migrate --from PATH` and
-   `promptmend profiles migrate --checkout PATH`, then `promptmend espanso deploy`.
-3. Once the match files no longer run the checkout's CLI, `promptmend config retire --from PATH`
-   moves the old `.env` into the backup. `promptmend config rollback` undoes the copy and the
-   retire.
-4. If `doctor` says `promptmend` on `PATH` is the checkout's, run `deactivate` (its `.venv` is
-   active) or take it off `PATH`.
+1. Install the release as shown above.
+2. Copy the checkout's `.env` into the [config folder](configuration.md#files-and-folders),
+   then run `promptmend config migrate` (see [Migrate a .env](configuration.md#migrate-a-env)).
+3. `promptmend profiles migrate --checkout PATH` copies the profiles you added or edited.
+4. `promptmend espanso deploy` points the triggers at the release instead of the checkout.
+5. If `promptmend` on `PATH` is still the checkout's, run `deactivate` (its `.venv` is active)
+   or take it off `PATH`.
+
+Coming from a version before 0.9: if Espanso's `match/base.yml` still holds the `-p-`
+template those versions installed there, delete it by hand (deploy no longer does), or `-p-`
+is defined twice.
 
 ### Keeping a .env
 
