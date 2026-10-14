@@ -665,9 +665,9 @@ Rules for agents:
   `user_data_dir()/previous-install.json` (damaged = empty). `shadow()` reports a different
   `promptmend` (or `prompt-workflow` alias) first on PATH. `Detection.pending` (ungated, since the copy itself closes
   the gate) is a copy from `migration.json` whose `.env` is not retired yet: doctor WARNs
-  (`retire_pending`) once no launcher points into it. `setup` offers the copy at the start of
-  its Settings step (`--migrate-from PATH`), then the profiles, and the retire after the
-  deploy step; a broken `.env` in a checkout it found by itself (not entered) is a to-do and
+  (`retire_pending`) once no launcher points into it. `setup --non-interactive` lists the copy at the
+  start of its Settings step (`--migrate-from PATH`), then the profiles, and the retire after
+  the deploy step, each as a to-do (the wizard applies them); a broken `.env` in a checkout it found by itself (not entered) is a to-do and
   setup then writes nothing, since config.toml or a key would close the gate. `best()` picks the
   candidate setup and the interface offer. Doctor's `previous_install` check; off the trigger
   path.
@@ -678,9 +678,10 @@ Rules for agents:
   real key is never sent). `stub_server()` (a context manager yielding a `Stub`: port, request
   paths) runs the stub, and `stub_settings(cfg, port)` is `stub_env()` for a `Settings`
   (`dataclasses.replace`: base URLs, placeholder keys, `history=False`), for the Try tab's
-  in-process stub runs. `setup` offers a `.env` migration (applies only on an interactive
-  yes), previews the deploy (`--deploy` applies, keeping edited files), and discloses the usage
-  history (D-HIST-0).
+  in-process stub runs. On a terminal `setup` opens the wizard (its options
+  prefill it via `SetupOptions`, #244; no line-by-line mode); `--non-interactive`/`--plain`
+  lists a `.env` migration as a to-do, previews the deploy (`--deploy` applies, keeping edited
+  files), and discloses the usage history (D-HIST-0).
 
 ### Data-protection gate
 

@@ -61,9 +61,14 @@ Next and Back (or Escape) move between the steps; Enter on a list picks and move
 change is made through the same code as its command and shows that command. With
 `PROMPTMEND_ENV` set, settings and keys stay in that file: Next moves on without saving a
 provider or profile and says so, the API keys step only says to add each key to that file, and
-Done names that file for a missing key. With `--plain`,
-or any of `--provider`, `--profile`, `--migrate-from`, `--deploy`/`--no-deploy` or
-`--no-smoke-test`, `setup` asks line by line instead (see [Commands](commands.md#management-commands)).
+Done names that file for a missing key.
+
+Options given to `setup` prefill the wizard: `--provider` and `--profile` preselect that
+choice (Next still saves it), `--migrate-from PATH` shows the earlier settings step, whose
+"Earlier install…" looks at that path, `--deploy` puts the focus on the install button
+(nothing is written until you press it), and `--no-deploy` and `--no-smoke-test` leave out
+the Espanso and Test steps. `--non-interactive` (or `--plain`) runs without the wizard and
+asks nothing (see [Commands](commands.md#management-commands)).
 
 ![The setup's provider step](../tests/snapshots/setup-provider.svg)
 

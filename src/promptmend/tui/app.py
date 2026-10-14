@@ -5,6 +5,7 @@ and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import ClassVar
 
 from textual import on, work
@@ -25,9 +26,9 @@ from .intro import AboutScreen, IntroScreen
 from .previous import PreviousInstallScreen, wants_offer
 from .profiles_pane import ProfilesPane
 from .settings_pane import SettingsPane
-from .setup_wizard import SetupOptions, SetupScreen, needs_setup
+from .setup_wizard import SetupOptions, SetupScreen, make_plan, needs_setup
 from .state import State, gather
-from .triggers_pane import TriggersPane
+from .triggers_pane import DeployTarget, TriggersPane
 from .try_pane import TryPane
 
 DEFAULT_THEME = "textual-dark"
@@ -291,8 +292,29 @@ class ManageApp(App[int]):
         if not any(isinstance(s, SetupScreen) for s in self.screen_stack):
             self.push_screen(SetupScreen())
 
-    def open_previous(self) -> None:
-        """Show the switch from an earlier checkout install, unless it is already open."""
+    def open_previous(
+        self, entered: Path | None = None, options: SetupOptions | None = None
+    ) -> None:
+        """Show the switch from an earlier checkout install, unless it is already open; with
+        ``entered`` (`setup --migrate-from`), detected with that path, and with the wizard's
+        ``options``, its --espanso-dir and --launcher for detection, deploy and retire."""
         self.offered = True
-        if not any(isinstance(s, PreviousInstallScreen) for s in self.screen_stack):
-            self.push_screen(PreviousInstallScreen())
+        if any(isinstance(s, PreviousInstallScreen) for s in self.screen_stack):
+            return
+        if options is None or not (options.espanso_dir or options.launcher or options.no_restart):
+            self.push_screen(PreviousInstallScreen(entered))
+            return
+        named = options
+        args = [
+            *(("--espanso-dir", named.espanso_dir) if named.espanso_dir else ()),
+            *(("--launcher", named.launcher) if named.launcher else ()),
+            *(("--no-restart",) if named.no_restart else ()),
+        ]
+        self.push_screen(
+            PreviousInstallScreen(
+                entered,
+                espanso_dir=Path(named.espanso_dir).expanduser() if named.espanso_dir else None,
+                launcher=Path(named.launcher).expanduser() if named.launcher else None,
+                target=DeployTarget(lambda: make_plan(named)[0], named.no_restart, tuple(args)),
+            )
+        )

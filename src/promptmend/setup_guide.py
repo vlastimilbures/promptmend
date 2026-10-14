@@ -233,9 +233,11 @@ def done_rows(
     plan: deploy.Plan | None,
     test: bool | None,
     legacy: str | None = None,
+    skipped: Sequence[str] = (),
 ) -> list[DoneRow]:
     """What is set and what is left; ``legacy`` is the .env PROMPTMEND_ENV names, where a
-    missing key then goes."""
+    missing key then goes. A step in ``skipped`` ("espanso", "test": left out by `setup
+    --no-deploy`/`--no-smoke-test`) says so and is not a problem."""
     rows = [DoneRow(True, "Provider", f"{settings.provider}; profile {settings.profile}")]
     for key in keys:
         if not key.needed:
@@ -247,7 +249,9 @@ def done_rows(
                 f"add {key.name}= to {legacy}" if legacy else f"`promptmend secrets set {key.name}`"
             )
             rows.append(DoneRow(False, key.name, f"not set: {fix}"))
-    if plan is None:
+    if "espanso" in skipped:
+        rows.append(DoneRow(True, "Match files", "skipped (--no-deploy)"))
+    elif plan is None:
         rows.append(DoneRow(False, "Match files", "Espanso's folder was not found"))
     elif not _writes(plan):
         text = f"installed in {plan.espanso_dir / 'match'}"
@@ -256,7 +260,9 @@ def done_rows(
         rows.append(DoneRow(True, "Match files", text))
     else:
         rows.append(DoneRow(False, "Match files", "not installed: `promptmend espanso deploy`"))
-    if test is None:
+    if "test" in skipped:
+        rows.append(DoneRow(True, "Test", "skipped (--no-smoke-test)"))
+    elif test is None:
         rows.append(DoneRow(False, "Test", "not run"))
     else:
         rows.append(DoneRow(test, "Test", "passed" if test else "failed (see the Test step)"))

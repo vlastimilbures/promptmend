@@ -5,6 +5,7 @@ logged as that command. What each step says comes from setup_guide.py (no Textua
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
-from .. import config, config_files, config_store, deploy, setup_guide, smoke
+from .. import config, config_files, config_store, deploy, previous_install, setup_guide, smoke
 from ..commands import common
 from ..commands import settings as settings_cmd
 from ..commands import setup as setup_cmd
@@ -44,12 +45,20 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class SetupOptions:
     """`setup`'s options the wizard honours; ``standalone`` when `setup` opened it (Done then
-    quits), else it was opened from Home and closes back to it."""
+    quits), else it was opened from Home and closes back to it. ``provider`` and ``profile``
+    preselect a choice, ``migrate_from`` is the earlier install to look at, ``deploy`` True
+    puts the focus on Install (still a press) and False skips that step, as ``smoke_test``
+    False skips the test (#244)."""
 
     espanso_dir: str | None = None
     launcher: str | None = None
     no_restart: bool = False
     standalone: bool = False
+    provider: str | None = None
+    profile: str | None = None
+    migrate_from: Path | None = None
+    deploy: bool | None = None
+    smoke_test: bool = True
 
 
 def make_plan(options: SetupOptions) -> tuple[deploy.Plan, str | None]:
@@ -90,7 +99,7 @@ class SetupScreen(Screen[None]):
     def __init__(self, options: SetupOptions | None = None) -> None:
         super().__init__()
         self.options = options or SetupOptions()
-        self.order = setup_guide.steps(earlier=False)
+        self.order = self._steps(earlier=False)
         self.at = "welcome"
         self.plan: deploy.Plan | None = None
         self.plan_error: str | None = None
@@ -166,6 +175,29 @@ class SetupScreen(Screen[None]):
                 )
         yield Footer()
 
+    @property
+    def skipped(self) -> list[str]:
+        """The steps `setup --no-deploy`/`--no-smoke-test` leave out."""
+        return [
+            step
+            for step, skip in (
+                ("espanso", self.options.deploy is False),
+                ("test", not self.options.smoke_test),
+            )
+            if skip
+        ]
+
+    def _named(self) -> Path | None:
+        """`setup --migrate-from`'s path, unless detection would not run (PROMPTMEND_ENV,
+        or settings or a key already saved)."""
+        if self.options.migrate_from is None or previous_install.gate(os.environ):
+            return None
+        return self.options.migrate_from
+
+    def _steps(self, earlier: bool) -> list[str]:
+        earlier = earlier or self._named() is not None
+        return [s for s in setup_guide.steps(earlier) if s not in self.skipped]
+
     @staticmethod
     def _button(id_: str, label: str) -> Button:
         return Button(label, id=id_, tooltip=teach.tooltip(id_))
@@ -186,7 +218,7 @@ class SetupScreen(Screen[None]):
 
     def show(self, state: State) -> None:
         """Fill every step from a fresh State (the app calls this after each reload)."""
-        self.order = setup_guide.steps(_earlier(state))
+        self.order = self._steps(_earlier(state))
         if self.at not in self.order:
             self.at = "provider"
         notes = []
@@ -201,10 +233,12 @@ class SetupScreen(Screen[None]):
         self._fill(
             "#setup-providers",
             setup_guide.provider_choices(state.settings, state.triggers),
+            self.options.provider,
         )
         self._fill(
             "#setup-profiles",
             setup_guide.profile_choices(state.settings, state.profiles),
+            self.options.profile,
         )
         self.keys = setup_guide.key_rows(state.layers, state.settings, state.triggers)
         legacy = common.legacy_env()
@@ -236,8 +270,11 @@ class SetupScreen(Screen[None]):
                 "lets this setup and the interface change them:"
             )
             lines += [f"  {line}" for line in migration.describe()]
-        offer = wants_offer(state.previous)
-        if offer:
+        named = self._named()
+        offer = wants_offer(state.previous) or named is not None
+        if named is not None:
+            lines.append(f"Earlier install… looks at {named}.")
+        elif offer:
             lines.append(
                 "An earlier install ran from a checkout of this project. Earlier install… "
                 "copies its settings, keys and profiles, step by step."
@@ -248,7 +285,7 @@ class SetupScreen(Screen[None]):
         self.query_one("#setup-migrate-env", Button).display = ready
         self.query_one("#setup-previous", Button).display = offer
 
-    def _fill(self, selector: str, choices: list[setup_guide.Choice]) -> None:
+    def _fill(self, selector: str, choices: list[setup_guide.Choice], preset: str | None) -> None:
         options = self.query_one(selector, OptionList)
         highlighted = options.highlighted_option.id if options.highlighted_option else None
         options.clear_options()
@@ -258,7 +295,7 @@ class SetupScreen(Screen[None]):
                 line.append("  (current)", style="green")
             line.append(f"\n  {choice.detail}", style="dim")
             options.add_option(Option(line, id=choice.value))
-        keep = highlighted or next((c.value for c in choices if c.current), None)
+        keep = highlighted or preset or next((c.value for c in choices if c.current), None)
         if keep is not None:
             try:
                 options.highlighted = options.get_option_index(keep)
@@ -281,6 +318,12 @@ class SetupScreen(Screen[None]):
         if step == "done":
             self._show_done()
         focus = {"provider": "#setup-providers", "profile": "#setup-profiles"}.get(step)
+        if (
+            step == "espanso"
+            and self.options.deploy
+            and not self.query_one("#setup-deploy", Button).disabled
+        ):
+            focus = "#setup-deploy"
         if focus:
             self.call_after_refresh(self.query_one(focus).focus)
         else:
@@ -407,7 +450,7 @@ class SetupScreen(Screen[None]):
 
     @on(Button.Pressed, "#setup-previous")
     def _previous(self) -> None:
-        self.manage.open_previous()
+        self.manage.open_previous(self._named(), self.options)
 
     # The Espanso step.
 
@@ -517,7 +560,7 @@ class SetupScreen(Screen[None]):
             return
         summary = Text()
         for row in setup_guide.done_rows(
-            state.settings, self.keys, self.plan, self.tested, common.legacy_env()
+            state.settings, self.keys, self.plan, self.tested, common.legacy_env(), self.skipped
         ):
             summary.append("✓ " if row.ok else "✗ ", style="green" if row.ok else "yellow")
             summary.append(f"{row.label}: ", style="bold")
