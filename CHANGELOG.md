@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Changed
+- The interface screenshots in the README and docs show version 0.25.0 and today's screens
+  (no intro, no command line, no Previous install), and docs/interface.md no longer calls
+  `setup` a question-and-answer alternative.
+
 ## 0.25.0 - 2026-10-14
 
 ### Changed

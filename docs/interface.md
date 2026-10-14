@@ -83,8 +83,8 @@ starts with that command (`$ promptmend config set …`).
 Home says in one line whether you are ready, or names the most urgent problem and the tab that
 fixes it. Below, each row has a status word (ok, warn, FAIL) and the tab that fixes it:
 
-- the installed version and whether it is the latest release (`0.21.0 · latest`); a newer
-  one shows as `new` (`0.22.0 available  a: how to update`), and the About screen (`a`)
+- the installed version and whether it is the latest release (`0.25.0 · latest`); a newer
+  one shows as `new` (`0.26.0 available  a: how to update`), and the About screen (`a`)
   gives the update command for your install channel. It is no problem: it never changes the
   headline or the header's status. It asks pypi.org once a day
   ([privacy](privacy.md#update-check)); `PROMPT_UPDATE_CHECK=false` turns it off;
@@ -189,5 +189,5 @@ models, never a made-up 0.
 ## See also
 
 - [Commands](commands.md): the headless commands behind every button
-- [Install](install.md#set-up): `setup`, the question-and-answer alternative
+- [Install](install.md#set-up): `setup` and `setup --non-interactive`
 - [Troubleshooting](troubleshooting.md): what the Diagnostics checks mean
