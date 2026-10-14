@@ -66,6 +66,12 @@ def test_install_without_a_launcher_guesses(
 EXE = ".exe" if os.name == "nt" else ""
 
 
+@pytest.fixture(autouse=True)
+def _lower_case_pathext(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Windows which() appends PATHEXT's spelling (`.EXE` by default); keep the paths exact.
+    monkeypatch.setenv("PATHEXT", EXE or ".exe")
+
+
 def _bin(folder: Path, *names: str) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     for name in names:
