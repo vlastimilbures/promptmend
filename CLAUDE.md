@@ -11,8 +11,7 @@ alias until 1.0.0) invoked by Espanso text-expansion triggers to rewrite a clipb
 draft into a more precise prompt via a local or cloud LLM. Espanso match files in
 `espanso/match/` call the CLI from `type: script` vars (an argv list, no shell) and paste back
 stdout. Besides the triggers (`improve`, `persona`) there are management commands
-(`src/promptmend/commands/`), a Textual interface (`promptmend ui`, `src/promptmend/tui/`) and
-a REPL (`promptmend shell`).
+(`src/promptmend/commands/`) and a Textual interface (`promptmend ui`, `src/promptmend/tui/`).
 
 ## Commands
 
@@ -38,10 +37,9 @@ uv run pre-commit run --all-files               # also YAML checks, gitleaks and
   `setup --deploy` or `espanso` itself: they read or rewrite the user's live Espanso match
   files, and a deploy restarts Espanso.
 - Tests stay offline: no external API calls; mock HTTP (`fake_http` in `tests/conftest.py`).
-  conftest also refuses every external command (`deploy.run_command`), child runs of the CLI
-  (`console.run`, `shell.run_here`), the PyPI update check and the local-server probe, stubs
-  the clipboard guard, and points `PROMPTMEND_ENV`, `HOME`, `XDG_*`, `APPDATA` and the
-  project root at temp dirs. Keep new tests inside those fences.
+  conftest also refuses every external command (`deploy.run_command`), the PyPI update check
+  and the local-server probe, stubs the clipboard guard, and points `PROMPTMEND_ENV`,
+  `HOME`, `XDG_*`, `APPDATA` and the project root at temp dirs. Keep new tests inside those fences.
 - Every user-visible change gets a CHANGELOG `## Unreleased` entry and an update of the README
   or the relevant docs/ page.
 - After editing `espanso/match/`, rerun `scripts/update_match_history.py` (it regenerates
@@ -179,20 +177,18 @@ when it runs. `entry.self_command()` is the argv prefix for any child that runs 
   update-check cache; `doctor --json` keeps
   `schema_version` 1 (only add check ids/keys).
 
-## Interface (`tui/`) and shell
+## Interface (`tui/`)
 
-- `textual` is imported only under `tui/` (except `tui/teach.py`, which has no Textual and is
-  shared with `promptmend/console.py` and the shell), reached only through `commands/ui.py`;
-  `prompt_toolkit` only by `commands/shell.py`. `promptmend/console.py` must not import textual.
+- `textual` is imported only under `tui/` (`tui/teach.py` has none), reached only through
+  `commands/ui.py`.
 - Each action calls the same service as its headless command and adds no logic. Keys show only
   as set/not set. Destructive actions go through a dialog whose Cancel has the focus.
 - No provider call except the explicit "Test call" and a confirmed Try tab run; the Try tab
   never touches the clipboard.
 - Every button names its headless command: `tui/teach.BUTTONS` (or `NO_COMMAND`);
-  `tests/test_tui_teach.py` parses each against the Click tree. The interface's command line runs only
-  what `console.POLICY` marks RUN (dialog and terminal rules are redirected); `promptmend shell`
-  runs everything POLICY does not refuse (plus `ui`, minus `shell`). Both refuse `improve`,
-  `persona` and key-like lines.
+  `tests/test_tui_teach.py` parses each against the Click tree. New code that shows a
+  user-typed value in a command passes it through `common.looks_like_a_key()` and shows
+  `teach.WITHHELD` instead of a match.
 
 ## Releases
 

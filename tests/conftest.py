@@ -64,23 +64,6 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(deploy, "run_command", refuse)
     # The same answers on every OS: a test of the Windows Espanso path turns it on (#210).
     monkeypatch.setattr(deploy, "WINDOWS_ESPANSO", False)
-    # ...nor start a real promptmend from the interface's command line (#111): Pilot tests
-    # pass a fake runner. Loaded only by the tui tests (collected before any test runs), so
-    # patched wherever it is loaded; the one --version smoke test calls the function it
-    # kept at import (test_tui_console.REAL_RUN) on purpose.
-    import sys
-
-    def no_child(argv: Sequence[str]) -> Any:
-        raise AssertionError(f"a test started a real promptmend {list(argv)}")
-
-    # promptmend.console defines it; tui.console imports it by name (Home's command line
-    # looks it up there), so both are patched. `promptmend shell` runs in the terminal
-    # through its own runner (#183), refused the same way.
-    for name in ("promptmend.console", "promptmend.tui.console"):
-        if (module := sys.modules.get(name)) is not None:
-            monkeypatch.setattr(module, "run", no_child)
-    if (shell := sys.modules.get("promptmend.commands.shell")) is not None:
-        monkeypatch.setattr(shell, "run_here", no_child)
     # ...nor ask pypi.org for the newest release (#197): every check is unknown, unless a test
     # puts the real fetch back (test_update_check.REAL_FETCH) and answers it with fake_http.
     from promptmend import update_check

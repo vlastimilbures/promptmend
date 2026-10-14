@@ -1,28 +1,22 @@
-"""The Home tab (Mockup B, #112): the headline, one row per part, the command line (#111)
-and the session log. The rows come from home.py; nothing here calls a provider."""
+"""The Home tab (Mockup B, #112): the headline, one row per part and the session log. The
+rows come from home.py; nothing here calls a provider."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 from rich.table import Table
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
-from textual.widgets import Button, RichLog, Static
+from textual.widgets import Button, Static
 
 from .. import doctor
 from ..commands import doctor as doctor_cmd
-from ..console import Decision, Ran, Runner, describe, runnable, shown, transcript
 from . import teach
-from .base import Pane, button_row, error_message
-from .console import CommandLine
-from .history_pane import HistoryPane
+from .base import Pane, button_row
 from .home import NOTE, TAB_LABELS, HomeRow, headline, home_rows
-from .modals import PickModal
-from .settings_pane import SettingsPane
 from .state import State
-from .triggers_pane import TriggersPane
 
 
 def _jump(tab: str | None) -> str:
@@ -96,8 +90,6 @@ class HomePane(Pane):
     (Mockup B, #112). The Diagnostics tab has every check; nothing here calls a provider."""
 
     rows: tuple[HomeRow, ...] = ()
-    # A command line's run is under way (one at a time).
-    running = False
 
     def compose(self) -> ComposeResult:
         yield Static("Checking…", markup=False, id="home-headline")
@@ -106,17 +98,8 @@ class HomePane(Pane):
             ("home-setup", "Setup…"),
             ("home-reload", "Check again"),
             ("home-previous", "Previous install…"),
-            ("home-recipes", "Recipes…"),
             ("home-copy", "Copy last"),
         )
-        # The command line (#111): completes, explains and runs a command (console.POLICY).
-        help_line = Static(describe(""), id="home-command-help", markup=False)
-        yield CommandLine(help_line, host=self)
-        yield help_line
-        # What a run printed; shown from the first run on.
-        output = RichLog(id="home-output", markup=False, highlight=False, wrap=True, max_lines=500)
-        output.display = False
-        yield output
         yield self.result()
         yield Static(session_text(()), id="home-session")
 
@@ -138,74 +121,6 @@ class HomePane(Pane):
         self.query_one("#home-session", Static).update(session_text(entries))
         self.query_one("#home-copy", Button).disabled = not entries
 
-    def run_line(self, argv: tuple[str, ...], runner: Runner) -> None:
-        """Run ``argv`` in a thread; its output goes below the command line when it ends.
-        Only what a fresh parse decides to run starts (console.runnable(), checked again by
-        console.run() itself)."""
-        if not runnable(argv):
-            self.report(f"error: refused to run {shown(argv)}", error=True)
-            return
-        self.running = True
-        output = self.query_one("#home-output", RichLog)
-        output.display = True
-        self.background(lambda: self._run_now(argv, runner))
-
-    def _run_now(self, argv: tuple[str, ...], runner: Runner) -> None:
-        try:
-            ran = runner(argv)
-        except Exception as exc:  # it could not start: shown as its output
-            ran = Ran(1, error_message(exc))
-        self.app.call_from_thread(self._ran, argv, ran)
-
-    def _ran(self, argv: tuple[str, ...], ran: Ran) -> None:
-        self.running = False
-        done = transcript(argv, ran)
-        output = self.query_one("#home-output", RichLog)
-        output.write(Text(f"$ {done.command}", style="bold"))
-        for line in done.lines:
-            output.write(Text(line))
-        output.write(Text(done.status, style="dim"))
-        output.scroll_visible()
-        prompt = self.query_one(CommandLine)
-        if not prompt.value:  # not while the next line is being typed
-            prompt.help_line.update(Text(f"$ {done.command}: {done.status} (output below)"))
-        self.manage.log_action(teach.Entry(done.command, done.summary, done.error))
-        self.manage.reload()
-
-    def open_dialog(self, decision: Decision) -> str:
-        """Open the dialog of the tab that owns ``decision``'s command; what to say in the
-        help line."""
-        main = self.manage.main
-        values = decision.values
-        triggers = main.query_one("#triggers-pane", TriggersPane)
-        settings = main.query_one("#settings-pane", SettingsPane)
-        usage_history = main.query_one("#history-pane", HistoryPane)
-        # Each console.DIALOG command -> its tab and what opens its dialog there.
-        dialogs: dict[tuple[str, ...], tuple[str, Callable[[], None]]] = {
-            ("espanso", "deploy"): ("triggers", triggers.start_deploy),
-            ("espanso", "detach"): (
-                "triggers",
-                lambda: triggers.ask_detach(remove_all=values.get("keep_static") is False),
-            ),
-            ("config", "migrate"): ("settings", settings.migrate_env),
-            ("secrets", "set"): ("settings", lambda: settings.set_key(values.get("name"))),
-            ("secrets", "remove"): ("settings", lambda: settings.remove_key(values.get("name"))),
-            ("history", "prune"): (
-                "history",
-                lambda: usage_history.prune(values.get("older_than")),
-            ),
-            ("history", "reset"): ("history", usage_history.reset),
-        }
-        tab, open_it = dialogs[decision.path]
-        if tab == "triggers" and triggers.busy:
-            return "A deploy or detach is already in progress; finish or cancel it first."
-        main.action_show(tab)
-        open_it()
-        message = f"$ {shown(decision.argv)}: on {TAB_LABELS[tab]}, in its dialog"
-        if decision.ignored:
-            message += f" ({', '.join(decision.ignored)} ignored: the dialog asks)"
-        return message + "."
-
     @on(Button.Pressed, "#home-reload")
     def _reload(self) -> None:
         self.manage.reload()
@@ -217,24 +132,6 @@ class HomePane(Pane):
     @on(Button.Pressed, "#home-setup")
     def _setup(self) -> None:
         self.manage.open_setup()
-
-    @on(Button.Pressed, "#home-recipes")
-    def _recipes(self) -> None:
-        """Pick a recipe to put on the command line (#111); nothing runs until Enter, and
-        Cancel leaves the line as it was."""
-        width = max(len(teach.equivalent(*r.argv)) for r in teach.RECIPES)
-        choices = [
-            (f"$ {teach.equivalent(*r.argv):<{width}}  {r.what}", teach.line(*r.argv))
-            for r in teach.RECIPES
-        ]
-
-        def picked(line: str | None) -> None:
-            if line is not None:
-                self.query_one(CommandLine).prefill(line)
-
-        self.app.push_screen(
-            PickModal("Put a recipe on the command line (Enter there runs it)", choices), picked
-        )
 
     @on(Button.Pressed, "#home-copy")
     def _copy(self) -> None:

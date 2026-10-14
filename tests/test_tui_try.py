@@ -19,7 +19,7 @@ from test_tui_snapshots import fixed_state
 from textual.pilot import Pilot
 from textual.widgets import Button, Select, Static, TabbedContent, TextArea
 
-from promptmend import cli, clipboard_guard, console, prompt_builder, smoke
+from promptmend import cli, clipboard_guard, prompt_builder, smoke
 from promptmend.cli import MAX_DRAFT_CHARS
 from promptmend.providers.usage import AttemptUsage
 from promptmend.tui import teach, try_pane
@@ -411,12 +411,6 @@ def test_usage_line() -> None:
     assert usage_line([local], 1.0, stub=False).endswith(
         "cost not applicable (runs on this machine)"
     )
-
-
-def test_the_command_line_points_at_the_try_tab() -> None:
-    decision = console.decide(console.resolve(["improve"]), ["improve"])
-    assert decision.kind == console.REFUSE
-    assert "Try tab (7)" in decision.message
 
 
 def test_pro_tier_preview_names_the_pro_model(cloud: None, fake_http: FakeHttp) -> None:

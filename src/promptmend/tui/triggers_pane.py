@@ -215,20 +215,18 @@ class TriggersPane(Pane):
     def _ask_detach_start(self) -> None:
         self.ask_detach()
 
-    def ask_detach(self, *, remove_all: bool = False) -> None:
-        """Read the deploy record in a worker, then ask (`espanso detach`); ``remove_all``
-        picks that mode first."""
+    def ask_detach(self) -> None:
+        """Read the deploy record in a worker, then ask (`espanso detach`)."""
         if self.claim():
             self.background(
                 lambda: self.app.call_from_thread(
                     self._ask_detach,
                     deploy.Manifest.load(),
                     deploy.espanso_dir().resolve(),
-                    remove_all,
                 )
             )
 
-    def _ask_detach(self, manifest: deploy.Manifest, root: Path, remove_all: bool = False) -> None:
+    def _ask_detach(self, manifest: deploy.Manifest, root: Path) -> None:
         if not manifest.entries:
             self.busy = False
             self.report("Nothing to do: promptmend has no deployed match files on record.")
@@ -241,7 +239,7 @@ class TriggersPane(Pane):
                 "mode",
                 "keep-static: only the matches that call the CLI; remove-all: every file",
                 ("keep-static", "remove-all"),
-                value="remove-all" if remove_all else "keep-static",
+                value="keep-static",
             )
         ]
 

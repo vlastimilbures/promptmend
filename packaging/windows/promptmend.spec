@@ -18,7 +18,6 @@ ROOT = Path(SPECPATH).resolve().parents[1]  # noqa: F821 - SPECPATH is set by Py
 hiddenimports = [
     *collect_submodules("promptmend"),
     *collect_submodules("textual"),
-    *collect_submodules("prompt_toolkit"),
     # Imported inside functions only: listed so a refactor that hides them cannot drop them.
     "tomli_w",
     "tomllib",

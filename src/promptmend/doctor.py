@@ -821,7 +821,6 @@ def run(
 # Modules the trigger path must never load (tests/test_trigger_contract.py freezes the same).
 HEAVY_MODULES = (
     "textual",
-    "prompt_toolkit",
     "tomli_w",
     "tomlkit",
     "keyring",
@@ -833,7 +832,6 @@ HEAVY_MODULES = (
     "promptmend.previous_install",
     "promptmend.relocate",
     "promptmend.local_probe",
-    "promptmend.console",
 )
 IMPORT_TIMEOUT = 30
 FROZEN_IMPORT = "not applicable: a frozen build has no interpreter to import the CLI in"

@@ -22,17 +22,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.widgets import Button
 
 from promptmend import assets, deploy, doctor, previous_install, update_check
 from promptmend.config import ConfigLayers
-from promptmend.console import Ran
 from promptmend.history import StatsRow
 from promptmend.prompt_builder import UserProfile
 from promptmend.tui import app as app_module
 from promptmend.tui import brand, home
 from promptmend.tui.app import HIGH_CONTRAST, ManageApp
-from promptmend.tui.console import CommandLine
 from promptmend.tui.setup_wizard import SetupOptions, SetupScreen
 from promptmend.tui.state import State
 
@@ -240,9 +237,6 @@ def _shoot(
     loader: Callable[[str], State] = fixed_state,
     size: tuple[int, int] = SIZE,
     intro: bool = False,
-    typed: str = "",
-    ran: Ran | None = None,
-    button: str | None = None,
     setup: int | None = None,
 ) -> str:
     # With ``setup``, the setup wizard as `setup` opens it, moved on that many steps.
@@ -261,27 +255,12 @@ def _shoot(
                 app.theme = theme
             if key:
                 await pilot.press(key)
-            if typed:
-                # A steady cursor, so the shot does not depend on the blink.
-                line = app.main.query_one(CommandLine)
-                line.cursor_blink = False
-                if ran is not None:  # Enter runs the line through a fake: no child
-                    line.runner = lambda argv: ran
-                await pilot.press(*typed, *(["enter"] if ran is not None else []))
-                for _ in range(3):
-                    await pilot.pause()
-                    await app.workers.wait_for_complete()
             for _ in range(setup or 0):
                 # The action, not Button.press(): a pressed button keeps its active style
                 # for a moment, so a shot would depend on the runner's speed.
                 wizard = app.screen
                 assert isinstance(wizard, SetupScreen)
                 wizard.action_next()
-                for _ in range(3):
-                    await pilot.pause()
-                    await app.workers.wait_for_complete()
-            if button:
-                app.main.query_one(button, Button).press()
                 for _ in range(3):
                     await pilot.pause()
                     await app.workers.wait_for_complete()
@@ -350,26 +329,6 @@ def test_snapshot_home_80_columns() -> None:
 # The header's status pill comes first (#174), so a 70-column terminal still shows it.
 def test_snapshot_home_70_columns() -> None:
     _check("home-70", _shoot("1", size=(70, 24)))
-
-
-# Home's command line (#111): `c`, a half-typed command, its suggestion and help.
-def test_snapshot_home_console() -> None:
-    _check("home-console", _shoot("c", typed="espanso st"))
-
-
-# A run from the command line (#111): its output below the help line, logged in the session.
-SECRETS_STATUS = (
-    "OPENROUTER_API_KEY: set (secret store)\nANTHROPIC_API_KEY: not set\nGROQ_API_KEY: not set\n"
-)
-
-
-def test_snapshot_home_output() -> None:
-    _check("home-output", _shoot("c", typed="secrets status", ran=Ran(0, SECRETS_STATUS)))
-
-
-# Home's recipes (#111): picking one puts it on the command line; Cancel has the focus.
-def test_snapshot_home_recipes() -> None:
-    _check("home-recipes", _shoot("1", button="#home-recipes"))
 
 
 # The intro (#112), wide enough for the wordmark and on a narrow terminal (text only), with

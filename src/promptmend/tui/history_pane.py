@@ -13,7 +13,6 @@ from textual.widgets import Button, DataTable, Select, Static
 
 from .. import history
 from ..commands import common, usage
-from ..console import shown_arg
 from . import teach
 from .base import Pane, add_row, button_row
 from .modals import ConfirmModal, Field, FormModal
@@ -130,18 +129,18 @@ class HistoryPane(Pane):
             return f"Exported {count} call(s) to {path}"
 
         fmt, raw = values["format"], values["path"].strip()
-        argv = ("history", "export", "--format", fmt, "-o", shown_arg(raw) if raw else "<FILE>")
+        # A path that looks like a key is never shown.
+        shown = teach.WITHHELD if common.looks_like_a_key(raw) else raw
+        argv = ("history", "export", "--format", fmt, "-o", shown if raw else "<FILE>")
         self.attempt(export, reload=False, command=teach.equivalent(*argv))
 
     @on(Button.Pressed, "#prune")
     def _prune(self) -> None:
         self.prune()
 
-    def prune(self, days: str | None = None) -> None:
-        """Ask how old (``days`` filled in, else the retention), then confirm (`history
-        prune`)."""
-        if days is None:
-            days = str(self.state.settings.history_retention_days) if self.state else ""
+    def prune(self) -> None:
+        """Ask how old (the retention filled in), then confirm (`history prune`)."""
+        days = str(self.state.settings.history_retention_days) if self.state else ""
         fields = [Field("days", "Delete the records older than this many days", value=days)]
         self.app.push_screen(
             FormModal("Prune the usage history", fields, submit="Next…"), self._ask_prune

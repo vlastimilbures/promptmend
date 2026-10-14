@@ -1,5 +1,5 @@
 """The interface's dialogs: a confirmation, a read-only text view (a diff), a small form, a
-list to pick from (Home's recipes, a setting's choices) and one value to edit (a setting).
+list to pick from (a setting's choices) and one value to edit (a setting).
 
 A destructive action always goes through one of them: nothing is deleted, overwritten or
 deployed until its button is pressed, and Cancel (or Escape, or n) is the focused default.
@@ -110,7 +110,7 @@ class TextModal(_Dialog[None]):
 
 
 class PickModal(_Dialog[str | None]):
-    """A list to pick one line from (Home's recipes); returns the picked value, or None when
+    """A list to pick one line from (a setting's choices); returns the picked value, or None when
     cancelled. Picking changes nothing by itself, so the list has the focus when it opens
     (Enter or a click picks); Escape or Cancel closes it."""
 

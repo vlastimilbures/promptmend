@@ -14,7 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.screen import Screen
 from textual.theme import Theme
-from textual.widgets import Footer, Header, Input, TabbedContent, TabPane
+from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 from .. import __version__
 from . import brand, teach
@@ -77,9 +77,6 @@ DataTable { height: auto; max-height: 14; margin-bottom: 1; }
 .result { margin-top: 1; }
 #home-headline { margin: 1 0; }
 #home-rows { height: auto; }
-#home-command { margin-top: 1; }
-#home-command-help { color: $text-muted; }
-#home-output { height: 12; margin-top: 1; border: round $panel-lighten-2; }
 #home-session { margin-top: 1; text-wrap: nowrap; text-overflow: ellipsis; }
 /* The Settings tab (#199): a one-line filter, the list filling the tab, two help lines. */
 #settings-pane { overflow-y: hidden; }
@@ -131,7 +128,6 @@ class MainScreen(Screen[None]):
             Binding(str(n), f"show('{tab}')", label, show=False)
             for n, (tab, (label, _)) in enumerate(TABS.items(), start=1)
         ),
-        Binding("c", "command", "Command"),
         Binding("a", "app.about", "About"),
         Binding("r", "app.reload", "Reload"),
         Binding("t", "app.toggle_contrast", "High contrast"),
@@ -158,12 +154,6 @@ class MainScreen(Screen[None]):
             self.call_after_refresh(settings.query_one("#settings-list").focus)
         elif self.focused is not None and settings in self.focused.ancestors_with_self:
             self.set_focus(None)
-
-    def action_command(self) -> None:
-        """Home's command line (#111), focused. Typed into, it keeps every letter and digit
-        (its own), so no binding here fires until Escape leaves it."""
-        self.action_show("home")
-        self.query_one("#home-command", Input).focus()
 
 
 class ManageApp(App[int]):
