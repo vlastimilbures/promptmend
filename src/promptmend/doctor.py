@@ -7,13 +7,15 @@ PROMPT_UPDATE_CHECK is false), asks a loopback Ollama or LM Studio whether it an
 (local_probe), reads the deployed match files, and reads the clipboard only to report its
 length. The report never holds a key, the persona or clipboard text, since people paste it
 into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and keys are only ever added
-(the one exception: the previous_install check, removed with the migration code in #246).
+(the one exception: the previous_install check, removed with the migration code in #246;
+its PATH warning lives on as path_shadow).
 """
 
 from __future__ import annotations
 
 import os
 import platform
+import shutil
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -34,6 +36,7 @@ CHECK_IDS = (
     "version",
     "cli",
     "install",
+    "path_shadow",
     "config",
     "keys",
     "persona",
@@ -53,6 +56,7 @@ DATA_KEYS = {
     "version": ("version", "python", "platform", "latest", "update_available", "checked_at"),
     "cli": ("path", "executable", "frozen"),
     "install": ("channel", "launcher", "editable"),
+    "path_shadow": ("command", "found", "launcher"),
     "config": ("mode", "files", "valid", "findings"),
     "keys": ("keys", "provider", "triggers"),
     "persona": ("set", "local_only", "findings"),
@@ -181,6 +185,50 @@ def _install_check(launcher: deploy.Launcher | None, error: str | None) -> Check
         )
     note = ", editable checkout" if editable else ""
     return Check("install", OK, f"{channel}{note}: {launcher.path}", data)
+
+
+def _path_shadow_check(
+    found: deploy.Launcher | None, environ: Mapping[str, str] = os.environ
+) -> Check:
+    """Whether `promptmend` (or its alias `prompt-workflow`, #169) first on PATH is this
+    install's launcher: another one makes the shell run an older CLI with other settings."""
+    if found is None:
+        return Check("path_shadow", INFO, "not checked: no launcher found")
+    path = environ.get("PATH", "")
+    # shortcut: on Windows, which() also searches the cwd first (Python 3.12+); doctor runs
+    # from a terminal, so fine unless someone reports a false warning from a project folder.
+    hits = {c: shutil.which(c, path=path) for c in ("promptmend", deploy.LEGACY_COMMAND)}
+    for command, where in hits.items():
+        if not where:
+            continue
+        own = found.path.with_name(command + found.path.suffix)
+        try:
+            if os.path.samefile(where, own):
+                continue
+        except OSError:
+            pass
+        data = {"command": command, "found": where, "launcher": str(own)}
+        hint = _shadow_hint(environ, Path(where), own)
+        return Check(
+            "path_shadow",
+            WARN,
+            f"`{command}` on PATH is {where}, not the installed launcher {own}: {hint}",
+            data,
+        )
+    where = hits["promptmend"]
+    if not where:
+        return Check("path_shadow", INFO, "`promptmend` is not on PATH")
+    data = {"command": "promptmend", "found": where, "launcher": str(found.path)}
+    return Check("path_shadow", OK, f"`promptmend` on PATH is the installed launcher {where}", data)
+
+
+def _shadow_hint(environ: Mapping[str, str], found: Path, launcher: Path) -> str:
+    venv = environ.get("VIRTUAL_ENV")
+    if venv and deploy.inside(found, Path(venv)):
+        return "a virtual environment is active: run `deactivate`"
+    if ".venv" in found.parts:
+        return f"remove {found.parent} from PATH"
+    return f"uninstall the old CLI, or put {launcher.parent} earlier on PATH"
 
 
 def _config_check(layers: ConfigLayers, strict_error: str | None) -> Check:
@@ -724,6 +772,7 @@ def run(
         _safely("version", lambda: _version_check(update, install)),
         _safely("cli", _cli_check),
         install,
+        _safely("path_shadow", lambda: _path_shadow_check(found)),
         _safely("config", lambda: _config_check(layers, strict_error)),
     ]
     try:

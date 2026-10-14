@@ -87,6 +87,15 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from promptmend import redaction
 
     monkeypatch.setattr(redaction, "_user_patterns", ())
+    # ...nor look up the developer's real `promptmend` on PATH (doctor's path_shadow): a test
+    # of the check passes its own environ.
+    import functools
+
+    from promptmend import doctor
+
+    monkeypatch.setattr(
+        doctor, "_path_shadow_check", functools.partial(doctor._path_shadow_check, environ={})
+    )
 
 
 # Headers httpx adds to every request on its own; calls[i]["headers"] leaves them out so a
