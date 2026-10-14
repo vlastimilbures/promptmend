@@ -16,7 +16,6 @@ Settings and Try tabs and the keys. Everything it does, a headless command does 
 - [Copy last](#copy-last)
 - [Try tab](#try-tab)
 - [Keys](#keys)
-- [Intro](#intro)
 - [Accessibility](#accessibility)
 
 ## Open it
@@ -79,7 +78,7 @@ asks nothing (see [Commands](commands.md#management-commands)).
 | `3` | Profiles | Built-in and your own profiles; pick the default profile, edit a profile in `$VISUAL` or `$EDITOR`, copy a checkout's profiles (it asks for the checkout's folder when none was found) |
 | `4` | Triggers | The match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
 | `5` | History | Usage statistics by trigger, provider, model or day; export, prune, reset |
-| `6` | Diagnostics | Each provider's model, base URL, key and whether the draft leaves this machine; every setting's source; the `doctor` checks, and an import-time check of the CLI |
+| `6` | Diagnostics | Each provider's model, base URL, key and whether the draft leaves this machine; the settings layers and any problem in the settings files; the `doctor` checks |
 | `7` | Try | Rewrite a typed draft against a stub or a confirmed provider |
 
 Every button's tooltip shows the command that does the same in a terminal, and every result
@@ -109,7 +108,7 @@ session's commands, or a few useful ones before you have done anything.
 ## Settings tab
 
 The Settings tab (`2`) lists every setting and both API keys, grouped (Output, Keys, Privacy,
-Models, History, Interface). Each row has a dot, the name, the value and where the value comes
+Models, History). Each row has a dot, the name, the value and where the value comes
 from (`config.toml`, `secrets.toml`, `.env`, `environment` or `default`):
 
 - a green `●` is a switch that is on, a key that is set, or a value that is not the default;
@@ -187,12 +186,6 @@ models, never a made-up 0.
 | `q` | Quit |
 | Escape | Leave the Try tab's draft, so the tab keys work again; clear the Settings filter |
 | Up, Down, `j`, `k`, Space, Enter, `/` | Move and change in the [Settings list](#settings-tab) |
-
-## Intro
-
-The interface opens with a short intro that stays until you press Enter (or any other key, or
-click); that key does nothing else. Its last line says how to turn it off for good:
-`promptmend config set PROMPT_UI_INTRO false`. `promptmend ui --no-intro` skips it once.
 
 ## Accessibility
 

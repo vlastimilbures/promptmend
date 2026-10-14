@@ -234,7 +234,6 @@ See [Privacy](privacy.md) for what each one changes.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `PROMPT_UI_INTRO` | `true` | `false` skips the [interface](interface.md#intro)'s intro, as `ui --no-intro` does once |
 | `PROMPT_UPDATE_CHECK` | `true` | `doctor` and the interface's Home ask pypi.org, once a day, whether a newer release exists ([privacy](privacy.md#update-check)); `false` makes no request |
 
 ### Files

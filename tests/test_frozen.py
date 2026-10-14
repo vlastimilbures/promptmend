@@ -66,16 +66,6 @@ def test_the_smoke_test_runs_the_frozen_exe() -> None:
 # --- doctor --------------------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("frozen")
-def test_import_check_is_not_applicable_when_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
-    def no_child(*args: object, **kwargs: object) -> None:
-        raise AssertionError("a frozen build starts no interpreter")
-
-    monkeypatch.setattr(subprocess, "run", no_child)
-    found = doctor.import_check()
-    assert found == doctor.ImportCheck(True, doctor.FROZEN_IMPORT)
-
-
 def test_cli_check_says_whether_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
     check = doctor._cli_check()
     assert check.data["frozen"] is False

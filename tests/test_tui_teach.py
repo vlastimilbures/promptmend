@@ -47,7 +47,6 @@ ALL = sorted(
     {argv for commands in teach.BUTTONS.values() for argv in commands}
     | {recipe.argv for recipe in teach.RECIPES}
     | set(teach.SETTING_ACTIONS.values())
-    | {teach.INTRO_OFF}
 )
 
 
@@ -110,7 +109,7 @@ def test_tooltips() -> None:
     assert smoke.startswith("In a terminal:\n$ promptmend setup\n")
     assert "smoke test" in smoke
     assert (teach.tooltip("home-previous") or "").count("$ promptmend") == 4
-    assert teach.tooltip("import-check") == teach.NO_COMMAND["import-check"]
+    assert teach.tooltip("home-copy") == teach.NO_COMMAND["home-copy"]
     assert teach.tooltip("previous-close") is None
     assert teach.tooltip("no-such-button") is None
 

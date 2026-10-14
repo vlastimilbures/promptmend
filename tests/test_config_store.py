@@ -207,6 +207,21 @@ def test_toml_notes(saved_mode: Path) -> None:
     assert repair.settings().ollama_model == "m"
 
 
+# A removed setting (#245) that the user saved, or still sets, is ignored without a
+# finding in either mode: doctor and `config validate` must not flag it.
+def test_retired_settings_are_ignored(
+    saved_mode: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(saved_mode / "config.toml", 'PROMPT_UI_INTRO = false\nOLLAMA_MODEL = "m"\n')
+    monkeypatch.setenv("PROMPT_UI_INTRO", "maybe")
+    assert ConfigLayers.resolve().settings().ollama_model == "m"
+    assert ConfigLayers.resolve(strict=False).findings == ()
+    monkeypatch.setenv("PROMPTMEND_ENV", str(_write(tmp_path / ".env", "PROMPT_UI_INTRO=no\n")))
+    assert ConfigLayers.resolve().findings == ()
+    assert ConfigLayers.resolve(strict=False).findings == ()
+    assert "PROMPT_UI_INTRO" not in env_names()
+
+
 # The secret store only contributes secrets; anything else in it is ignored.
 def test_secret_store_holds_only_secrets(saved_mode: Path) -> None:
     _write(

@@ -5,17 +5,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from rich.text import Text
-from textual import on
 from textual.app import ComposeResult
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import DataTable, Static
 
 from .. import doctor
 from ..commands import common
 from ..commands import doctor as doctor_cmd
 from ..commands import settings as settings_cmd
-from ..config import env_names
 from ..factory import routes
-from .base import Pane, add_row, button_row
+from .base import Pane, add_row
 from .state import State
 
 
@@ -71,15 +69,11 @@ class DiagnosticsPane(Pane):
         yield Static("", markup=False, id="policy")
         yield DataTable(id="routes", cursor_type="none", zebra_stripes=True)
         yield Static("", markup=False, id="layers")
-        yield DataTable(id="diag-settings", cursor_type="none", zebra_stripes=True)
         yield Static("", markup=False, id="findings")
         yield Static("", markup=False, id="all-checks")
         yield Static("", markup=False, id="store")
-        yield button_row(("import-check", "Check the trigger's import time"))
-        yield self.result()
 
     def setup(self) -> None:
-        self.query_one("#diag-settings", DataTable).add_columns("Setting", "Value", "From", "Note")
         self.query_one("#routes", DataTable).add_columns(
             "Provider", "Model", "Base URL", "The draft", "Key"
         )
@@ -90,24 +84,6 @@ class DiagnosticsPane(Pane):
         self.query_one("#layers", Static).update(
             "\n".join(settings_cmd.layers_lines(layers, raw=False))
         )
-        table = self.query_one("#diag-settings", DataTable)
-        table.clear()
-        for name in env_names():
-            entry = layers.entries[name]
-            notes = []
-            if entry.shadows:
-                notes.append("overrides " + ", ".join(map(common.short_label, entry.shadows)))
-            if entry.rejected:
-                bad = ", ".join(map(common.short_label, entry.rejected))
-                notes.append(f"invalid value in {bad} ignored")
-            add_row(
-                table,
-                name,
-                common.shown_value(name, entry),
-                common.short_label(entry.source),
-                "; ".join(notes),
-                key=name,
-            )
         findings = [f"{common.source_label(f.source)}: {f.message}" for f in layers.findings]
         self.query_one("#findings", Static).update(
             "Findings:\n" + "\n".join(f"  {line}" for line in findings)
@@ -126,12 +102,3 @@ class DiagnosticsPane(Pane):
             f"Lost history writes: {lost}{f' (last {last})' if last else ''}; tracking "
             f"{'incomplete' if stored.get('tracking_incomplete') else 'complete'}"
         )
-
-    @on(Button.Pressed, "#import-check")
-    def _import_check(self) -> None:
-        self.report("Importing the CLI in a fresh interpreter…")
-        self.background(self._import_now)
-
-    def _import_now(self) -> None:
-        found = doctor.import_check()
-        self.app.call_from_thread(self.report, found.message, error=not found.ok)

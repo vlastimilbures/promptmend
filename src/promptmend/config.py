@@ -35,6 +35,9 @@ def _cut_at_comment(raw: str) -> bool:
 # model slug, profile name, number or key holds a space, and a base URL never needs ` #`.
 _HASH_IN_VALUE = frozenset({"PROMPT_EXTRA_PATTERNS", "PROMPT_PERSONA"})
 _EXTRA = "PROMPT_EXTRA_PATTERNS"
+# Settings a release removed: a saved one is skipped without a finding, since the user saved
+# it when it was a setting (and `config unset` no longer takes the name).
+RETIRED = frozenset({"PROMPT_UI_INTRO"})  # the interface's intro (#245)
 
 
 def _env_text(data: bytes) -> str:
@@ -242,7 +245,7 @@ def _saved_layer(
     known, secrets = env_names(), secret_names()
     values = {}
     for key, value in table.items():
-        if key == VERSION_KEY:
+        if key == VERSION_KEY or key in RETIRED:
             continue
         if key not in known:
             note(source, f"{safe_repr(key)} in {name} is not a setting; it was ignored")
@@ -608,9 +611,6 @@ class Settings:
     history: bool = _env("PROMPT_HISTORY", "true", _bool)
     # Days a history record is kept; HistoryStore.prune() deletes older ones.
     history_retention_days: int = _env("PROMPT_HISTORY_RETENTION_DAYS", "365", _retention_days)
-    # The interface's intro as it opens (tui/intro.py, #112); false skips it, as
-    # `ui --no-intro` does. Only `ui` reads it; the triggers never do.
-    ui_intro: bool = _env("PROMPT_UI_INTRO", "true", _bool)
     # Whether doctor and the interface's Home ask PyPI, at most once a day, for a newer
     # release (update_check.py, #197); false makes no request. The triggers never ask.
     update_check: bool = _env("PROMPT_UPDATE_CHECK", "true", _bool)

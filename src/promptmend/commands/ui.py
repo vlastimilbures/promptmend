@@ -22,17 +22,10 @@ def on_a_terminal() -> bool:
     return common.stdin_is_tty() and common.stdout_is_tty()
 
 
-def wants_intro() -> bool:
-    """PROMPT_UI_INTRO (#112), read in repair mode: a broken settings file shows the intro,
-    and the interface then reports the file."""
-    return common.load_layers()[1].ui_intro
-
-
 @app.command("ui", short_help="Open the full-screen interface to set up and manage (a terminal).")
 def ui(
-    no_intro: bool = typer.Option(
-        False, "--no-intro", help="Open without the intro (or set PROMPT_UI_INTRO=false)."
-    ),
+    # The intro is gone (#245); the option stays accepted, hidden, so old scripts still run.
+    no_intro: bool = typer.Option(False, "--no-intro", hidden=True),
 ) -> None:
     """Open the full-screen interface: status, settings and keys, profiles, triggers, usage
     history and diagnostics. It needs a terminal; every screen has a headless command (see
@@ -45,7 +38,7 @@ def ui(
         )
     from ..tui.app import ManageApp
 
-    interface = ManageApp(intro=not no_intro and wants_intro(), first_run=True)
+    interface = ManageApp(first_run=True)
     interface.run()
     sys.exit(interface.return_code or 0)
 
@@ -55,6 +48,6 @@ def open_setup(options: SetupOptions) -> None:
     (Open PromptMend stays in the interface)."""
     from ..tui.app import ManageApp
 
-    interface = ManageApp(intro=False, setup=options)
+    interface = ManageApp(setup=options)
     interface.run()
     sys.exit(interface.return_code or 0)
