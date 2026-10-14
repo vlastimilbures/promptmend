@@ -28,7 +28,7 @@ from .profiles_pane import ProfilesPane
 from .settings_pane import SettingsPane
 from .setup_wizard import SetupOptions, SetupScreen, make_plan, needs_setup
 from .state import State, gather
-from .triggers_pane import TriggersPane
+from .triggers_pane import DeployTarget, TriggersPane
 from .try_pane import TryPane
 
 DEFAULT_THEME = "textual-dark"
@@ -301,15 +301,20 @@ class ManageApp(App[int]):
         self.offered = True
         if any(isinstance(s, PreviousInstallScreen) for s in self.screen_stack):
             return
-        if options is None or (options.espanso_dir is None and options.launcher is None):
+        if options is None or not (options.espanso_dir or options.launcher or options.no_restart):
             self.push_screen(PreviousInstallScreen(entered))
             return
         named = options
+        args = [
+            *(("--espanso-dir", named.espanso_dir) if named.espanso_dir else ()),
+            *(("--launcher", named.launcher) if named.launcher else ()),
+            *(("--no-restart",) if named.no_restart else ()),
+        ]
         self.push_screen(
             PreviousInstallScreen(
                 entered,
                 espanso_dir=Path(named.espanso_dir).expanduser() if named.espanso_dir else None,
                 launcher=Path(named.launcher).expanduser() if named.launcher else None,
-                plan_of=lambda: make_plan(named)[0],
+                target=DeployTarget(lambda: make_plan(named)[0], named.no_restart, tuple(args)),
             )
         )

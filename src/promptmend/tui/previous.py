@@ -31,7 +31,7 @@ from .base import (
 )
 from .modals import ConfirmModal, FormModal
 from .state import State
-from .triggers_pane import TriggersPane
+from .triggers_pane import DeployTarget, TriggersPane
 
 if TYPE_CHECKING:
     from .app import ManageApp
@@ -82,16 +82,17 @@ class PreviousInstallScreen(Screen[None]):
         *,
         espanso_dir: Path | None = None,
         launcher: Path | None = None,
-        plan_of: Callable[[], deploy.Plan] | None = None,
+        target: DeployTarget | None = None,
     ) -> None:
         super().__init__()
         # The path typed into "Enter a path…" (or setup's --migrate-from): detected again
         # with it on every refresh.
         self.entered = entered
-        # setup's --espanso-dir and --launcher: detection, the deploy and the retire use them.
+        # setup's --espanso-dir and --launcher: detection, the deploy (``target``, with its
+        # --no-restart) and the retire use them.
         self.espanso_dir = espanso_dir
         self.launcher = launcher
-        self.plan_of = plan_of
+        self.target = target
         self.found = previous_install.Detection()
 
     def compose(self) -> ComposeResult:
@@ -303,12 +304,12 @@ class PreviousInstallScreen(Screen[None]):
             return
         best = previous_install.best(self.found.candidates)
         if best is None or best.env_file is None or self.found.pending is not None:
-            triggers.start_deploy(self.plan_of)
+            triggers.start_deploy(self.target)
             return
 
         def done(yes: bool | None) -> None:
             if yes:
-                triggers.start_deploy(self.plan_of)
+                triggers.start_deploy(self.target)
 
         # As setup's deploy step (#110): deploying before the copy leaves the triggers with
         # neither the old settings nor the new ones.
@@ -358,7 +359,8 @@ class PreviousInstallScreen(Screen[None]):
             place = config_store.apply_retire(root, espanso_dir=folder, consent=plan.token)
             return f"Retired: {plan.env_file} -> {place}"
 
-        command = teach.equivalent("config", "retire", "--from", str(root))
+        where = ("--espanso-dir", str(self.espanso_dir)) if self.espanso_dir else ()
+        command = teach.equivalent("config", "retire", "--from", str(root), *where)
         self._ask(
             f"Retire the old .env of {root}?", "\n".join(plan.describe()), "Retire", apply, command
         )

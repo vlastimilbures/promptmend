@@ -401,11 +401,23 @@ def test_wizard_passes_its_folder_and_launcher_to_the_earlier_install(
         assert isinstance(screen, PreviousInstallScreen)
         assert screen.espanso_dir == named
         assert screen.launcher == Path("/bin/pm")
-        assert screen.plan_of is not None
-        assert screen.plan_of().espanso_dir == named.resolve()
+        assert screen.target is not None
+        assert screen.target.read().espanso_dir == named.resolve()
         assert asked[-1] == {"entered": old, "espanso_dir": named, "launcher": Path("/bin/pm")}
+        # Its deploy previews and writes the named folder, and keeps setup's --no-restart.
+        await press(app, pilot, "#previous-deploy")
+        assert f"Into {named.resolve() / 'match'}:" in str(app.screen.preview)  # type: ignore[attr-defined]
+        await press(app, pilot, "#submit")
+        assert len(list((named / "match").iterdir())) == 3
+        assert list((espanso.root / "match").iterdir()) == []
+        assert ["espanso", "restart"] not in espanso.calls
+        assert app.session[-1].command == (
+            f"promptmend espanso deploy --espanso-dir {named} --launcher /bin/pm --no-restart"
+        )
 
-    options = SetupOptions(str(named), "/bin/pm", standalone=True, migrate_from=old)
+    options = SetupOptions(
+        str(named), "/bin/pm", no_restart=True, standalone=True, migrate_from=old
+    )
     drive(scenario, setup=options)
 
 

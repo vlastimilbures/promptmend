@@ -4,6 +4,7 @@ detach dialogs (`espanso deploy|detach`)."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from textual import on
@@ -16,6 +17,17 @@ from . import teach
 from .base import Pane, add_row, button_row, manifest_digest, plan_digest
 from .modals import Field, FormModal, TextModal
 from .state import State, current_plan
+
+
+@dataclass(frozen=True)
+class DeployTarget:
+    """Where a deploy goes: this install's plan, or setup's --espanso-dir/--launcher one
+    (the previous install screen opened from the wizard), with its --no-restart and the
+    options its logged `espanso deploy` names."""
+
+    read: Callable[[], deploy.Plan] = current_plan
+    no_restart: bool = False
+    args: tuple[str, ...] = ()
 
 
 def _servers_down(state: State) -> set[str]:
@@ -104,13 +116,13 @@ class TriggersPane(Pane):
     def _deploy(self) -> None:
         self.start_deploy()
 
-    def start_deploy(self, plan_of: Callable[[], deploy.Plan] | None = None) -> None:
+    def start_deploy(self, target: DeployTarget | None = None) -> None:
         """Read the plan in a worker, then preview it in a dialog (also the previous install
-        screen's step 3, whose ``plan_of`` is setup's --espanso-dir/--launcher plan)."""
-        read = plan_of or current_plan
+        screen's step 3, with its ``target``)."""
+        to = target or DeployTarget()
         if self.claim():
             self.report("Reading the match files…")
-            self.background(lambda: self.app.call_from_thread(self._ask_deploy, read(), read))
+            self.background(lambda: self.app.call_from_thread(self._ask_deploy, to.read(), to))
 
     def claim(self) -> bool:
         """Start a deploy or detach unless one is already open: a second dialog would apply
@@ -121,16 +133,17 @@ class TriggersPane(Pane):
         self.busy = True
         return True
 
-    def _ask_deploy(self, plan: deploy.Plan, read: Callable[[], deploy.Plan]) -> None:
+    def _ask_deploy(self, plan: deploy.Plan, to: DeployTarget) -> None:
         if plan.is_noop:
             self.busy = False
             self.report("Nothing to do: every match file is in sync.")
             return
         if plan.only_forgets:  # the manifest only: no file is written, so nothing to ask
             self.report("Forgetting deploy records of files that are gone…")
-            self.background(lambda: self._apply(plan, {}, read))
+            self.background(lambda: self._apply(plan, {}, to))
             return
-        lines = [f"{s.state:<9} {s.name}" for s in plan.steps]
+        lines = [f"Into {plan.espanso_dir / 'match'}:"]
+        lines += [f"{s.state:<9} {s.name}" for s in plan.steps]
         if plan.legacy is not None:
             lines.append(f"legacy    {plan.legacy.name} will be retired, with a backup")
         lines += [f"forget    {key} (already gone)" for key in plan.orphans]
@@ -154,7 +167,7 @@ class TriggersPane(Pane):
                 return
             choices = {s.name: values[f"choice-{i}"] for i, s in enumerate(conflicts)}
             self.report("Deploying…")
-            self.background(lambda: self._apply(plan, choices, read))
+            self.background(lambda: self._apply(plan, choices, to))
 
         self.app.push_screen(
             FormModal("Deploy the match files", fields, submit="Deploy", preview=preview), done
@@ -164,10 +177,10 @@ class TriggersPane(Pane):
         self,
         plan: deploy.Plan,
         choices: dict[str, str],
-        read: Callable[[], deploy.Plan],
+        to: DeployTarget,
     ) -> None:
         """In the worker: apply the plan the person saw, unless the files changed since."""
-        if plan_digest(read()) != plan_digest(plan):
+        if plan_digest(to.read()) != plan_digest(plan):
             raise deploy.DeployError(
                 "the match files or the deploy record changed since the preview; nothing was "
                 "written. Press Deploy again to see the new plan"
@@ -177,7 +190,9 @@ class TriggersPane(Pane):
         # while (#215). _done() reloads again once Espanso answered.
         self.app.call_from_thread(self.manage.reload)
         lines = list(outcome.lines)
-        if outcome.changed and not deploy.restart_espanso():
+        if outcome.changed and to.no_restart:
+            lines.append("Espanso was not restarted (--no-restart).")
+        elif outcome.changed and not deploy.restart_espanso():
             lines.append("Could not restart Espanso; run `espanso restart` yourself.")
         if outcome.kept:
             names = ", ".join(p.name for p in outcome.kept)
@@ -185,7 +200,10 @@ class TriggersPane(Pane):
         else:
             lines.append("The match files are up to date.")
         self.app.call_from_thread(
-            self._done, "\n".join(lines), bool(outcome.kept), teach.equivalent("espanso", "deploy")
+            self._done,
+            "\n".join(lines),
+            bool(outcome.kept),
+            teach.equivalent("espanso", "deploy", *to.args),
         )
 
     def _done(self, message: str, error: bool, command: str | None = None) -> None:
