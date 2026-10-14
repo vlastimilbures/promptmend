@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal
 
 from . import __version__
-from .config import MAX_RETENTION_DAYS, _user_config_dir, user_data_dir
+from .config import LEGACY_APP_DIR, MAX_RETENTION_DAYS, _user_config_dir, user_data_dir
 from .redaction import compile_extra, is_bare_token, scan
 
 if TYPE_CHECKING:
@@ -617,7 +617,8 @@ class HistoryStore:
         except Exception:
             self._mark_lost(sidecar_deadline)
             return False
-        spooled, pending = self._replayable(extra)
+        # One lock try: a busy lock leaves the spool for later instead of eating the write budget.
+        spooled, pending = self._replayable(extra, time.monotonic())
         try:
             self._write(op, rows, start + _WRITE_BUDGET + extra_time, cutoff, spooled=spooled)
         except Exception:
@@ -633,7 +634,7 @@ class HistoryStore:
         valid is dropped and counted as lost. Returns how many were stored; never raises."""
         try:
             extra = compile_extra(self.extra_patterns)
-            spooled, pending = self._replayable(extra)
+            spooled, pending = self._replayable(extra, time.monotonic() + _SERVICE_TIMEOUT)
             if not pending:
                 return 0
             if spooled:
@@ -679,7 +680,7 @@ class HistoryStore:
                 raise TimeoutError("history write budget spent")
             return max(1, int(left * 1000))
 
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        _make_folder(self.path.parent)
         with self._connect(timeout=remaining_ms() / 1000) as conn:
             # Abort a statement that runs past the budget (checked every _PROGRESS_STEPS VM steps).
             conn.set_progress_handler(lambda: int(time.monotonic() > deadline), _PROGRESS_STEPS)
@@ -825,12 +826,20 @@ class HistoryStore:
             rows.append(_attempt_row(op_id, seq, at, self._price_table(), extra))
         return op_row, rows
 
-    def _replayable(self, extra: tuple[re.Pattern[str], ...]) -> tuple[list[_Spooled], bool]:
+    def _replayable(
+        self, extra: tuple[re.Pattern[str], ...], deadline: float
+    ) -> tuple[list[_Spooled], bool]:
         """The valid spooled records (at most _SPOOL_LIMIT), and whether the spool has
-        anything to settle (a record, an invalid entry, or a file that is not a spool). An
-        unreadable spool is left for later. Never raises."""
+        anything to settle (a record, an invalid entry, or a file that is not a spool). The
+        spool is read under the sidecar lock (an unlocked reader would make another
+        process's os.replace fail on Windows, #241); with no spool the lock is not taken. An
+        unreadable spool, or a lock not had by ``deadline``, is left for later. Never
+        raises."""
+        if not self.spool_path.exists():
+            return [], False
         try:
-            entries = self._load_spool()
+            with self._sidecar_lock(deadline):
+                entries = self._load_spool()
         except ValueError:
             return [], True
         except Exception:
@@ -906,7 +915,7 @@ class HistoryStore:
         nonce is in it removes it. One left by a killed process is broken after _STALE_LOCK.
         Tries at least once, however little time is left."""
         lock = self.lost_path.with_name(f"{LOST_NAME}.lock")
-        lock.parent.mkdir(parents=True, exist_ok=True)
+        _make_folder(lock.parent)
         nonce = uuid.uuid4().hex
         while True:
             try:
@@ -993,8 +1002,13 @@ class HistoryStore:
         except Exception:
             info["error"] = "no sqlite3"
         try:
-            info["lost_writes"], info["last_lost_utc"] = self._read_lost()
-            info["spooled"] = len(self._load_spool())
+            # Read under the lock, like a write (#241); with neither file there is nothing to lock.
+            sidecar = self.lost_path.exists() or self.spool_path.exists()
+            with (
+                self._sidecar_lock(time.monotonic() + 1.0) if sidecar else contextlib.nullcontext()
+            ):
+                info["lost_writes"], info["last_lost_utc"] = self._read_lost()
+                info["spooled"] = len(self._load_spool())
             sidecar_ok = True
         except Exception:
             sidecar_ok = False
@@ -1205,6 +1219,12 @@ class HistoryStore:
                 for row in conn.execute(sql + " ORDER BY operation_id, seq")
             ]
         return ops, attempts
+
+
+def _make_folder(folder: Path) -> None:
+    # Never re-create the legacy folder relocate moved away (#241): the record is dropped uncounted.
+    if folder.name != LEGACY_APP_DIR:
+        folder.mkdir(parents=True, exist_ok=True)
 
 
 def _break_stale(lock: Path) -> bool:

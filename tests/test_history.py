@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from promptmend import history
-from promptmend.config import Settings, user_data_dir
+from promptmend.config import LEGACY_APP_DIR, Settings, user_data_dir
 from promptmend.history import HistoryError, HistoryStore, load_price_table
 
 SRC = Path(history.__file__).resolve().parents[1]
@@ -719,6 +719,91 @@ def test_a_first_write_that_times_out_is_replayed_by_stats(
     assert (row.key, row.operations, row.attempts) == ("-i-", 1, 1)
     health = store.health()
     assert (health.spooled, health.lost_writes) == (0, 0)
+
+
+# #241: an unlocked reader made another process's os.replace of the spool fail on Windows.
+def test_the_spool_is_read_only_under_the_sidecar_lock(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _spool_one(store, monkeypatch)
+    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    real_load = HistoryStore._load_spool
+    locked: list[bool] = []
+
+    def load(self: HistoryStore) -> list[object]:
+        locked.append(lock.exists())
+        return real_load(self)
+
+    monkeypatch.setattr(HistoryStore, "_load_spool", load)
+    assert store.record(_op())
+    assert locked
+    assert all(locked)
+    assert not store.spool_path.exists()
+
+
+def test_a_spool_locked_by_another_process_is_left_for_later(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spooled = _spool_one(store, monkeypatch)
+    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock.touch()  # another process is reading or writing the spool
+    assert store._replayable((), time.monotonic() + 0.05) == ([], False)
+    # Waiting for the lock would spend the write budget and spool this record too.
+    assert store.record(_op())
+    assert spooled not in {r["id"] for r in _rows(store, "operations")}
+    assert len(_spool(store)["records"]) == 1
+    lock.unlink()
+    records, pending = store._replayable((), time.monotonic() + 0.05)
+    assert pending
+    assert [op[0] for op, _ in records] == [spooled]
+
+
+def test_without_a_spool_record_takes_no_sidecar_lock(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_lock(self: HistoryStore, deadline: float) -> None:
+        raise AssertionError("sidecar lock taken")
+
+    monkeypatch.setattr(HistoryStore, "_sidecar_lock", no_lock)
+    assert store.record(_op())
+    assert len(_rows(store, "operations")) == 1
+
+
+def test_health_reads_the_sidecar_only_under_its_lock(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_lock = HistoryStore._sidecar_lock
+    taken: list[float] = []
+
+    def lock(self: HistoryStore, deadline: float) -> Any:
+        taken.append(deadline)
+        return real_lock(self, deadline)
+
+    monkeypatch.setattr(HistoryStore, "_sidecar_lock", lock)
+    store.health()
+    assert taken == []  # no sidecar files: nothing to lock, nothing created
+    assert not store.path.parent.exists()
+    _spool_one(store, monkeypatch)
+    taken.clear()
+    assert store.health().spooled == 1
+    assert len(taken) == 1
+    held = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    held.touch()  # another process holds it
+    health = store.health()
+    assert (health.spooled, health.tracking_incomplete) == (0, True)
+    held.unlink()
+
+
+# #241: a record whose path was chosen before relocate moved the legacy folder away.
+def test_the_moved_legacy_folder_is_never_created_again(tmp_path: Path) -> None:
+    legacy = tmp_path / LEGACY_APP_DIR
+    store = HistoryStore(legacy / history.DB_NAME)
+    assert store.record(_op(), [_attempt()]) is False
+    assert store.record(_op(kind="nope")) is False
+    assert not legacy.exists()
+    nested = HistoryStore(tmp_path / "new" / "promptmend" / history.DB_NAME)
+    assert nested.record(_op())
+    assert nested.path.exists()
 
 
 def test_an_empty_database_file_still_gets_the_creating_budget(

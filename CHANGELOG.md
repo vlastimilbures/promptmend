@@ -21,6 +21,11 @@ All notable changes to this project are documented here. The format follows
   `rollback`, `retire`, `profiles migrate` and `history prune` a one-line summary; each
   command's own `--help` keeps the full text (#247).
 ### Fixed
+- Usage history: a recorded run and `doctor` read `history.spool` and `history.lost` only
+  under their lock, so on Windows they can no longer make another run's update of those files
+  fail and lose that record, and a run that started before a management command moved the
+  old `prompt-workflow` data folder no longer creates that folder again (that run's record is
+  dropped) (#241).
 - `setup --espanso-dir` offers the earlier settings step for an earlier install whose
   match files are in that folder, not in Espanso's default one.
 - A TLS certificate failure (a corporate proxy, a self-signed endpoint) is reported at once
