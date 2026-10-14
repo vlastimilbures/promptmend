@@ -14,7 +14,7 @@ from textual import work
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, DataTable, Static
 
-from .. import config_store, deploy, history, previous_install
+from .. import config_store, deploy, history
 from .. import profiles as profile_service
 from ..commands import common
 from ..commands import profiles as profiles_cmd
@@ -153,7 +153,7 @@ def error_message(exc: Exception) -> str:
     return f"error: unexpected {type(exc).__name__}: {exc}"
 
 
-CHECKOUT_FIELD = Field("previous-path", "The checkout's folder", placeholder="~/Projects/…")
+CHECKOUT_FIELD = Field("checkout-path", "The checkout's folder", placeholder="~/Projects/…")
 
 
 def checkout_path(owner: Reporter, values: dict[str, str] | None) -> Path | None:
@@ -173,14 +173,6 @@ def checkout_path(owner: Reporter, values: dict[str, str] | None) -> Path | None
     return Path(text).expanduser()
 
 
-def previous_root(found: previous_install.Detection) -> Path | None:
-    """The earlier checkout to offer: the best candidate, else the one a copy left pending."""
-    best = previous_install.best(found.candidates)
-    if best is not None:
-        return best.root
-    return found.pending.root if found.pending else None
-
-
 class Reporter(Protocol):
     def report(self, message: str, *, error: bool = False, command: str | None = None) -> None: ...
 
@@ -198,32 +190,29 @@ def _migrated(result: config_store.MigrationResult) -> str:
 
 def confirm_migration(
     owner: Reporter,
-    source: Path | None = None,
     *,
     title: str = "Migrate the .env?",
     confirm: str = "Migrate",
     note: str = _ROLLBACK_NOTE,
     done: Callable[[config_store.MigrationResult], str] = _migrated,
 ) -> None:
-    """Preview the .env migration (with ``source``, the copy from that earlier checkout),
-    then apply it on Yes, as `config migrate [--from]` does. The dialog's words and the
-    message ``done`` makes of the result are the caller's."""
+    """Preview the .env migration, then apply it on Yes, as `config migrate` does. The
+    dialog's words and the message ``done`` makes of the result are the caller's."""
     try:
-        plan = config_store.plan_migration(source=source)
+        plan = config_store.plan_migration()
     except EXPECTED as exc:
         owner.report(error_message(exc), error=True)
         return
     if plan.status != "ready":
         owner.report("\n".join(plan.describe()))
         return
-    argv = ("config", "migrate", *(("--from", str(source)) if source is not None else ()))
 
     def apply() -> str:
-        return done(config_store.apply_migration(source=source, consent=plan.token))
+        return done(config_store.apply_migration(consent=plan.token))
 
     def answered(yes: bool | None) -> None:
         if yes:
-            owner.attempt(apply, command=teach.equivalent(*argv))
+            owner.attempt(apply, command=teach.equivalent("config", "migrate"))
 
     preview = "\n".join([*plan.describe(), "", note])
     cast("Widget", owner).app.push_screen(ConfirmModal(title, preview, confirm=confirm), answered)
@@ -288,12 +277,11 @@ def manifest_digest(manifest: deploy.Manifest) -> list[tuple[str, dict[str, Any]
 
 
 def plan_digest(plan: deploy.Plan) -> tuple[object, ...]:
-    """What a deploy preview showed: each file's state and content, the legacy file, the
+    """What a deploy preview showed: each file's state and content, the
     launcher and the manifest it was compared with."""
     return (
         plan.espanso_dir,
         plan.launcher,
-        plan.legacy,
         [(s.name, s.state, s.current) for s in plan.steps],
         manifest_digest(plan.manifest),
         plan.orphans,

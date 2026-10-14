@@ -2,27 +2,14 @@
 options prefilling the steps (#244). With --non-interactive (or --plain) it asks nothing:
 settings and the default profile from the options, the API key from --api-key-stdin, a deploy
 preview (applied with --deploy), and a smoke test against a stub on 127.0.0.1, never a paid
-call. A .env migration and an earlier checkout install's settings, profiles and .env (#110)
-are only listed there, with their commands: the wizard applies them, with consent."""
+call. A .env migration is only listed there, with its command: the wizard applies it, with
+consent."""
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import typer
 
-from .. import (
-    assets,
-    config,
-    config_files,
-    config_store,
-    deploy,
-    previous_install,
-    profiles,
-    setup_guide,
-    smoke,
-)
+from .. import assets, config, config_files, config_store, deploy, setup_guide, smoke
 from ..config import setting_fields
 from ..factory import PROVIDER_KEYS, PROVIDER_NAMES
 from ..prompt_builder import system_prompt
@@ -58,44 +45,10 @@ class _Steps:
         self.todo.append(message)
 
 
-def _previous_install(
-    entered: Path | None, espanso_dir: str | None, launcher: str | None
-) -> previous_install.Candidate | None:
-    """Print what detection finds of an earlier checkout install, and return the one to offer:
-    the entered one, else the first with a .env, else the first. Reads only."""
-    try:
-        found = previous_install.detect(
-            entered=entered,
-            espanso_dir=Path(espanso_dir).expanduser() if espanso_dir else None,
-            launcher=Path(launcher).expanduser() if launcher else None,
-        )
-    except (OSError, ValueError, deploy.DeployError) as exc:
-        typer.echo(f"  Could not look for a previous install: {exc}")
-        return None
-    if found.shadow:
-        common.warn(
-            f"`{found.shadow.command}` on PATH is {found.shadow.path}, "
-            f"not {found.shadow.launcher}: "
-            f"{found.shadow.hint}"
-        )
-    if not found.candidates:
-        return None
-    for candidate in found.candidates:
-        typer.echo(f"  Previous install: {candidate.root} ({', '.join(sorted(candidate.signals))})")
-        env_file = ".env present" if candidate.env_file else "no .env"
-        typer.echo(f"    {env_file}; profiles folder: {'yes' if candidate.profiles_dir else 'no'}")
-        for deployed in candidate.launchers_in_root:
-            typer.echo(f"    the match files still run {deployed}")
-    return previous_install.best(found.candidates)
-
-
-def _settings_writable(
-    steps: _Steps, copy_from: Path | None = None, *, detected: bool = False
-) -> bool:
+def _settings_writable(steps: _Steps) -> bool:
     """Whether setup may write config.toml and the secret store. A .env in use is not
     migrated here (`config migrate` or the wizard does that, with consent), so nothing is
-    written, since config.toml would make the .env unread. With ``copy_from``, an earlier
-    checkout's .env would be copied (copy mode); it is left as a to-do the same way."""
+    written, since config.toml would make the .env unread."""
     if common.legacy_env():
         steps.later(
             f"{config.env_file_var()} is set, so settings and keys stay in that file; setup "
@@ -103,80 +56,20 @@ def _settings_writable(
         )
         return False
     try:
-        plan = config_store.plan_migration(source=copy_from)
+        plan = config_store.plan_migration()
     except config_store.MigrationError as exc:
-        if not detected:
-            steps.fail("settings", f"{exc}")
-            return False
-        # A checkout setup found by itself never fails setup: it is offered, not asked for.
-        # Nothing is written either: config.toml or a key would close the offer for good.
-        steps.later(
-            f"its settings were not copied: {exc}; then run "
-            f"`promptmend config migrate --from {copy_from}`"
-        )
+        steps.fail("settings", f"{exc}")
         return False
     if plan.status != "ready":
-        if copy_from is not None:
-            typer.echo(f"  Nothing was copied from {copy_from}: {plan.describe()[0]}")
         return True
-    command = "promptmend config migrate"
-    if plan.copy is not None:
-        root = plan.copy.path.parent
-        command += f" --from {root}"
-        typer.echo(
-            f"  Your settings are in {root}'s .env. Copying them to config.toml and the "
-            "secret store would do this:"
-        )
-    else:
-        typer.echo(
-            "  Your settings are in a .env. Moving them to config.toml and the secret store "
-            "would do this:"
-        )
+    typer.echo(
+        "  Your settings are in a .env. Moving them to config.toml and the secret store "
+        "would do this:"
+    )
     for line in plan.describe():
         typer.echo(f"    {line}")
-    what = f"copy the settings of {root}" if plan.copy is not None else "move the .env settings"
-    steps.later(f"{what}: `{command}` (setup changed nothing)")
+    steps.later("move the .env settings: `promptmend config migrate` (setup changed nothing)")
     return False
-
-
-def _profiles_step(steps: _Steps, root: Path) -> None:
-    """List the profiles added or edited in an earlier checkout, and the command that copies
-    them."""
-    source = root / profiles.prompts_path(root)
-    command = f"promptmend profiles migrate --checkout {root}"
-    try:
-        pristine = profiles.git_pristine_profiles(root)
-        changed = profiles.changed_profiles(source, pristine)
-    except ValueError as exc:
-        typer.echo(f"  Could not compare the profiles of {root}: {exc}")
-        steps.later(f"copy edited profiles yourself: `{command} --rev <commit>`")
-        return
-    if not changed:
-        return
-    typer.echo(f"  Profiles added or edited in {root}:")
-    for name, change in changed.items():
-        typer.echo(f"    {name}.md ({change})")
-    steps.later(f"copy the profiles added or edited in {root}: `{command}`")
-
-
-def _retire_step(steps: _Steps, espanso_dir: str | None) -> None:
-    """Once its settings were copied, say how to retire an earlier checkout's .env; refused
-    while a match file still runs that checkout's CLI."""
-    copied = previous_install.copied_env(os.environ)
-    if copied is None:
-        return
-    root, env_file = copied
-    command = f"promptmend config retire --from {root}"
-    folder = Path(espanso_dir).expanduser() if espanso_dir else None
-    try:
-        plan = config_store.plan_retire(root, espanso_dir=folder)
-    except config_store.MigrationError as exc:
-        typer.echo(f"  {env_file} stays in place: {exc}")
-        steps.later(f"retire the old .env later: `{command}`")
-        return
-    for line in plan.describe():
-        typer.echo(f"  {line}")
-    steps.later(f"retire the old .env: `{command}`")
 
 
 # The setting each choice is, and its Settings field.
@@ -364,14 +257,6 @@ def setup(
     smoke_test: bool = typer.Option(
         True, "--smoke-test/--no-smoke-test", help="Run improve against a local stub at the end"
     ),
-    migrate_from: str | None = typer.Option(
-        None,
-        "--migrate-from",
-        help="An earlier checkout to take settings and profiles from (the wizard's earlier "
-        "install step looks there; --non-interactive lists the commands); default: the one "
-        "the match files, the deploy manifest or uv name",
-        metavar="PATH",
-    ),
     plain: bool = typer.Option(
         False,
         "--plain",
@@ -380,10 +265,9 @@ def setup(
 ) -> None:
     """First run: settings, the API keys, the Espanso match files and a smoke test against a
     stub on 127.0.0.1 (never a paid call). On a terminal it opens full screen, one step at a
-    time: --provider and --profile preselect a choice, --migrate-from adds the earlier
-    settings step, which looks at that path, and --no-deploy or --no-smoke-test skip a step. With
-    --non-interactive (or --plain) it asks nothing. Re-run it any time; it changes only what
-    you choose."""
+    time: --provider and --profile preselect a choice, and --no-deploy or --no-smoke-test skip a
+    step. With --non-interactive (or --plain) it asks nothing. Re-run it any time; it changes
+    only what you choose."""
     interactive = not (non_interactive or plain)
     if interactive and not ui_cmd.on_a_terminal():
         common.fail(
@@ -401,7 +285,6 @@ def setup(
         (espanso_dir, "--espanso-dir"),
         (launcher, "--launcher"),
         (profile, "--profile"),
-        (migrate_from, "--migrate-from"),
     ):
         common.no_key(value, option)
     if interactive:
@@ -417,7 +300,6 @@ def setup(
                 standalone=True,
                 provider=provider,
                 profile=profile,
-                migrate_from=Path(migrate_from).expanduser() if migrate_from else None,
                 deploy=deploy_files,
                 smoke_test=smoke_test,
             )
@@ -437,30 +319,7 @@ def setup(
         typer.echo(f"  {line}")
 
     steps.heading("Settings")
-    entered = Path(migrate_from).expanduser() if migrate_from else None
-    previous = None if common.legacy_env() else _previous_install(entered, espanso_dir, launcher)
-    if previous is not None and previous.env_file is not None:
-        copy_from: Path | None = previous.root
-    elif previous is not None:
-        typer.echo(f"  {previous.root} has no .env; there are no settings to copy")
-        copy_from = None
-    else:
-        # Not detected (not a checkout, or the settings are saved): the plan says why.
-        copy_from = entered
-    writable = _settings_writable(
-        steps,
-        copy_from,
-        detected=previous is not None and previous_install.ENTERED not in previous.signals,
-    )
-    # Deploying before the copy would leave the triggers with neither the old settings nor
-    # the new ones (#110: copy first, then redeploy).
-    uncopied = (
-        previous is not None
-        and previous.env_file is not None
-        and previous_install.copied_env(os.environ) is None
-    )
-    if previous is not None and previous.profiles_dir is not None:
-        _profiles_step(steps, previous.root)
+    writable = _settings_writable(steps)
     if writable:
         layers, settings = common.load_layers()
     chosen = provider if provider is not None else settings.provider
@@ -483,11 +342,6 @@ def setup(
     if deploy_files is False:
         typer.echo("  Skipped (--no-deploy).")
     else:
-        if uncopied and previous is not None:
-            common.warn(
-                f"the settings of {previous.root} are not copied yet; deploying now leaves "
-                "the triggers without them"
-            )
         _deploy_step(
             steps,
             apply=deploy_files,
@@ -495,9 +349,6 @@ def setup(
             launcher=launcher,
             no_restart=no_restart,
         )
-
-    if not common.legacy_env():
-        _retire_step(steps, espanso_dir)
 
     steps.heading("Smoke test (a stub on 127.0.0.1; no provider is called)")
     if smoke_test:

@@ -578,7 +578,6 @@ class Plan:
     espanso_dir: Path
     launcher: str
     steps: list[FileStep]
-    legacy: Path | None  # the pre-0.9 match/base.yml we retire, if present
     manifest: Manifest
     # Manifest entries outside this plan whose file is gone: apply forgets them.
     orphans: list[str] = field(default_factory=list)
@@ -588,7 +587,7 @@ class Plan:
 
     @property
     def _files_in_sync(self) -> bool:
-        return self.legacy is None and all(
+        return all(
             s.state == IN_SYNC and s.entry is not None and s.entry.digest == _digest(s.rendered)
             for s in self.steps
         )
@@ -669,19 +668,9 @@ def _state(
     return MODIFIED if entry is not None else FOREIGN
 
 
-def _legacy_base(match_dir: Path) -> Path | None:
-    """Before 0.9 the -p- template shipped as match/base.yml, the file Espanso itself
-    creates for the user's snippets. Only our copy is retired; any other base.yml stays."""
-    legacy = match_dir / "base.yml"
-    text = _read(legacy)
-    if text and 'trigger: "-p-"' in text and ("promptmend" in text or LEGACY_COMMAND in text):
-        return legacy
-    return None
-
-
-def _yours(match_dir: Path, legacy: Path | None) -> list[Path]:
+def _yours(match_dir: Path) -> list[Path]:
     """The ``.yml``/``.yaml`` files (or links to one) directly in ``match_dir`` that are not
-    ours: no packaged name and not the legacy base.yml deploy retires. Our backups and
+    ours: no packaged name. Our backups and
     side-by-side copies end in another suffix, so Espanso never loads them and neither are
     listed; subfolders (packages/) are skipped. Names only, nothing is opened or followed;
     an unreadable folder lists nothing."""
@@ -692,7 +681,7 @@ def _yours(match_dir: Path, legacy: Path | None) -> list[Path]:
     except OSError:
         return []
     for path in children:
-        if path.name in ours or path == legacy or path.suffix.lower() not in (".yml", ".yaml"):
+        if path.name in ours or path.suffix.lower() not in (".yml", ".yaml"):
             continue
         try:
             if path.is_symlink() or path.is_file():  # a link is listed, never followed
@@ -726,8 +715,7 @@ def plan(espanso: Path, launcher: str, manifest: Manifest) -> Plan:
     orphans = sorted(
         key for key, e in manifest.entries.items() if key not in planned and is_gone(e)
     )
-    legacy = _legacy_base(match_dir)
-    return Plan(espanso, launcher, steps, legacy, manifest, orphans, _yours(match_dir, legacy))
+    return Plan(espanso, launcher, steps, manifest, orphans, _yours(match_dir))
 
 
 # --- Apply --------------------------------------------------------------------------------
@@ -795,11 +783,6 @@ def apply(the_plan: Plan, choices: Mapping[str, str] | None = None) -> Outcome:
     stamp = _stamp()
     manifest = the_plan.manifest
     match_dir = the_plan.espanso_dir / "match"
-
-    if the_plan.legacy is not None:
-        backup = _backup(the_plan.legacy, stamp)
-        the_plan.legacy.unlink()
-        outcome.add(f"retired legacy {the_plan.legacy} (backed up to {backup.name})")
 
     for step in the_plan.steps:
         # Every write lands in Espanso's match/ folder; config/ is never touched (#37).

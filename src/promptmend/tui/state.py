@@ -5,9 +5,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from .. import assets, deploy, doctor, history, previous_install, update_check
+from .. import assets, deploy, doctor, history, update_check
 from ..commands import common
 from ..commands.usage import store
 from ..config import ConfigLayers, Settings
@@ -27,10 +26,6 @@ class State:
     group_by: str
     stats: list[history.StatsRow]
     stats_error: str | None
-    # An earlier checkout install to switch from (#110), with previous_error saying why
-    # nothing could be looked for.
-    previous: previous_install.Detection = field(default_factory=previous_install.Detection)
-    previous_error: str | None = None
     # Whether a newer release exists (#197): Home's Version row and About.
     update: update_check.UpdateStatus = field(default_factory=update_check.UpdateStatus)
 
@@ -44,8 +39,8 @@ def current_plan(runner: deploy.Runner | None = None) -> deploy.Plan:
 
 
 def _once(runner: deploy.Runner) -> deploy.Runner:
-    """``runner``, asking each command (`espanso path config`, the launcher lookup) once: doctor,
-    the plan and the previous-install lookup all ask, and a reload blocks the Settings list
+    """``runner``, asking each command (`espanso path config`, the launcher lookup) once: doctor
+    and the plan both ask, and a reload blocks the Settings list
     (#242). Read-only commands only, so one answer per reload is the same moment."""
     answers: dict[tuple[str, ...], str | deploy.CommandFailure | None] = {}
 
@@ -58,31 +53,10 @@ def _once(runner: deploy.Runner) -> deploy.Runner:
     return run
 
 
-def detect_previous(
-    *,
-    runner: deploy.Runner | None = None,
-    espanso_dir: Path | None = None,
-    launcher: Path | None = None,
-) -> tuple[previous_install.Detection, str | None]:
-    """previous_install.detect(), or nothing found and why when it could not look."""
-    try:
-        found = previous_install.detect(runner=runner, espanso_dir=espanso_dir, launcher=launcher)
-    except (deploy.DeployError, OSError, ValueError) as exc:
-        return previous_install.Detection(), str(exc) or type(exc).__name__
-    return found, None
-
-
-def gather(
-    group_by: str = "trigger",
-    *,
-    espanso_dir: Path | None = None,
-    launcher: Path | None = None,
-) -> State:
+def gather(group_by: str = "trigger") -> State:
     """Everything the screens show. Read-only: doctor without the clipboard, the deploy plan,
-    the profiles, the usage stats, an earlier checkout install and the update check (cached
-    for a day, so a reload asks PyPI no more often), each failure kept to show instead of
-    raised. ``espanso_dir`` and ``launcher`` (setup's options) are where to look for the
-    earlier install."""
+    the profiles, the usage stats and the update check (cached for a day, so a reload asks
+    PyPI no more often), each failure kept to show instead of raised."""
     layers, settings = common.load_layers()
     update = update_check.check_configured()
     # Only read-only commands may go through it: a cached `espanso restart` would be skipped.
@@ -100,9 +74,6 @@ def gather(
         stats = store(settings).stats(group_by)
     except (history.HistoryError, OSError, ValueError) as exc:
         stats_error = str(exc) or type(exc).__name__
-    previous, previous_error = detect_previous(
-        runner=run, espanso_dir=espanso_dir, launcher=launcher
-    )
     return State(
         layers=layers,
         settings=settings,
@@ -114,7 +85,5 @@ def gather(
         group_by=group_by,
         stats=stats,
         stats_error=stats_error,
-        previous=previous,
-        previous_error=previous_error,
         update=update,
     )

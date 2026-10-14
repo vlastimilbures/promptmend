@@ -10,7 +10,6 @@ import io
 import json
 import os
 import re
-import shutil
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from decimal import Decimal
 from pathlib import Path
@@ -31,12 +30,10 @@ from promptmend.tui import (
     profiles_pane,
     settings_model,
     settings_pane,
-    triggers_pane,
 )
 from promptmend.tui.app import HIGH_CONTRAST, ManageApp
 from promptmend.tui.home import pill
 from promptmend.tui.modals import ConfirmModal, EditModal, FormModal, PickModal, TextModal
-from promptmend.tui.previous import PreviousInstallScreen
 from promptmend.tui.state import State, gather
 
 if TYPE_CHECKING:
@@ -126,12 +123,6 @@ def _dialog(app: ManageApp) -> ConfirmModal | FormModal | TextModal:
     return screen
 
 
-def _previous_screen(app: ManageApp) -> PreviousInstallScreen:
-    screen = app.screen
-    assert isinstance(screen, PreviousInstallScreen)
-    return screen
-
-
 def _plan() -> deploy.Plan:
     plan = gather().plan
     assert plan is not None
@@ -141,8 +132,7 @@ def _plan() -> deploy.Plan:
 def test_gather_asks_each_command_once(
     espanso: FakeRunner, saved: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#242: doctor, the plan and the previous-install lookup (gate open: saved mode, nothing
-    saved yet) share one answer per command per reload."""
+    """#242: doctor and the plan share one answer per command per reload."""
     launcher = deploy.resolve_launcher()
 
     def resolve(*, runner: deploy.Runner | None = None, **_: Any) -> deploy.Launcher:
@@ -1202,17 +1192,17 @@ def test_profiles_migrate_without_a_checkout_asks_for_one(
         profiles = pane(app, "profiles")
         await pilot.press("3")
         await press(app, pilot, "#migrate-profiles")
-        await fill(app, pilot, previous_path="  ")
+        await fill(app, pilot, checkout_path="  ")
         assert profiles.last_message == "No path entered."
         await press(app, pilot, "#migrate-profiles")
-        await fill(app, pilot, previous_path=str(tmp_path / "nothing"))
+        await fill(app, pilot, checkout_path=str(tmp_path / "nothing"))
         assert "is it a checkout of this project?" in profiles.last_message
         assert "--checkout" not in profiles.last_message
         await press(app, pilot, "#migrate-profiles")
-        await fill(app, pilot, previous_path="sk-or-v1-" + "ab12" * 16)
+        await fill(app, pilot, checkout_path="sk-or-v1-" + "ab12" * 16)
         assert "looks like a key" in profiles.last_message
         await press(app, pilot, "#migrate-profiles")
-        await fill(app, pilot, previous_path=f'"{elsewhere}"')
+        await fill(app, pilot, checkout_path=f'"{elsewhere}"')
         assert f"From {elsewhere}:" in _dialog(app).preview
         assert "mine.md (added)" in _dialog(app).preview
 
@@ -1409,21 +1399,6 @@ def test_triggers_report_failures(espanso: FakeRunner, monkeypatch: pytest.Monke
         assert pane(app, "triggers").last_message == "error: the disk is full"
 
     drive(scenario)
-
-
-def test_triggers_deploy_retires_the_legacy_file(espanso: FakeRunner) -> None:
-    legacy = espanso.root / "match" / "base.yml"
-    legacy.write_text('matches:\n  - trigger: "-p-"  # promptmend\n', encoding="utf-8")
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("4")
-        await press(app, pilot, "#deploy")
-        assert "legacy    base.yml will be retired" in _dialog(app).preview
-        await press(app, pilot, "#submit")
-        assert "retired legacy" in pane(app, "triggers").last_message
-
-    drive(scenario)
-    assert not legacy.exists()
 
 
 def test_triggers_without_a_launcher(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1986,251 +1961,6 @@ def test_builtin_profiles_load_in_a_fixed_order(monkeypatch: pytest.MonkeyPatch)
     assert list(prompt_builder._load_profiles()) == ["default", "general", "zeta"]
 
 
-# --- Previous install (#110) --------------------------------------------------------------
-
-
-def _old_checkout(tmp_path: Path, espanso: FakeRunner) -> Path:
-    """A checkout an editable install ran from: a .env with one setting and the key, an
-    edited profile, and the match files rendered with its .venv launcher."""
-    from promptmend import assets, previous_install
-
-    root = tmp_path / "Projects" / "epr"
-    (root / profile_service.PROMPTS_PATH).mkdir(parents=True)
-    name = previous_install.PROJECT_NAME
-    (root / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n', "utf-8")
-    (root / ".env").write_text(f"PROMPT_TIMEOUT_SECONDS=45\nOPENROUTER_API_KEY={KEY}\n", "utf-8")
-    (root / profile_service.PROMPTS_PATH / "mine.md").write_text("Mine.\n", "utf-8")
-    if os.name == "nt":
-        launcher = (root / ".venv" / "Scripts" / "promptmend.exe").as_posix()
-    else:
-        launcher = str(root / ".venv" / "bin" / "promptmend")
-    for match in assets.match_names():
-        text = assets.read_match(match).replace(deploy.PLACEHOLDER, launcher)
-        (espanso.root / "match" / match).write_bytes(text.encode("utf-8"))
-    return root
-
-
-@pytest.fixture
-def previous(
-    saved: Path, espanso: FakeRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Path:
-
-    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
-    return _old_checkout(tmp_path, espanso)
-
-
-def _found(app: ManageApp) -> str:
-    return str(app.screen.query_one("#previous-found").render())
-
-
-def _disabled(app: ManageApp, step: str) -> bool:
-    return app.screen.query_one(f"#previous-{step}", Button).disabled
-
-
-def test_previous_install_walks_copy_deploy_retire(previous: Path) -> None:
-    from promptmend.tui.previous import PreviousInstallScreen
-
-    root = previous.resolve()
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert isinstance(app.screen, PreviousInstallScreen)
-        assert f"Previous install: {root} (launcher); .env present" in _found(app)
-        assert _disabled(app, "retire")
-        await press(app, pilot, "#previous-copy")
-        assert isinstance(app.screen, ConfirmModal)
-        assert "OPENROUTER_API_KEY" in _dialog(app).preview
-        assert KEY not in _dialog(app).preview
-        await press(app, pilot, "#confirm")
-        assert _previous_screen(app).last_message.startswith("Copied; backup in")
-        assert f"Settings copied from {root}" in _found(app)
-        assert _disabled(app, "copy")
-        assert _disabled(app, "retire")  # the match files still run the checkout's CLI
-        await press(app, pilot, "#previous-deploy")
-        assert isinstance(app.screen, FormModal)
-        await press(app, pilot, "#submit")
-        assert isinstance(app.screen, PreviousInstallScreen)
-        assert not _disabled(app, "retire")
-        await press(app, pilot, "#previous-retire")
-        assert isinstance(app.screen, ConfirmModal)
-        await press(app, pilot, "#confirm")
-        assert _previous_screen(app).last_message.startswith(f"Retired: {root / '.env'}")
-
-    drive(scenario)
-    assert not (previous / ".env").exists()
-    from promptmend.config import Settings
-
-    settings = Settings.load()
-    assert settings.timeout == 45
-    assert settings.openrouter_api_key == KEY
-
-
-def test_previous_install_cancel_writes_nothing_and_deploy_warns(previous: Path) -> None:
-    before = {p.name: p.read_bytes() for p in previous.parent.parent.rglob("*.yml")}
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("1")
-        await settle(pilot)
-        assert isinstance(app.screen, ConfirmModal)
-        await press(app, pilot, "#cancel")
-        await pilot.press("4")  # retire is disabled: the key does nothing
-        await settle(pilot)
-        assert not isinstance(app.screen, ConfirmModal)
-        await press(app, pilot, "#previous-deploy")
-        assert isinstance(app.screen, ConfirmModal)
-        assert "not copied yet" in app.screen.dialog_title
-        assert app.screen.focused.id == "cancel"
-        await press(app, pilot, "#cancel")
-
-    drive(scenario)
-    assert not config.settings_file().exists()
-    assert not (config._user_config_dir() / "secrets.toml").exists()
-    after = {p.name: p.read_bytes() for p in previous.parent.parent.rglob("*.yml")}
-    assert after == before
-
-
-def test_previous_install_shown_once_skip_and_home_reopens(previous: Path) -> None:
-    from promptmend import previous_install
-    from promptmend.tui.previous import PreviousInstallScreen
-
-    async def first(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert isinstance(app.screen, PreviousInstallScreen)
-        await pilot.press("escape")
-        await settle(pilot)
-        app.reload()
-        await settle(pilot)
-        assert not isinstance(app.screen, PreviousInstallScreen)  # once per session
-        await press(app, pilot, "#home-previous")
-        assert isinstance(app.screen, PreviousInstallScreen)
-        await press(app, pilot, "#previous-skip")
-
-    drive(first)
-    assert previous_install.skipped_roots() == {str(previous.resolve())}
-
-    async def second(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert not isinstance(app.screen, PreviousInstallScreen)
-        # Nothing left to offer, yet the button stays: it is the way to enter a path (#237).
-        assert app.main.query_one("#home-previous", Button).display
-        await press(app, pilot, "#home-previous")
-        await settle(pilot)
-        assert "No previous install found" in _found(app)
-        assert _disabled(app, "skip")
-
-    drive(second)
-
-
-def test_previous_install_entered_path(
-    saved: Path, espanso: FakeRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from promptmend.tui.previous import PreviousInstallScreen
-
-    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
-    root = _old_checkout(tmp_path, espanso)
-    for path in (espanso.root / "match").iterdir():
-        path.unlink()  # no launcher signal: only the path the user types finds it
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert not isinstance(app.screen, PreviousInstallScreen)
-        await press(app, pilot, "#home-previous")
-        assert "No previous install found" in _found(app)
-        await press(app, pilot, "#previous-enter")
-        await fill(app, pilot, previous_path=str(root))
-        assert f"Previous install: {root.resolve()} (entered)" in _found(app)
-        await press(app, pilot, "#previous-enter")
-        await fill(app, pilot, previous_path="sk-or-v1-" + "ab12" * 16)
-        assert "looks like a key" in _previous_screen(app).last_message
-
-    drive(scenario)
-
-
-def test_previous_install_profiles_tab_uses_the_detected_root(
-    previous: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(profile_service, "git_pristine_profiles", lambda root, rev=None: {})
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("escape")
-        await settle(pilot)
-        await pilot.press("3")
-        await press(app, pilot, "#migrate-profiles")
-        assert isinstance(app.screen, ConfirmModal)
-        assert f"From {previous.resolve()}:" in _dialog(app).preview
-        assert "mine.md (added)" in _dialog(app).preview
-
-    drive(scenario)
-
-
-def test_previous_install_detect_failure_is_shown(
-    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from promptmend import previous_install
-
-    def broken(*args: Any, **kwargs: Any) -> None:
-        raise OSError("no access")
-
-    monkeypatch.setattr(previous_install, "detect", broken)
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await press(app, pilot, "#home-previous")
-        assert "Could not look for a previous install: no access" in _found(app)
-
-    drive(scenario)
-
-
-def test_previous_install_steps_wait_for_a_deploy(previous: Path) -> None:
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        app.main.query_one("#triggers-pane", triggers_pane.TriggersPane).busy = True
-        for step in ("copy", "profiles", "deploy", "enter"):
-            await press(app, pilot, f"#previous-{step}")
-            assert not isinstance(app.screen, ConfirmModal | FormModal), step
-            assert _previous_screen(app).last_message.startswith("A deploy is in progress")
-
-    drive(scenario)
-
-
-def test_previous_install_retire_needs_espanso_to_name_its_folder(
-    previous: Path, espanso: FakeRunner
-) -> None:
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await press(app, pilot, "#previous-copy")
-        await press(app, pilot, "#confirm")
-        await press(app, pilot, "#previous-deploy")
-        await press(app, pilot, "#submit")
-        del espanso.answers["espanso path config"]
-        await press(app, pilot, "#previous-retire")
-        assert not isinstance(app.screen, ConfirmModal)
-        message = _previous_screen(app).last_message
-        assert "cannot check which CLI the match files run" in message
-        assert f"config retire --from {previous.resolve()} --espanso-dir PATH" in message
-
-    drive(scenario)
-    assert (previous / ".env").is_file()
-
-
-def test_previous_install_entered_path_that_is_no_checkout(
-    saved: Path, espanso: FakeRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-
-    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
-    root = _old_checkout(tmp_path, espanso)
-    for path in (espanso.root / "match").iterdir():
-        path.unlink()
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        app.open_previous()  # Home hides its button: nothing was found
-        await settle(pilot)
-        await press(app, pilot, "#previous-enter")
-        await fill(app, pilot, previous_path=str(elsewhere))
-        assert _previous_screen(app).last_message.startswith(f"{elsewhere} is not a checkout")
-        assert _previous_screen(app).entered is None
-        await press(app, pilot, "#previous-enter")
-        await fill(app, pilot, previous_path=f'"{root}"')  # pasted with its quotes
-        assert f"Previous install: {root.resolve()} (entered)" in _found(app)
-
-    drive(scenario)
-
-
 # --- About (#112) ------------------------------------------------------------------------
 
 
@@ -2329,14 +2059,12 @@ def test_about_says_whether_a_newer_release_exists(monkeypatch: pytest.MonkeyPat
 # --- Every action shows its command (#111, stage 1) ---------------------------------------
 
 
-def test_every_button_has_its_command_as_tooltip(previous: Path) -> None:
+def test_every_button_has_its_command_as_tooltip(espanso: FakeRunner) -> None:
     from promptmend.tui import teach
-    from promptmend.tui.previous import PreviousInstallScreen
 
     seen: dict[str, object] = {}
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert isinstance(app.screen, PreviousInstallScreen)
         for screen in (app.main, app.screen):
             for button in screen.query(Button):
                 seen[button.id or ""] = button.tooltip
@@ -2424,21 +2152,3 @@ def test_session_log_keeps_the_latest(espanso: FakeRunner) -> None:
     assert text.count("$ promptmend doctor") == home_pane.SESSION_LINES
     failed = home_pane.session_text([teach.Entry("c", "boom", error=True)]).plain
     assert "    error: boom" in failed
-
-
-def test_home_previous_install_hidden_once_settings_are_saved(
-    saved: Path, espanso: FakeRunner
-) -> None:
-    """Shown while a previous install could still be copied, even with nothing found (#237);
-    hidden once config.toml exists, since a copy is then refused (D-MIG-4)."""
-
-    async def shown(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert app.main.query_one("#home-previous", Button).display
-
-    drive(shown)
-    config_store.save_settings(config_store.read_settings(), {"PROMPT_TIMEOUT_SECONDS": "45"})
-
-    async def hidden(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert not app.main.query_one("#home-previous", Button).display
-
-    drive(hidden)

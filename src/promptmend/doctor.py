@@ -6,7 +6,8 @@ mode, asks PyPI for the newest release at most once a day (update_check, unless
 PROMPT_UPDATE_CHECK is false), asks a loopback Ollama or LM Studio whether it answers
 (local_probe), reads the deployed match files, and reads the clipboard only to report its
 length. The report never holds a key, the persona or clipboard text, since people paste it
-into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and keys are only ever added.
+into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and keys are only ever added
+(the one exception: the previous_install check, removed with the migration code in #246).
 """
 
 from __future__ import annotations
@@ -43,7 +44,6 @@ CHECK_IDS = (
     "sqlite",
     "clipboard",
     "profiles",
-    "previous_install",
     "folders",
     "local_servers",
 )
@@ -84,7 +84,6 @@ DATA_KEYS = {
     "sqlite": ("version", "wal_reset_bug", "journal_mode"),
     "clipboard": ("read", "length", "concealed", "error"),
     "profiles": ("profile", "pro_profile", "user"),
-    "previous_install": ("gated", "roots", "signals", "env_file", "retire_pending", "shadow"),
     "folders": ("config_dir", "data_dir", "legacy", "conflicts"),
     "local_servers": ("servers", "deployed"),
 }
@@ -430,6 +429,7 @@ def _espanso_check(runner: deploy.Runner, espanso_dir: Path | None) -> tuple[Che
 
 
 def _match_check(target: Path, launcher: str | None, manifest: deploy.Manifest | None) -> Check:
+    # "legacy" (the pre-0.9 base.yml, no longer looked for since #246) stays for the schema.
     data: dict[str, Any] = {"espanso_dir": str(target), "files": [], "legacy": False}
     if launcher is None or manifest is None:
         why = "the deploy manifest cannot be read" if manifest is None else "no launcher found"
@@ -438,13 +438,12 @@ def _match_check(target: Path, launcher: str | None, manifest: deploy.Manifest |
         return Check("match_files", WARN, f"no Espanso match folder in {target}", data)
     the_plan = deploy.plan(target, deploy.launcher_text(launcher), manifest)
     data["files"] = [{"name": s.name, "state": s.state} for s in the_plan.steps]
-    data["legacy"] = the_plan.legacy is not None
     broken = [s for s in the_plan.steps if s.state in (deploy.STALE, deploy.MISSING)]
     edited = [s for s in the_plan.steps if s.state in (deploy.MODIFIED, deploy.FOREIGN)]
     if broken:
         names = ", ".join(f"{s.name}: {s.state}" for s in broken)
         return Check("match_files", FAIL, f"{names}; run `promptmend espanso deploy`", data)
-    if edited or the_plan.legacy is not None:
+    if edited:
         return Check("match_files", WARN, "some files are not ours as deployed", data)
     return Check("match_files", OK, "every match file is in sync", data)
 
@@ -628,62 +627,6 @@ def _profiles_check(settings: config.Settings) -> Check:
     return Check("profiles", OK, f"PROMPT_PROFILE {settings.profile} resolves", data)
 
 
-def _previous_install_check(
-    runner: deploy.Runner, espanso_dir: Path, launcher: str | None
-) -> Check:
-    from . import previous_install
-
-    try:
-        found = previous_install.detect(
-            runner=runner,
-            espanso_dir=espanso_dir,
-            launcher=Path(launcher) if launcher else None,
-            look_up_launcher=False,  # run() already looked: ``launcher`` is its answer
-        )
-    except Exception as exc:
-        # Information only: a folder it cannot look at never fails the report.
-        message = f"could not look for a previous install: {type(exc).__name__}"
-        return Check("previous_install", WARN, message)
-    first = found.candidates[0] if found.candidates else None
-    pending = found.pending
-    retire = pending is not None and not pending.launchers_in_root
-    data = {
-        "gated": found.gated,
-        "roots": [str(c.root) for c in found.candidates],
-        "signals": sorted(first.signals) if first else [],
-        "env_file": str(first.env_file) if first and first.env_file else None,
-        "retire_pending": str(pending.env_file) if pending and retire else None,
-        "shadow": found.shadow.path if found.shadow else None,
-    }
-    found_at = (
-        f"a previous install was found at {', '.join(str(c.root) for c in found.candidates)} "
-        "and is not migrated"
-    )
-    notes = [found_at] if first else []
-    if pending and retire:
-        notes.append(
-            f"the old .env at {pending.env_file} is still in place "
-            f"(`promptmend config retire --from {pending.root}`)"
-        )
-    elif pending:
-        notes.append(
-            f"the settings of {pending.root} were copied, but the match files still run "
-            f"{', '.join(pending.launchers_in_root)} (`promptmend espanso deploy`)"
-        )
-    if found.shadow:
-        notes.append(
-            f"`{found.shadow.command}` on PATH is {found.shadow.path}, not the installed launcher "
-            f"{found.shadow.launcher}: {found.shadow.hint}"
-        )
-    if found.shadow or (pending and retire):
-        return Check("previous_install", WARN, "; ".join(notes), data)
-    if notes:
-        return Check("previous_install", INFO, "; ".join(notes), data)
-    if found.gated:
-        return Check("previous_install", OK, "settings are in place; nothing to look for", data)
-    return Check("previous_install", OK, "no previous install found", data)
-
-
 def _folders_check() -> Check:
     """The user folders in use (#169). Doctor runs after the move (cli._LazyGroup), so a legacy
     folder still in use means the move failed, and entries left in one are conflicts: the new
@@ -806,9 +749,6 @@ def run(
         checks.append(Check("sqlite", WARN, "unknown"))
     checks.append(_safely("clipboard", lambda: _clipboard_check(clipboard)))
     checks.append(_safely("profiles", lambda: _profiles_check(settings)))
-    checks.append(
-        _safely("previous_install", lambda: _previous_install_check(run_command, target, current))
-    )
     checks.append(_safely("folders", _folders_check))
     checks.append(
         _safely("local_servers", lambda: _local_servers_check(settings, triggers, deployed))

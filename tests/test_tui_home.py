@@ -5,7 +5,6 @@ pane shows them."""
 from __future__ import annotations
 
 import dataclasses
-from pathlib import Path
 
 import pytest
 from test_tui_snapshots import fixed_state
@@ -68,7 +67,7 @@ def test_ready_install() -> None:
     assert found["Pro (-ip-)"].text == "openrouter · openai/gpt-6-luna"
     assert found["Triggers"].text == "3 of 3 match files in sync · Espanso running"
     assert found["History"].text == "on · 57 calls recorded"
-    assert found["Checks"].text == "15 ok · 0 warn · 0 fail"
+    assert found["Checks"].text == "14 ok · 0 warn · 0 fail"
 
 
 def _update(state: State, status: str, latest: str | None = "0.22.0") -> State:
@@ -213,9 +212,6 @@ def test_triggers_row_follows_doctor_and_espanso() -> None:
     assert row.text.endswith("Espanso not running")
     assert row.problem == "espanso says so"
     assert state.plan is not None
-    legacy = dataclasses.replace(state.plan, legacy=Path("/home/me/espanso/match/base.yml"))
-    row = _rows(dataclasses.replace(state, plan=legacy))["Triggers"]
-    assert row.problem == "the old base.yml is still deployed"
     unplanned = dataclasses.replace(state, plan=None, plan_error="no launcher found")
     row = _rows(unplanned)["Triggers"]
     assert (row.status, row.problem) == (
@@ -277,7 +273,7 @@ def test_checks_row_and_pill_count_every_check() -> None:
     report = _report(state, persona=doctor.WARN, keys=doctor.FAIL, sqlite=doctor.WARN)
     rows = home_rows(dataclasses.replace(state, report=report))
     checks = {r.label: r for r in rows}["Checks"]
-    assert checks.text == "12 ok · 2 warn · 1 fail"
+    assert checks.text == "11 ok · 2 warn · 1 fail"
     assert (checks.status, checks.problem) == (doctor.FAIL, "keys: keys says so")
     assert headline(rows) == ("Not ready: keys: keys says so.", "diagnostics")
     assert pill(report) == "1 problem, 2 warnings"

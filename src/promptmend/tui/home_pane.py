@@ -97,7 +97,6 @@ class HomePane(Pane):
         yield button_row(
             ("home-setup", "Setup…"),
             ("home-reload", "Check again"),
-            ("home-previous", "Previous install…"),
             ("home-copy", "Copy last"),
         )
         yield self.result()
@@ -107,15 +106,9 @@ class HomePane(Pane):
         self.rows = tuple(home_rows(state))
         self.query_one("#home-headline", Static).update(home_headline(self.rows))
         self.query_one("#home-rows", Static).update(home_table(self.rows))
-        # While a previous install could still be copied (not gated: "Enter a path…" finds
-        # one detection missed or the user skipped, #237), or there is one to show (#222).
-        found = state.previous
-        shown = not found.gated or found.candidates or found.pending or state.previous_error
-        self.query_one("#home-previous", Button).display = bool(shown)
 
     def setup(self) -> None:
         self.query_one("#home-copy", Button).disabled = not self.manage.session
-        self.query_one("#home-previous", Button).display = False
 
     def show_session(self, entries: Sequence[teach.Entry]) -> None:
         self.query_one("#home-session", Static).update(session_text(entries))
@@ -124,10 +117,6 @@ class HomePane(Pane):
     @on(Button.Pressed, "#home-reload")
     def _reload(self) -> None:
         self.manage.reload()
-
-    @on(Button.Pressed, "#home-previous")
-    def _previous(self) -> None:
-        self.manage.open_previous()
 
     @on(Button.Pressed, "#home-setup")
     def _setup(self) -> None:

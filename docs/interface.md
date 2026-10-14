@@ -29,12 +29,6 @@ asks first, in a dialog whose Cancel has the focus. No provider is called except
 call button, which runs `improve` against a stub on `127.0.0.1` with a placeholder key, and by
 a Try tab run you confirm.
 
-When it finds an earlier checkout install, it opens a "Previous install" checklist once per
-session (also on Home's "Previous install…", there until your settings are saved in
-`config.toml`, or while one is found; its "Enter a path…" finds a checkout it did not, or one
-you skipped): copy the settings, copy the profiles, deploy,
-retire the old `.env`. See [From a checkout install](install.md#from-a-checkout-install).
-
 ## Setup
 
 `promptmend setup` in a terminal opens the interface on its setup, one step at a time, with
@@ -45,7 +39,7 @@ time.
 | Step | What you do |
 |------|-------------|
 | Welcome | Read what setup does and what the usage history keeps |
-| Earlier settings | Shown only when there is one: move a `.env` into `config.toml` and the secret store, or open the Previous install checklist |
+| Earlier settings | Shown only when there is one: move a `.env` into `config.toml` and the secret store |
 | Provider | Pick the default provider from a list; each line says whether it is cloud or local, whether it needs a key, and which triggers use it |
 | Profile | Pick the default profile; each line says how it rewrites |
 | API keys | Paste each key the triggers need (hidden); the step names the triggers each key is for |
@@ -60,9 +54,7 @@ provider or profile and says so, the API keys step only says to add each key to 
 Done names that file for a missing key.
 
 Options given to `setup` prefill the wizard: `--provider` and `--profile` preselect that
-choice (Next still saves it), `--migrate-from PATH` shows the earlier settings step, whose
-"Earlier install…" looks at that path, `--espanso-dir` also decides whether an earlier
-install is offered (its match files are looked for in that folder), `--deploy` puts the focus on the install button
+choice (Next still saves it), `--deploy` puts the focus on the install button
 (nothing is written until you press it), and `--no-deploy` and `--no-smoke-test` leave out
 the Espanso and Test steps. `--non-interactive` (or `--plain`) runs without the wizard and
 asks nothing (see [Commands](commands.md#management-commands)).

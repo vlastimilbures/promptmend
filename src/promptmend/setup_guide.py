@@ -16,7 +16,7 @@ from .factory import PROVIDER_LABELS, PROVIDER_NAMES
 from .prompt_builder import ADDED, PROFILES, UserProfile
 
 # Step id -> the name in the left rail, in order. "earlier" is shown only when there is a
-# .env or an earlier checkout install to take settings from.
+# .env to take settings from.
 STEPS = {
     "welcome": "Welcome",
     "earlier": "Earlier settings",

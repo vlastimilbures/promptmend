@@ -135,8 +135,6 @@ def _triggers_row(state: State) -> HomeRow:
     elif edited:
         verb = "was" if edited == 1 else "were"
         problem = f"{_count(edited, 'match file')} {verb} edited since the last deploy"
-    elif state.plan.legacy is not None:
-        problem = f"the old {state.plan.legacy.name} is still deployed"
     else:
         others = [c for c in (espanso, launcher) if c is not None and _status(c.status) != OK]
         problem = others[0].message if others else ""
