@@ -429,6 +429,7 @@ def test_wizard_offers_the_earlier_install_deployed_in_its_folder(
     # Only the folder named by --espanso-dir has an earlier install's launcher; the default
     # folder has none, so an offer must come from detection in the named one.
     from promptmend import previous_install
+    from promptmend.tui.previous import PreviousInstallScreen
 
     named = tmp_path / "named"
     old = tmp_path / "old"
@@ -446,6 +447,11 @@ def test_wizard_offers_the_earlier_install_deployed_in_its_folder(
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         assert "earlier" in _wizard(app).order
         assert "An earlier install ran from a checkout" in _text(app, "#setup-earlier-text")
+        # Home's "Earlier install…" (no options) deploys and retires in that folder too.
+        app.open_previous()
+        await settle(pilot)
+        assert isinstance(app.screen, PreviousInstallScreen)
+        assert app.screen.espanso_dir == named
 
     drive(scenario, setup=SetupOptions(str(named), standalone=True))
 

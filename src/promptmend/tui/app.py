@@ -4,7 +4,7 @@ and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself."""
 
 from __future__ import annotations
 
-import dataclasses
+import functools
 from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
@@ -28,7 +28,7 @@ from .previous import PreviousInstallScreen, wants_offer
 from .profiles_pane import ProfilesPane
 from .settings_pane import SettingsPane
 from .setup_wizard import SetupOptions, SetupScreen, make_plan, needs_setup
-from .state import State, detect_previous, gather
+from .state import State, gather
 from .triggers_pane import DeployTarget, TriggersPane
 from .try_pane import TryPane
 
@@ -188,6 +188,13 @@ class ManageApp(App[int]):
         self.intro = intro
         # Read here, not at import, so the snapshot tests can pin it and a release changes none.
         self.title = f"{self.TITLE} {__version__}"
+        if loader is gather and setup is not None and setup.espanso_dir:
+            # `setup --espanso-dir`: look for the earlier install deployed in that folder.
+            loader = functools.partial(
+                gather,
+                espanso_dir=Path(setup.espanso_dir).expanduser(),
+                launcher=Path(setup.launcher).expanduser() if setup.launcher else None,
+            )
         self.loader = loader
         self.group_by = "trigger"
         self.state: State | None = None
@@ -248,15 +255,6 @@ class ManageApp(App[int]):
     def _load(self, generation: int) -> None:
         try:
             state = self.loader(self.group_by)
-            named = self.setup_options
-            if named is not None and named.espanso_dir:
-                # `setup --espanso-dir`: offer the earlier install deployed there, not in the
-                # default folder the loader looked at.
-                previous, error = detect_previous(
-                    espanso_dir=Path(named.espanso_dir).expanduser(),
-                    launcher=Path(named.launcher).expanduser() if named.launcher else None,
-                )
-                state = dataclasses.replace(state, previous=previous, previous_error=error)
         except Exception as exc:
             self.call_from_thread(
                 self.notify,
@@ -309,6 +307,8 @@ class ManageApp(App[int]):
         ``entered`` (`setup --migrate-from`), detected with that path, and with the wizard's
         ``options``, its --espanso-dir and --launcher for detection, deploy and retire."""
         self.offered = True
+        # Every way in (Home's button too) uses setup's folder, as the detection did.
+        options = options or self.setup_options
         if any(isinstance(s, PreviousInstallScreen) for s in self.screen_stack):
             return
         if options is None or not (options.espanso_dir or options.launcher or options.no_restart):

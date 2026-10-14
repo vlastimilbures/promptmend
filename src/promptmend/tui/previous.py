@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 
 from textual import on, work
 from textual.app import ComposeResult
@@ -32,9 +32,6 @@ from .base import (
 from .modals import ConfirmModal, FormModal
 from .state import State
 from .triggers_pane import DeployTarget, TriggersPane
-
-if TYPE_CHECKING:
-    pass
 
 INTRO = (
     "An earlier install ran from a checkout of this project. This install never reads that "

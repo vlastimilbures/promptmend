@@ -72,11 +72,17 @@ def detect_previous(
     return found, None
 
 
-def gather(group_by: str = "trigger") -> State:
+def gather(
+    group_by: str = "trigger",
+    *,
+    espanso_dir: Path | None = None,
+    launcher: Path | None = None,
+) -> State:
     """Everything the screens show. Read-only: doctor without the clipboard, the deploy plan,
     the profiles, the usage stats, an earlier checkout install and the update check (cached
     for a day, so a reload asks PyPI no more often), each failure kept to show instead of
-    raised."""
+    raised. ``espanso_dir`` and ``launcher`` (setup's options) are where to look for the
+    earlier install."""
     layers, settings = common.load_layers()
     update = update_check.check_configured()
     # Only read-only commands may go through it: a cached `espanso restart` would be skipped.
@@ -94,7 +100,9 @@ def gather(group_by: str = "trigger") -> State:
         stats = store(settings).stats(group_by)
     except (history.HistoryError, OSError, ValueError) as exc:
         stats_error = str(exc) or type(exc).__name__
-    previous, previous_error = detect_previous(runner=run)
+    previous, previous_error = detect_previous(
+        runner=run, espanso_dir=espanso_dir, launcher=launcher
+    )
     return State(
         layers=layers,
         settings=settings,
