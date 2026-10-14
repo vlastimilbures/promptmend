@@ -174,7 +174,8 @@ when it runs. `entry.self_command()` is the argv prefix for any child that runs 
   from a value, no traceback on broken config): add a new command to its `_commands()`.
 - `doctor` changes nothing except replaying the history spool and refreshing the
   update-check cache; `doctor --json` keeps
-  `schema_version` 1 (only add check ids/keys).
+  `schema_version` 1 (only add check ids/keys; `previous_install` was removed in #246 by owner
+  decision).
 
 ## Interface (`tui/`)
 

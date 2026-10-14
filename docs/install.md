@@ -309,8 +309,7 @@ To move from one channel to another (say from uv to Homebrew):
 2. Run `promptmend espanso deploy` from the new install, so the match files call its launcher.
 3. Uninstall the old one (step 4 of [Uninstall](#uninstall)).
 
-Run from the new install, `doctor` warns while the matches still call the old launcher, or
-while the old `promptmend` comes first on `PATH`.
+Run from the new install, `doctor` warns while the matches still call the old launcher.
 
 ## Uninstall
 
@@ -409,8 +408,11 @@ A checkout install is one made with the install scripts (an editable install). T
 never reads the checkout's `.env` or its profiles; take them along by hand:
 
 1. Install the release as shown above.
-2. Copy the checkout's `.env` into the [config folder](configuration.md#files-and-folders),
-   then run `promptmend config migrate` (see [Migrate a .env](configuration.md#migrate-a-env)).
+2. Before you run `setup` or save any setting, copy the checkout's `.env` into the
+   [config folder](configuration.md#files-and-folders) and run `promptmend config migrate`
+   (see [Migrate a .env](configuration.md#migrate-a-env)). Once `config.toml` exists, a `.env`
+   is ignored and not migrated: set each value with `promptmend config set` and each key with
+   `promptmend secrets set` instead.
 3. `promptmend profiles migrate --checkout PATH` copies the profiles you added or edited.
 4. `promptmend espanso deploy` points the triggers at the release instead of the checkout.
 5. If `promptmend` on `PATH` is still the checkout's, run `deactivate` (its `.venv` is active)
