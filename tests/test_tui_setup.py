@@ -4,6 +4,7 @@ the real services into per-test folders; Espanso is a fake runner and the smoke 
 from __future__ import annotations
 
 import dataclasses
+import shlex
 from pathlib import Path
 
 import pytest
@@ -412,7 +413,8 @@ def test_wizard_passes_its_folder_and_launcher_to_the_earlier_install(
         assert list((espanso.root / "match").iterdir()) == []
         assert ["espanso", "restart"] not in espanso.calls
         assert app.session[-1].command == (
-            f"promptmend espanso deploy --espanso-dir {named} --launcher /bin/pm --no-restart"
+            f"promptmend espanso deploy --espanso-dir {shlex.quote(str(named))} --launcher /bin/pm"
+            " --no-restart"
         )
 
     options = SetupOptions(
