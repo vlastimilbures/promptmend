@@ -23,7 +23,7 @@ from .diagnostics_pane import DiagnosticsPane
 from .history_pane import HistoryPane
 from .home import TAB_LABELS, pill
 from .home_pane import HomePane
-from .intro import AboutScreen, IntroScreen
+from .intro import AboutScreen
 from .previous import PreviousInstallScreen, wants_offer
 from .profiles_pane import ProfilesPane
 from .settings_pane import SettingsPane
@@ -168,14 +168,10 @@ class ManageApp(App[int]):
         self,
         *,
         loader: Callable[[str], State] = gather,
-        intro: bool = True,
         setup: SetupOptions | None = None,
         first_run: bool = False,
     ) -> None:
         super().__init__()
-        # Whether the intro opens (#112); it then stays until a key or click (#173). Off for
-        # `ui --no-intro`, PROMPT_UI_INTRO=false and the tests.
-        self.intro = intro
         # Read here, not at import, so the snapshot tests can pin it and a release changes none.
         self.title = f"{self.TITLE} {__version__}"
         if loader is gather and setup is not None and setup.espanso_dir:
@@ -210,10 +206,6 @@ class ManageApp(App[int]):
             self.first_run = False
             self.offered = True  # its Earlier settings step offers the previous install
             self.push_screen(SetupScreen(self.setup_options))
-        elif self.intro:
-            # Over the main screen while the state loads; the previous install offer waits
-            # until it closes.
-            self.push_screen(IntroScreen(__version__), lambda _: self._maybe_offer())
 
     def action_about(self) -> None:
         report = self.state.report if self.state else None
@@ -270,10 +262,10 @@ class ManageApp(App[int]):
 
     def _maybe_offer(self) -> None:
         """Open the previous install screen by itself, once per session, when the state found
-        one, and not while the intro is still showing (its close calls this again)."""
+        one, and not while the setup wizard is open."""
         if self.state is None:
             return
-        if any(isinstance(s, (IntroScreen, SetupScreen)) for s in self.screen_stack):
+        if any(isinstance(s, SetupScreen) for s in self.screen_stack):
             return
         if self.first_run:
             self.first_run = False

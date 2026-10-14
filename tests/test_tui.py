@@ -21,7 +21,7 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
-from promptmend import config, config_store, deploy, doctor, history, smoke
+from promptmend import config, config_store, deploy, history, smoke
 from promptmend import profiles as profile_service
 from promptmend.history import HistoryStore
 from promptmend.tui import (
@@ -104,8 +104,6 @@ async def settle(pilot: Pilot[int]) -> None:
 
 
 def drive(scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]], **kwargs: Any) -> ManageApp:
-    # No intro unless a test asks for one (#112): it would sit over every screen until a key.
-    kwargs.setdefault("intro", False)
     app = ManageApp(**kwargs)
 
     async def main() -> None:
@@ -1543,26 +1541,20 @@ def test_history_unreadable_store(espanso: FakeRunner, monkeypatch: pytest.Monke
 # --- Diagnostics --------------------------------------------------------------------------
 
 
-def test_diagnostics_provenance_and_import_check(
-    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_diagnostics_store_and_layers(espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
-    monkeypatch.setattr(
-        doctor, "import_check", lambda: doctor.ImportCheck(True, "40 ms, 200 module(s)")
-    )
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await pilot.press("6")
         diagnostics = pane(app, "diagnostics")
-        rows = table_rows(app, "diagnostics", "#diag-settings")
-        assert rows["OPENROUTER_API_KEY"][1:3] == ["<set>", "environment"]
         assert KEY not in app.export_screenshot()
+        assert "Read from, lowest precedence first:" in str(
+            diagnostics.query_one("#layers").render()
+        )
         store = str(diagnostics.query_one("#store").render())
         assert "Lost history writes: 0" in store
         assert "SQLite" in store
         assert ", journal none yet;" in store
-        await press(app, pilot, "#import-check")
-        assert diagnostics.last_message == "40 ms, 200 module(s)"
 
     drive(scenario)
 
@@ -1571,14 +1563,8 @@ def test_diagnostics_on_a_broken_config(espanso: FakeRunner, tmp_path: Path) -> 
     (tmp_path / ".env").write_text("PROMPT_LOCAL_ONLY=maybe\n", encoding="utf-8")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        from textual.widgets import DataTable
-
         await pilot.press("6")
         diagnostics = pane(app, "diagnostics")
-        table = diagnostics.query_one("#diag-settings", DataTable)
-        row = [c.plain for c in table.get_row_at(table.get_row_index("PROMPT_LOCAL_ONLY"))]
-        assert row[1:3] == ["false", "default"]
-        assert row[3].startswith("invalid value in ")
         assert "PROMPT_LOCAL_ONLY must be true or false" in str(
             diagnostics.query_one("#findings").render()
         )
@@ -1616,18 +1602,6 @@ def test_files_under_home_show_as_tilde(
         assert settings_rows(app)["PROMPT_PROFILE"].source == "config.toml"
         assert settings_rows(app)["PROMPT_PROFILE"].where == "~/.config/promptmend/config.toml"
         assert settings_rows(app)["OPENROUTER_API_KEY"].source == "secrets.toml"
-        monkeypatch.setenv("PROMPT_PROFILE", "default")
-        monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
-        app.reload()
-        await settle(pilot)
-        await pilot.press("6")
-        rows = table_rows(app, "diagnostics", "#diag-settings")
-        assert rows["OPENROUTER_API_KEY"][3] == "overrides ~/.config/promptmend/secrets.toml"
-        assert rows["PROMPT_PROFILE"][2:4] == [
-            "environment",
-            "overrides ~/.config/promptmend/config.toml",
-        ]
-        assert rows["PROMPT_HISTORY"][2] == "default"
 
     drive(scenario)
 
@@ -1642,32 +1616,6 @@ def test_short_label_only_shortens_files_under_home(monkeypatch: pytest.MonkeyPa
     assert common.short_label(f"file:{elsewhere}") == elsewhere
     assert common.short_label(config.ENV_SOURCE) == "environment"
     assert common.short_label(config.DEFAULT_SOURCE) == "default"
-
-
-def test_import_check_runs_a_fresh_interpreter() -> None:
-    found = doctor.import_check()
-    assert found.ok, found.message
-    assert found.modules
-    assert found.seconds is not None
-    assert "no heavy module" in found.message
-
-
-def test_import_check_reports_failures(monkeypatch: pytest.MonkeyPatch) -> None:
-    import subprocess
-
-    def timeout(*args: Any, **kwargs: Any) -> None:
-        raise subprocess.TimeoutExpired("python", 1)
-
-    monkeypatch.setattr(subprocess, "run", timeout)
-    assert doctor.import_check().message == "the import check could not run (TimeoutExpired)"
-
-    class Heavy:
-        stdout = json.dumps({"seconds": 0.5, "modules": 900, "heavy": ["textual"]}).encode()
-
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Heavy())
-    found = doctor.import_check()
-    assert not found.ok
-    assert found.message == "500 ms, 900 module(s); loads textual"
 
 
 # --- services the interface added ---------------------------------------------------------
@@ -1718,7 +1666,6 @@ def terminal(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     def run(self: ManageApp, *args: Any, **kwargs: Any) -> None:
         state["launched"] += 1
-        state["intro"] = self.intro
         self._return_code = state["code"]
 
     monkeypatch.setattr(ManageApp, "run", run)
@@ -2015,7 +1962,6 @@ def test_children_ignore_modules_planted_in_the_working_directory(
             f"open({str(marker)!r}, 'w').write('planted')\nraise SystemExit(9)\n",
             encoding="utf-8",
         )
-    assert doctor.import_check().ok
     assert smoke.run("ollama").ok
     assert not marker.exists()
 
@@ -2285,103 +2231,7 @@ def test_previous_install_entered_path_that_is_no_checkout(
     drive(scenario)
 
 
-# --- Intro and About (#112) ---------------------------------------------------------------
-
-
-def test_intro_stays_until_a_key(espanso: FakeRunner) -> None:
-    from promptmend.tui.intro import INTRO_HINT, IntroScreen
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert isinstance(app.screen, IntroScreen)
-        await pilot.pause(1.2)  # longer than the old 0.8 s timer (#173)
-        await settle(pilot)
-        assert isinstance(app.screen, IntroScreen)
-        shown = str(app.screen.query_one("#intro").render())
-        assert INTRO_HINT in shown
-        assert "promptmend config set PROMPT_UI_INTRO false" in shown
-
-    drive(scenario, intro=True)
-
-
-@pytest.mark.parametrize("key", ["enter", "escape", "q"])
-def test_intro_closes_on_enter_escape_or_any_key_and_nothing_else(
-    espanso: FakeRunner, key: str
-) -> None:
-    from textual.widgets import TabbedContent
-
-    from promptmend.tui.intro import IntroScreen
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert isinstance(app.screen, IntroScreen)
-        await pilot.press(key)
-        await settle(pilot)
-        assert app.screen_stack[-1] is app.main
-        assert app.is_running
-        assert app.main.query_one(TabbedContent).active == "home"
-
-    drive(scenario, intro=True)
-
-
-def test_intro_any_key_closes_it_and_is_consumed(espanso: FakeRunner) -> None:
-    from textual.widgets import TabbedContent
-
-    from promptmend.tui.intro import IntroScreen
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        intro = app.screen
-        assert isinstance(intro, IntroScreen)
-        assert "promptmend" in str(intro.query_one("#intro").render())
-        await pilot.press("q")  # closes the intro, does not quit
-        await settle(pilot)
-        assert not isinstance(app.screen, IntroScreen)
-        intro.close()  # a second close changes nothing
-        await settle(pilot)
-        assert app.screen is app.main
-        assert app.is_running
-        assert app.main.query_one(TabbedContent).active == "home"
-
-    drive(scenario, intro=True)
-
-
-def test_intro_click_closes_it(espanso: FakeRunner) -> None:
-    from promptmend.tui.intro import IntroScreen
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert isinstance(app.screen, IntroScreen)
-        await pilot.click("#intro")
-        await settle(pilot)
-        assert not isinstance(app.screen, IntroScreen)
-
-    drive(scenario, intro=True)
-
-
-def test_intro_digit_does_not_switch_tabs(espanso: FakeRunner) -> None:
-    from textual.widgets import TabbedContent
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("6")
-        await settle(pilot)
-        assert app.main.query_one(TabbedContent).active == "home"
-        await pilot.press("6")
-        assert app.main.query_one(TabbedContent).active == "diagnostics"
-
-    drive(scenario, intro=True)
-
-
-def test_previous_install_offer_waits_for_the_intro(previous: Path) -> None:
-    from promptmend.tui.intro import IntroScreen
-    from promptmend.tui.previous import PreviousInstallScreen
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert app.state is not None
-        assert app.state.previous.candidates
-        assert isinstance(app.screen, IntroScreen)
-        assert not any(isinstance(s, PreviousInstallScreen) for s in app.screen_stack)
-        await pilot.press("space")
-        await settle(pilot)
-        assert isinstance(app.screen, PreviousInstallScreen)
-
-    drive(scenario, intro=True)
+# --- About (#112) ------------------------------------------------------------------------
 
 
 def test_about_lists_version_runtime_and_folders(
@@ -2435,49 +2285,22 @@ def test_about_before_the_state_is_read(espanso: FakeRunner) -> None:
     drive(scenario, loader=broken)
 
 
-@pytest.mark.parametrize(
-    ("args", "environ", "intro"),
-    [
-        (("ui",), {}, True),
-        ((), {}, True),
-        (("ui", "--no-intro"), {}, False),
-        (("ui",), {"PROMPT_UI_INTRO": "false"}, False),
-        # A value the strict parser rejects falls back to the default in repair mode.
-        (("ui",), {"PROMPT_UI_INTRO": "maybe"}, True),
-    ],
-)
-def test_intro_opt_out(
-    terminal: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
-    args: tuple[str, ...],
-    environ: dict[str, str],
-    intro: bool,
+@pytest.mark.parametrize("args", [("ui",), (), ("ui", "--no-intro")])
+def test_ui_opens_and_no_intro_is_a_hidden_no_op(
+    terminal: dict[str, Any], args: tuple[str, ...]
 ) -> None:
-    for name, value in environ.items():
-        monkeypatch.setenv(name, value)
+    # The intro is gone (#245); `--no-intro` is still accepted so old scripts keep working.
     result = _invoke(*args)
-    assert result.exit_code == 0
-    assert terminal["intro"] == intro
+    assert result.exit_code == 0, result.output
+    assert terminal["launched"] == 1
+    assert "--no-intro" not in _invoke("ui", "--help").output
 
 
-def test_ui_intro_setting_is_strict(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PROMPT_UI_INTRO", "maybe")
-    with pytest.raises(ValueError, match="PROMPT_UI_INTRO"):
-        config.Settings.load()
-    monkeypatch.setenv("PROMPT_UI_INTRO", "false")
-    assert config.Settings.load().ui_intro is False
-
-
-def test_brand_is_ascii_and_narrow_terminals_get_text_only() -> None:
+def test_brand_is_ascii() -> None:
     from promptmend.tui import brand
 
-    wide, narrow = brand.splash(110, "1.2.3"), brand.splash(70, "1.2.3")
-    assert wide.isascii()
     assert brand.TAGLINE.isascii()
     assert brand.LOGO.isascii()
-    assert brand.MARK[1] in wide
-    assert brand.MARK[1] not in narrow
-    assert narrow == f"{brand.NAME} 1.2.3\n\n{brand.TAGLINE}"
     assert max(map(len, brand.LOGO.splitlines())) < brand.NARROW
     assert brand.LOGO.splitlines() == [*brand.MARK, "", brand.TAGLINE]
     assert all(line == line.rstrip() for line in brand.LOGO.splitlines())

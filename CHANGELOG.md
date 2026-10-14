@@ -26,6 +26,14 @@ All notable changes to this project are documented here. The format follows
   button's tooltip and every result still show the command it runs; Home still lists this
   session's commands and a few useful ones, and Copy last copies the latest.
 - The `prompt-toolkit` dependency, used only by the `shell` command (#239).
+- The interface's intro screen and its setting `PROMPT_UI_INTRO` (#245): the interface opens
+  straight on Home. A saved or environment `PROMPT_UI_INTRO` is now ignored (doctor and
+  `config validate` do not flag it; `config unset` refuses it, so delete a leftover line in
+  `config.toml` by hand), and `promptmend ui --no-intro` is still accepted and does nothing. The Settings tab loses its Interface group.
+- The Diagnostics tab's import-time check of the CLI (#245).
+- The Diagnostics tab's table of every setting and its source (#245); the Settings tab and
+  `promptmend config show` list each setting and where it comes from, and `config show` also
+  names what each value overrides.
 ### Fixed
 - Usage history: a recorded run and `doctor` read `history.spool` and `history.lost` only
   under their lock, so on Windows they can no longer make another run's update of those files

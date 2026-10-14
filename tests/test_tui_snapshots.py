@@ -236,12 +236,11 @@ def _shoot(
     theme: str | None = None,
     loader: Callable[[str], State] = fixed_state,
     size: tuple[int, int] = SIZE,
-    intro: bool = False,
     setup: int | None = None,
 ) -> str:
     # With ``setup``, the setup wizard as `setup` opens it, moved on that many steps.
     options = SetupOptions(standalone=True) if setup is not None else None
-    app = ManageApp(loader=loader, intro=intro, setup=options)
+    app = ManageApp(loader=loader, setup=options)
     # The active tab's underline slides into place; a snapshot must not catch it midway.
     app.animation_level = "none"
     shots: list[str] = []
@@ -329,13 +328,6 @@ def test_snapshot_home_80_columns() -> None:
 # The header's status pill comes first (#174), so a 70-column terminal still shows it.
 def test_snapshot_home_70_columns() -> None:
     _check("home-70", _shoot("1", size=(70, 24)))
-
-
-# The intro (#112), wide enough for the wordmark and on a narrow terminal (text only), with
-# its hint (#173). It stays up for the shot: no key is pressed.
-@pytest.mark.parametrize(("name", "size"), [("intro", SIZE), ("intro-narrow", (64, 20))])
-def test_snapshot_intro(name: str, size: tuple[int, int]) -> None:
-    _check(name, _shoot(None, size=size, intro=True))
 
 
 def test_snapshot_about() -> None:

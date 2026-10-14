@@ -9,7 +9,7 @@ from collections.abc import Mapping
 
 from .. import __version__, config, config_store, update_check
 
-# The interface's display name: the header, the intro, the wordmark and About all read it
+# The interface's display name: the header, the wordmark and About all read it
 # here, so a rename (#169) changes this one line (and the snapshots).
 NAME = "PromptMend"
 TAGLINE = "A rough draft in, a precise prompt out: type -i- in any text field."
@@ -20,7 +20,7 @@ NARROW = 70
 
 
 # The logo: a mended speech bubble beside `uvx pyfiglet -f small PromptMend`, ASCII and
-# narrower than NARROW. The intro and About show MARK above the tagline.
+# narrower than NARROW. About shows it above the tagline.
 MARK = (
     " .-------.    ___                    _   __  __             _",
     r" |  [+]  |   | _ \_ _ ___ _ __  _ __| |_|  \/  |___ _ _  __| |",
@@ -29,16 +29,6 @@ MARK = (
     "                               |_|",
 )
 LOGO = "\n".join((*MARK, "", TAGLINE))
-
-
-def splash(width: int, version: str | None = None) -> str:
-    """The intro's text: the mark (when ``width`` columns hold it), the name and version,
-    and the tagline."""
-    title = f"{NAME} {version or __version__}"
-    lines = [title, "", TAGLINE]
-    if width > NARROW:
-        lines = [*MARK, "", *lines]
-    return "\n".join(lines)
 
 
 def runtime() -> dict[str, str]:

@@ -47,15 +47,8 @@ def _m(group: str, name: str, kind: str, help_: str, choices: Sequence[str] = ()
     return Meta(name, group, kind, help_, tuple(choices))
 
 
-_OUT, _KEYS, _PRIV, _MOD, _HIST, _UI = (
-    "Output",
-    "Keys",
-    "Privacy",
-    "Models",
-    "History",
-    "Interface",
-)
-GROUPS = (_OUT, _KEYS, _PRIV, _MOD, _HIST, _UI)
+_OUT, _KEYS, _PRIV, _MOD, _HIST = ("Output", "Keys", "Privacy", "Models", "History")
+GROUPS = (_OUT, _KEYS, _PRIV, _MOD, _HIST)
 
 # Every setting, in the order the list shows it: each config.env_names() name exactly once.
 SETTINGS: tuple[Meta, ...] = (
@@ -144,7 +137,6 @@ SETTINGS: tuple[Meta, ...] = (
     _m(_MOD, "ANTHROPIC_MAX_TOKENS", INT, "Output cap of an Anthropic call, in tokens."),
     _m(_HIST, "PROMPT_HISTORY", BOOL, "Keep the local usage history (metadata only)."),
     _m(_HIST, "PROMPT_HISTORY_RETENTION_DAYS", INT, "Days a usage record is kept."),
-    _m(_UI, "PROMPT_UI_INTRO", BOOL, "Show the intro as the interface opens."),
 )
 BY_NAME = {meta.name: meta for meta in SETTINGS}
 

@@ -80,7 +80,6 @@ NOTES = {
 }
 # Buttons with no command of their own: they move around the interface or measure it.
 NO_COMMAND = {
-    "import-check": "Imports the CLI in a fresh interpreter and times it; no command.",
     "home-copy": "Copy the latest command of this session, as Home's log shows it, to the\n"
     "terminal clipboard (OSC 52); the clipboard is never read.",
     "previous-enter": "",
@@ -110,9 +109,6 @@ RECIPES = (
     Recipe(("espanso", "status", "--diff"), "what a deploy would change"),
     Recipe(("stats", "--by", "model"), "usage by model"),
 )
-
-# The intro's hint (#173): the command that turns the intro off.
-INTRO_OFF = ("config", "set", "PROMPT_UI_INTRO", "false")
 
 
 def equivalent(*argv: str) -> str:
