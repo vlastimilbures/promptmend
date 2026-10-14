@@ -4,6 +4,7 @@ and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself."""
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
@@ -27,7 +28,7 @@ from .previous import PreviousInstallScreen, wants_offer
 from .profiles_pane import ProfilesPane
 from .settings_pane import SettingsPane
 from .setup_wizard import SetupOptions, SetupScreen, make_plan, needs_setup
-from .state import State, gather
+from .state import State, detect_previous, gather
 from .triggers_pane import DeployTarget, TriggersPane
 from .try_pane import TryPane
 
@@ -247,6 +248,15 @@ class ManageApp(App[int]):
     def _load(self, generation: int) -> None:
         try:
             state = self.loader(self.group_by)
+            named = self.setup_options
+            if named is not None and named.espanso_dir:
+                # `setup --espanso-dir`: offer the earlier install deployed there, not in the
+                # default folder the loader looked at.
+                previous, error = detect_previous(
+                    espanso_dir=Path(named.espanso_dir).expanduser(),
+                    launcher=Path(named.launcher).expanduser() if named.launcher else None,
+                )
+                state = dataclasses.replace(state, previous=previous, previous_error=error)
         except Exception as exc:
             self.call_from_thread(
                 self.notify,

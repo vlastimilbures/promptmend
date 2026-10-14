@@ -65,7 +65,8 @@ Done names that file for a missing key.
 
 Options given to `setup` prefill the wizard: `--provider` and `--profile` preselect that
 choice (Next still saves it), `--migrate-from PATH` shows the earlier settings step, whose
-"Earlier install…" looks at that path, `--deploy` puts the focus on the install button
+"Earlier install…" looks at that path, `--espanso-dir` also decides whether an earlier
+install is offered (its match files are looked for in that folder), `--deploy` puts the focus on the install button
 (nothing is written until you press it), and `--no-deploy` and `--no-smoke-test` leave out
 the Espanso and Test steps. `--non-interactive` (or `--plain`) runs without the wizard and
 asks nothing (see [Commands](commands.md#management-commands)).
