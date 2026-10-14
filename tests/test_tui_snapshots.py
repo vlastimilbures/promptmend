@@ -55,6 +55,7 @@ _MESSAGES = {
     "version": (doctor.INFO, f"promptmend {VERSION}"),
     "cli": (doctor.INFO, f"running {LAUNCHER}"),
     "install": (doctor.OK, f"uv: {LAUNCHER}"),
+    "path_shadow": (doctor.OK, f"`promptmend` on PATH is the installed launcher {LAUNCHER}"),
     "config": (doctor.OK, f"valid (saved: {HOME}/.config/promptmend/config.toml)"),
     "keys": (doctor.OK, "OPENROUTER_API_KEY: set, ANTHROPIC_API_KEY: not set"),
     "persona": (doctor.OK, "PROMPT_PERSONA matches no data-protection pattern"),

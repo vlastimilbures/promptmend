@@ -42,7 +42,7 @@ def no_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_install_reports_the_channel(tmp_path: Path) -> None:
-    exe = tmp_path / "bin" / "promptmend"
+    exe = tmp_path / "bin" / f"promptmend{EXE}"
     exe.parent.mkdir()
     exe.write_text("", "utf-8")
     check = doctor._install_check(deploy.Launcher(exe, "uv"), None)
@@ -58,6 +58,83 @@ def test_install_without_a_launcher_guesses(
     root.mkdir()
     (root / "pyproject.toml").write_text("", "utf-8")
     assert doctor._install_check(None, "x").data["channel"] == "editable"
+
+
+# --- path_shadow --------------------------------------------------------------------------
+
+
+EXE = ".exe" if os.name == "nt" else ""
+
+
+def _bin(folder: Path, *names: str) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        exe = folder / (name + EXE)
+        exe.write_text("", "utf-8")
+        exe.chmod(0o755)
+    return folder
+
+
+def test_path_shadow_ok_with_the_own_launcher(tmp_path: Path) -> None:
+    own = _bin(tmp_path / "own", "promptmend", "prompt-workflow")
+    found = deploy.Launcher(own / f"promptmend{EXE}", "uv")
+    check = doctor._path_shadow_check(found, environ={"PATH": str(own)})
+    assert check.status == "ok"
+    assert check.data["found"] == str(own / f"promptmend{EXE}")
+
+
+def test_path_shadow_info_when_not_on_path_or_no_launcher(tmp_path: Path) -> None:
+    own = _bin(tmp_path / "own", "promptmend")
+    found = deploy.Launcher(own / f"promptmend{EXE}", "uv")
+    check = doctor._path_shadow_check(found, environ={"PATH": str(tmp_path / "empty")})
+    assert (check.status, check.message) == ("info", "`promptmend` is not on PATH")
+    assert doctor._path_shadow_check(None, environ={"PATH": str(own)}).status == "info"
+
+
+@pytest.mark.parametrize(
+    ("folder", "venv", "hint"),
+    [
+        ("old/bin", None, "uninstall the old CLI, or put {own} earlier on PATH"),
+        ("venv/bin", "venv", "a virtual environment is active: run `deactivate`"),
+        ("repo/.venv/bin", None, "remove {old} from PATH"),
+    ],
+)
+def test_path_shadow_warns_with_a_hint(
+    tmp_path: Path, folder: str, venv: str | None, hint: str
+) -> None:
+    own = _bin(tmp_path / "own", "promptmend")
+    old = _bin(tmp_path / folder, "promptmend")
+    environ = {"PATH": os.pathsep.join((str(old), str(own)))}
+    if venv:
+        environ["VIRTUAL_ENV"] = str(tmp_path / venv)
+    check = doctor._path_shadow_check(
+        deploy.Launcher(own / f"promptmend{EXE}", "uv"), environ=environ
+    )
+    assert check.status == "warn"
+    assert check.message == (
+        f"`promptmend` on PATH is {old / f'promptmend{EXE}'}, not the installed launcher "
+        f"{own / f'promptmend{EXE}'}: " + hint.format(own=own, old=old)
+    )
+    assert check.data == {
+        "command": "promptmend",
+        "found": str(old / f"promptmend{EXE}"),
+        "launcher": str(own / f"promptmend{EXE}"),
+    }
+
+
+def test_path_shadow_warns_about_the_legacy_alias(tmp_path: Path) -> None:
+    # This install has no alias next to it: samefile() fails, and the old one is reported.
+    own = _bin(tmp_path / "own", "promptmend")
+    old = _bin(tmp_path / "old", "prompt-workflow")
+    environ = {"PATH": os.pathsep.join((str(old), str(own)))}
+    check = doctor._path_shadow_check(
+        deploy.Launcher(own / f"promptmend{EXE}", "uv"), environ=environ
+    )
+    assert check.status == "warn"
+    assert check.message.startswith(
+        f"`prompt-workflow` on PATH is {old / f'prompt-workflow{EXE}'},"
+    )
+    assert check.data["launcher"] == str(own / f"prompt-workflow{EXE}")
 
 
 # --- version and update (#197) ------------------------------------------------------------
@@ -301,11 +378,11 @@ def test_local_servers_never_ask_another_host(monkeypatch: pytest.MonkeyPatch) -
 def test_cli_path_names_the_windows_exe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     exe = tmp_path / "promptmend.exe"
     exe.write_text("", "utf-8")
-    monkeypatch.setattr(sys, "argv", [str(tmp_path / "promptmend")])
+    monkeypatch.setattr(sys, "argv", [str(tmp_path / f"promptmend{EXE}")])
     monkeypatch.setattr(sys, "platform", "win32")
     assert doctor._cli_check().data["path"] == str(exe)
     monkeypatch.setattr(sys, "platform", "darwin")
-    assert doctor._cli_check().data["path"] == str(tmp_path / "promptmend")
+    assert doctor._cli_check().data["path"] == str(tmp_path / f"promptmend{EXE}")
 
 
 # --- Espanso, match files, launcher -------------------------------------------------------
@@ -346,7 +423,7 @@ def test_match_files_in_sync_edited_and_unknown(espanso: Path) -> None:
 def test_launcher_checks(tmp_path: Path, espanso: Path) -> None:
     assert doctor._launcher_check(LAUNCHER, None).status == "warn"
     assert doctor._launcher_check(LAUNCHER, deploy.Manifest.load()).status == "info"
-    exe = tmp_path / "promptmend"
+    exe = tmp_path / f"promptmend{EXE}"
     exe.write_text("", "utf-8")
     deploy.apply(deploy.plan(espanso, str(exe), deploy.Manifest.load()))
     check = doctor._launcher_check(str(exe), deploy.Manifest.load())
@@ -358,7 +435,7 @@ def test_launcher_check_warns_about_the_old_command(tmp_path: Path, espanso: Pat
     old = tmp_path / "prompt-workflow"
     old.write_text("", "utf-8")
     deploy.apply(deploy.plan(espanso, str(old), deploy.Manifest.load()))
-    check = doctor._launcher_check(str(tmp_path / "promptmend"), deploy.Manifest.load())
+    check = doctor._launcher_check(str(tmp_path / f"promptmend{EXE}"), deploy.Manifest.load())
     assert check.status == "warn"
     assert "redeploy with `promptmend espanso deploy`" in check.message
     assert set(check.data) == set(doctor.DATA_KEYS["launcher"])
@@ -366,11 +443,11 @@ def test_launcher_check_warns_about_the_old_command(tmp_path: Path, espanso: Pat
 
 
 def test_launcher_check_warns_about_another_launcher(tmp_path: Path, espanso: Path) -> None:
-    other = tmp_path / "other" / "promptmend"
+    other = tmp_path / "other" / f"promptmend{EXE}"
     other.parent.mkdir()
     other.write_text("", "utf-8")
     deploy.apply(deploy.plan(espanso, str(other), deploy.Manifest.load()))
-    check = doctor._launcher_check(str(tmp_path / "promptmend"), deploy.Manifest.load())
+    check = doctor._launcher_check(str(tmp_path / f"promptmend{EXE}"), deploy.Manifest.load())
     assert (check.status, check.data["drift"]) == ("warn", True)
     assert "redeploy" not in check.message
 
@@ -400,11 +477,13 @@ def test_same_launcher_keeps_case_on_posix() -> None:
 def test_launcher_check_skips_entries_whose_file_is_gone(tmp_path: Path, espanso: Path) -> None:
     """A deleted folder (or another Espanso config folder) leaves manifest entries behind:
     their launcher calls nothing, so a gone one is no FAIL; a live file's gone launcher is."""
-    exe = tmp_path / "promptmend"
+    exe = tmp_path / f"promptmend{EXE}"
     exe.write_text("", "utf-8")
     old = tmp_path / "old-espanso"
     (old / "match").mkdir(parents=True)
-    deploy.apply(deploy.plan(old, str(tmp_path / "gone" / "promptmend"), deploy.Manifest.load()))
+    deploy.apply(
+        deploy.plan(old, str(tmp_path / "gone" / f"promptmend{EXE}"), deploy.Manifest.load())
+    )
     deploy.apply(deploy.plan(espanso, str(exe), deploy.Manifest.load()))
     for path in (old / "match").iterdir():
         path.unlink()

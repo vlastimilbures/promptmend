@@ -309,7 +309,8 @@ To move from one channel to another (say from uv to Homebrew):
 2. Run `promptmend espanso deploy` from the new install, so the match files call its launcher.
 3. Uninstall the old one (step 4 of [Uninstall](#uninstall)).
 
-Run from the new install, `doctor` warns while the matches still call the old launcher.
+Run from the new install, `doctor` warns while the matches still call the old launcher, or
+while the old `promptmend` comes first on `PATH` (`path_shadow`).
 
 ## Uninstall
 
@@ -415,8 +416,8 @@ never reads the checkout's `.env` or its profiles; take them along by hand:
    `promptmend secrets set` instead.
 3. `promptmend profiles migrate --checkout PATH` copies the profiles you added or edited.
 4. `promptmend espanso deploy` points the triggers at the release instead of the checkout.
-5. If `promptmend` on `PATH` is still the checkout's, run `deactivate` (its `.venv` is active)
-   or take it off `PATH`.
+5. If `promptmend` on `PATH` is still the checkout's (`doctor` warns in `path_shadow`), run
+   `deactivate` (its `.venv` is active) or take it off `PATH`.
 
 Coming from a version before 0.9: if Espanso's `match/base.yml` still holds the `-p-`
 template those versions installed there, delete it by hand (deploy no longer does), or `-p-`

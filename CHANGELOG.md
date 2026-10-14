@@ -35,10 +35,11 @@ All notable changes to this project are documented here. The format follows
   names what each value overrides.
 - The pre-1.0 migration code (#246): `config retire`, `config migrate --from`,
   `setup --migrate-from`, the interface's Previous install screen (Home's "Previous install…"
-  and the setup wizard's "Earlier install…"), and doctor's `previous_install` check (with its
-  warning about another `promptmend` first on `PATH`). To move from a checkout install, copy
-  its `.env` into the config folder and run `config migrate`, and copy edited profiles with
-  `profiles migrate --checkout PATH` (docs/install.md, "From a checkout install").
+  and the setup wizard's "Earlier install…"), and doctor's `previous_install` check (its
+  warning about another `promptmend` first on `PATH` stays, as `path_shadow`). To move from
+  a checkout install, copy its `.env` into the config folder and run `config migrate`, and
+  copy edited profiles with `profiles migrate --checkout PATH` (docs/install.md, "From a
+  checkout install").
   `config rollback` still puts back a checkout's `.env` that an earlier `config retire` moved.
 - Deploy no longer retires the `match/base.yml` that versions before 0.9 installed (#246): if
   it is still there, delete it by hand; `promptmend espanso status` lists it as yours.

@@ -67,7 +67,7 @@ def test_ready_install() -> None:
     assert found["Pro (-ip-)"].text == "openrouter · openai/gpt-6-luna"
     assert found["Triggers"].text == "3 of 3 match files in sync · Espanso running"
     assert found["History"].text == "on · 57 calls recorded"
-    assert found["Checks"].text == "14 ok · 0 warn · 0 fail"
+    assert found["Checks"].text == "15 ok · 0 warn · 0 fail"
 
 
 def _update(state: State, status: str, latest: str | None = "0.22.0") -> State:
@@ -273,7 +273,7 @@ def test_checks_row_and_pill_count_every_check() -> None:
     report = _report(state, persona=doctor.WARN, keys=doctor.FAIL, sqlite=doctor.WARN)
     rows = home_rows(dataclasses.replace(state, report=report))
     checks = {r.label: r for r in rows}["Checks"]
-    assert checks.text == "11 ok · 2 warn · 1 fail"
+    assert checks.text == "12 ok · 2 warn · 1 fail"
     assert (checks.status, checks.problem) == (doctor.FAIL, "keys: keys says so")
     assert headline(rows) == ("Not ready: keys: keys says so.", "diagnostics")
     assert pill(report) == "1 problem, 2 warnings"
