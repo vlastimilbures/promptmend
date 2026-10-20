@@ -351,7 +351,8 @@ def _local_servers_check(
             notes.append(f"{', '.join(names)} needs {spec.label}: no answer at {spec.url_setting}")
     data = {"servers": servers, "deployed": deployed}
     if not notes:
-        return Check("local_servers", INFO, "no trigger uses Ollama or LM Studio", data)
+        probed = " or ".join(s.label for s in PROVIDERS.values() if s.probe_path)
+        return Check("local_servers", INFO, f"no trigger uses {probed}", data)
     return Check("local_servers", INFO, "; ".join(notes), data)
 
 

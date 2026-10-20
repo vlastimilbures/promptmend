@@ -103,6 +103,9 @@ def test_local_spec_stays_local_on_loopback(spec: ProviderSpec) -> None:
     assert not leaves_machine(spec.name, cfg)
     assert not isinstance(make_provider(spec.name, cfg), GatedProvider)
     assert not isinstance(make_provider(spec.name, replace(cfg, local_only=True)), GatedProvider)
+    if spec.protocol == "ollama":  # an Ollama cloud model goes to ollama.com
+        model: dict[str, Any] = {f"{spec.name}_model": "gpt-oss:120b-cloud"}
+        assert leaves_machine(spec.name, replace(cfg, **model))
     remote = _url(cfg, spec, "https://llm.example.com/v1")
     assert leaves_machine(spec.name, remote)
     assert isinstance(make_provider(spec.name, remote), GatedProvider)

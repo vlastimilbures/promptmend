@@ -132,7 +132,8 @@ def provider_choices(settings: Settings, triggers: Sequence[assets.Trigger]) -> 
     used = rewrites(triggers, settings)
     refused = {r.name for r in factory.routes(settings) if r.refused}
     found = []
-    # The Provider step lists the cloud providers (the default among them) first.
+    # The Provider step lists the cloud providers first, in registry order (OpenRouter, the
+    # default, leads; tests/test_setup_guide.py pins it), then the local ones.
     for spec in sorted(PROVIDERS.values(), key=lambda spec: not spec.cloud):
         name = spec.name
         detail = spec.help

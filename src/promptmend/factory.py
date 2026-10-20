@@ -102,7 +102,7 @@ def leaves_machine(name: str, cfg: Settings) -> bool:
         return True
     if not is_loopback(getattr(cfg, f"{name}_base_url")):
         return True
-    return name == "ollama" and _is_ollama_cloud(cfg.ollama_model)
+    return spec.protocol == "ollama" and _is_ollama_cloud(getattr(cfg, f"{name}_model"))
 
 
 # The key setting each provider needs; the local ones need none.
