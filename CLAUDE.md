@@ -95,8 +95,8 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
 - The `-if-` form's fields stay fixed choices, each a whole args item (no free text reaches
   the CLI), each list starting with and defaulting to `default`, timeouts at most 120 s.
 - `espanso/match/prompts-core.yml` holds static snippets (no CLI call); `-ic-` (Anthropic)
-  and `-io-` (OpenAI) stay commented out. `tests/test_triggers.py` replays every match's args as a real process
-  against `smoke`'s stub.
+  and `-io-` (OpenAI) stay commented out. `tests/test_triggers.py` replays every match's args
+  as a real process against `smoke`'s stub.
 - Nothing is ever deployed to Espanso's `config/`; `deploy` writes only into
   `<espanso>/match/`, never overwrites a file the user edited without an explicit choice, and
   routes every external command through `deploy.run_command`.

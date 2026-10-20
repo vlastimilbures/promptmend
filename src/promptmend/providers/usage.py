@@ -177,7 +177,8 @@ def _common(body: Mapping[str, object], usage: AttemptUsage) -> AttemptUsage:
 
 
 def openai_usage(body: Mapping[str, object], usage: AttemptUsage) -> AttemptUsage:
-    """Token counts from an OpenAI-compatible reply (LM Studio, a custom endpoint).
+    """Token counts from an OpenAI-compatible reply (OpenAI, LM Studio, a custom endpoint),
+    which reports no cost.
 
     ``prompt_tokens`` includes the cached tokens, which are taken out of ``input_uncached``;
     with no cache details it is all counted as uncached.

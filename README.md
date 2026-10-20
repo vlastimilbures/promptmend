@@ -19,8 +19,8 @@ the result in place of the trigger. If something went wrong, you get a readable
 
 It works the same on macOS and Windows, with [OpenRouter](https://openrouter.ai),
 [Anthropic](https://www.anthropic.com), [OpenAI](https://openai.com),
-[Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai). A full-screen terminal interface and plain commands set it up
-and manage it.
+[Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai). A full-screen terminal
+interface and plain commands set it up and manage it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/vlastimilbures/promptmend/main/docs/flow-dark.svg">
@@ -268,8 +268,8 @@ More: [docs/configuration.md](https://github.com/vlastimilbures/promptmend/blob/
 ## Privacy
 
 Cloud triggers send your clipboard to OpenRouter (and the endpoint that serves the model), to
-Anthropic or to OpenAI. So does Ollama or LM Studio at another address, or an Ollama `cloud` model. Each
-such call carries:
+Anthropic or to OpenAI. So does Ollama or LM Studio at another address, or an Ollama `cloud`
+model. Each such call carries:
 
 - the draft, after the data-protection gate and the removal of invisible characters;
 - the system prompt: the profile's instructions and your persona, which the gate does not scan;

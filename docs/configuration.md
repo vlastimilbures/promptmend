@@ -206,7 +206,7 @@ OpenAI's own API, called directly (the commented-out `-io-` trigger, `--provider
 |---------|---------|---------|
 | `OPENAI_API_KEY` | — | Required for OpenAI |
 | `OPENAI_MODEL` | `gpt-6-luna` | Model; the pro tier's model, benchmarked at effort `low` (see the [benchmark](benchmark.md)) |
-| `OPENAI_REASONING_EFFORT` | `low` | `none`…`high`, sent as `reasoning_effort` (each model accepts only some of them); `--effort` sets it for one call. Empty omits it, for a model without a reasoning control, which rejects the field |
+| `OPENAI_REASONING_EFFORT` | `low` | `none`…`high`, sent as `reasoning_effort` (each model accepts only some of them; OpenAI's `xhigh` and `max` are not offered, being too slow for a trigger); `--effort` sets it for one call. Empty omits it, for a model without a reasoning control, which rejects the field |
 | `OPENAI_MAX_TOKENS` | `2400` | Output cap, sent as `max_completion_tokens` (OpenAI's reasoning models reject `max_tokens`); the reasoning counts against it |
 | `OPENAI_TEMPERATURE` | *(empty)* | Sampling temperature for OpenAI; empty sends none, since OpenAI's reasoning models return HTTP 400 for any temperature but the default. A set value is sent as is, so set it only for a model that accepts one |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API endpoint; must be `https://` |

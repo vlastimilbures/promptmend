@@ -181,7 +181,7 @@ def test_override_error_is_recorded(stub_provider: StubProvider, history_rows: H
 
 
 # --tier pro on a local provider is refused before any call: an error marker, no attempt.
-def test_openrouter_only_refusal_is_recorded(
+def test_provider_option_refusal_is_recorded(
     fake_http: FakeHttp, history_rows: HistoryRows
 ) -> None:
     assert _run([*LOCAL, "--tier", "pro"]).startswith("[promptmend: --tier pro applies")

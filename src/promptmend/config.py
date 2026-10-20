@@ -449,7 +449,7 @@ EFFORTS = ("none", "minimal", "low", "medium", "high")
 
 
 def _effort(raw: str) -> str:
-    # A typo would otherwise reach OpenRouter and come back as an opaque HTTP 400.
+    # A typo would otherwise reach the API and come back as an opaque HTTP 400.
     if raw.lower() not in ("", *EFFORTS):
         raise ValueError(f"empty or one of {', '.join(EFFORTS)}")
     return raw.lower()
@@ -499,13 +499,15 @@ def check_provider_options(provider: str, tier: str, effort: str | None) -> None
     standard, --effort default) pass."""
     spec = PROVIDERS.get(provider)
     refused = []
-    if tier == "pro" and not has_pro_tier(provider):
+    if tier == "pro" and not (spec and spec.router):
         refused.append(("--tier pro", [s.label for s in PROVIDERS.values() if s.router]))
     if effort not in (None, KEEP) and not (spec and spec.effort):
         refused.append(("--effort", [s.label for s in PROVIDERS.values() if s.effort]))
     if refused:
-        parts = [f"{option} only to {' and '.join(labels)}" for option, labels in refused]
-        parts[0] = parts[0].replace(" only", " applies only", 1)
+        parts = [
+            f"{option}{' applies' if i == 0 else ''} only to {' and '.join(labels)}"
+            for i, (option, labels) in enumerate(refused)
+        ]
         raise ValueError(f"{', '.join(parts)}, not {safe_repr(provider)}")
 
 

@@ -433,7 +433,8 @@ def improve(
         help=f"{', '.join(TIERS)}; pro uses the OPENROUTER_PRO_* reasoning model (OpenRouter only)",
     ),
     effort: str | None = typer.Option(
-        None, help=f"OpenRouter reasoning effort for this call: {', '.join((KEEP, *EFFORTS))}"
+        None,
+        help=f"Reasoning effort for this call (OpenRouter, OpenAI): {', '.join((KEEP, *EFFORTS))}",
     ),
     max_tokens: str | None = typer.Option(None, help=f"Output cap for this call, or {KEEP}"),
     timeout: str | None = typer.Option(None, help=f"Request timeout in seconds, or {KEEP}"),

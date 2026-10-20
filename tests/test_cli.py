@@ -1181,7 +1181,7 @@ def test_pro_max_tokens_leaves_other_providers(
 
 
 # An unknown provider is reported as such, not as an OpenRouter-only option.
-def test_unknown_provider_beats_openrouter_only(fake_http: FakeHttp) -> None:
+def test_unknown_provider_beats_provider_options(fake_http: FakeHttp) -> None:
     result = improve("--provider", "foo", "--tier", "pro", "--source", "argument", "--text", "d")
     assert result.stdout.startswith("[promptmend: Unknown provider 'foo'")
     assert fake_http.requests == []
