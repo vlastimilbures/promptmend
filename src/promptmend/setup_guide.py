@@ -12,8 +12,8 @@ from pathlib import Path
 
 from . import assets, deploy, doctor, factory
 from .config import ConfigLayers, Settings, secret_names
-from .factory import PROVIDER_LABELS, PROVIDER_NAMES
 from .prompt_builder import ADDED, PROFILES, UserProfile
+from .providers.registry import PROVIDERS
 
 # Step id -> the name in the left rail, in order. "earlier" is shown only when there is a
 # .env to take settings from.
@@ -37,15 +37,6 @@ WELCOME = (
     "Move with Next and Back (Escape). Nothing calls a paid provider."
 )
 
-# What each provider is, for the Provider step.
-PROVIDER_HELP = {
-    "openrouter": "cloud, many models through one key",
-    "anthropic": "cloud, Claude models, needs a key",
-    "ollama": "local model on this machine, no key",
-    "lmstudio": "local model on this machine, no key",
-}
-# The order the Provider step lists them: the cloud default first.
-PROVIDER_ORDER = ("openrouter", "anthropic", "ollama", "lmstudio")
 PROVIDER_INTRO = (
     "Each trigger picks its own provider: the ones shown next to each choice below. This "
     "choice is the default for a bare `promptmend improve` and the Try tab."
@@ -141,15 +132,16 @@ def provider_choices(settings: Settings, triggers: Sequence[assets.Trigger]) -> 
     used = rewrites(triggers, settings)
     refused = {r.name for r in factory.routes(settings) if r.refused}
     found = []
-    order = [*PROVIDER_ORDER, *(n for n in PROVIDER_NAMES if n not in PROVIDER_ORDER)]
-    for name in order:
-        detail = PROVIDER_HELP.get(name, "")
+    # The Provider step lists the cloud providers (the default among them) first.
+    for spec in sorted(PROVIDERS.values(), key=lambda spec: not spec.cloud):
+        name = spec.name
+        detail = spec.help
         names = [t for t in used.get(name, []) if t]
         if names:
             detail += f" · {' '.join(names)}"
         if name in refused:
             detail += "; refused while PROMPT_LOCAL_ONLY=true"
-        found.append(Choice(name, PROVIDER_LABELS[name], detail, name == settings.provider))
+        found.append(Choice(name, spec.label, detail, name == settings.provider))
     return found
 
 

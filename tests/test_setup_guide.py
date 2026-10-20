@@ -24,7 +24,8 @@ def test_steps_hide_earlier_unless_needed() -> None:
 def test_provider_choices_name_their_triggers() -> None:
     choices = setup_guide.provider_choices(_settings(), assets.triggers())
     assert sorted(c.value for c in choices) == sorted(PROVIDER_NAMES)
-    assert choices[0].value == "openrouter"
+    # The cloud providers (the default among them) first, then the local ones.
+    assert [c.value for c in choices] == ["openrouter", "anthropic", "ollama", "lmstudio"]
     by = {c.value: c for c in choices}
     assert "-i-" in by["openrouter"].detail
     assert "-il-" in by["ollama"].detail

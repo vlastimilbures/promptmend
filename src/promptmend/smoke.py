@@ -22,8 +22,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
+from .config import setting_fields
 from .entry import self_command
+from .providers.registry import PROVIDERS
 
 if TYPE_CHECKING:
     from .config import Settings
@@ -127,17 +130,23 @@ class SmokeResult:
     message: str
 
 
+def _stub_urls(port: int) -> dict[str, str]:
+    """Each provider's base URL on the stub: its built-in default's path on 127.0.0.1, so a
+    request reaches the stub at the path the real API would get."""
+    defaults = {f.metadata["env"]: f.metadata["default"] for f in setting_fields()}
+    return {
+        name: f"http://127.0.0.1:{port}{urlsplit(defaults[spec.url_setting]).path}"
+        for name, spec in PROVIDERS.items()
+    }
+
+
 def stub_env(port: int, environ: Mapping[str, str]) -> dict[str, str]:
     """``environ`` with every provider pointed at the stub, placeholder keys and no history."""
-    base = f"http://127.0.0.1:{port}"
+    urls = _stub_urls(port)
     return {
         **environ,
-        "OPENROUTER_BASE_URL": f"{base}/api/v1",
-        "ANTHROPIC_BASE_URL": base,
-        "OLLAMA_BASE_URL": base,
-        "LMSTUDIO_BASE_URL": f"{base}/v1",
-        "OPENROUTER_API_KEY": PLACEHOLDER_KEY,
-        "ANTHROPIC_API_KEY": PLACEHOLDER_KEY,
+        **{spec.url_setting: urls[name] for name, spec in PROVIDERS.items()},
+        **{spec.key: PLACEHOLDER_KEY for spec in PROVIDERS.values() if spec.key},
         "PROMPT_HISTORY": "false",
     }
 
@@ -145,17 +154,9 @@ def stub_env(port: int, environ: Mapping[str, str]) -> dict[str, str]:
 def stub_settings(cfg: Settings, port: int) -> Settings:
     """``cfg`` pointed at the stub as stub_env() points the environment: every provider's
     base URL, placeholder keys and no history."""
-    base = f"http://127.0.0.1:{port}"
-    return replace(
-        cfg,
-        openrouter_base_url=f"{base}/api/v1",
-        anthropic_base_url=base,
-        ollama_base_url=base,
-        lmstudio_base_url=f"{base}/v1",
-        openrouter_api_key=PLACEHOLDER_KEY,
-        anthropic_api_key=PLACEHOLDER_KEY,
-        history=False,
-    )
+    changes: dict[str, Any] = {f"{name}_base_url": url for name, url in _stub_urls(port).items()}
+    changes |= {f"{name}_api_key": PLACEHOLDER_KEY for name, spec in PROVIDERS.items() if spec.key}
+    return replace(cfg, **changes, history=False)
 
 
 def run(provider: str, *, runner: Runner | None = None) -> SmokeResult:

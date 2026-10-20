@@ -10,6 +10,7 @@ from typing import Any
 
 from . import config_files
 from .config_files import CONFIG_VERSION, VERSION_KEY, ConfigFileError, SecretStoreError
+from .providers.registry import PROVIDERS
 from .redaction import InvalidExtraPattern, compile_extra, safe_repr, set_user_patterns
 
 
@@ -690,16 +691,14 @@ class Settings:
         destination = _override(output, "--output", _output)
         changes: dict[str, Any] = {}
         if slug:
-            models = ("ollama_model", "lmstudio_model", "openrouter_model", "anthropic_model")
-            changes |= dict.fromkeys(models, slug)
+            changes |= dict.fromkeys((f"{name}_model" for name in PROVIDERS), slug)
         if endpoint is not None:
             changes["openrouter_provider"] = endpoint
         if effort not in (None, KEEP):
             changes["openrouter_reasoning_effort"] = effort
         if tokens is not None:
-            changes["openrouter_max_tokens"] = tokens
-            changes["anthropic_max_tokens"] = tokens
-            changes["call_max_tokens"] = tokens
+            caps = [spec.cap for spec in PROVIDERS.values() if spec.cap]
+            changes |= dict.fromkeys([*caps, "call_max_tokens"], tokens)
         if seconds is not None:
             changes["timeout"] = seconds
         if destination is not None:

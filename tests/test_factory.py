@@ -13,6 +13,7 @@ from promptmend.providers.anthropic import AnthropicProvider
 from promptmend.providers.base import Provider, ProviderError
 from promptmend.providers.ollama import OllamaProvider
 from promptmend.providers.openai_compatible import OpenAICompatibleProvider
+from promptmend.providers.registry import PROVIDERS
 
 if TYPE_CHECKING:
     from conftest import FakeHttp
@@ -674,17 +675,14 @@ def test_force_remote_gates_a_loopback_stand_in(name: str) -> None:
 
 
 def test_check_base_url_matches_make_provider() -> None:
-    plain = replace(
-        Settings(),
-        openrouter_base_url="http://relay.example/api/v1",
-        anthropic_base_url="http://relay.example",
-        openrouter_api_key="k",
-        anthropic_api_key="k",
-    )
-    for name, setting in factory._HTTPS_ONLY.items():
-        with pytest.raises(GateBlocked, match=f"{setting} must be an https:// URL"):
-            factory.check_base_url(name, plain)
-        with pytest.raises(GateBlocked, match=f"{setting} must be an https:// URL"):
-            make_provider(name, plain)
+    cloud = [spec for spec in PROVIDERS.values() if spec.cloud]
+    changes: dict[str, Any] = {f"{spec.name}_base_url": "http://relay.example" for spec in cloud}
+    changes |= {f"{spec.name}_api_key": "k" for spec in cloud}
+    plain = replace(Settings(), **changes)
+    for spec in cloud:
+        with pytest.raises(GateBlocked, match=f"{spec.url_setting} must be an https:// URL"):
+            factory.check_base_url(spec.name, plain)
+        with pytest.raises(GateBlocked, match=f"{spec.url_setting} must be an https:// URL"):
+            make_provider(spec.name, plain)
     factory.check_base_url("ollama", replace(plain, ollama_base_url="http://relay.example"))
     factory.check_base_url("openrouter", Settings())

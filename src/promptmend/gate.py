@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from .providers.base import Provider, ProviderError
+from .providers.registry import PROVIDERS
 from .redaction import SOFT_FINDINGS, scan_draft
 
 
@@ -26,7 +27,8 @@ def _block_message(
             "PROMPT_GATE_LOCAL=false if the server runs the model itself."
         )
     once = "-iok-" if name == "openrouter" else "--allow-flagged"
-    local = "a local trigger (-il-)" if name in ("openrouter", "anthropic") else "a local model"
+    spec = PROVIDERS.get(name)
+    local = "a local trigger (-il-)" if spec and spec.cloud else "a local model"
     alternative = "" if gate_local else f", or use {local}"
     message = "Blocked cloud call. Sensitive content detected: " + ", ".join(findings) + ". "
     if not hard:
