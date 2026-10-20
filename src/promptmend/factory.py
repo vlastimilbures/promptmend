@@ -225,7 +225,7 @@ def make_provider(
         provider = AnthropicProvider(
             base_url=base_url,
             model=model,
-            api_key=api_key or "",  # a cloud spec has a key: _require() raised without one
+            api_key=api_key or "",  # an anthropic spec sets key: _require() raised
             timeout=cfg.timeout,
             max_tokens=max_tokens,
             temperature=cfg.temperature,

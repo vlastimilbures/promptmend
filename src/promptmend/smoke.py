@@ -21,15 +21,12 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urlsplit
 
-from .config import setting_fields
+from .config import Settings, setting_fields
 from .entry import self_command
 from .providers.registry import PROVIDERS
-
-if TYPE_CHECKING:
-    from .config import Settings
 
 # What the stub answers, and so what improve must print.
 REPLY = "promptmend setup check: ok"

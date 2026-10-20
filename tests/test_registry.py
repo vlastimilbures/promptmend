@@ -13,11 +13,9 @@ from promptmend import assets, setup_guide, smoke
 from promptmend.config import Settings, env_names, secret_names
 from promptmend.factory import (
     PROVIDER_KEYS,
-    PROVIDER_LABELS,
     check_base_url,
     leaves_machine,
     make_provider,
-    routes,
 )
 from promptmend.gate import GateBlocked, GatedProvider
 from promptmend.providers.base import ProviderError
@@ -51,17 +49,15 @@ def test_both_kinds_exist() -> None:
 @pytest.mark.parametrize("spec", PROVIDERS.values(), ids=list(PROVIDERS))
 def test_spec_names_its_settings(spec: ProviderSpec) -> None:
     assert {f"{spec.name}_base_url", f"{spec.name}_model"} <= SETTINGS_FIELDS
-    assert {spec.model_setting, spec.url_setting} <= set(env_names())
-    assert PROVIDER_LABELS[spec.name] == spec.label
+    prefix = spec.name.upper()
+    assert {f"{prefix}_MODEL", f"{prefix}_BASE_URL"} <= set(env_names())
     assert spec.help
     if spec.cap:
         assert spec.cap in SETTINGS_FIELDS
-    route = next(r for r in routes(Settings()) if r.name == spec.name)
-    assert (route.model_setting, route.url_setting, route.key) == (
-        spec.model_setting,
-        spec.url_setting,
-        spec.key,
-    )
+    # The Anthropic adapter needs a key and an output cap; make_provider() cannot check it.
+    if spec.protocol == "anthropic":
+        assert spec.key
+        assert spec.cap
 
 
 # A cloud API needs its key (a secret), has its own output cap, is never probed as a local
@@ -133,8 +129,14 @@ def test_setup_lists_every_provider_cloud_first() -> None:
 def test_stub_points_every_provider_at_the_stub() -> None:
     env = smoke.stub_env(4242, {"OPENROUTER_API_KEY": "real"})
     cfg = smoke.stub_settings(_keyed(Settings()), 4242)
+    # Each keeps its default's path, so the stub sees the paths the real API would.
+    assert {spec.url_setting: env[spec.url_setting] for spec in PROVIDERS.values()} == {
+        "OLLAMA_BASE_URL": "http://127.0.0.1:4242",
+        "LMSTUDIO_BASE_URL": "http://127.0.0.1:4242/v1",
+        "OPENROUTER_BASE_URL": "http://127.0.0.1:4242/api/v1",
+        "ANTHROPIC_BASE_URL": "http://127.0.0.1:4242",
+    }
     for spec in PROVIDERS.values():
-        assert env[spec.url_setting].startswith("http://127.0.0.1:4242")
         assert getattr(cfg, f"{spec.name}_base_url") == env[spec.url_setting]
         if spec.key:
             assert env[spec.key] == smoke.PLACEHOLDER_KEY

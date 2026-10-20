@@ -343,14 +343,12 @@ def _local_servers_check(
         base_url = getattr(settings, f"{provider}_base_url")
         answers = local_probe.answers(base_url.rstrip("/") + spec.probe_path)
         servers[provider] = {"answers": answers, "triggers": names}
-        label = spec.label
-        setting = spec.url_setting
         if answers is None:
-            notes.append(f"{label} ({', '.join(names)}) is not on this machine; not asked")
+            notes.append(f"{spec.label} ({', '.join(names)}) is not on this machine; not asked")
         elif answers:
-            notes.append(f"{label} answers ({', '.join(names)})")
+            notes.append(f"{spec.label} answers ({', '.join(names)})")
         else:
-            notes.append(f"{', '.join(names)} needs {label}: no answer at {setting}")
+            notes.append(f"{', '.join(names)} needs {spec.label}: no answer at {spec.url_setting}")
     data = {"servers": servers, "deployed": deployed}
     if not notes:
         return Check("local_servers", INFO, "no trigger uses Ollama or LM Studio", data)

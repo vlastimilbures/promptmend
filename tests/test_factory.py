@@ -45,6 +45,14 @@ def test_make_provider_lmstudio() -> None:
     assert isinstance(provider, OpenAICompatibleProvider)
     assert provider.api_key is None
     assert provider.label == "LM Studio"
+    # The title, body and response hook are OpenRouter's alone (bench_models.py passes them).
+    cfg = replace(Settings(), openrouter_provider="x", openrouter_data_collection="deny")
+    provider = make_provider(
+        "lmstudio", cfg, extra_body={"x": 1}, on_response=lambda _: None, title="T"
+    )
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert (provider.extra_headers, provider.extra_body) == ({}, {})
+    assert provider.on_response is None
 
 
 # make_provider("openrouter") is gated and sets X-Title + max_tokens.
