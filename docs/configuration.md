@@ -195,7 +195,7 @@ Used by `-ip-`, `-if-` and `--tier pro`.
 | `ANTHROPIC_API_KEY` | — | Required for Anthropic |
 | `ANTHROPIC_MODEL` | `claude-sonnet-5` | Model |
 | `ANTHROPIC_MAX_TOKENS` | `2400` | Output cap |
-| `ANTHROPIC_TEMPERATURE` | *(empty)* | Sampling temperature for Anthropic; empty sends none, since Claude 4.7 and later reject any temperature below 1. A set value is sent as is |
+| `ANTHROPIC_TEMPERATURE` | *(empty)* | Sampling temperature for Anthropic; empty sends none, since current Claude models (Opus 4.7, Sonnet 5 and later) return HTTP 400 for a temperature (most for any value, the rest for any but the default). A set value is sent as is, so set it only for a model that accepts one |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | API endpoint; must be `https://` |
 
 ### Ollama

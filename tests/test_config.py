@@ -193,13 +193,14 @@ def test_empty_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
         Settings()
 
 
-# ANTHROPIC_TEMPERATURE is empty by default (Claude 4.7+ rejects any temperature below 1, so
-# none is sent), and a set value is taken as is, below 1 included (#273).
+# ANTHROPIC_TEMPERATURE is empty by default (current Claude models reject a temperature, so
+# none is sent), a set value is taken as is, and PROMPT_TEMPERATURE never sets it (#273).
 def test_anthropic_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Settings().anthropic_temperature is None
     for raw, value in (("1", 1.0), ("0", 0.0), ("0.3", 0.3), ("", None)):
         monkeypatch.setenv("ANTHROPIC_TEMPERATURE", raw)
         assert Settings.load().anthropic_temperature == value
+    monkeypatch.delenv("ANTHROPIC_TEMPERATURE")
     monkeypatch.setenv("PROMPT_TEMPERATURE", "0.7")
     assert Settings().anthropic_temperature is None
 

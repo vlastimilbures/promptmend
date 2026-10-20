@@ -990,8 +990,6 @@ def test_empty_temperature_is_omitted(monkeypatch: pytest.MonkeyPatch, fake_http
     assert "temperature" not in _local_body(fake_http, "lmstudio")
     fake_http.requests.clear()
     assert "temperature" not in _cloud_body(monkeypatch, fake_http, "openrouter")
-    fake_http.requests.clear()
-    assert "temperature" not in _cloud_body(monkeypatch, fake_http, "anthropic")
 
 
 # --- Per-provider temperature (#273) -------------------------------------------------------
@@ -1028,7 +1026,7 @@ def _temperatures(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> dict[
     return found
 
 
-# Claude 4.7+ rejects any temperature below 1: by default Anthropic gets none, while the
+# Current Claude models reject a temperature: by default Anthropic gets none, while the
 # OpenRouter body is what it always was.
 def test_anthropic_sends_no_temperature_by_default(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp
@@ -1045,9 +1043,6 @@ def test_anthropic_sends_no_temperature_by_default(
         "model": "claude-sonnet-5",
         "max_tokens": 2400,
     }
-    assert _temperatures(monkeypatch, fake_http) == {
-        "ollama": 0.2, "lmstudio": 0.2, "openrouter": 0.2, "anthropic": None,
-    }  # fmt: skip
 
 
 # Each temperature reaches only its own providers.
@@ -1066,9 +1061,8 @@ def test_temperature_is_per_provider(monkeypatch: pytest.MonkeyPatch, fake_http:
 # A saved ANTHROPIC_TEMPERATURE (config.toml) is sent as is.
 def test_saved_anthropic_temperature(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> None:
     monkeypatch.delenv("PROMPTMEND_ENV")
-    directory = config._user_config_dir(os.environ)
-    directory.mkdir(parents=True)
-    (directory / "config.toml").write_text("config_version = 1\nANTHROPIC_TEMPERATURE = 0.5\n")
+    config.settings_file().parent.mkdir(parents=True)
+    config.settings_file().write_text("config_version = 1\nANTHROPIC_TEMPERATURE = 0.5\n", "utf-8")
     assert _cloud_body(monkeypatch, fake_http, "anthropic")["temperature"] == 0.5
 
 

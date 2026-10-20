@@ -12,10 +12,11 @@ All notable changes to this project are documented here. The format follows
   `setup` a question-and-answer alternative.
 
 ### Fixed
-- Anthropic calls no longer send `PROMPT_TEMPERATURE` (default 0.2), which Claude 4.7 and
-  later models reject with HTTP 400, so the default Anthropic setup and `-ic-` failed (#273).
-  Anthropic has its own `ANTHROPIC_TEMPERATURE`, empty by default (no temperature is sent);
-  `PROMPT_TEMPERATURE` still applies to OpenRouter, Ollama and LM Studio.
+- Anthropic calls no longer send `PROMPT_TEMPERATURE` (default 0.2). Current Claude models
+  (Opus 4.7, Sonnet 5 and later) reject a temperature with HTTP 400, so the default Anthropic
+  setup and `-ic-` failed (#273). Anthropic has its own `ANTHROPIC_TEMPERATURE`, empty by
+  default (no temperature is sent); `PROMPT_TEMPERATURE` still applies to OpenRouter, Ollama
+  and LM Studio.
 
 ## 0.25.0 - 2026-10-14
 

@@ -58,7 +58,7 @@ def test_spec_names_its_settings(spec: ProviderSpec) -> None:
         assert spec.temperature in SETTINGS_FIELDS
         assert spec.temperature.upper() in env_names()
     # The Anthropic adapter needs a key and an output cap; make_provider() cannot check it.
-    # It needs its own temperature too: Claude 4.7+ rejects PROMPT_TEMPERATURE's 0.2 (#273).
+    # It needs its own temperature too: current Claude models reject PROMPT_TEMPERATURE (#273).
     if spec.protocol == "anthropic":
         assert spec.key
         assert spec.cap

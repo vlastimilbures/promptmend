@@ -71,7 +71,8 @@ The Home and Try snapshots are also the README's screenshots (`docs/interface.sv
 so a release regenerates none of them.
 
 If you change a prompt, a provider or anything on the request path, also run the opt-in live
-tests (needs `OPENROUTER_API_KEY` in `.env`, costs fractions of a cent):
+tests (needs `OPENROUTER_API_KEY` in `.env`, costs fractions of a cent; the Anthropic one also
+needs `ANTHROPIC_API_KEY` and is skipped without it):
 
 ```bash
 uv run pytest -m live
@@ -333,7 +334,7 @@ promptmend/
 │   ├── render_diagram.py         docs/flow.mmd to README's light and dark SVGs
 │   └── release_notes.py          release: the version and its CHANGELOG notes
 ├── tests/                        unit tests, no network (fake_http in conftest.py)
-│   ├── test_live.py              opt-in real OpenRouter calls (pytest -m live)
+│   ├── test_live.py              opt-in real OpenRouter/Anthropic calls (-m live)
 │   ├── test_trigger_contract.py  exact trigger output, imports and module budget
 │   ├── test_tui.py               the interface, driven headless with Textual's Pilot
 │   ├── test_tui_snapshots.py     SVG snapshots of each tab (snapshots/, UPDATE_SNAPSHOTS=1)

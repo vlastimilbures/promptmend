@@ -597,8 +597,9 @@ class Settings:
     anthropic_model: str = _env("ANTHROPIC_MODEL", "claude-sonnet-5")
     anthropic_api_key: str = _env("ANTHROPIC_API_KEY", "", str.strip, secret=True)
     anthropic_max_tokens: int = _env("ANTHROPIC_MAX_TOKENS", "2400", _positive_int)
-    # Claude 4.7 and later reject any temperature below 1 (HTTP 400, #273), so empty (the
-    # default) sends none; a set value is sent as is.
+    # Current Claude models (Opus 4.7, Sonnet 5 and later) return HTTP 400 for a temperature
+    # (most for any value, the rest for any but the default, #273), so empty (the default)
+    # sends none; a set value is sent as is, for a model that accepts one.
     anthropic_temperature: float | None = _env("ANTHROPIC_TEMPERATURE", "", _temperature)
     allow_cloud_override: bool = _env("ALLOW_CLOUD_OVERRIDE", "false", _bool)
     # Refuse every provider that can send the draft off this machine (factory.make_provider),

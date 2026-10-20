@@ -633,7 +633,7 @@ def _temperatures(cfg: Settings) -> dict[str, float | None]:
 
 
 # PROMPT_TEMPERATURE reaches every provider but Anthropic, which has ANTHROPIC_TEMPERATURE
-# (empty by default: Claude 4.7+ rejects any temperature below 1, #273). An empty value
+# (empty by default: current Claude models reject a temperature, #273). An empty value
 # reaches its providers as None (omitted from the body), and --max-tokens reaches the local
 # providers, which otherwise get no cap (#31).
 def test_make_provider_empty_temperature_and_call_cap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -641,9 +641,6 @@ def test_make_provider_empty_temperature_and_call_cap(monkeypatch: pytest.Monkey
     monkeypatch.setenv("ANTHROPIC_API_KEY", "-".join(("test", "key")))
     others = [name for name in PROVIDER_NAMES if name != "anthropic"]
     assert _temperatures(Settings()) == {**dict.fromkeys(others, 0.2), "anthropic": None}
-    monkeypatch.setenv("ANTHROPIC_TEMPERATURE", "1")
-    assert _temperatures(Settings()) == {**dict.fromkeys(others, 0.2), "anthropic": 1.0}
-    monkeypatch.setenv("ANTHROPIC_TEMPERATURE", "")
     monkeypatch.setenv("PROMPT_TEMPERATURE", "")
     cfg = Settings()
     assert _temperatures(cfg) == dict.fromkeys(PROVIDER_NAMES, None)
