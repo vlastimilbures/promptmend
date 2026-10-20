@@ -102,6 +102,7 @@ def test_attribution_covers_the_allowlist() -> None:
         "-il-",
         "-ilm-",
         "-ic-",
+        "-io-",
         "-p-",
     ]
 

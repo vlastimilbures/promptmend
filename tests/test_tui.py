@@ -825,7 +825,7 @@ def test_settings_filter(espanso: FakeRunner) -> None:
         assert settings.query_one(settings_pane.SettingsList).has_focus
         await pilot.press("slash", *"keys")  # the filter's text is selected: typing replaces it
         await settle(pilot)
-        assert list(settings.rows) == ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"]
+        assert list(settings.rows) == ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
         await pilot.press("down")
         assert settings.query_one(settings_pane.SettingsList).has_focus
         await pilot.press("slash", *"zzz")
@@ -1624,6 +1624,8 @@ def test_triggers_match_the_match_files() -> None:
     assert (found["-ip-"].provider, found["-ip-"].tier) == ("openrouter", "pro")
     assert (found["-ilm-"].provider, found["-ilm-"].profile) == ("lmstudio", "general")
     assert (found["-ic-"].active, found["-ic-"].provider) == (False, "anthropic")
+    assert (found["-io-"].active, found["-io-"].provider) == (False, "openai")
+    assert found["-io-"].profile is None  # PROMPT_PROFILE, as -i- and -ip-
     assert (found["-p-"].command, found["-risk-"].command) == ("persona", None)
 
 

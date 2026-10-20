@@ -23,7 +23,7 @@ from .config import (
     TIERS,
     ConfigLayers,
     Settings,
-    openrouter_only,
+    check_provider_options,
 )
 from .entry import TRIGGER_COMMANDS
 from .factory import PROVIDER_NAMES, make_provider
@@ -476,7 +476,7 @@ def improve(
         )
         # An unknown name is left to make_provider(), which reports it as such.
         if provider in PROVIDER_NAMES:
-            openrouter_only(provider, tier, effort)
+            check_provider_options(provider, tier, effort)
         raw = _read_input(source, text)
         # The rewrite comes back cleaned, which matters here too: --copy and clipboard output
         # put it on the clipboard.

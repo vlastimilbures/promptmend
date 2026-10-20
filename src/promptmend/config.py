@@ -386,8 +386,9 @@ _non_negative_float = _number(float, "a number of 0 or more", lambda v: v >= 0)
 
 
 def _temperature(raw: str) -> float | None:
-    """PROMPT_TEMPERATURE or ANTHROPIC_TEMPERATURE: empty (set, but to nothing) sends no
-    temperature at all, for models that reject the field; unset keeps the default."""
+    """PROMPT_TEMPERATURE, ANTHROPIC_TEMPERATURE or OPENAI_TEMPERATURE: empty (set, but to
+    nothing) sends no temperature at all, for models that reject the field; unset keeps the
+    default."""
     if raw == "":
         return None
     try:
@@ -443,7 +444,7 @@ def _regexes(raw: str) -> str:
 
 
 TIERS = ("standard", "pro")
-# OpenRouter `reasoning.effort` values accepted by --effort.
+# OpenRouter `reasoning.effort` and OpenAI `reasoning_effort` values accepted by --effort.
 EFFORTS = ("none", "minimal", "low", "medium", "high")
 
 
@@ -485,25 +486,27 @@ KEEP = "default"
 AUTO_ENDPOINT = "auto"
 
 
-def openrouter_only(provider: str, tier: str, effort: str | None) -> None:
-    """Refuse --tier pro and --effort for a provider other than OpenRouter, the only one with
-    a pro tier and a reasoning-effort control; silently ignoring them would paste a rewrite
-    the user did not ask for. The neutral values (--tier standard, --effort default) pass."""
-    if provider == "openrouter":
-        return
-    named = [
-        option
-        for option, used in (
-            ("--tier pro", tier == "pro"),
-            ("--effort", effort not in (None, KEEP)),
-        )
-        if used
-    ]
-    if named:
-        verb = "apply" if len(named) > 1 else "applies"
-        raise ValueError(
-            f"{' and '.join(named)} {verb} only to OpenRouter, not {safe_repr(provider)}"
-        )
+def has_pro_tier(provider: str) -> bool:
+    """Whether ``provider`` has the pro tier: OpenRouter alone (its spec's ``router``)."""
+    spec = PROVIDERS.get(provider)
+    return spec is not None and spec.router
+
+
+def check_provider_options(provider: str, tier: str, effort: str | None) -> None:
+    """Refuse --tier pro for a provider without the pro tier and --effort for one without a
+    reasoning-effort setting (registry.ProviderSpec ``router`` and ``effort``); silently
+    ignoring them would paste a rewrite the user did not ask for. The neutral values (--tier
+    standard, --effort default) pass."""
+    spec = PROVIDERS.get(provider)
+    refused = []
+    if tier == "pro" and not has_pro_tier(provider):
+        refused.append(("--tier pro", [s.label for s in PROVIDERS.values() if s.router]))
+    if effort not in (None, KEEP) and not (spec and spec.effort):
+        refused.append(("--effort", [s.label for s in PROVIDERS.values() if s.effort]))
+    if refused:
+        parts = [f"{option} only to {' and '.join(labels)}" for option, labels in refused]
+        parts[0] = parts[0].replace(" only", " applies only", 1)
+        raise ValueError(f"{', '.join(parts)}, not {safe_repr(provider)}")
 
 
 def split_model_spec(spec: str | None) -> tuple[str | None, str | None]:
@@ -546,7 +549,8 @@ class Settings:
     timeout: float = _env("PROMPT_TIMEOUT_SECONDS", "30", _positive_float)
     # Low by default: the rewrite must reproduce fixed template wordings verbatim.
     # Empty omits the temperature from every OpenRouter, Ollama and LM Studio request (models
-    # that reject the field); Anthropic has its own, anthropic_temperature.
+    # that reject the field); Anthropic and OpenAI have their own (anthropic_temperature,
+    # openai_temperature).
     temperature: float | None = _env("PROMPT_TEMPERATURE", "0.2", _temperature)
     ollama_base_url: str = _env("OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_model: str = _env("OLLAMA_MODEL", "qwen3:8b")
@@ -601,6 +605,19 @@ class Settings:
     # (most for any value, the rest for any but the default, #273), so empty (the default)
     # sends none; a set value is sent as is, for a model that accepts one.
     anthropic_temperature: float | None = _env("ANTHROPIC_TEMPERATURE", "", _temperature)
+    # OpenAI's own API (#274), called at /chat/completions with the cap as
+    # max_completion_tokens, which its reasoning models require.
+    openai_base_url: str = _env("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    # The model -ip- runs through OpenRouter (openai/gpt-6-luna), benchmarked at effort low.
+    openai_model: str = _env("OPENAI_MODEL", "gpt-6-luna")
+    openai_api_key: str = _env("OPENAI_API_KEY", "", str.strip, secret=True)
+    openai_max_tokens: int = _env("OPENAI_MAX_TOKENS", "2400", _positive_int)
+    # A top-level `reasoning_effort`: without one a reasoning model takes its default effort,
+    # too slow for a trigger. Empty omits the field, for a model without a reasoning control.
+    openai_reasoning_effort: str = _env("OPENAI_REASONING_EFFORT", "low", _effort)
+    # OpenAI's reasoning models return HTTP 400 for any temperature but the default, so empty
+    # (the default) sends none; a set value is sent as is, for a model that accepts one.
+    openai_temperature: float | None = _env("OPENAI_TEMPERATURE", "", _temperature)
     allow_cloud_override: bool = _env("ALLOW_CLOUD_OVERRIDE", "false", _bool)
     # Refuse every provider that can send the draft off this machine (factory.make_provider),
     # whatever --provider a trigger passes.
@@ -662,11 +679,11 @@ class Settings:
         output: str | None = None,
     ) -> Settings:
         """Settings for one CLI call on ``provider``: for_tier(), then the per-call overrides.
-        Only OpenRouter has a pro tier, so another provider keeps the standard settings (the
-        tier name is still checked). A set PROMPT_PRO_PROFILE is meant for
+        Only OpenRouter has a pro tier (has_pro_tier()), so another provider keeps the standard
+        settings (the tier name is still checked). A set PROMPT_PRO_PROFILE is meant for
         OPENROUTER_PRO_MODEL, so a pro call that runs another model (one picked in the -if-
         popup) uses PROMPT_PROFILE instead."""
-        pro = tier == "pro" and provider == "openrouter"
+        pro = tier == "pro" and has_pro_tier(provider)
         tiered = self.for_tier(tier)
         cfg = (tiered if pro else self).with_overrides(
             model=model, effort=effort, max_tokens=max_tokens, timeout=timeout, output=output
@@ -700,7 +717,9 @@ class Settings:
         if endpoint is not None:
             changes["openrouter_provider"] = endpoint
         if effort not in (None, KEEP):
-            changes["openrouter_reasoning_effort"] = effort
+            changes |= dict.fromkeys(
+                [spec.effort for spec in PROVIDERS.values() if spec.effort], effort
+            )
         if tokens is not None:
             caps = [spec.cap for spec in PROVIDERS.values() if spec.cap]
             changes |= dict.fromkeys([*caps, "call_max_tokens"], tokens)

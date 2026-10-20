@@ -27,7 +27,7 @@ from textual.widgets import Button, Label, Select, Static, TextArea
 
 from .. import cli, recorder, smoke
 from ..commands import common
-from ..config import TIERS, ConfigLayers, Settings, openrouter_only
+from ..config import TIERS, ConfigLayers, Settings, check_provider_options, has_pro_tier
 from ..factory import PROVIDER_NAMES, check_base_url, leaves_machine
 from ..prompt_builder import ADDED, PROFILES
 from . import teach
@@ -111,7 +111,7 @@ def usage_line(attempts: Sequence[AttemptUsage], latency_ms: float, *, stub: boo
 
 def _model_setting(provider: str, tier: str) -> str:
     """The setting that names the model a call runs (for_call(): pro only on OpenRouter)."""
-    if provider == "openrouter" and tier == "pro":
+    if tier == "pro" and has_pro_tier(provider):
         return "OPENROUTER_PRO_MODEL"
     return f"{provider.upper()}_MODEL"
 
@@ -189,7 +189,7 @@ class TryPane(Pane):
             # (repair mode would run with the default, an ungated or unrefused call).
             layers = ConfigLayers.resolve()
             cfg = layers.settings().for_call(tier, provider=provider)
-            openrouter_only(provider, tier, None)
+            check_provider_options(provider, tier, None)
         except Exception as exc:
             self._finish(Outcome(cli.clean(cli.marker(exc)), True, "", None), None)
             return

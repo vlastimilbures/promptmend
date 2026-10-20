@@ -30,12 +30,12 @@ promptmend improve --tier pro --source clipboard   # the reasoning model behind 
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `--provider` | `PROMPT_PROVIDER` | `ollama`, `lmstudio`, `openrouter`, `anthropic` |
+| `--provider` | `PROMPT_PROVIDER` | `ollama`, `lmstudio`, `openrouter`, `anthropic`, `openai` |
 | `--profile` | `PROMPT_PROFILE` (`PROMPT_PRO_PROFILE`, if set, with `--tier pro` on `OPENROUTER_PRO_MODEL`) | `default`, `general`, or one of [your own profiles](profiles.md#your-own-profiles) |
 | `--model` | the provider's configured model | Overrides the model of whichever provider runs; `model@endpoint` also pins the OpenRouter endpoint (`@auto` unpins) |
 | `--tier` | `standard` | OpenRouter only: `pro` uses the `OPENROUTER_PRO_*` settings |
-| `--effort` | `OPENROUTER_REASONING_EFFORT` (`OPENROUTER_PRO_REASONING_EFFORT` with `--tier pro`) | OpenRouter only: `none`, `minimal`, `low`, `medium`, `high` |
-| `--max-tokens` | `OPENROUTER_MAX_TOKENS` (`OPENROUTER_PRO_MAX_TOKENS`, if set, with `--tier pro`) or `ANTHROPIC_MAX_TOKENS`; no cap for Ollama and LM Studio | Output cap for this call (Ollama: `num_predict`) |
+| `--effort` | `OPENROUTER_REASONING_EFFORT` (`OPENROUTER_PRO_REASONING_EFFORT` with `--tier pro`) or `OPENAI_REASONING_EFFORT` | OpenRouter and OpenAI only: `none`, `minimal`, `low`, `medium`, `high` |
+| `--max-tokens` | `OPENROUTER_MAX_TOKENS` (`OPENROUTER_PRO_MAX_TOKENS`, if set, with `--tier pro`), `ANTHROPIC_MAX_TOKENS` or `OPENAI_MAX_TOKENS`; no cap for Ollama and LM Studio | Output cap for this call (Ollama: `num_predict`) |
 | `--timeout` | `PROMPT_TIMEOUT_SECONDS` (`PROMPT_PRO_TIMEOUT_SECONDS` with `--tier pro`) | Time limit in seconds for this call, retry included |
 | `--source` | `clipboard` | `clipboard`, `stdin` or `argument` |
 | `--text` | — | The draft, with `--source argument` |
@@ -43,9 +43,9 @@ promptmend improve --tier pro --source clipboard   # the reasoning model behind 
 | `--copy` | off | With `paste` output, also copy the result to the clipboard (no effect with `clipboard`); if the copy fails, the result is still printed after the error marker |
 | `--allow-flagged` | off | Send this one draft despite soft findings of the gate (what `-iok-` passes; see [overriding a block](privacy.md#overriding-a-block)) |
 
-`--tier pro` and `--effort` (other than `default`) with any provider but OpenRouter are
-refused with a `[promptmend: …]` marker, and no call is made: no other provider has a pro tier
-or a reasoning-effort control.
+`--tier pro` with any provider but OpenRouter, and `--effort` (other than `default`) with any
+provider but OpenRouter and OpenAI, are refused with a `[promptmend: …]` marker, and no call
+is made: no other provider has a pro tier, or a reasoning-effort control.
 
 ## Scripting contract
 

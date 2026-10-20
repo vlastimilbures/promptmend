@@ -57,6 +57,16 @@ def test_spec_names_its_settings(spec: ProviderSpec) -> None:
     if spec.temperature:
         assert spec.temperature in SETTINGS_FIELDS
         assert spec.temperature.upper() in env_names()
+    if spec.effort:
+        assert spec.effort in SETTINGS_FIELDS
+        assert spec.effort.upper() in env_names()
+    # The cap's request field: OpenAI's reasoning models reject max_tokens (#274); every other
+    # body keeps max_tokens. The other wire formats have no such choice.
+    assert spec.cap_field in ("max_tokens", "max_completion_tokens")
+    if spec.protocol != "openai":
+        assert spec.cap_field == "max_tokens"
+        assert spec.effort is None
+        assert not spec.router
     # The Anthropic adapter needs a key and an output cap; make_provider() cannot check it.
     # It needs its own temperature too: current Claude models reject PROMPT_TEMPERATURE (#273).
     if spec.protocol == "anthropic":
@@ -116,14 +126,29 @@ def test_local_spec_stays_local_on_loopback(spec: ProviderSpec) -> None:
     assert isinstance(make_provider(spec.name, remote), GatedProvider)
 
 
-# --model and --max-tokens reach whichever provider runs.
+# OpenRouter alone has the router extras (the pro tier, routing, X-Title, its cost, -iok-).
+def test_only_openrouter_is_a_router() -> None:
+    assert [spec.name for spec in PROVIDERS.values() if spec.router] == ["openrouter"]
+    openai = PROVIDERS["openai"]
+    assert (openai.cap_field, openai.effort, openai.router) == (
+        "max_completion_tokens",
+        "openai_reasoning_effort",
+        False,
+    )
+    assert (openai.temperature, openai.cap) == ("openai_temperature", "openai_max_tokens")
+
+
+# --model, --effort and --max-tokens reach whichever provider runs (--effort those with one).
 def test_overrides_reach_every_provider() -> None:
-    cfg = Settings().with_overrides(model="m", max_tokens="300")
+    cfg = Settings().with_overrides(model="m", effort="medium", max_tokens="300")
     for spec in PROVIDERS.values():
         assert getattr(cfg, f"{spec.name}_model") == "m"
         if spec.cap:
             assert getattr(cfg, spec.cap) == 300
+        if spec.effort:
+            assert getattr(cfg, spec.effort) == "medium"
     assert cfg.call_max_tokens == 300
+    assert [s.name for s in PROVIDERS.values() if s.effort] == ["openrouter", "openai"]
 
 
 def test_setup_lists_every_provider_cloud_first() -> None:
@@ -143,6 +168,7 @@ def test_stub_points_every_provider_at_the_stub() -> None:
         "LMSTUDIO_BASE_URL": "http://127.0.0.1:4242/v1",
         "OPENROUTER_BASE_URL": "http://127.0.0.1:4242/api/v1",
         "ANTHROPIC_BASE_URL": "http://127.0.0.1:4242",
+        "OPENAI_BASE_URL": "http://127.0.0.1:4242/v1",
     }
     for spec in PROVIDERS.values():
         assert getattr(cfg, f"{spec.name}_base_url") == env[spec.url_setting]

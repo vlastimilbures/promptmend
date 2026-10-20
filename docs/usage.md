@@ -27,6 +27,7 @@ match files it writes into Espanso. Read it after [installing](install.md) and r
 | `-il-` | General prompt improvement, fully local | Ollama | — | No (see below) | `general` |
 | `-ilm-` | General prompt improvement, fully local | LM Studio | — | No (see below) | `general` |
 | `-ic-` | General improvement through Claude (commented out by default) | Anthropic | `ANTHROPIC_API_KEY` | Yes, [gated](privacy.md#the-data-protection-gate) | `general` |
+| `-io-` | The golden-template rewrite through OpenAI directly (commented out by default) | OpenAI | `OPENAI_API_KEY` | Yes, [gated](privacy.md#the-data-protection-gate) | `PROMPT_PROFILE` (`default`) |
 | `-p-` | An empty golden template to fill in, opening with your persona | — | — | No | — |
 | `-risk-` | A static risk-analysis prompt scaffold to fill in | — | — | No | — |
 
@@ -45,8 +46,9 @@ model has no `cloud` tag; otherwise the draft leaves it and the gate runs as for
 
 One rule decides which triggers a deploy turns on: a trigger is active unless it needs a key
 you opt into. So `-il-` and `-ilm-` are always active, even with no Ollama or LM Studio
-installed, and `-ic-` ships commented out (uncomment it once `ANTHROPIC_API_KEY` is set). A
-local trigger whose server does not answer pastes an error marker. `promptmend doctor`
+installed, and `-ic-` and `-io-` ship commented out (uncomment one once its key,
+`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, is set). A local trigger whose server does not answer
+pastes an error marker. `promptmend doctor`
 (`local_servers`) and the interface's Triggers tab (State `needs Ollama`, `needs LM Studio`)
 say so; they ask only a server on this machine, with one short request, never a trigger.
 `doctor`'s `keys` check names the deployed triggers that need each missing key.
@@ -177,8 +179,8 @@ accept.
 
 ## Your own triggers
 
-Put your own variants (an `-ic-` for Anthropic, an `-if-` with other lists, a trigger with
-another profile) in a file of your own in Espanso's `match/` folder, such as `my-prompts.yml`:
+Put your own variants (an `-ic-` for Anthropic, an `-io-` for OpenAI, an `-if-` with other
+lists, a trigger with another profile) in a file of your own in Espanso's `match/` folder, such as `my-prompts.yml`:
 
 1. Copy the match from the deployed `prompts-llm.yml`, which already holds the CLI's absolute
    path.
@@ -208,7 +210,8 @@ another profile) in a file of your own in Espanso's `match/` folder, such as `my
 then keeps your copy (or replaces it, with a backup, if you choose ours), so it no longer
 receives updates.
 
-In a checkout, you can enable `-ic-` by uncommenting it in `espanso/match/prompts-llm.yml`
+In a checkout, you can enable `-ic-` or `-io-` by uncommenting it in
+`espanso/match/prompts-llm.yml`
 and running `promptmend espanso deploy` (or the install script) again.
 
 ## Managing the match files

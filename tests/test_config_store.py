@@ -1103,7 +1103,7 @@ def test_secret_sentinel(saved_mode: Path, project: Path) -> None:
 
 # Every secret field is flagged, so it can never be saved in config.toml.
 def test_secret_names() -> None:
-    assert secret_names() == ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY")
+    assert secret_names() == ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
     assert set(secret_names()) <= set(env_names())
 
 

@@ -91,11 +91,11 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
 - `tests/test_yaml.py` enforces, for every match (commented-out ones too): `force_mode:
   clipboard` on every CLI match, its own `label:` (`PromptMend: …`), `left_word: true`, and a
   literal `--trigger-id <id>` right after the subcommand from `recorder.TRIGGER_IDS`
-  (`i iok ip if il ilm ic p`), never a `{{form}}` value.
+  (`i iok ip if il ilm ic io p`), never a `{{form}}` value.
 - The `-if-` form's fields stay fixed choices, each a whole args item (no free text reaches
   the CLI), each list starting with and defaulting to `default`, timeouts at most 120 s.
 - `espanso/match/prompts-core.yml` holds static snippets (no CLI call); `-ic-` (Anthropic)
-  stays commented out. `tests/test_triggers.py` replays every match's args as a real process
+  and `-io-` (OpenAI) stay commented out. `tests/test_triggers.py` replays every match's args as a real process
   against `smoke`'s stub.
 - Nothing is ever deployed to Espanso's `config/`; `deploy` writes only into
   `<espanso>/match/`, never overwrites a file the user edited without an explicit choice, and
@@ -105,7 +105,7 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
 
 - `factory.make_provider()` is the only place providers are built (the CLI, the interface and
   `scripts/bench_models.py` all use it). It wraps everything that can send the draft off the
-  machine (`leaves_machine()`: OpenRouter and Anthropic always; Ollama/LM Studio on a
+  machine (`leaves_machine()`: OpenRouter, Anthropic and OpenAI always; Ollama/LM Studio on a
   non-loopback URL or an Ollama `cloud` model) in `gate.GatedProvider`, which runs
   `redaction.scan_draft()` and blocks a flagged draft unless `ALLOW_CLOUD_OVERRIDE=true`.
 - **A new provider that can leave the machine must return through `_gate()` and be reported by

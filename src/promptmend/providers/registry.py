@@ -28,6 +28,16 @@ class ProviderSpec:
     cap: str | None = None
     # The Settings field of its own temperature; None: PROMPT_TEMPERATURE (Settings.temperature).
     temperature: str | None = None
+    # The request field that carries the output cap (OpenAI's reasoning models reject
+    # max_tokens and want max_completion_tokens).
+    cap_field: str = "max_tokens"
+    # The Settings field of its reasoning effort, which --effort also sets; None: it has none,
+    # and --effort is refused for it.
+    effort: str | None = None
+    # OpenRouter's own API: the pro tier (--tier pro, OPENROUTER_PRO_*), endpoint routing and
+    # the nested `reasoning` field, X-Title, the cost in each reply, the bench hooks and the
+    # -iok- trigger. A spec without it sends its effort as a top-level `reasoning_effort`.
+    router: bool = False
     # Where doctor asks a local server whether it answers, below its base URL.
     probe_path: str | None = None
 
@@ -66,6 +76,8 @@ PROVIDERS: dict[str, ProviderSpec] = {
             cloud=True,
             key="OPENROUTER_API_KEY",
             cap="openrouter_max_tokens",
+            effort="openrouter_reasoning_effort",
+            router=True,
         ),
         ProviderSpec(
             "anthropic",
@@ -76,6 +88,18 @@ PROVIDERS: dict[str, ProviderSpec] = {
             key="ANTHROPIC_API_KEY",
             cap="anthropic_max_tokens",
             temperature="anthropic_temperature",
+        ),
+        ProviderSpec(
+            "openai",
+            "OpenAI",
+            "cloud, GPT models, needs a key",
+            "openai",
+            cloud=True,
+            key="OPENAI_API_KEY",
+            cap="openai_max_tokens",
+            temperature="openai_temperature",
+            cap_field="max_completion_tokens",
+            effort="openai_reasoning_effort",
         ),
     )
 }

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 # The managed Espanso matches pass these as --trigger-id, each as a literal argument. Stored
 # as the trigger itself (`i` -> `-i-`), the shape history.py keeps.
-TRIGGER_IDS = ("i", "iok", "ip", "if", "il", "ilm", "ic", "p")
+TRIGGER_IDS = ("i", "iok", "ip", "if", "il", "ilm", "ic", "io", "p")
 # Stored for a real call from the interface's Try tab (a direct call, no match), so stats can
 # tell it from a bare `promptmend improve` (#222). Never a --trigger-id value.
 TRY_TAB = "-try-"

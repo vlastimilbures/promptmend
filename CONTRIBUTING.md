@@ -71,8 +71,8 @@ The Home and Try snapshots are also the README's screenshots (`docs/interface.sv
 so a release regenerates none of them.
 
 If you change a prompt, a provider or anything on the request path, also run the opt-in live
-tests (needs `OPENROUTER_API_KEY` in `.env`, costs fractions of a cent; the Anthropic one also
-needs `ANTHROPIC_API_KEY` and is skipped without it):
+tests (needs `OPENROUTER_API_KEY` in `.env`, costs fractions of a cent; the Anthropic and
+OpenAI ones also need `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` and are skipped without it):
 
 ```bash
 uv run pytest -m live
@@ -277,7 +277,7 @@ path. Raise the ceiling only with new measurements here.
 promptmend/
 ├── espanso/                      deployed into Espanso by `promptmend espanso deploy`
 │   ├── match/                    also shipped in the wheel, see assets.py
-│   │   ├── prompts-llm.yml       -i- -ip- -if- -iok- -il- -ilm- (-ic-): call the CLI
+│   │   ├── prompts-llm.yml       -i- -ip- -if- -iok- -il- -ilm- (-ic- -io-): call the CLI
 │   │   ├── prompts-core.yml      -risk-: static snippet
 │   │   └── prompts-template.yml  -p-: the empty golden template, opens with your persona
 ├── src/promptmend/               the promptmend CLI
@@ -316,7 +316,7 @@ promptmend/
 │       ├── registry.py           ProviderSpec: what each provider is (PROVIDERS)
 │       ├── base.py               HTTP call, error mapping, <think> stripping
 │       ├── usage.py              per-attempt tokens and cost (AttemptUsage) for an observer
-│       ├── openai_compatible.py  OpenRouter and LM Studio
+│       ├── openai_compatible.py  OpenRouter, OpenAI and LM Studio
 │       ├── anthropic.py          Anthropic Messages API
 │       └── ollama.py             Ollama /api/chat
 ├── packaging/windows/            PyInstaller spec and entry script of the Windows zip (#185)
@@ -334,7 +334,7 @@ promptmend/
 │   ├── render_diagram.py         docs/flow.mmd to README's light and dark SVGs
 │   └── release_notes.py          release: the version and its CHANGELOG notes
 ├── tests/                        unit tests, no network (fake_http in conftest.py)
-│   ├── test_live.py              opt-in real OpenRouter/Anthropic calls (-m live)
+│   ├── test_live.py              opt-in real OpenRouter/Anthropic/OpenAI calls (-m live)
 │   ├── test_trigger_contract.py  exact trigger output, imports and module budget
 │   ├── test_tui.py               the interface, driven headless with Textual's Pilot
 │   ├── test_tui_snapshots.py     SVG snapshots of each tab (snapshots/, UPDATE_SNAPSHOTS=1)

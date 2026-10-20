@@ -231,9 +231,10 @@ def test_merged_env_line_is_reported_not_pasted(tmp_path: Path) -> None:
             "default",
         ],
         ["--provider", "anthropic", "--profile", "general"],
+        ["--provider", "openai"],
         ["--provider", "openrouter", "--allow-flagged"],
     ],
-    ids=["-i-", "-ip-", "-if-", "-ic-", "-iok-"],
+    ids=["-i-", "-ip-", "-if-", "-ic-", "-io-", "-iok-"],
 )
 def test_local_only_blocks_cloud_triggers(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, args: list[str]
@@ -241,6 +242,7 @@ def test_local_only_blocks_cloud_triggers(
     monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     result = improve(*args, "--source", "argument", "--text", "draft")
     assert result.exit_code == 0
     assert result.stdout.startswith("[promptmend: PROMPT_LOCAL_ONLY=true: ")
@@ -950,21 +952,33 @@ def test_ollama_capped_hint(fake_http: FakeHttp) -> None:
     assert improve(*args).stdout.endswith("before writing any text; raise --max-tokens]")
 
 
-# --tier pro and --effort apply only to OpenRouter: elsewhere they are refused inline with no
-# call; the neutral values (--tier standard, --effort default) are not.
-@pytest.mark.parametrize("provider", ["ollama", "lmstudio", "anthropic"])
+# --tier pro applies only to OpenRouter and --effort only to OpenRouter and OpenAI: elsewhere
+# they are refused inline with no call; the neutral values (--tier standard, --effort default)
+# are not.
+_PRO = "--tier pro applies only to OpenRouter"
+_EFFORT = "--effort applies only to OpenRouter and OpenAI"
+
+
 @pytest.mark.parametrize(
-    ("args", "named"),
-    [(["--tier", "pro"], "--tier pro"), (["--effort", "high"], "--effort"),
-     (["--effort", "none"], "--effort")],
+    ("provider", "args", "refusal"),
+    [
+        *((p, ["--tier", "pro"], _PRO) for p in ("ollama", "lmstudio", "anthropic", "openai")),
+        *((p, ["--effort", e], _EFFORT) for p in ("ollama", "lmstudio", "anthropic")
+          for e in ("high", "none")),
+    ],
 )  # fmt: skip
-def test_openrouter_only_options_refused(
-    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, provider: str, args: list[str], named: str
+def test_provider_options_refused(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_http: FakeHttp,
+    provider: str,
+    args: list[str],
+    refusal: str,
 ) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "-".join(("test", "key")))
+    monkeypatch.setenv("OPENAI_API_KEY", "-".join(("test", "key")))
     result = improve("--provider", provider, *args, "--source", "argument", "--text", "d")
     assert result.exit_code == 0
-    assert result.stdout == f"[promptmend: {named} applies only to OpenRouter, not '{provider}']"
+    assert result.stdout == f"[promptmend: {refusal}, not '{provider}']"
     assert fake_http.requests == []
 
 
@@ -974,7 +988,7 @@ def test_neutral_tier_and_effort_pass_for_local(fake_http: FakeHttp) -> None:
 
 
 # PROMPT_PROVIDER decides when --provider is not given.
-def test_openrouter_only_uses_configured_provider(
+def test_provider_options_use_configured_provider(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp
 ) -> None:
     monkeypatch.setenv("PROMPT_PROVIDER", "ollama")
@@ -997,16 +1011,18 @@ def test_empty_temperature_is_omitted(monkeypatch: pytest.MonkeyPatch, fake_http
 _CLOUD_BODIES = {
     "openrouter": _LOCAL_BODIES["lmstudio"],
     "anthropic": {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"},
+    "openai": _LOCAL_BODIES["lmstudio"],
 }
 
 
 def _cloud_body(
-    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, provider: str
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, provider: str, *args: str
 ) -> dict[str, Any]:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     fake_http.reply(_CLOUD_BODIES[provider])
-    result = improve("--provider", provider, "--source", "argument", "--text", "d")
+    result = improve("--provider", provider, *args, "--source", "argument", "--text", "d")
     assert (result.exit_code, result.stdout) == (0, "ok")
     ((call),) = fake_http.calls
     return {k: v for k, v in call["json"].items() if k not in ("messages", "system")}
@@ -1020,7 +1036,7 @@ def _temperatures(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> dict[
         body = _local_body(fake_http, provider)
         found[provider] = body.get("options", body).get("temperature")
         fake_http.requests.clear()
-    for provider in ("openrouter", "anthropic"):
+    for provider in ("openrouter", "anthropic", "openai"):
         found[provider] = _cloud_body(monkeypatch, fake_http, provider).get("temperature")
         fake_http.requests.clear()
     return found
@@ -1048,13 +1064,15 @@ def test_anthropic_sends_no_temperature_by_default(
 # Each temperature reaches only its own providers.
 def test_temperature_is_per_provider(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> None:
     monkeypatch.setenv("ANTHROPIC_TEMPERATURE", "1")
+    monkeypatch.setenv("OPENAI_TEMPERATURE", "0.5")
     assert _temperatures(monkeypatch, fake_http) == {
-        "ollama": 0.2, "lmstudio": 0.2, "openrouter": 0.2, "anthropic": 1.0,
+        "ollama": 0.2, "lmstudio": 0.2, "openrouter": 0.2, "anthropic": 1.0, "openai": 0.5,
     }  # fmt: skip
     monkeypatch.setenv("PROMPT_TEMPERATURE", "0.7")
     monkeypatch.setenv("ANTHROPIC_TEMPERATURE", "")
+    monkeypatch.setenv("OPENAI_TEMPERATURE", "")
     assert _temperatures(monkeypatch, fake_http) == {
-        "ollama": 0.7, "lmstudio": 0.7, "openrouter": 0.7, "anthropic": None,
+        "ollama": 0.7, "lmstudio": 0.7, "openrouter": 0.7, "anthropic": None, "openai": None,
     }  # fmt: skip
 
 
@@ -1077,6 +1095,47 @@ def test_bad_anthropic_temperature_is_a_marker(
     assert result.stdout.startswith(
         "[promptmend: ANTHROPIC_TEMPERATURE must be empty or a number of 0 or more"
     )
+    assert fake_http.requests == []
+
+
+# --effort, --model and --max-tokens reach OpenAI (#274): the effort as its top-level
+# reasoning_effort, the cap as max_completion_tokens; OpenRouter's body keeps its own fields.
+def test_call_options_reach_openai(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> None:
+    assert _cloud_body(monkeypatch, fake_http, "openai") == {
+        "model": "gpt-6-luna",
+        "max_completion_tokens": 2400,
+        "reasoning_effort": "low",
+    }
+    fake_http.requests.clear()
+    args = ("--effort", "high", "--model", "gpt-x", "--max-tokens", "300")
+    assert _cloud_body(monkeypatch, fake_http, "openai", *args) == {
+        "model": "gpt-x",
+        "max_completion_tokens": 300,
+        "reasoning_effort": "high",
+    }
+    fake_http.requests.clear()
+    body = _cloud_body(monkeypatch, fake_http, "openrouter", "--effort", "high")
+    assert body["reasoning"] == {"effort": "high", "exclude": True}
+    assert "reasoning_effort" not in body
+
+
+# A bad OPENAI_* value stops the trigger with a marker naming it, before any call.
+@pytest.mark.parametrize(
+    ("name", "value", "expected"),
+    [
+        ("OPENAI_REASONING_EFFORT", "max", "must be empty or one of none, minimal"),
+        ("OPENAI_TEMPERATURE", "warm", "must be empty or a number of 0 or more"),
+        ("OPENAI_MAX_TOKENS", "0", "must be a whole number above 0"),
+    ],
+)
+def test_bad_openai_setting_is_a_marker(
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, name: str, value: str, expected: str
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv(name, value)
+    result = improve("--provider", "openai", "--source", "argument", "--text", "d")
+    assert result.exit_code == 0
+    assert result.stdout.startswith(f"[promptmend: {name} {expected}")
     assert fake_http.requests == []
 
 
