@@ -15,6 +15,7 @@ import pytest
 from typer.testing import CliRunner
 
 import promptmend.cli as cli
+from promptmend import config
 from promptmend.cli import _read_input, app
 from promptmend.config import Settings
 from promptmend.prompt_builder import system_prompt
@@ -981,12 +982,108 @@ def test_openrouter_only_uses_configured_provider(
     assert result.stdout == "[promptmend: --tier pro applies only to OpenRouter, not 'ollama']"
 
 
-# An empty PROMPT_TEMPERATURE omits the temperature from every request.
+# An empty PROMPT_TEMPERATURE omits the temperature from every request that uses it.
 def test_empty_temperature_is_omitted(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> None:
     monkeypatch.setenv("PROMPT_TEMPERATURE", "")
     assert "options" not in _local_body(fake_http, "ollama")
     fake_http.requests.clear()
     assert "temperature" not in _local_body(fake_http, "lmstudio")
+    fake_http.requests.clear()
+    assert "temperature" not in _cloud_body(monkeypatch, fake_http, "openrouter")
+    fake_http.requests.clear()
+    assert "temperature" not in _cloud_body(monkeypatch, fake_http, "anthropic")
+
+
+# --- Per-provider temperature (#273) -------------------------------------------------------
+
+_CLOUD_BODIES = {
+    "openrouter": _LOCAL_BODIES["lmstudio"],
+    "anthropic": {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"},
+}
+
+
+def _cloud_body(
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, provider: str
+) -> dict[str, Any]:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    fake_http.reply(_CLOUD_BODIES[provider])
+    result = improve("--provider", provider, "--source", "argument", "--text", "d")
+    assert (result.exit_code, result.stdout) == (0, "ok")
+    ((call),) = fake_http.calls
+    return {k: v for k, v in call["json"].items() if k not in ("messages", "system")}
+
+
+def _temperatures(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> dict[str, object]:
+    """The temperature each provider's request carries (None: the field is absent)."""
+    found: dict[str, object] = {}
+    fake_http.requests.clear()
+    for provider in ("ollama", "lmstudio"):
+        body = _local_body(fake_http, provider)
+        found[provider] = body.get("options", body).get("temperature")
+        fake_http.requests.clear()
+    for provider in ("openrouter", "anthropic"):
+        found[provider] = _cloud_body(monkeypatch, fake_http, provider).get("temperature")
+        fake_http.requests.clear()
+    return found
+
+
+# Claude 4.7+ rejects any temperature below 1: by default Anthropic gets none, while the
+# OpenRouter body is what it always was.
+def test_anthropic_sends_no_temperature_by_default(
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp
+) -> None:
+    assert _cloud_body(monkeypatch, fake_http, "openrouter") == {
+        "model": "google/gemini-3.5-flash-lite",
+        "max_tokens": 2400,
+        "temperature": 0.2,
+        "provider": {"order": ["google-ai-studio/flex"]},
+        "reasoning": {"effort": "minimal", "exclude": True},
+    }
+    fake_http.requests.clear()
+    assert _cloud_body(monkeypatch, fake_http, "anthropic") == {
+        "model": "claude-sonnet-5",
+        "max_tokens": 2400,
+    }
+    assert _temperatures(monkeypatch, fake_http) == {
+        "ollama": 0.2, "lmstudio": 0.2, "openrouter": 0.2, "anthropic": None,
+    }  # fmt: skip
+
+
+# Each temperature reaches only its own providers.
+def test_temperature_is_per_provider(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> None:
+    monkeypatch.setenv("ANTHROPIC_TEMPERATURE", "1")
+    assert _temperatures(monkeypatch, fake_http) == {
+        "ollama": 0.2, "lmstudio": 0.2, "openrouter": 0.2, "anthropic": 1.0,
+    }  # fmt: skip
+    monkeypatch.setenv("PROMPT_TEMPERATURE", "0.7")
+    monkeypatch.setenv("ANTHROPIC_TEMPERATURE", "")
+    assert _temperatures(monkeypatch, fake_http) == {
+        "ollama": 0.7, "lmstudio": 0.7, "openrouter": 0.7, "anthropic": None,
+    }  # fmt: skip
+
+
+# A saved ANTHROPIC_TEMPERATURE (config.toml) is sent as is.
+def test_saved_anthropic_temperature(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> None:
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    directory = config._user_config_dir(os.environ)
+    directory.mkdir(parents=True)
+    (directory / "config.toml").write_text("config_version = 1\nANTHROPIC_TEMPERATURE = 0.5\n")
+    assert _cloud_body(monkeypatch, fake_http, "anthropic")["temperature"] == 0.5
+
+
+# A bad ANTHROPIC_TEMPERATURE stops the trigger with a marker naming it, before any call.
+def test_bad_anthropic_temperature_is_a_marker(
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_TEMPERATURE", "warm")
+    result = improve("--provider", "anthropic", "--source", "argument", "--text", "d")
+    assert result.exit_code == 0
+    assert result.stdout.startswith(
+        "[promptmend: ANTHROPIC_TEMPERATURE must be empty or a number of 0 or more"
+    )
+    assert fake_http.requests == []
 
 
 def _openrouter_max_tokens(

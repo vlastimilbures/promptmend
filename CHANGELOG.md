@@ -11,6 +11,12 @@ All notable changes to this project are documented here. The format follows
   (no intro, no command line, no Previous install), and docs/interface.md no longer calls
   `setup` a question-and-answer alternative.
 
+### Fixed
+- Anthropic calls no longer send `PROMPT_TEMPERATURE` (default 0.2), which Claude 4.7 and
+  later models reject with HTTP 400, so the default Anthropic setup and `-ic-` failed (#273).
+  Anthropic has its own `ANTHROPIC_TEMPERATURE`, empty by default (no temperature is sent);
+  `PROMPT_TEMPERATURE` still applies to OpenRouter, Ollama and LM Studio.
+
 ## 0.25.0 - 2026-10-14
 
 ### Changed

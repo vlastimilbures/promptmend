@@ -26,6 +26,8 @@ class ProviderSpec:
     # The Settings field of its own output cap, which --max-tokens also sets; None: it has no
     # cap setting, and only a --max-tokens (Settings.call_max_tokens) caps it.
     cap: str | None = None
+    # The Settings field of its own temperature; None: PROMPT_TEMPERATURE (Settings.temperature).
+    temperature: str | None = None
     # Where doctor asks a local server whether it answers, below its base URL.
     probe_path: str | None = None
 
@@ -73,6 +75,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
             cloud=True,
             key="ANTHROPIC_API_KEY",
             cap="anthropic_max_tokens",
+            temperature="anthropic_temperature",
         ),
     )
 }

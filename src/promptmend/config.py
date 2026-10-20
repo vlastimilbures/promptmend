@@ -386,8 +386,8 @@ _non_negative_float = _number(float, "a number of 0 or more", lambda v: v >= 0)
 
 
 def _temperature(raw: str) -> float | None:
-    """PROMPT_TEMPERATURE: empty (set, but to nothing) sends no temperature at all, for
-    models that reject the field; unset keeps the default."""
+    """PROMPT_TEMPERATURE or ANTHROPIC_TEMPERATURE: empty (set, but to nothing) sends no
+    temperature at all, for models that reject the field; unset keeps the default."""
     if raw == "":
         return None
     try:
@@ -545,7 +545,8 @@ class Settings:
     output: str = _env("PROMPT_OUTPUT", PASTE, _output)
     timeout: float = _env("PROMPT_TIMEOUT_SECONDS", "30", _positive_float)
     # Low by default: the rewrite must reproduce fixed template wordings verbatim.
-    # Empty omits the temperature from every request (models that reject the field).
+    # Empty omits the temperature from every OpenRouter, Ollama and LM Studio request (models
+    # that reject the field); Anthropic has its own, anthropic_temperature.
     temperature: float | None = _env("PROMPT_TEMPERATURE", "0.2", _temperature)
     ollama_base_url: str = _env("OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_model: str = _env("OLLAMA_MODEL", "qwen3:8b")
@@ -596,6 +597,9 @@ class Settings:
     anthropic_model: str = _env("ANTHROPIC_MODEL", "claude-sonnet-5")
     anthropic_api_key: str = _env("ANTHROPIC_API_KEY", "", str.strip, secret=True)
     anthropic_max_tokens: int = _env("ANTHROPIC_MAX_TOKENS", "2400", _positive_int)
+    # Claude 4.7 and later reject any temperature below 1 (HTTP 400, #273), so empty (the
+    # default) sends none; a set value is sent as is.
+    anthropic_temperature: float | None = _env("ANTHROPIC_TEMPERATURE", "", _temperature)
     allow_cloud_override: bool = _env("ALLOW_CLOUD_OVERRIDE", "false", _bool)
     # Refuse every provider that can send the draft off this machine (factory.make_provider),
     # whatever --provider a trigger passes.

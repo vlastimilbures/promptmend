@@ -160,7 +160,7 @@ included (see [Privacy](privacy.md#what-is-sent-and-to-whom)).
 | `PROMPT_PROFILE_OVERRIDES` | *(empty)* | Comma-separated built-in profiles (`default`, `general`) your own same-named file replaces, see [Profiles](profiles.md#replacing-a-built-in) |
 | `PROMPT_OUTPUT` | `paste` | `clipboard` puts the rewrite on the clipboard instead of pasting it, see [clipboard output](usage.md#output-paste-or-clipboard) |
 | `PROMPT_TIMEOUT_SECONDS` | `30` | Time limit for one call, retry included |
-| `PROMPT_TEMPERATURE` | `0.2` | Kept low so fixed template wording survives; empty (`PROMPT_TEMPERATURE=`, or `config set PROMPT_TEMPERATURE ""`) sends no temperature, for models that reject it, while unset keeps `0.2` |
+| `PROMPT_TEMPERATURE` | `0.2` | For OpenRouter, Ollama and LM Studio; Anthropic uses `ANTHROPIC_TEMPERATURE` instead. Kept low so fixed template wording survives; empty (`PROMPT_TEMPERATURE=`, or `config set PROMPT_TEMPERATURE ""`) sends no temperature, for models that reject it, while unset keeps `0.2` |
 
 ### OpenRouter
 
@@ -195,6 +195,7 @@ Used by `-ip-`, `-if-` and `--tier pro`.
 | `ANTHROPIC_API_KEY` | — | Required for Anthropic |
 | `ANTHROPIC_MODEL` | `claude-sonnet-5` | Model |
 | `ANTHROPIC_MAX_TOKENS` | `2400` | Output cap |
+| `ANTHROPIC_TEMPERATURE` | *(empty)* | Sampling temperature for Anthropic; empty sends none, since Claude 4.7 and later reject any temperature below 1. A set value is sent as is |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | API endpoint; must be `https://` |
 
 ### Ollama
