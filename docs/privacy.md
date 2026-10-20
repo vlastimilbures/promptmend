@@ -47,10 +47,11 @@ carrying:
 - **the system prompt**: the profile's instructions and, with the `default` profile (or your
   own profile using `{{PERSONA_RULE}}`), your `PROMPT_PERSONA` sentence, word for word;
 - **the model name and request settings**, such as the temperature and maximum tokens (for
-  OpenRouter also the reasoning effort and the endpoint preference; for Ollama its `think`
-  setting and `num_ctx` when set; the Anthropic API version header);
+  OpenRouter also the reasoning effort and the endpoint preference; for OpenAI the reasoning
+  effort; for Ollama its `think` setting and `num_ctx` when set; the Anthropic API version
+  header);
 - **the API key**, only as the authentication header (`Authorization: Bearer …` for
-  OpenRouter, `x-api-key` for Anthropic; none for Ollama or LM Studio).
+  OpenRouter and OpenAI, `x-api-key` for Anthropic; none for Ollama or LM Studio).
 
 The persona goes with every such call and is **not** scanned by the gate: an email, a company
 name or one of your `PROMPT_EXTRA_PATTERNS` in the persona is sent even where the same text in
@@ -65,6 +66,7 @@ unless `PROMPT_GATE_LOCAL=true`), and name what it matches, never the text.
 |----------|------------|
 | OpenRouter (`-i-`, `-iok-`, `-ip-`, `-if-`) | OpenRouter (`OPENROUTER_BASE_URL`), and the upstream endpoint that serves the model: the one pinned by `OPENROUTER_PROVIDER` (`OPENROUTER_PRO_PROVIDER` for `-ip-`, the form's pick for `-if-`), or another endpoint serving the same model when OpenRouter falls back, which `OPENROUTER_ALLOW_FALLBACKS` allows by default (`false` makes the pin binding). An empty pin leaves the choice to OpenRouter. The request carries an `X-Title: promptmend` header, which attributes the calls to this app in OpenRouter's dashboard (the benchmark script sends `promptmend-bench`) |
 | Anthropic (`-ic-`, commented out) | Anthropic (`ANTHROPIC_BASE_URL`) |
+| OpenAI (`-io-`, commented out) | OpenAI (`OPENAI_BASE_URL`), called directly, not through OpenRouter |
 | Ollama / LM Studio on `localhost` (`-il-`, `-ilm-`) | Nobody else, as long as the server on this machine runs the model itself (a `localhost` relay that forwards to a cloud API is not detected; a `cloud`-tagged Ollama model is the next row). These triggers use the `general` profile, which has no persona |
 | Ollama / LM Studio at another address, or an Ollama `cloud` model | The configured server (`OLLAMA_BASE_URL`/`api/chat` or `LMSTUDIO_BASE_URL`); for a cloud model, that Ollama server also forwards the request to ollama.com (this tool sends no key there). With an `http://` URL anyone on the network path can read the draft too. The gate applies as for the cloud providers |
 
@@ -85,8 +87,8 @@ after the trigger.
 
 How long each recipient keeps the request, and whether it may train on it, is set by them, not
 by this tool. See OpenRouter's privacy and data settings for your account (they cover which
-upstream endpoints it may route to) and the privacy terms of the upstream provider or of
-Anthropic.
+upstream endpoints it may route to) and the privacy terms of the upstream provider, of
+Anthropic or of OpenAI.
 
 To make the request itself carry that choice, set `OPENROUTER_DATA_COLLECTION=deny` (empty,
 the default, sends no such field). The request then asks OpenRouter, through its
@@ -108,7 +110,7 @@ or clear the setting.
 Every call that can send the draft off your machine first runs through a regex gate
 ([`redaction.py`](../src/promptmend/redaction.py)):
 
-- OpenRouter and Anthropic, always;
+- OpenRouter, Anthropic and OpenAI, always;
 - Ollama or LM Studio when their base URL is not loopback (`localhost`, `127.0.0.0/8` or `::1`);
 - Ollama when the model is a cloud model: a `:cloud` or `-cloud` tag in any letter case, also
   with an `@sha256:…` digest, which the local daemon forwards to ollama.com;
@@ -328,7 +330,7 @@ writes. `promptmend history reset` deletes the spool too. Only a disk the operat
 itself stalls (a hung network drive) can hold a write up longer.
 
 Costs are kept only as the provider reported them; an unknown cost is shown as unknown, never
-as 0. For an estimate where a provider reports no cost (Anthropic), create `prices.toml` in the
+as 0. For an estimate where a provider reports no cost (Anthropic, OpenAI), create `prices.toml` in the
 [config folder](configuration.md#files-and-folders) with your prices per million tokens:
 
 ```toml

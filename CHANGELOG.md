@@ -6,7 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Added
+- OpenAI as a direct provider (`--provider openai`, #274), called at `/chat/completions` the
+  way its reasoning models need: the output cap as `max_completion_tokens`, a top-level
+  `reasoning_effort` and no temperature by default. New settings `OPENAI_API_KEY` (in the
+  secret store), `OPENAI_MODEL` (`gpt-6-luna`), `OPENAI_BASE_URL` (https only),
+  `OPENAI_MAX_TOKENS` (2400), `OPENAI_REASONING_EFFORT` (`low`; empty omits it) and
+  `OPENAI_TEMPERATURE` (empty: none sent). It always leaves the machine, so the
+  data-protection gate always runs and `PROMPT_LOCAL_ONLY=true` refuses it. Its usage records
+  hold its token counts; OpenAI reports no cost, so the cost is unknown.
+- A `-io-` trigger for OpenAI, shipped commented out like `-ic-`; it uses `PROMPT_PROFILE`.
+
 ### Changed
+- `--effort` is accepted with `--provider openai` too (it sets `OPENAI_REASONING_EFFORT` for
+  the call); `--tier pro` stays OpenRouter only. The refusal names which providers take each
+  option.
 - The interface screenshots in the README and docs show version 0.25.0 and today's screens
   (no intro, no command line, no Previous install), and docs/interface.md no longer calls
   `setup` a question-and-answer alternative.

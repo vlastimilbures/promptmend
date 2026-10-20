@@ -138,3 +138,17 @@ matches:
   #       type: script
   #       params:
   #         args: ["__PROMPT_WORKFLOW__", "improve", "--trigger-id", "ic", "--provider", "anthropic", "--profile", "general", "--source", "clipboard"]
+
+  # OpenAI cloud trigger, disabled by default. It sends clipboard content
+  # to the OpenAI API. Uncomment only if company policy permits, and note
+  # that the CLI still blocks sensitive content unless ALLOW_CLOUD_OVERRIDE=true.
+  # - trigger: "-io-"
+  #   label: "PromptMend: rewrite (OpenAI)"
+  #   left_word: true
+  #   replace: "{{output}}"
+  #   force_mode: clipboard
+  #   vars:
+  #     - name: output
+  #       type: script
+  #       params:
+  #         args: ["__PROMPT_WORKFLOW__", "improve", "--trigger-id", "io", "--provider", "openai", "--source", "clipboard"]

@@ -290,7 +290,7 @@ def test_persona_trigger_is_recorded_once(history_rows: HistoryRows) -> None:
 
 def _script_vars() -> dict[str, list[str]]:
     """trigger -> the args of its script var that runs the CLI, for every match that has one,
-    the commented-out -ic- included (each `# - trigger:` block, uncommented)."""
+    the commented-out -ic- and -io- included (each `# - trigger:` block, uncommented)."""
     found: dict[str, list[str]] = {}
     for path in sorted(MATCH_DIR.glob("*.yml")):
         text = path.read_text(encoding="utf-8")
@@ -325,7 +325,7 @@ def _launcher() -> list[str]:
 
 
 def test_every_cli_trigger_has_a_script_var() -> None:
-    assert set(SCRIPT_VARS) == {*EXPECTED, "-ic-", "-p-"}
+    assert set(SCRIPT_VARS) == {*EXPECTED, "-ic-", "-io-", "-p-"}
 
 
 # Espanso starts args[0] with the other items as its arguments, no shell, and treats a nonzero
@@ -344,7 +344,7 @@ def test_trigger_args_run_as_a_process(trigger: str) -> None:
     improve = args[1] == "improve"
     if trigger in COMMANDS:
         args = ["__PROMPT_WORKFLOW__", *_argv(trigger)]
-    elif improve:  # -ic-, commented out: no form, the same draft swap
+    elif improve:  # -ic- and -io-, commented out: no form, the same draft swap
         source = args.index("--source")
         args[source : source + 2] = ["--source", "argument", "--text", "draft"]
     with smoke.stub_server() as stub:

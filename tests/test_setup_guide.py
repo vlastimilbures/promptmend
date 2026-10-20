@@ -25,7 +25,7 @@ def test_provider_choices_name_their_triggers() -> None:
     choices = setup_guide.provider_choices(_settings(), assets.triggers())
     assert sorted(c.value for c in choices) == sorted(PROVIDER_NAMES)
     # The cloud providers (the default among them) first, then the local ones.
-    assert [c.value for c in choices] == ["openrouter", "anthropic", "ollama", "lmstudio"]
+    assert [c.value for c in choices] == ["openrouter", "anthropic", "openai", "ollama", "lmstudio"]
     by = {c.value: c for c in choices}
     assert "-i-" in by["openrouter"].detail
     assert "-il-" in by["ollama"].detail
@@ -52,6 +52,7 @@ def test_key_rows_follow_the_triggers_not_only_the_provider() -> None:
     assert rows["OPENROUTER_API_KEY"].needed
     assert "-i-" in rows["OPENROUTER_API_KEY"].triggers
     assert not rows["ANTHROPIC_API_KEY"].needed  # -ic- is commented out
+    assert not rows["OPENAI_API_KEY"].needed  # -io- too
     line = setup_guide.key_line(rows["ANTHROPIC_API_KEY"])
     assert line == "ANTHROPIC_API_KEY: not set; not needed by any active trigger"
     rows = {

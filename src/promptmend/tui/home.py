@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from .. import __version__, deploy, doctor, update_check
 from ..commands import common
+from ..config import has_pro_tier
 from ..factory import routes
 from .state import State
 
@@ -91,7 +92,7 @@ def _trigger_row(state: State, label: str, name: str) -> HomeRow:
         return HomeRow(FAIL, label, provider, "", "settings", f"{name} names {provider}")
     entries = state.layers.entries
     model_setting = route.model_setting
-    if trigger is not None and trigger.tier == "pro" and provider == "openrouter":
+    if trigger is not None and trigger.tier == "pro" and has_pro_tier(provider):
         model_setting = "OPENROUTER_PRO_MODEL"
     text = f"{provider} · {common.shown_value(model_setting, entries[model_setting])}"
     if route.refused:

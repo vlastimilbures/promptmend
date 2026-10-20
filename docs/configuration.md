@@ -160,7 +160,7 @@ included (see [Privacy](privacy.md#what-is-sent-and-to-whom)).
 | `PROMPT_PROFILE_OVERRIDES` | *(empty)* | Comma-separated built-in profiles (`default`, `general`) your own same-named file replaces, see [Profiles](profiles.md#replacing-a-built-in) |
 | `PROMPT_OUTPUT` | `paste` | `clipboard` puts the rewrite on the clipboard instead of pasting it, see [clipboard output](usage.md#output-paste-or-clipboard) |
 | `PROMPT_TIMEOUT_SECONDS` | `30` | Time limit for one call, retry included |
-| `PROMPT_TEMPERATURE` | `0.2` | For OpenRouter, Ollama and LM Studio; Anthropic uses `ANTHROPIC_TEMPERATURE` instead. Kept low so fixed template wording survives; empty (`PROMPT_TEMPERATURE=`, or `config set PROMPT_TEMPERATURE ""`) sends no temperature, for models that reject it, while unset keeps `0.2` |
+| `PROMPT_TEMPERATURE` | `0.2` | For OpenRouter, Ollama and LM Studio; Anthropic and OpenAI use `ANTHROPIC_TEMPERATURE` and `OPENAI_TEMPERATURE` instead. Kept low so fixed template wording survives; empty (`PROMPT_TEMPERATURE=`, or `config set PROMPT_TEMPERATURE ""`) sends no temperature, for models that reject it, while unset keeps `0.2` |
 
 ### OpenRouter
 
@@ -197,6 +197,19 @@ Used by `-ip-`, `-if-` and `--tier pro`.
 | `ANTHROPIC_MAX_TOKENS` | `2400` | Output cap |
 | `ANTHROPIC_TEMPERATURE` | *(empty)* | Sampling temperature for Anthropic; empty sends none, since current Claude models (Opus 4.7, Sonnet 5 and later) return HTTP 400 for a temperature (most for any value, the rest for any but the default). A set value is sent as is, so set it only for a model that accepts one |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | API endpoint; must be `https://` |
+
+### OpenAI
+
+OpenAI's own API, called directly (the commented-out `-io-` trigger, `--provider openai`).
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `OPENAI_API_KEY` | — | Required for OpenAI |
+| `OPENAI_MODEL` | `gpt-6-luna` | Model; the pro tier's model, benchmarked at effort `low` (see the [benchmark](benchmark.md)) |
+| `OPENAI_REASONING_EFFORT` | `low` | `none`…`high`, sent as `reasoning_effort` (each model accepts only some of them; OpenAI's `xhigh` and `max` are not offered, being too slow for a trigger); `--effort` sets it for one call. Empty omits it, for a model without a reasoning control, which rejects the field |
+| `OPENAI_MAX_TOKENS` | `2400` | Output cap, sent as `max_completion_tokens` (OpenAI's reasoning models reject `max_tokens`); the reasoning counts against it |
+| `OPENAI_TEMPERATURE` | *(empty)* | Sampling temperature for OpenAI; empty sends none, since OpenAI's reasoning models return HTTP 400 for any temperature but the default. A set value is sent as is, so set it only for a model that accepts one |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API endpoint; must be `https://` |
 
 ### Ollama
 

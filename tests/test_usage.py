@@ -213,6 +213,47 @@ def test_anthropic_mapping(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch)
     assert (record.charged_amount, record.cost_state, record.reasoning) == (None, "unknown", None)
 
 
+# OpenAI (#274) goes through openai_usage: its tokens, cached and reasoning ones included, and
+# no cost, so `unknown`, never 0; a `cost` field (OpenRouter's) is never read for it.
+def test_openai_mapping(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-" + "t" * 12)
+    records: list[AttemptUsage] = []
+    fake_http.reply(
+        _openai_body(
+            "rewritten",
+            id="chatcmpl-1",
+            model="gpt-6-luna-2026-09-01",
+            provider="OpenAI",
+            usage={
+                "prompt_tokens": 900,
+                "completion_tokens": 250,
+                "prompt_tokens_details": {"cached_tokens": 512},
+                "completion_tokens_details": {"reasoning_tokens": 180},
+                "cost": 0.5,
+            },
+        )
+    )
+    provider = make_provider("openai", Settings(), observer=records.append)
+    assert provider.generate("draft", "sys") == "rewritten"
+    (record,) = records
+    assert record == AttemptUsage(
+        provider="openai",
+        requested_model="gpt-6-luna",
+        endpoint="remote",
+        attempt=1,
+        status=200,
+        error_kind=None,
+        latency_ms=record.latency_ms,
+        cost_state="unknown",
+        returned_model="gpt-6-luna-2026-09-01",
+        generation_id="chatcmpl-1",
+        input_uncached=388,
+        cache_read=512,
+        output=250,
+        reasoning=180,
+    )
+
+
 _OLLAMA_BODY = {
     "model": "qwen3:8b",
     "message": {"content": "ok"},

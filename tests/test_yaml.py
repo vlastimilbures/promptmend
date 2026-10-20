@@ -27,7 +27,8 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _commented_matches(path: Path) -> list[dict[str, Any]]:
-    """Matches shipped commented out (such as -ic-): each `# - trigger:` block, uncommented."""
+    """Matches shipped commented out (such as -ic- and -io-): each `# - trigger:` block,
+    uncommented."""
     blocks: list[list[str]] = []
     current: list[str] | None = None
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -66,7 +67,7 @@ def test_triggers_are_unique_across_files() -> None:
 
 
 def _all_matches() -> list[dict[str, Any]]:
-    """Every match, the commented-out ones (-ic-) included."""
+    """Every match, the commented-out ones (-ic-, -io-) included."""
     matches = [m for path in MATCH_FILES for m in _load(path)["matches"]]
     return matches + [m for path in MATCH_FILES for m in _commented_matches(path)]
 
@@ -126,7 +127,7 @@ def test_cli_matches_paste_via_clipboard() -> None:
     matches = [m for path in MATCH_FILES for m in _load(path)["matches"]]
     matches += [m for path in MATCH_FILES for m in _commented_matches(path)]
     cli_matches = [m for m in matches if _calls_cli(m)]
-    expected = {"-i-", "-ip-", "-if-", "-iok-", "-il-", "-ilm-", "-ic-", "-p-"}
+    expected = {"-i-", "-ip-", "-if-", "-iok-", "-il-", "-ilm-", "-ic-", "-io-", "-p-"}
     assert {m["trigger"] for m in cli_matches} >= expected
     # Backstop: every CLI call in the raw text belongs to one of those matches, so none can
     # hide in global_vars or in a commented block the parser above does not recognise.
@@ -146,10 +147,10 @@ def test_no_match_ignores_errors() -> None:
         assert "ignore_error" not in path.read_text("utf-8"), path.name
 
 
-# Every match that runs the CLI, the commented-out -ic- included, names itself for the usage
-# history with one literal --trigger-id: its own trigger without the dashes, from the CLI's
-# allowlist. Never a {{form}} value or any other variable, and never shared, so two triggers
-# cannot be counted as one.
+# Every match that runs the CLI, the commented-out -ic- and -io- included, names itself for the
+# usage history with one literal --trigger-id: its own trigger without the dashes, from the
+# CLI's allowlist. Never a {{form}} value or any other variable, and never shared, so two
+# triggers cannot be counted as one.
 def test_cli_matches_pass_their_own_trigger_id() -> None:
     matches = [m for path in MATCH_FILES for m in _load(path)["matches"]]
     matches += [m for path in MATCH_FILES for m in _commented_matches(path)]
@@ -229,9 +230,24 @@ def test_no_trigger_is_inside_another() -> None:
 def test_triggers_fire_only_at_word_start() -> None:
     matches = [m for path in MATCH_FILES for m in _load(path)["matches"]]
     matches += [m for path in MATCH_FILES for m in _commented_matches(path)]
-    assert "-ic-" in {m["trigger"] for m in matches}
+    assert {"-ic-", "-io-"} <= {m["trigger"] for m in matches}
     for match in matches:
         assert match.get("left_word", match.get("word")) is True, match["trigger"]
+
+
+# The cloud triggers that need a key the user opts into ship commented out: -ic- (Anthropic)
+# and -io- (OpenAI, #274), which sends PROMPT_PROFILE as -i- does.
+def test_opt_in_cloud_triggers_ship_commented_out() -> None:
+    active = {m["trigger"] for path in MATCH_FILES for m in _load(path)["matches"]}
+    commented = {m["trigger"]: m for path in MATCH_FILES for m in _commented_matches(path)}
+    assert {"-ic-", "-io-"} <= set(commented)
+    assert not {"-ic-", "-io-"} & active
+    (var,) = _cli_vars(commented["-io-"])
+    args = var["params"]["args"]
+    assert args[1:4] == ["improve", "--trigger-id", "io"]
+    assert args[args.index("--provider") + 1] == "openai"
+    assert "--profile" not in args
+    assert commented["-io-"]["label"] == "PromptMend: rewrite (OpenAI)"
 
 
 def _form_vars(path: Path) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:

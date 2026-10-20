@@ -86,7 +86,7 @@ def test_for_call(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # Only OpenRouter has a pro tier: for any other provider for_call("pro") keeps the standard
 # profile and timeout, even with PROMPT_PRO_PROFILE set (#31).
-@pytest.mark.parametrize("provider", ["ollama", "lmstudio", "anthropic"])
+@pytest.mark.parametrize("provider", ["ollama", "lmstudio", "anthropic", "openai"])
 def test_for_call_pro_tier_is_openrouter_only(
     monkeypatch: pytest.MonkeyPatch, provider: str
 ) -> None:
@@ -101,17 +101,25 @@ def test_for_call_pro_tier_is_openrouter_only(
         settings.for_call("ultra", provider=provider)
 
 
-# --tier pro and --effort name OpenRouter-only settings; the neutral values pass anywhere.
-def test_openrouter_only_options() -> None:
-    config.openrouter_only("openrouter", "pro", "high")
+# --tier pro needs OpenRouter's pro tier and --effort a provider with an effort setting (the
+# registry's router and effort); the neutral values pass anywhere.
+def test_provider_options() -> None:
+    config.check_provider_options("openrouter", "pro", "high")
+    config.check_provider_options("openai", "standard", "high")
     for neutral in ((("standard", None)), ("standard", "default")):
-        config.openrouter_only("ollama", *neutral)
+        config.check_provider_options("ollama", *neutral)
     with pytest.raises(
-        ValueError, match=r"^--tier pro and --effort apply only to OpenRouter, not 'lmstudio'"
+        ValueError,
+        match=r"^--tier pro applies only to OpenRouter, --effort only to OpenRouter and OpenAI, "
+        r"not 'lmstudio'$",
     ):
-        config.openrouter_only("lmstudio", "pro", "low")
-    with pytest.raises(ValueError, match=r"^--effort applies only to OpenRouter, not 'x y'"):
-        config.openrouter_only("x y", "standard", "none")
+        config.check_provider_options("lmstudio", "pro", "low")
+    with pytest.raises(ValueError, match=r"^--tier pro applies only to OpenRouter, not 'openai'$"):
+        config.check_provider_options("openai", "pro", "low")
+    with pytest.raises(
+        ValueError, match=r"^--effort applies only to OpenRouter and OpenAI, not 'x y'$"
+    ):
+        config.check_provider_options("x y", "standard", "none")
 
 
 # --max-tokens is kept for the local providers too, which have no cap setting of their own.
@@ -205,6 +213,21 @@ def test_anthropic_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Settings().anthropic_temperature is None
 
 
+# OpenAI's own settings (#274): its reasoning models reject a non-default temperature, so
+# none is sent by default and PROMPT_TEMPERATURE never sets it; effort low, the https API.
+def test_openai_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = Settings()
+    assert (cfg.openai_base_url, cfg.openai_model) == ("https://api.openai.com/v1", "gpt-6-luna")
+    assert (cfg.openai_max_tokens, cfg.openai_reasoning_effort) == (2400, "low")
+    assert (cfg.openai_temperature, cfg.openai_api_key) == (None, "")
+    monkeypatch.setenv("PROMPT_TEMPERATURE", "0.7")
+    monkeypatch.setenv("OPENAI_TEMPERATURE", "0.3")
+    assert (Settings().temperature, Settings().openai_temperature) == (0.7, 0.3)
+    monkeypatch.setenv("OPENAI_API_KEY", "  sk-test  ")
+    assert Settings().openai_api_key == "sk-test"
+    assert "sk-test" not in repr(Settings())
+
+
 # split_model_spec: a bare slug has no pin, slug@endpoint pins it, @auto unpins.
 def test_split_model_spec() -> None:
     assert split_model_spec(None) == (None, None)
@@ -272,8 +295,10 @@ def test_with_overrides_rejects_bad_values(kwargs: dict[str, str], message: str)
         ("PROMPT_PRO_TIMEOUT_SECONDS", "a number above 0"),
         ("PROMPT_TEMPERATURE", "empty or a number of 0 or more"),
         ("ANTHROPIC_TEMPERATURE", "empty or a number of 0 or more"),
+        ("OPENAI_TEMPERATURE", "empty or a number of 0 or more"),
         ("OPENROUTER_MAX_TOKENS", "a whole number above 0"),
         ("ANTHROPIC_MAX_TOKENS", "a whole number above 0"),
+        ("OPENAI_MAX_TOKENS", "a whole number above 0"),
     ],
 )
 @pytest.mark.parametrize("raw", ["not-a-number", "inf", "nan", "-1"])
@@ -472,10 +497,15 @@ def test_bool_parsing_rejects_other_values(
         Settings()
 
 
-# Both reasoning-effort settings accept empty (omit the field) or a known effort, any case.
-@pytest.mark.parametrize(
-    "env_name", ["OPENROUTER_REASONING_EFFORT", "OPENROUTER_PRO_REASONING_EFFORT"]
-)
+# Every reasoning-effort setting accepts empty (omit the field) or a known effort, any case.
+_EFFORT_SETTINGS = [
+    "OPENROUTER_REASONING_EFFORT",
+    "OPENROUTER_PRO_REASONING_EFFORT",
+    "OPENAI_REASONING_EFFORT",
+]
+
+
+@pytest.mark.parametrize("env_name", _EFFORT_SETTINGS)
 @pytest.mark.parametrize(("raw", "expected"), [("", ""), ("low", "low"), ("HIGH", "high")])
 def test_effort_parsing(
     monkeypatch: pytest.MonkeyPatch, env_name: str, raw: str, expected: str
@@ -484,10 +514,8 @@ def test_effort_parsing(
     assert getattr(Settings(), env_name.lower()) == expected
 
 
-# A typo is reported at load instead of reaching OpenRouter as an opaque HTTP 400.
-@pytest.mark.parametrize(
-    "env_name", ["OPENROUTER_REASONING_EFFORT", "OPENROUTER_PRO_REASONING_EFFORT"]
-)
+# A typo is reported at load instead of reaching the API as an opaque HTTP 400.
+@pytest.mark.parametrize("env_name", _EFFORT_SETTINGS)
 def test_effort_typo_is_rejected(monkeypatch: pytest.MonkeyPatch, env_name: str) -> None:
     monkeypatch.setenv(env_name, "hihg")
     with pytest.raises(

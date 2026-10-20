@@ -1,10 +1,10 @@
-"""End-to-end checks against the real OpenRouter default model, and Anthropic's.
+"""End-to-end checks against the real OpenRouter default model, Anthropic's and OpenAI's.
 
 Opt-in: the tests marked `live` are excluded by default, run them with
 `uv run pytest -m live`. They spend a fraction of a cent per run and need OPENROUTER_API_KEY
-(ANTHROPIC_API_KEY for the Anthropic one, skipped without it) in the environment or the
-repo's .env. An unmarked offline twin runs the same command and checks on a canned reply, so
-this file cannot break unseen between live runs.
+(ANTHROPIC_API_KEY or OPENAI_API_KEY for those, each skipped without it) in the environment
+or the repo's .env. An unmarked offline twin runs the same command and checks on a canned
+reply, so this file cannot break unseen between live runs.
 """
 
 from __future__ import annotations
@@ -32,6 +32,8 @@ REPO = Path(__file__).resolve().parents[1]
 IMPROVE = ["improve", "--provider", "openrouter", "--profile", "default", "--source", "stdin"]
 # What -ic- runs.
 ANTHROPIC = ["improve", "--provider", "anthropic", "--profile", "general", "--source", "stdin"]
+# What -io- runs.
+OPENAI = ["improve", "--provider", "openai", "--source", "stdin"]
 
 
 def _setting(name: str) -> str:
@@ -65,6 +67,10 @@ needs_key = pytest.mark.skipif(
 needs_anthropic_key = pytest.mark.skipif(
     not _has_key("ANTHROPIC_API_KEY"),
     reason="ANTHROPIC_API_KEY not configured, or PROMPT_LOCAL_ONLY=true",
+)
+needs_openai_key = pytest.mark.skipif(
+    not _has_key("OPENAI_API_KEY"),
+    reason="OPENAI_API_KEY not configured, or PROMPT_LOCAL_ONLY=true",
 )
 
 
@@ -127,3 +133,28 @@ def test_live_anthropic_runs_offline(monkeypatch: pytest.MonkeyPatch, fake_http:
     ((call),) = fake_http.calls
     assert call["url"] == "https://api.anthropic.com/v1/messages"
     assert "temperature" not in call["json"]
+
+
+# The default OpenAI setup is accepted by the real API (#274): the cap as
+# max_completion_tokens, effort low as a top-level reasoning_effort and no temperature, since
+# its reasoning models reject max_tokens and any temperature but the default.
+@pytest.mark.live
+@needs_openai_key
+def test_live_openai_rewrite() -> None:
+    draft = bench.DRAFTS["board"]
+    proc = _improve(draft.text, OPENAI)
+    _assert_rewrite(proc.returncode, proc.stdout, draft)
+
+
+def test_live_openai_runs_offline(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    fake_http.reply({"choices": [{"message": {"content": GOOD}, "finish_reason": "stop"}]})
+    draft = bench.DRAFTS["board"]
+    result = CliRunner().invoke(app, OPENAI, input=draft.text)
+    _assert_rewrite(result.exit_code, result.stdout, draft)
+    ((call),) = fake_http.calls
+    assert call["url"] == "https://api.openai.com/v1/chat/completions"
+    body = call["json"]
+    assert (body["model"], body["max_completion_tokens"]) == ("gpt-6-luna", 2400)
+    assert body["reasoning_effort"] == "low"
+    assert not {"max_tokens", "temperature", "reasoning", "provider"} & set(body)

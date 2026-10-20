@@ -11,7 +11,7 @@ from .providers.base import Provider, ProviderError, is_loopback
 from .providers.ollama import OllamaProvider
 from .providers.openai_compatible import OpenAICompatibleProvider
 from .providers.registry import PROVIDERS
-from .providers.usage import UsageObserver
+from .providers.usage import UsageObserver, openai_usage, openrouter_usage
 from .redaction import compile_extra, safe_repr
 
 PROVIDER_NAMES = tuple(PROVIDERS)
@@ -181,8 +181,9 @@ def make_provider(
     cloud API), with the same override rules; it is still local for PROMPT_LOCAL_ONLY, routes()
     and its ``not_applicable`` cost.
 
-    ``extra_body``, ``on_response`` and ``title`` only apply to OpenRouter; they let
-    scripts/bench_models.py request usage/cost data through the same construction path.
+    ``extra_body``, ``on_response`` and ``title`` only apply to OpenRouter (a ``router``
+    spec); they let scripts/bench_models.py request usage/cost data through the same
+    construction path.
 
     ``observer`` goes to every provider, inside the gate, and receives one AttemptUsage per
     HTTP attempt (providers/usage.py); a draft the gate blocks makes no attempt, so no record.
@@ -233,21 +234,25 @@ def make_provider(
             observer=observer,
         )
     else:
-        # OpenRouter alone takes the app title, routing and reasoning fields and the bench hooks.
-        openrouter = name == "openrouter"
+        # OpenRouter alone takes the app title, routing and nested reasoning fields, the bench
+        # hooks and reports a cost; another spec's effort is a top-level field.
+        router = spec.router
         provider = OpenAICompatibleProvider(
             base_url=base_url,
             model=model,
             api_key=api_key,
             timeout=cfg.timeout,
             max_tokens=max_tokens,
+            cap_field=spec.cap_field,
             temperature=temperature,
-            extra_headers={"X-Title": title} if openrouter else {},
+            reasoning_effort=getattr(cfg, spec.effort) if spec.effort and not router else "",
+            extra_headers={"X-Title": title} if router else {},
             label=spec.label,
-            extra_body={**openrouter_body(cfg), **(extra_body or {})} if openrouter else {},
-            on_response=on_response if openrouter else None,
+            extra_body={**openrouter_body(cfg), **(extra_body or {})} if router else {},
+            on_response=on_response if router else None,
             observer=observer,
             name=name,
+            usage=openrouter_usage if router else openai_usage,
             local=not remote,
         )
     if remote or cfg.gate_local:

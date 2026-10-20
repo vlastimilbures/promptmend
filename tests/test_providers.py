@@ -186,6 +186,63 @@ def test_openrouter_request_shape(fake_http: FakeHttp, monkeypatch: pytest.Monke
     }
 
 
+# OpenAI (#274): the cap as max_completion_tokens (its reasoning models reject max_tokens), a
+# top-level reasoning_effort, no temperature by default (they reject one) and none of
+# OpenRouter's extras (X-Title, routing, the nested reasoning).
+def test_openai_request_shape(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    fake_http.reply(_openai_body("ok"))
+    make_provider("openai", Settings()).generate("draft", "sys")
+    call = fake_http.calls[0]
+    assert call["url"] == "https://api.openai.com/v1/chat/completions"
+    assert call["headers"] == {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer test-key",
+    }
+    assert call["json"] == {
+        "model": "gpt-6-luna",
+        "messages": [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "draft"},
+        ],
+        "max_completion_tokens": 2400,
+        "reasoning_effort": "low",
+    }
+
+
+# A set OPENAI_TEMPERATURE is sent as is; an empty OPENAI_REASONING_EFFORT omits the field.
+def test_openai_temperature_and_empty_effort(
+    fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_TEMPERATURE", "1")
+    monkeypatch.setenv("OPENAI_REASONING_EFFORT", "")
+    fake_http.reply(_openai_body("ok"))
+    make_provider("openai", Settings()).generate("draft", "sys")
+    body = fake_http.calls[0]["json"]
+    assert {k: v for k, v in body.items() if k != "messages"} == {
+        "model": "gpt-6-luna",
+        "max_completion_tokens": 2400,
+        "temperature": 1.0,
+    }
+
+
+# LM Studio's request is what it was before OpenAI's fields existed: max_tokens when capped,
+# no reasoning_effort, no key.
+def test_lmstudio_request_shape(fake_http: FakeHttp) -> None:
+    fake_http.reply(_openai_body("ok"))
+    make_provider("lmstudio", Settings().with_overrides(max_tokens="300")).generate("d", "sys")
+    call = fake_http.calls[0]
+    assert call["url"] == "http://localhost:1234/v1/chat/completions"
+    assert call["headers"] == {"Content-Type": "application/json"}
+    assert call["json"] == {
+        "model": "local-model",
+        "messages": [{"role": "system", "content": "sys"}, {"role": "user", "content": "d"}],
+        "max_tokens": 300,
+        "temperature": 0.2,
+    }
+
+
 # on_response receives the raw body (scripts/bench_models.py reads usage/cost from it).
 def test_openai_compatible_on_response_gets_raw_body(fake_http: FakeHttp) -> None:
     body = {**_openai_body("ok"), "usage": {"cost": 0.1}}

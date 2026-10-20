@@ -26,8 +26,8 @@ def _block_message(
             "content detected: " + ", ".join(findings) + ". Remove it, or set "
             "PROMPT_GATE_LOCAL=false if the server runs the model itself."
         )
-    once = "-iok-" if name == "openrouter" else "--allow-flagged"
     spec = PROVIDERS.get(name)
+    once = "-iok-" if spec and spec.router else "--allow-flagged"
     local = "a local trigger (-il-)" if spec and spec.cloud else "a local model"
     alternative = "" if gate_local else f", or use {local}"
     message = "Blocked cloud call. Sensitive content detected: " + ", ".join(findings) + ". "

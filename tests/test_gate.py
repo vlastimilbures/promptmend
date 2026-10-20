@@ -139,15 +139,16 @@ def test_allow_flagged_sends_each_soft_finding(draft: str, finding: str) -> None
     assert finding in provider.sent_despite
 
 
-# A remote Ollama or LM Studio is not told to use -iok- (an OpenRouter trigger) or -il-.
-@pytest.mark.parametrize("name", ["ollama", "lmstudio", "anthropic"])
+# Only OpenRouter (the registry's router) is told to use -iok-, its trigger; a remote Ollama or
+# LM Studio is not told to use -il- either, while a cloud API is.
+@pytest.mark.parametrize("name", ["ollama", "lmstudio", "anthropic", "openai"])
 def test_block_message_hint_per_provider(name: str) -> None:
     provider = GatedProvider(_Stub(), allow_override=False, name=name)
     with pytest.raises(ProviderError) as exc:
         provider.generate("Output is CONFIDENTIAL", "system")
     assert "send it once with --allow-flagged" in str(exc.value)
     assert "-iok-" not in str(exc.value)
-    assert ("-il-" in str(exc.value)) == (name == "anthropic")
+    assert ("-il-" in str(exc.value)) == (name in ("anthropic", "openai"))
 
 
 # sent_despite describes the last call only.
@@ -170,7 +171,7 @@ def test_block_message_default_wording() -> None:
 
 # With PROMPT_GATE_LOCAL=true the local triggers are gated too, so the cloud message does not
 # send the user to them (or to a local model).
-@pytest.mark.parametrize("name", ["openrouter", "anthropic", "ollama"])
+@pytest.mark.parametrize("name", ["openrouter", "anthropic", "openai", "ollama"])
 @pytest.mark.parametrize(
     ("draft", "tail"),
     [

@@ -23,7 +23,7 @@ from .config import (
     TIERS,
     ConfigLayers,
     Settings,
-    openrouter_only,
+    check_provider_options,
 )
 from .entry import TRIGGER_COMMANDS
 from .factory import PROVIDER_NAMES, make_provider
@@ -433,7 +433,8 @@ def improve(
         help=f"{', '.join(TIERS)}; pro uses the OPENROUTER_PRO_* reasoning model (OpenRouter only)",
     ),
     effort: str | None = typer.Option(
-        None, help=f"OpenRouter reasoning effort for this call: {', '.join((KEEP, *EFFORTS))}"
+        None,
+        help=f"Reasoning effort for this call (OpenRouter, OpenAI): {', '.join((KEEP, *EFFORTS))}",
     ),
     max_tokens: str | None = typer.Option(None, help=f"Output cap for this call, or {KEEP}"),
     timeout: str | None = typer.Option(None, help=f"Request timeout in seconds, or {KEEP}"),
@@ -476,7 +477,7 @@ def improve(
         )
         # An unknown name is left to make_provider(), which reports it as such.
         if provider in PROVIDER_NAMES:
-            openrouter_only(provider, tier, effort)
+            check_provider_options(provider, tier, effort)
         raw = _read_input(source, text)
         # The rewrite comes back cleaned, which matters here too: --copy and clipboard output
         # put it on the clipboard.

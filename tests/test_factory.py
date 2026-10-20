@@ -170,6 +170,11 @@ def test_make_provider_unknown() -> None:
             "https://api.anthropic.com/v1/messages",
             {"content": [{"type": "text", "text": "ok"}]},
         ),
+        (
+            "openai",
+            "https://api.openai.com/v1/chat/completions",
+            {"choices": [{"message": {"content": "ok"}}]},
+        ),
     ],
 )
 def test_every_provider_name_builds(
@@ -181,6 +186,7 @@ def test_every_provider_name_builds(
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
     fake_http.reply(body)
     assert make_provider(name, Settings()).generate("d", "s") == "ok"
     assert [call["url"] for call in fake_http.calls] == [url]
@@ -189,7 +195,12 @@ def test_every_provider_name_builds(
 # A key pasted from rich text (a smart quote, an accented letter, an invisible character)
 # is refused by name before anything is built or sent, and never repeated.
 @pytest.mark.parametrize(
-    ("name", "env_name"), [("openrouter", "OPENROUTER_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")]
+    ("name", "env_name"),
+    [
+        ("openrouter", "OPENROUTER_API_KEY"),
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("openai", "OPENAI_API_KEY"),
+    ],
 )
 @pytest.mark.parametrize("key", ["sk-t\u00ebst-key", "sk-test\u200bkey", "\u201csk-test-key\u201d"])
 def test_non_ascii_key_is_refused(
@@ -206,18 +217,25 @@ def test_non_ascii_key_is_refused(
 
 # The table above covers every advertised name.
 def test_every_provider_name_is_listed() -> None:
-    names = {"ollama", "lmstudio", "openrouter", "anthropic"}
+    names = {"ollama", "lmstudio", "openrouter", "anthropic", "openai"}
     assert set(PROVIDER_NAMES) == names
 
 
 # With the default settings only the cloud providers are gated.
 @pytest.mark.parametrize(
     ("name", "gated"),
-    [("ollama", False), ("lmstudio", False), ("openrouter", True), ("anthropic", True)],
+    [
+        ("ollama", False),
+        ("lmstudio", False),
+        ("openrouter", True),
+        ("anthropic", True),
+        ("openai", True),
+    ],
 )
 def test_cloud_providers_are_gated(monkeypatch: pytest.MonkeyPatch, name: str, gated: bool) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
     assert isinstance(make_provider(name, Settings()), GatedProvider) is gated
 
 
@@ -325,11 +343,19 @@ def test_local_only_allows_a_name_containing_cloud(
     [
         ("openrouter", {}),
         ("anthropic", {}),
+        ("openai", {}),
         ("ollama", {"OLLAMA_BASE_URL": "http://192.168.1.5:11434"}),
         ("ollama", {"OLLAMA_MODEL": "gpt-oss:120b-cloud"}),
         ("lmstudio", {"LMSTUDIO_BASE_URL": "https://lms.example.com/v1"}),
     ],
-    ids=["openrouter", "anthropic", "remote-ollama", "ollama-cloud-model", "remote-lmstudio"],
+    ids=[
+        "openrouter",
+        "anthropic",
+        "openai",
+        "remote-ollama",
+        "ollama-cloud-model",
+        "remote-lmstudio",
+    ],
 )
 def test_local_only_refuses_providers_that_leave_the_machine(
     monkeypatch: pytest.MonkeyPatch, name: str, env: dict[str, str]
@@ -365,6 +391,7 @@ def test_gated_exactly_when_leaving_the_machine(
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     cfg = Settings()
@@ -475,7 +502,12 @@ def test_make_provider_openrouter_data_collection_unset(monkeypatch: pytest.Monk
 
 # Cloud base URLs must be https, so the API key never travels in plaintext.
 @pytest.mark.parametrize(
-    ("name", "var"), [("openrouter", "OPENROUTER_BASE_URL"), ("anthropic", "ANTHROPIC_BASE_URL")]
+    ("name", "var"),
+    [
+        ("openrouter", "OPENROUTER_BASE_URL"),
+        ("anthropic", "ANTHROPIC_BASE_URL"),
+        ("openai", "OPENAI_BASE_URL"),
+    ],
 )
 @pytest.mark.parametrize("url", ["http://example.com/api", "ftp://example.com", "example.com"])
 def test_cloud_base_url_requires_https(
@@ -483,6 +515,7 @@ def test_cloud_base_url_requires_https(
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv(var, url)
     with pytest.raises(ProviderError, match=f"{var} must be an https:// URL"):
         make_provider(name, Settings())
@@ -508,12 +541,13 @@ def test_invalid_extra_pattern_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # allow_flagged reaches the gate of every provider that leaves the machine, and nothing else.
-@pytest.mark.parametrize("name", ["openrouter", "anthropic"])
+@pytest.mark.parametrize("name", ["openrouter", "anthropic", "openai"])
 def test_make_provider_passes_allow_flagged_to_gate(
     monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
     provider = make_provider(name, Settings.load(), allow_flagged=True)
     assert isinstance(provider, GatedProvider)
     assert provider._allow_flagged is True
@@ -632,15 +666,17 @@ def _temperatures(cfg: Settings) -> dict[str, float | None]:
     return found
 
 
-# PROMPT_TEMPERATURE reaches every provider but Anthropic, which has ANTHROPIC_TEMPERATURE
-# (empty by default: current Claude models reject a temperature, #273). An empty value
-# reaches its providers as None (omitted from the body), and --max-tokens reaches the local
-# providers, which otherwise get no cap (#31).
+# PROMPT_TEMPERATURE reaches every provider but Anthropic and OpenAI, which have their own
+# (empty by default: current Claude and OpenAI reasoning models reject a temperature, #273,
+# #274). An empty value reaches its providers as None (omitted from the body), and
+# --max-tokens reaches the local providers, which otherwise get no cap (#31).
 def test_make_provider_empty_temperature_and_call_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "-".join(("test", "key")))
-    others = [name for name in PROVIDER_NAMES if name != "anthropic"]
-    assert _temperatures(Settings()) == {**dict.fromkeys(others, 0.2), "anthropic": None}
+    monkeypatch.setenv("OPENAI_API_KEY", "-".join(("test", "key")))
+    own = ("anthropic", "openai")
+    others = [name for name in PROVIDER_NAMES if name not in own]
+    assert _temperatures(Settings()) == {**dict.fromkeys(others, 0.2), **dict.fromkeys(own)}
     monkeypatch.setenv("PROMPT_TEMPERATURE", "")
     cfg = Settings()
     assert _temperatures(cfg) == dict.fromkeys(PROVIDER_NAMES, None)

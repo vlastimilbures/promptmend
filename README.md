@@ -18,9 +18,9 @@ the result in place of the trigger. If something went wrong, you get a readable
 `[promptmend: …]` message, never a blank.
 
 It works the same on macOS and Windows, with [OpenRouter](https://openrouter.ai),
-[Anthropic](https://www.anthropic.com), [Ollama](https://ollama.com) or
-[LM Studio](https://lmstudio.ai). A full-screen terminal interface and plain commands set it up
-and manage it.
+[Anthropic](https://www.anthropic.com), [OpenAI](https://openai.com),
+[Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai). A full-screen terminal
+interface and plain commands set it up and manage it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/vlastimilbures/promptmend/main/docs/flow-dark.svg">
@@ -32,7 +32,8 @@ and manage it.
 - **Golden-template rewrite.** Any draft becomes
   `CONTEXT / GOAL / INSTRUCTIONS / CONSTRAINTS / INPUTS / OUTPUTS`.
 - **Two tiers.** `-i-` answers in seconds; `-ip-` uses a reasoning model for hard drafts.
-- **Four providers.** OpenRouter, Anthropic, Ollama and LM Studio; fully local if you like.
+- **Five providers.** OpenRouter, Anthropic, OpenAI, Ollama and LM Studio; fully local if you
+  like.
 - **Data-protection gate.** Keys, cards, IDs, emails and your own patterns never leave unless
   you override.
 - **Your persona, once.** `PROMPT_PERSONA` opens every rewrite with your role.
@@ -266,9 +267,9 @@ More: [docs/configuration.md](https://github.com/vlastimilbures/promptmend/blob/
 
 ## Privacy
 
-Cloud triggers send your clipboard to OpenRouter (and the endpoint that serves the model) or
-to Anthropic. So does Ollama or LM Studio at another address, or an Ollama `cloud` model. Each
-such call carries:
+Cloud triggers send your clipboard to OpenRouter (and the endpoint that serves the model), to
+Anthropic or to OpenAI. So does Ollama or LM Studio at another address, or an Ollama `cloud`
+model. Each such call carries:
 
 - the draft, after the data-protection gate and the removal of invisible characters;
 - the system prompt: the profile's instructions and your persona, which the gate does not scan;
@@ -334,5 +335,5 @@ Licensed under the
 Built on [Espanso](https://espanso.org/), [Typer](https://typer.tiangolo.com/),
 [Textual](https://textual.textualize.io/), [HTTPX](https://www.python-httpx.org/) and
 [uv](https://docs.astral.sh/uv/), with models served by [OpenRouter](https://openrouter.ai/),
-[Anthropic](https://www.anthropic.com/), [Ollama](https://ollama.com/) and
-[LM Studio](https://lmstudio.ai/).
+[Anthropic](https://www.anthropic.com/), [OpenAI](https://openai.com/),
+[Ollama](https://ollama.com/) and [LM Studio](https://lmstudio.ai/).
