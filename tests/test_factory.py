@@ -622,18 +622,28 @@ def test_gate_local_block_message(
     )
 
 
-# An empty PROMPT_TEMPERATURE reaches every provider as None (omitted from the body), and
-# --max-tokens reaches the local providers, which otherwise get no cap (#31).
-def test_make_provider_empty_temperature_and_call_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "-".join(("test", "key")))
-    monkeypatch.setenv("PROMPT_TEMPERATURE", "")
-    cfg = Settings()
+def _temperatures(cfg: Settings) -> dict[str, float | None]:
+    found = {}
     for name in PROVIDER_NAMES:
         provider = make_provider(name, cfg)
         inner = provider._inner if isinstance(provider, GatedProvider) else provider
         assert isinstance(inner, (OllamaProvider, OpenAICompatibleProvider, AnthropicProvider))
-        assert inner.temperature is None
+        found[name] = inner.temperature
+    return found
+
+
+# PROMPT_TEMPERATURE reaches every provider but Anthropic, which has ANTHROPIC_TEMPERATURE
+# (empty by default: current Claude models reject a temperature, #273). An empty value
+# reaches its providers as None (omitted from the body), and --max-tokens reaches the local
+# providers, which otherwise get no cap (#31).
+def test_make_provider_empty_temperature_and_call_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "-".join(("test", "key")))
+    others = [name for name in PROVIDER_NAMES if name != "anthropic"]
+    assert _temperatures(Settings()) == {**dict.fromkeys(others, 0.2), "anthropic": None}
+    monkeypatch.setenv("PROMPT_TEMPERATURE", "")
+    cfg = Settings()
+    assert _temperatures(cfg) == dict.fromkeys(PROVIDER_NAMES, None)
     uncapped = make_provider("ollama", cfg)
     assert isinstance(uncapped, OllamaProvider)
     assert uncapped.max_tokens is None

@@ -193,6 +193,18 @@ def test_empty_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
         Settings()
 
 
+# ANTHROPIC_TEMPERATURE is empty by default (current Claude models reject a temperature, so
+# none is sent), a set value is taken as is, and PROMPT_TEMPERATURE never sets it (#273).
+def test_anthropic_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert Settings().anthropic_temperature is None
+    for raw, value in (("1", 1.0), ("0", 0.0), ("0.3", 0.3), ("", None)):
+        monkeypatch.setenv("ANTHROPIC_TEMPERATURE", raw)
+        assert Settings.load().anthropic_temperature == value
+    monkeypatch.delenv("ANTHROPIC_TEMPERATURE")
+    monkeypatch.setenv("PROMPT_TEMPERATURE", "0.7")
+    assert Settings().anthropic_temperature is None
+
+
 # split_model_spec: a bare slug has no pin, slug@endpoint pins it, @auto unpins.
 def test_split_model_spec() -> None:
     assert split_model_spec(None) == (None, None)
@@ -259,6 +271,7 @@ def test_with_overrides_rejects_bad_values(kwargs: dict[str, str], message: str)
         ("PROMPT_TIMEOUT_SECONDS", "a number above 0"),
         ("PROMPT_PRO_TIMEOUT_SECONDS", "a number above 0"),
         ("PROMPT_TEMPERATURE", "empty or a number of 0 or more"),
+        ("ANTHROPIC_TEMPERATURE", "empty or a number of 0 or more"),
         ("OPENROUTER_MAX_TOKENS", "a whole number above 0"),
         ("ANTHROPIC_MAX_TOKENS", "a whole number above 0"),
     ],

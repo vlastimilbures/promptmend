@@ -68,7 +68,7 @@ SETTINGS: tuple[Meta, ...] = (
     ),
     _m(_OUT, "PROMPT_PERSONA", TEXT, "Who you are, opening the rewrite's CONTEXT; never shown."),
     _m(_OUT, "PROMPT_TIMEOUT_SECONDS", TEXT, "Seconds before a rewrite call gives up."),
-    _m(_OUT, "PROMPT_TEMPERATURE", TEXT, "Sampling temperature; empty sends none."),
+    _m(_OUT, "PROMPT_TEMPERATURE", TEXT, "Sampling temperature (not Anthropic); empty: none."),
     _m(_KEYS, "OPENROUTER_API_KEY", KEY, "OpenRouter's API key, kept in the secret store."),
     _m(_KEYS, "ANTHROPIC_API_KEY", KEY, "Anthropic's API key, kept in the secret store."),
     _m(_PRIV, "PROMPT_LOCAL_ONLY", BOOL, "Refuse every provider that sends the draft away."),
@@ -135,6 +135,7 @@ SETTINGS: tuple[Meta, ...] = (
     _m(_MOD, "ANTHROPIC_BASE_URL", TEXT, "Anthropic's API address (https)."),
     _m(_MOD, "ANTHROPIC_MODEL", TEXT, "Anthropic's model."),
     _m(_MOD, "ANTHROPIC_MAX_TOKENS", INT, "Output cap of an Anthropic call, in tokens."),
+    _m(_MOD, "ANTHROPIC_TEMPERATURE", TEXT, "Anthropic's sampling temperature; empty: none."),
     _m(_HIST, "PROMPT_HISTORY", BOOL, "Keep the local usage history (metadata only)."),
     _m(_HIST, "PROMPT_HISTORY_RETENTION_DAYS", INT, "Days a usage record is kept."),
 )

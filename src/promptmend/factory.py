@@ -208,6 +208,7 @@ def make_provider(
     model = getattr(cfg, f"{name}_model")
     api_key = _require(getattr(cfg, f"{name}_api_key"), spec.key) if spec.key else None
     max_tokens = getattr(cfg, spec.cap or "call_max_tokens")
+    temperature = getattr(cfg, spec.temperature or "temperature")
     provider: Provider
     if spec.protocol == "ollama":
         provider = OllamaProvider(
@@ -215,7 +216,7 @@ def make_provider(
             model=model,
             timeout=cfg.timeout,
             think=cfg.ollama_think,
-            temperature=cfg.temperature,
+            temperature=temperature,
             max_tokens=max_tokens,
             num_ctx=cfg.ollama_num_ctx,
             observer=observer,
@@ -228,7 +229,7 @@ def make_provider(
             api_key=api_key or "",  # an anthropic spec sets key: _require() raised
             timeout=cfg.timeout,
             max_tokens=max_tokens,
-            temperature=cfg.temperature,
+            temperature=temperature,
             observer=observer,
         )
     else:
@@ -240,7 +241,7 @@ def make_provider(
             api_key=api_key,
             timeout=cfg.timeout,
             max_tokens=max_tokens,
-            temperature=cfg.temperature,
+            temperature=temperature,
             extra_headers={"X-Title": title} if openrouter else {},
             label=spec.label,
             extra_body={**openrouter_body(cfg), **(extra_body or {})} if openrouter else {},
