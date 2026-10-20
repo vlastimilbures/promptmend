@@ -108,8 +108,9 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   machine (`leaves_machine()`: OpenRouter and Anthropic always; Ollama/LM Studio on a
   non-loopback URL or an Ollama `cloud` model) in `gate.GatedProvider`, which runs
   `redaction.scan_draft()` and blocks a flagged draft unless `ALLOW_CLOUD_OVERRIDE=true`.
-- **A new provider that can leave the machine must return through `_gate()` and be listed in
-  `leaves_machine()`.**
+- **A new provider that can leave the machine must return through `_gate()` and be reported by
+  `leaves_machine()`:** a cloud API is a `cloud=True` spec in `providers/registry.PROVIDERS`
+  (always gated, key required, https only; `tests/test_registry.py`).
 - `--allow-flagged` (the `-iok-` trigger) lets one call through only when every finding is in
   `redaction.SOFT_FINDINGS`; the output then starts with a `sent despite` marker naming the
   findings (names only, never the text).

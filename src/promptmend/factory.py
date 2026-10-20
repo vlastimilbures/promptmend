@@ -10,17 +10,13 @@ from .providers.anthropic import AnthropicProvider
 from .providers.base import Provider, ProviderError, is_loopback
 from .providers.ollama import OllamaProvider
 from .providers.openai_compatible import OpenAICompatibleProvider
+from .providers.registry import PROVIDERS
 from .providers.usage import UsageObserver
 from .redaction import compile_extra, safe_repr
 
-PROVIDER_NAMES = ("ollama", "lmstudio", "openrouter", "anthropic")
+PROVIDER_NAMES = tuple(PROVIDERS)
 # How messages name each provider.
-PROVIDER_LABELS = {
-    "ollama": "Ollama",
-    "lmstudio": "LM Studio",
-    "openrouter": "OpenRouter",
-    "anthropic": "Anthropic",
-}
+PROVIDER_LABELS = {name: spec.label for name, spec in PROVIDERS.items()}
 # Sent as OpenRouter's X-Title so calls are attributed to this app in its dashboard.
 APP_TITLE = "promptmend"
 
@@ -69,21 +65,17 @@ def _require(value: str | None, env_name: str) -> str:
     return value
 
 
-# The providers whose base URL must be https: they send a key.
-_HTTPS_ONLY = {"openrouter": "OPENROUTER_BASE_URL", "anthropic": "ANTHROPIC_BASE_URL"}
-
-
 def check_base_url(name: str, cfg: Settings) -> None:
-    """Refuse to send an API key over plaintext HTTP; a loopback proxy is the exception.
-    make_provider() applies it; the Try tab's stub runs check the real URL with it before
-    pointing the settings at the stub."""
-    setting = _HTTPS_ONLY.get(name)
-    if setting is None:
+    """Refuse to send a cloud provider's API key over plaintext HTTP; a loopback proxy is the
+    exception. make_provider() applies it; the Try tab's stub runs check the real URL with it
+    before pointing the settings at the stub."""
+    spec = PROVIDERS.get(name)
+    if spec is None or not spec.cloud:
         return
     url = getattr(cfg, f"{name}_base_url")
     scheme = urlsplit(url).scheme
     if not (scheme == "https" or (scheme == "http" and is_loopback(url))):
-        raise GateBlocked(f"{setting} must be an https:// URL")
+        raise GateBlocked(f"{spec.url_setting} must be an https:// URL")
 
 
 def _is_ollama_cloud(model: str) -> bool:
@@ -100,18 +92,21 @@ def _is_ollama_cloud(model: str) -> bool:
 
 
 def leaves_machine(name: str, cfg: Settings) -> bool:
-    """Whether the named provider can send the draft off this machine: the cloud providers
-    always, Ollama or LM Studio when the base URL is not loopback or (Ollama) the model is a
-    cloud model. The gate and PROMPT_LOCAL_ONLY both follow this one decision."""
-    if name == "ollama":
-        return not is_loopback(cfg.ollama_base_url) or _is_ollama_cloud(cfg.ollama_model)
-    if name == "lmstudio":
-        return not is_loopback(cfg.lmstudio_base_url)
-    return name in ("openrouter", "anthropic")
+    """Whether the named provider can send the draft off this machine: a cloud provider
+    always, a local one when its base URL is not loopback or (Ollama) the model is a cloud
+    model. The gate and PROMPT_LOCAL_ONLY both follow this one decision."""
+    spec = PROVIDERS.get(name)
+    if spec is None:
+        return False
+    if spec.cloud:
+        return True
+    if not is_loopback(getattr(cfg, f"{name}_base_url")):
+        return True
+    return spec.protocol == "ollama" and _is_ollama_cloud(getattr(cfg, f"{name}_model"))
 
 
 # The key setting each provider needs; the local ones need none.
-PROVIDER_KEYS = {"openrouter": "OPENROUTER_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+PROVIDER_KEYS = {name: spec.key for name, spec in PROVIDERS.items() if spec.key}
 
 
 @dataclass(frozen=True)
@@ -133,15 +128,14 @@ def routes(cfg: Settings) -> list[Route]:
     """Every provider in PROVIDER_NAMES with its model and base URL settings, key setting and
     whether it can send the draft off this machine. Builds no provider and makes no call."""
     found = []
-    for name in PROVIDER_NAMES:
-        prefix = name.upper()
+    for name, spec in PROVIDERS.items():
         remote = leaves_machine(name, cfg)
         found.append(
             Route(
                 name,
-                f"{prefix}_MODEL",
-                f"{prefix}_BASE_URL",
-                PROVIDER_KEYS.get(name),
+                spec.model_setting,
+                spec.url_setting,
+                spec.key,
                 remote,
                 remote and cfg.local_only,
             )
@@ -207,58 +201,54 @@ def make_provider(
     if remote and cfg.local_only:
         raise GateBlocked(f"PROMPT_LOCAL_ONLY=true: {name} would send the draft off this machine")
     check_base_url(name, cfg)
+    spec = PROVIDERS.get(name)
+    if spec is None:
+        raise ProviderError(f"Unknown provider {safe_repr(name)}. Use {', '.join(PROVIDER_NAMES)}.")
+    base_url = getattr(cfg, f"{name}_base_url")
+    model = getattr(cfg, f"{name}_model")
+    api_key = _require(getattr(cfg, f"{name}_api_key"), spec.key) if spec.key else None
+    max_tokens = getattr(cfg, spec.cap or "call_max_tokens")
     provider: Provider
-    if name == "ollama":
+    if spec.protocol == "ollama":
         provider = OllamaProvider(
-            base_url=cfg.ollama_base_url,
-            model=cfg.ollama_model,
+            base_url=base_url,
+            model=model,
             timeout=cfg.timeout,
             think=cfg.ollama_think,
             temperature=cfg.temperature,
-            max_tokens=cfg.call_max_tokens,
+            max_tokens=max_tokens,
             num_ctx=cfg.ollama_num_ctx,
             observer=observer,
             local=not remote,
         )
-    elif name == "lmstudio":
-        provider = OpenAICompatibleProvider(
-            base_url=cfg.lmstudio_base_url,
-            model=cfg.lmstudio_model,
-            timeout=cfg.timeout,
-            max_tokens=cfg.call_max_tokens,
-            temperature=cfg.temperature,
-            label="LM Studio",
-            observer=observer,
-            name=name,
-            local=not remote,
-        )
-    elif name == "openrouter":
-        provider = OpenAICompatibleProvider(
-            base_url=cfg.openrouter_base_url,
-            model=cfg.openrouter_model,
-            api_key=_require(cfg.openrouter_api_key, "OPENROUTER_API_KEY"),
-            timeout=cfg.timeout,
-            max_tokens=cfg.openrouter_max_tokens,
-            temperature=cfg.temperature,
-            extra_headers={"X-Title": title},
-            label="OpenRouter",
-            extra_body={**openrouter_body(cfg), **(extra_body or {})},
-            on_response=on_response,
-            observer=observer,
-            name=name,
-        )
-    elif name == "anthropic":
+    elif spec.protocol == "anthropic":
         provider = AnthropicProvider(
-            base_url=cfg.anthropic_base_url,
-            model=cfg.anthropic_model,
-            api_key=_require(cfg.anthropic_api_key, "ANTHROPIC_API_KEY"),
+            base_url=base_url,
+            model=model,
+            api_key=api_key or "",  # an anthropic spec sets key: _require() raised
             timeout=cfg.timeout,
-            max_tokens=cfg.anthropic_max_tokens,
+            max_tokens=max_tokens,
             temperature=cfg.temperature,
             observer=observer,
         )
     else:
-        raise ProviderError(f"Unknown provider {safe_repr(name)}. Use {', '.join(PROVIDER_NAMES)}.")
+        # OpenRouter alone takes the app title, routing and reasoning fields and the bench hooks.
+        openrouter = name == "openrouter"
+        provider = OpenAICompatibleProvider(
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            timeout=cfg.timeout,
+            max_tokens=max_tokens,
+            temperature=cfg.temperature,
+            extra_headers={"X-Title": title} if openrouter else {},
+            label=spec.label,
+            extra_body={**openrouter_body(cfg), **(extra_body or {})} if openrouter else {},
+            on_response=on_response if openrouter else None,
+            observer=observer,
+            name=name,
+            local=not remote,
+        )
     if remote or cfg.gate_local:
         return _gate(provider, cfg, allow_flagged, name, remote=remote)
     return provider

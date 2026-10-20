@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import __version__, assets, config, config_files, deploy, factory, local_probe, update_check
 from .config import ConfigLayers, secret_names
+from .providers.registry import PROVIDERS
 
 if TYPE_CHECKING:
     from .history import Health
@@ -91,8 +92,6 @@ DATA_KEYS = {
     "folders": ("config_dir", "data_dir", "legacy", "conflicts"),
     "local_servers": ("servers", "deployed"),
 }
-# Where local_probe asks each local server, below its base URL.
-_PROBE_PATHS = {"ollama": "/api/tags", "lmstudio": "/models"}
 
 
 @dataclass(frozen=True)
@@ -337,26 +336,23 @@ def _local_servers_check(
     used = _rewrites(triggers, settings)
     servers: dict[str, dict[str, Any]] = {}
     notes = []
-    for provider, base_url in (
-        ("ollama", settings.ollama_base_url),
-        ("lmstudio", settings.lmstudio_base_url),
-    ):
+    for provider, spec in PROVIDERS.items():
         names = used.get(provider)
-        if not names:
+        if spec.probe_path is None or not names:
             continue
-        answers = local_probe.answers(base_url.rstrip("/") + _PROBE_PATHS[provider])
+        base_url = getattr(settings, f"{provider}_base_url")
+        answers = local_probe.answers(base_url.rstrip("/") + spec.probe_path)
         servers[provider] = {"answers": answers, "triggers": names}
-        label = factory.PROVIDER_LABELS[provider]
-        setting = f"{provider.upper()}_BASE_URL"
         if answers is None:
-            notes.append(f"{label} ({', '.join(names)}) is not on this machine; not asked")
+            notes.append(f"{spec.label} ({', '.join(names)}) is not on this machine; not asked")
         elif answers:
-            notes.append(f"{label} answers ({', '.join(names)})")
+            notes.append(f"{spec.label} answers ({', '.join(names)})")
         else:
-            notes.append(f"{', '.join(names)} needs {label}: no answer at {setting}")
+            notes.append(f"{', '.join(names)} needs {spec.label}: no answer at {spec.url_setting}")
     data = {"servers": servers, "deployed": deployed}
     if not notes:
-        return Check("local_servers", INFO, "no trigger uses Ollama or LM Studio", data)
+        probed = " or ".join(s.label for s in PROVIDERS.values() if s.probe_path)
+        return Check("local_servers", INFO, f"no trigger uses {probed}", data)
     return Check("local_servers", INFO, "; ".join(notes), data)
 
 

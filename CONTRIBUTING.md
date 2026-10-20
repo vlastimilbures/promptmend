@@ -312,6 +312,7 @@ promptmend/
 │   │   ├── default.md            golden-template rewrite (-i-, -ip-, -if-)
 │   │   └── general.md            lighter "make this precise" rewrite (local triggers)
 │   └── providers/
+│       ├── registry.py           ProviderSpec: what each provider is (PROVIDERS)
 │       ├── base.py               HTTP call, error mapping, <think> stripping
 │       ├── usage.py              per-attempt tokens and cost (AttemptUsage) for an observer
 │       ├── openai_compatible.py  OpenRouter and LM Studio
@@ -438,10 +439,15 @@ Snippets that need no model go in `espanso/match/prompts-core.yml`, as plain Esp
    failed or filtered reply is marked instead of pasted as complete. Take an optional
    `observer` and, when it is set, pass `post_json(..., meter=Meter(...))` with a parser in
    `providers/usage.py` that maps the body's tokens and cost (a missing cost stays `None`).
-2. Add it to `PROVIDER_NAMES` and `make_provider()` in `factory.py`, passing `observer`. If it can send data off the
-   machine, return it through `_gate()`, as the other providers do, and make `leaves_machine()`
-   report it, so the gate and `PROMPT_LOCAL_ONLY` both cover it.
-3. Add wire-format and error-path cases to `tests/test_providers.py`, and a factory test.
+2. Add a `ProviderSpec` to `PROVIDERS` in `providers/registry.py` and its settings
+   (`{name}_base_url`, `{name}_model`, and for a cloud API `{name}_api_key` and its cap) to
+   `config.py` (see [Add a setting](#add-a-setting)). A cloud API is `cloud=True`: then
+   `leaves_machine()` reports it, `make_provider()` returns it through `_gate()`, its key is
+   required and its base URL must be https, so the gate and `PROMPT_LOCAL_ONLY` both cover it.
+   A new wire format also needs its branch in `make_provider()` in `factory.py`, passing
+   `observer`.
+3. Add wire-format and error-path cases to `tests/test_providers.py`; `tests/test_registry.py`
+   checks every spec.
 
 ### Improve the redaction gate
 
