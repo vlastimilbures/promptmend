@@ -21,7 +21,6 @@ EXAMPLES = {
     "<PROVIDER>": "openrouter",
     "<TIER>": "standard",
     "<DRAFT>": "a rough draft",
-    teach.CHECKOUT: "Projects/epr",
 }
 
 

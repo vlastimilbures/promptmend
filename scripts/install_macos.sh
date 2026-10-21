@@ -23,15 +23,6 @@ done
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_dir"
 
-# The tool's name before the rename (#169). Its `prompt-workflow` launcher sits where this
-# install puts the alias of the same name: uv refuses to install over it, and after a --force
-# install, uninstalling the old tool later would delete the alias. Remove the old tool first.
-tools="$(uv tool list 2>/dev/null || true)"
-if grep -q '^espanso-prompt-rewriter ' <<<"$tools"; then
-  echo "Uninstalling espanso-prompt-rewriter, the tool's old name (now promptmend)."
-  uv tool uninstall espanso-prompt-rewriter
-fi
-
 # `uv tool install` ignores uv.lock, so pass the locked versions as constraints (#34). The
 # tool gets its own isolated environment; dev dependencies are not needed to deploy. Bytecode is
 # compiled now, where a wait is expected, not on the first run (#216).
@@ -55,9 +46,9 @@ if [ -f "$repo_dir/.env" ]; then
   chmod 600 "$repo_dir/.env"
 fi
 
-echo "Settings are read from a .env (copy .env.example to ~/.config/promptmend/.env;"
-echo "one in $repo_dir is still read), or the saved config.toml and secrets.toml"
-echo "(see docs/configuration.md). Then test -p- and -i- in any text field."
+echo "Save the settings with 'promptmend setup' (config.toml and secrets.toml), or point"
+echo "PROMPTMEND_ENV at a .env (see docs/configuration.md). Then test -p- and -i- in any"
+echo "text field."
 # Last, so its result is the final thing printed: it shows the plan, writes the match files
 # with this launcher and restarts Espanso. A match file you edited is kept, never
 # overwritten, and it ends with a WARNING naming each one (exit 0: keeping it is safe).

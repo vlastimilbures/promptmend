@@ -82,7 +82,7 @@ def _bin(folder: Path, *names: str) -> Path:
 
 
 def test_path_shadow_ok_with_the_own_launcher(tmp_path: Path) -> None:
-    own = _bin(tmp_path / "own", "promptmend", "prompt-workflow")
+    own = _bin(tmp_path / "own", "promptmend")
     found = deploy.Launcher(own / f"promptmend{EXE}", "uv")
     check = doctor._path_shadow_check(found, environ={"PATH": str(own)})
     assert check.status == "ok"
@@ -126,21 +126,6 @@ def test_path_shadow_warns_with_a_hint(
         "found": str(old / f"promptmend{EXE}"),
         "launcher": str(own / f"promptmend{EXE}"),
     }
-
-
-def test_path_shadow_warns_about_the_legacy_alias(tmp_path: Path) -> None:
-    # This install has no alias next to it: samefile() fails, and the old one is reported.
-    own = _bin(tmp_path / "own", "promptmend")
-    old = _bin(tmp_path / "old", "prompt-workflow")
-    environ = {"PATH": os.pathsep.join((str(old), str(own)))}
-    check = doctor._path_shadow_check(
-        deploy.Launcher(own / f"promptmend{EXE}", "uv"), environ=environ
-    )
-    assert check.status == "warn"
-    assert check.message.startswith(
-        f"`prompt-workflow` on PATH is {old / f'prompt-workflow{EXE}'},"
-    )
-    assert check.data["launcher"] == str(own / f"prompt-workflow{EXE}")
 
 
 # --- version and update (#197) ------------------------------------------------------------
@@ -240,14 +225,19 @@ def test_config_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PROMPTMEND_ENV")
     assert _config().data["mode"] == "defaults"
     assert _config().status == "ok"
-    env = config._user_config_dir() / ".env"
+    env = config.user_config_dir() / ".env"
     env.parent.mkdir(parents=True)
     env.write_text("PROMPT_PROFILE=general\n", "utf-8")
-    assert _config().data["mode"] == "env"
+    # A .env no release reads any more (#275) is a finding, with config.toml or without.
+    check = _config()
+    assert (check.data["mode"], check.status) == ("defaults", "warn")
+    assert check.data["findings"][0]["source"] == f"file:{env}"
+    assert "no longer read" in check.data["findings"][0]["message"]
     config.settings_file().write_text("config_version = 1\n", "utf-8")
     check = _config()
-    assert check.data["mode"] == "saved"
-    assert check.status == "warn"  # the .env is now ignored: a finding
+    assert (check.data["mode"], check.status) == ("saved", "warn")
+    env.unlink()
+    assert _config().status == "ok"
 
 
 def test_config_strict_error_fails() -> None:
@@ -434,18 +424,6 @@ def test_launcher_checks(tmp_path: Path, espanso: Path) -> None:
     deploy.apply(deploy.plan(espanso, str(exe), deploy.Manifest.load()))
     check = doctor._launcher_check(str(exe), deploy.Manifest.load())
     assert (check.status, check.data["drift"]) == ("ok", False)
-
-
-# #169: match files still calling the deprecated `prompt-workflow` alias get a redeploy hint.
-def test_launcher_check_warns_about_the_old_command(tmp_path: Path, espanso: Path) -> None:
-    old = tmp_path / "prompt-workflow"
-    old.write_text("", "utf-8")
-    deploy.apply(deploy.plan(espanso, str(old), deploy.Manifest.load()))
-    check = doctor._launcher_check(str(tmp_path / f"promptmend{EXE}"), deploy.Manifest.load())
-    assert check.status == "warn"
-    assert "redeploy with `promptmend espanso deploy`" in check.message
-    assert set(check.data) == set(doctor.DATA_KEYS["launcher"])
-    assert check.data["drift"] is True
 
 
 def test_launcher_check_warns_about_another_launcher(tmp_path: Path, espanso: Path) -> None:
@@ -715,7 +693,7 @@ def test_persona_check_only_when_a_profile_sends_it() -> None:
     )
     pro = Settings(persona=f"Mail {address}", profile="general", pro_profile="default")
     assert doctor._persona_check(pro).status == "warn"
-    folder = config._user_config_dir() / "profiles"
+    folder = config.user_config_dir() / "profiles"
     folder.mkdir(parents=True)
     (folder / "mine.md").write_text("Rewrite it. {{PERSONA_RULE}}", "utf-8")
     (folder / "plain.md").write_text("Rewrite it.", "utf-8")
@@ -748,7 +726,7 @@ def test_persona_check_in_the_report(
 
 def test_profiles_check(monkeypatch: pytest.MonkeyPatch) -> None:
     assert doctor._profiles_check(Settings(profile="nosuch")).status == "fail"
-    folder = config._user_config_dir() / "profiles"
+    folder = config.user_config_dir() / "profiles"
     folder.mkdir(parents=True)
     (folder / "general.md").write_text("x", "utf-8")
     check = doctor._profiles_check(Settings())
@@ -774,7 +752,7 @@ def test_a_check_that_raises_is_reported(
 
 
 def test_overrides_hint_keeps_the_names_already_listed() -> None:
-    from promptmend.profiles import overrides_hint
+    from promptmend.prompt_builder import overrides_hint
 
     assert overrides_hint(["mine", "default-pro"]) is None  # not a built-in
     assert overrides_hint(["general"], ("general",)) is None

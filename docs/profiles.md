@@ -72,8 +72,7 @@ A name is lower-case letters, digits, `-` and `_`: no dots or spaces, and not a 
 name such as `con`. The file must be named exactly `<name>.md`.
 
 A profile you added under `src/promptmend/prompts/` in a checkout keeps working there, but
-belongs in this folder: `promptmend profiles migrate --checkout PATH` copies it over (copies
-only, never overwrites).
+belongs in this folder: copy it over by hand.
 
 ## Replacing a built-in
 

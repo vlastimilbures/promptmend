@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
 
-from .config import _user_config_dir
+from .config import user_config_dir
 from .redaction import safe_repr
 
 _PROMPT_DIR = files(__package__) / "prompts"
@@ -45,7 +45,7 @@ PROFILE_NAME = re.compile(r"(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a
 def user_profiles_dir() -> Path:
     """The user's own profiles, `<name>.md` in the config dir that also holds .env. An
     upgrade never touches it, unlike the package's prompts/."""
-    return _user_config_dir() / "profiles"
+    return user_config_dir() / "profiles"
 
 
 def _read_user_profile(name: str) -> str | None:
@@ -161,6 +161,21 @@ def user_profiles(overrides: Collection[str] = ()) -> list[UserProfile]:
     listed = {p.name for p in found}
     missing = [n for n in overrides if n not in listed]
     return found + [UserProfile(n, folder / f"{n}.md", MISSING) for n in missing]
+
+
+def overrides_hint(names: Iterable[str], current: Collection[str] = ()) -> str | None:
+    """How to use the user profiles in ``names`` that are named like a built-in: each is read
+    only once PROMPT_PROFILE_OVERRIDES lists it (never a silent swap). None when there is
+    none, or ``current`` (the setting's value now) already lists them all."""
+    builtins = [name for name in names if name in PROFILES and name not in current]
+    if not builtins:
+        return None
+    value = ",".join(dict.fromkeys([*current, *builtins]))
+    files = ", ".join(f"{name}.md" for name in builtins)
+    return (
+        f"Your {files} replaces the built-in only once PROMPT_PROFILE_OVERRIDES lists it: "
+        f"`promptmend config set PROMPT_PROFILE_OVERRIDES {value}`."
+    )
 
 
 # Present in every profile that emits the golden template (CONTEXT ... OUTPUTS).

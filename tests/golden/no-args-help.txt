@@ -8,9 +8,9 @@ improve Improve a draft prompt. Errors are printed inline so Espanso shows them.
 persona Print PROMPT_PERSONA for the -p- snippet, or a fill-in placeholder when unset.
 espanso Deploy the match files into Espanso, check them, or remove them.
 setup First run: settings, key, match files, and a smoke test on a local stub.
-config Show, check and change the settings (config.toml); migrate a .env to it.
+config Show, check and change the settings (config.toml).
 secrets Save, check or remove API keys in the secret store. Keys are never arguments.
-profiles List the rewrite profiles, or copy a checkout's edited ones to your profile folder.
+profiles List the rewrite profiles: the built-in ones and yours.
 stats Calls, latency, tokens and costs from the local usage history.
 history Export, prune or reset the local usage history (metadata only, this device only).
 doctor Check the install, settings, keys, Espanso, matches and history.

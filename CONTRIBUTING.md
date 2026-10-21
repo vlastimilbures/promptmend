@@ -42,8 +42,9 @@ On Linux, run `uv tool install --editable .` and `promptmend espanso deploy`.
 
 An editable install runs the code and profiles straight from the checkout, so a `git pull` or
 a branch switch changes `-i-` at once, while the match files change only on the next deploy.
-It also reads a `.env` in the checkout; keep the one holding your key in the config folder
-instead (`chmod 600` it), where a careless `git add` cannot pick it up.
+It reads the same settings as a release (`config.toml` and `secrets.toml`, see
+`promptmend setup`), never the checkout's `.env`: to use a `.env`, point `PROMPTMEND_ENV` at it
+(`chmod 600` it, and keep it out of `git add`).
 
 ## Checks
 
@@ -71,7 +72,8 @@ The Home and Try snapshots are also the README's screenshots (`docs/interface.sv
 so a release regenerates none of them.
 
 If you change a prompt, a provider or anything on the request path, also run the opt-in live
-tests (needs `OPENROUTER_API_KEY` in `.env`, costs fractions of a cent; the Anthropic and
+tests (needs `OPENROUTER_API_KEY` in the environment or the checkout's `.env`, which the live
+tests point `PROMPTMEND_ENV` at; costs fractions of a cent; the Anthropic and
 OpenAI ones also need `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` and are skipped without it):
 
 ```bash
@@ -293,10 +295,9 @@ promptmend/
 │   ├── local_probe.py            asks a loopback Ollama or LM Studio whether it answers
 │   ├── smoke.py                  setup's smoke test: improve against a stub on 127.0.0.1
 │   ├── setup_guide.py            what setup says at each step (wizard and text flow), no Textual
-│   ├── config.py                 Settings from the environment, config.toml or .env
+│   ├── config.py                 Settings from the environment, config.toml or a named .env
 │   ├── config_files.py           reads config.toml/secrets.toml; atomic, private writes
-│   ├── config_store.py           saves settings and secrets; .env migration and rollback
-│   ├── relocate.py               moves the user folders from prompt-workflow to promptmend
+│   ├── config_store.py           saves settings and secrets
 │   ├── factory.py                make_provider(): builds providers, decides which are gated
 │   ├── gate.py                   GatedProvider: scans every draft that can leave the machine
 │   ├── clipboard_guard.py        refuses password-manager (concealed) clipboard items
@@ -304,7 +305,6 @@ promptmend/
 │   ├── history.py                local usage history (SQLite, metadata only, fail-open)
 │   ├── recorder.py               records each improve/persona run in the usage history
 │   ├── prompt_builder.py         loads built-in and user profiles, fills in the persona rule
-│   ├── profiles.py               migrate a checkout's own profiles to the user directory
 │   ├── assets.py                 the packaged Espanso match files (importlib.resources)
 │   ├── deploy.py                 espanso deploy/status/detach: manifest, states, stable launcher
 │   ├── espanso_windows.py        Espanso on Windows without reading its output (#209-#211)
@@ -355,9 +355,7 @@ A profile for your own use does not belong in the repo: put it in the user profi
 when `XDG_CONFIG_HOME` is set on macOS or Linux; `%APPDATA%\promptmend\profiles\` on
 Windows), where an upgrade cannot replace it. See
 [docs/profiles.md](docs/profiles.md#your-own-profiles); a same-named file overrides a built-in only when
-`PROMPT_PROFILE_OVERRIDES` lists it. `profiles.migrate_profiles()` copies profiles a checkout
-added or edited under `src/promptmend/prompts/` into that directory (it never deletes or
-overwrites).
+`PROMPT_PROFILE_OVERRIDES` lists it.
 
 To ship a new built-in profile:
 

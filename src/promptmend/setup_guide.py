@@ -15,11 +15,9 @@ from .config import ConfigLayers, Settings, secret_names
 from .prompt_builder import ADDED, PROFILES, UserProfile
 from .providers.registry import PROVIDERS
 
-# Step id -> the name in the left rail, in order. "earlier" is shown only when there is a
-# .env to take settings from.
+# Step id -> the name in the left rail, in order.
 STEPS = {
     "welcome": "Welcome",
-    "earlier": "Earlier settings",
     "provider": "Provider",
     "profile": "Profile",
     "keys": "API keys",
@@ -64,6 +62,17 @@ def legacy_keys_intro(env_file: str) -> str:
     return (
         f"PROMPTMEND_ENV is set, so keys are read only from {env_file}: add each one there "
         "as NAME=value (this setup cannot save them)."
+    )
+
+
+def unread_env_note(env_file: Path | None) -> str | None:
+    """What setup says about ``env_file`` (config.unread_env_file()): a .env no release reads
+    any more (#275), whose settings this setup saves again; None without one."""
+    if env_file is None:
+        return None
+    return (
+        f"{env_file} is no longer read: choose its settings again here (they are saved in "
+        "config.toml and the secret store), then remove that file."
     )
 
 
@@ -117,10 +126,6 @@ class DoneRow:
     ok: bool
     label: str
     text: str
-
-
-def steps(earlier: bool) -> list[str]:
-    return [s for s in STEPS if earlier or s != "earlier"]
 
 
 def rewrites(triggers: Sequence[assets.Trigger], settings: Settings) -> dict[str, list[str]]:

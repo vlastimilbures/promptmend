@@ -2,7 +2,7 @@
 
 This page covers getting PromptMend running on macOS, Windows or Linux, keeping it up to date,
 switching between install channels and removing it again. It also holds the notes for anyone
-upgrading from an older release or from a checkout install. The README's
+upgrading from an older release. The README's
 [Install](../README.md#install) section has the short version.
 
 ## Contents
@@ -149,8 +149,7 @@ It prints each command before running it, and:
 4. runs `promptmend doctor --no-clipboard`, which lists what [Set up](#set-up) still has to do.
 
 It never runs `promptmend setup` or `promptmend espanso deploy`: it only names them as the
-next step. It says so when it replaces an editable install from a checkout, or removes the
-old `espanso-prompt-rewriter` tool.
+next step. It says so when it replaces an editable install from a checkout.
 
 To install another release, set the version in PowerShell first and run the `irm … | iex`
 part in that same window. 0.19.0 is the oldest release it accepts.
@@ -244,8 +243,9 @@ After any install, run one of these in a terminal:
 - `promptmend` opens the [full-screen interface](interface.md), which does the same through
   its tabs.
 
-`setup` also offers to migrate a `.env` it finds (for an earlier checkout install, see
-[From a checkout install](#from-a-checkout-install)); it changes nothing unless you say yes. In a script, pass the key on stdin and nothing is asked:
+`setup` also names a `.env` left in the config folder, which is no longer read (see
+[From 0.25 or earlier](#from-025-or-earlier-settings-in-a-env)). In a script, pass the key on
+stdin and nothing is asked:
 
 ```bash
 promptmend setup --non-interactive --api-key-stdin --deploy < key.txt
@@ -295,12 +295,6 @@ it up to date.
 On Windows, a deploy is needed after upgrading from 0.20.0 or earlier: those match files ran
 the CLI through PowerShell, which fails on every trigger (#18).
 
-`prompt-workflow` is installed next to `promptmend`, even on a fresh install: it is the
-command's name before 0.19.0, kept as a deprecated alias so match files, scripts and shortcuts
-written for it keep working ([the alias](commands.md#the-prompt-workflow-alias), #169). It
-runs the same CLI, prints a deprecation note before a management command, and goes away in
-1.0.0; run `promptmend espanso deploy` once so your match files call `promptmend`.
-
 ## Switch channel
 
 To move from one channel to another (say from uv to Homebrew):
@@ -333,7 +327,7 @@ Espanso's rendering error.
    Do not uninstall while one of these files is left.
 3. Optionally, and only if you want them gone: `promptmend history reset` deletes the usage
    history, and `promptmend secrets remove OPENROUTER_API_KEY` (or `ANTHROPIC_API_KEY`)
-   deletes a saved key. The config folder (`config.toml`, `profiles/`, `backups/`) and the
+   deletes a saved key. The config folder (`config.toml`, `profiles/`) and the
    data folder stay until you delete them (see
    [Files and folders](configuration.md#files-and-folders)).
 4. Uninstall through the channel you installed with:
@@ -342,8 +336,6 @@ Espanso's rendering error.
    - Homebrew: `brew uninstall promptmend`, and `brew untap vlastimilbures/tap` if nothing
      else from the tap is installed.
 
-   Either removes the `prompt-workflow` alias with `promptmend` (see [Update](#update)).
-
 If the CLI is already broken or gone, install it again, then detach. Or clean up by hand:
 `espanso-manifest.json` in the data folder lists each deployed file as `target` with its
 `backups`. Delete the targets in Espanso's `match/` folder, restore a backup if you want your
@@ -351,84 +343,59 @@ earlier version back, and restart Espanso.
 
 ## Upgrading from older versions
 
+### From 0.25 or earlier: settings in a .env
+
+Releases up to 0.25.0 also read a `.env` in the config folder (and an editable install the
+checkout's `.env`), and had `config migrate`, `config rollback`, `profiles migrate` and the
+`prompt-workflow` alias. All of that is gone (#275): only the `.env` that `PROMPTMEND_ENV`
+names is read.
+
+Before you upgrade, while 0.25.0 is still installed:
+
+1. Its `config migrate` moves the `.env` in use into `config.toml` and the secret store,
+   after a preview.
+2. From a checkout install (one made with the install scripts), `profiles migrate --checkout
+   PATH` copies the profiles you added or edited there into your profile folder.
+
+Already upgraded? Your settings are not lost: the `.env` is still there, and `doctor` and
+`config validate` report it. Set `PROMPTMEND_ENV` to it to keep using it, or save its settings
+again with `promptmend setup` (see [Settings in a .env](configuration.md#settings-in-a-env)).
+Copy a profile you edited in a checkout into the profile folder by hand
+([Profiles](profiles.md)).
+
+Leaving a checkout install for a release: run `promptmend espanso deploy` from the release, so
+the triggers call it, and if `promptmend` on `PATH` is still the checkout's (`doctor` warns in
+`path_shadow`), run `deactivate` (its `.venv` is active) or take it off `PATH`.
+
 ### From 0.18 or earlier: the rename
 
 Up to 0.18.0 the package was `espanso-prompt-rewriter` and the command `prompt-workflow`; both
 are now `promptmend`. Switch over once:
 
 ```bash
-uv tool uninstall espanso-prompt-rewriter   # first; the triggers stop working until the deploy
+uv tool uninstall espanso-prompt-rewriter   # the triggers stop working until the deploy
 uv tool install promptmend -c https://github.com/vlastimilbures/promptmend/releases/latest/download/constraints.txt
 promptmend espanso deploy                   # the matches now call promptmend
 promptmend doctor
 ```
 
-Uninstall the old tool first. Both install a `prompt-workflow` launcher in the same folder, so
-uv refuses to install `promptmend` next to it. If `--force` made it, uninstalling the old tool
-afterwards deletes the `prompt-workflow` alias that now belongs to `promptmend`. If you already
-installed with `--force`, run `uv tool uninstall espanso-prompt-rewriter`, then the
-`uv tool install --force promptmend …` line again.
-
-The install scripts and `install.ps1` uninstall the old tool themselves.
-
 The deploy counts the match files an earlier release wrote (stamped `# prompt-workflow …`) as
-its own and `stale`, so it replaces them without asking. `doctor` warns while the deployed
-matches still call a `prompt-workflow` launcher. Other changes a script may notice:
+its own and `stale`, so it replaces them without asking. Other changes a script may notice:
 
 - the error and note marker is `[promptmend: …]` (was `[prompt-workflow: …]`);
 - the match labels in Espanso's search bar start with `PromptMend:`;
 - the Python package is `promptmend`;
 - OpenRouter sees the `X-Title: promptmend` header.
 
-`prompt-workflow` stays installed as a deprecated alias until 1.0.0 (see
-[commands](commands.md#the-prompt-workflow-alias)).
-
-### The folders' new name
-
-Releases up to 0.18.0 kept your settings in `~/.config/prompt-workflow/` and the usage history
-and deploy manifest in `~/.local/share/prompt-workflow/` (`%APPDATA%\prompt-workflow\` and
-`%LOCALAPPDATA%\prompt-workflow\` on Windows). The folders are now named `promptmend`.
-
-The first management command you run, or the interface, renames them and prints one line per
-folder on stderr. `improve`, `persona`, `--help`, `--version`, an unknown command and shell
-completion never move anything. Until then the triggers keep using the old folders.
-
-- It is a rename, so `secrets.toml` stays private to you.
-- If both folders exist, only what the new one lacks is moved; nothing is overwritten, and
-  `promptmend doctor` lists what stayed behind.
-- A move that fails (on Windows, a file another program holds open) is tried again by the next
-  command.
-- If `PROMPTMEND_ENV` or `PROMPT_WORKFLOW_ENV` (in your shell or in Espanso's environment)
-  names a `.env` inside the old config folder, that folder is not moved: point the variable at
-  the same file under the new folder, then run the command again.
-- A symlinked old folder is never moved; move it by hand.
-
-### From a checkout install
-
-A checkout install is one made with the install scripts (an editable install). The release
-never reads the checkout's `.env` or its profiles; take them along by hand:
-
-1. Install the release as shown above.
-2. Before you run `setup` or save any setting, copy the checkout's `.env` into the
-   [config folder](configuration.md#files-and-folders) and run `promptmend config migrate`
-   (see [Migrate a .env](configuration.md#migrate-a-env)). Once `config.toml` exists, a `.env`
-   is ignored and not migrated: set each value with `promptmend config set` and each key with
-   `promptmend secrets set` instead.
-3. `promptmend profiles migrate --checkout PATH` copies the profiles you added or edited.
-4. `promptmend espanso deploy` points the triggers at the release instead of the checkout.
-5. If `promptmend` on `PATH` is still the checkout's (`doctor` warns in `path_shadow`), run
-   `deactivate` (its `.venv` is active) or take it off `PATH`.
+Those releases kept your settings in `~/.config/prompt-workflow/` and the usage history and
+deploy manifest in `~/.local/share/prompt-workflow/` (`%APPDATA%\prompt-workflow\` and
+`%LOCALAPPDATA%\prompt-workflow\` on Windows). Releases 0.19 to 0.25 renamed them to
+`promptmend` on the first management command; this one no longer looks for them, so rename
+them by hand if they are still there.
 
 Coming from a version before 0.9: if Espanso's `match/base.yml` still holds the `-p-`
 template those versions installed there, delete it by hand (deploy no longer does), or `-p-`
 is defined twice.
-
-### Keeping a .env
-
-Instead of migrating, you can keep a `.env`: move it into the config folder
-(`~/.config/promptmend/.env`, `%APPDATA%\promptmend\.env` on Windows), where the release reads
-it too, or point `PROMPTMEND_ENV` at it. Set that variable for GUI apps, since Espanso does not
-inherit your shell. See [Where settings live](configuration.md#where-settings-live).
 
 ## Install from a checkout
 

@@ -65,7 +65,7 @@ def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
     """Saved mode: no PROMPTMEND_ENV, so config.toml and the secret store are read (in
     conftest's per-test config dir)."""
     monkeypatch.delenv("PROMPTMEND_ENV")
-    return config._user_config_dir()
+    return config.user_config_dir()
 
 
 @pytest.fixture
@@ -245,13 +245,17 @@ def test_config_set_refuses_in_legacy_mode(tmp_path: Path) -> None:
     assert not config.settings_file().exists()
 
 
-def test_config_set_refuses_to_orphan_a_dotenv(saved: Path) -> None:
-    saved.mkdir(parents=True)
-    (saved / ".env").write_text("PROMPT_PROFILE=general\n", "utf-8")
+# A .env in the user config folder is no longer read (#275), so saving config.toml cannot
+# orphan it: `config set` saves, and `config validate` reports the unread file.
+def test_config_set_saves_beside_an_unread_dotenv(saved: Path) -> None:
+    env = _dotenv(saved)
     result = _run("config", "set", "PROMPT_TIMEOUT_SECONDS", "10")
-    assert result.exit_code == 1
-    assert "config migrate" in result.stderr
-    assert not (saved / "config.toml").exists()
+    assert result.exit_code == 0, result.output
+    assert "PROMPT_TIMEOUT_SECONDS = 10" in (saved / "config.toml").read_text("utf-8")
+    result = _run("config", "validate")
+    assert result.exit_code == common.PROBLEMS
+    assert f"{env}: .env is no longer read" in result.stdout
+    assert KEY not in result.output
 
 
 def test_config_validate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -344,44 +348,6 @@ def _dotenv(saved: Path) -> Path:
     return env
 
 
-def test_config_migrate_needs_consent(saved: Path) -> None:
-    env = _dotenv(saved)
-    result = _run("config", "migrate")
-    assert result.exit_code == common.NEEDS_TERMINAL
-    assert "Preview token:" in result.stdout
-    assert KEY not in result.output
-    assert _run("config", "migrate", "--dry-run").exit_code == 0
-    assert _run("config", "migrate", "--yes").exit_code == 2
-    assert _run("config", "migrate", "--yes", "--preview-token", "wrong").exit_code == 2
-    assert env.is_file()
-    assert not (saved / "config.toml").exists()
-
-
-def test_config_migrate_and_rollback_with_the_token(saved: Path) -> None:
-    env = _dotenv(saved)
-    preview = _run("config", "migrate", "--dry-run").stdout
-    token = preview.split("Preview token: ")[1].split()[0]
-    result = _run("config", "migrate", "--yes", "--preview-token", token)
-    assert result.exit_code == 0, result.output
-    assert not env.exists()
-    assert 'PROMPT_PROFILE = "general"' in (saved / "config.toml").read_text("utf-8")
-    preview = _run("config", "rollback", "--dry-run").stdout
-    token = preview.split("Preview token: ")[1].split()[0]
-    result = _run("config", "rollback", "--yes", "--preview-token", token)
-    assert result.exit_code == 0, result.output
-    assert "Rolled back: the .env is read again." in result.stdout
-    assert env.is_file()
-    assert not (saved / "config.toml").exists()
-
-
-def test_config_migrate_interactive(saved: Path, tty: None) -> None:
-    env = _dotenv(saved)
-    assert _run("config", "migrate", input="n\n").exit_code == 1
-    assert env.is_file()
-    assert _run("config", "migrate", input="y\n").exit_code == 0
-    assert not env.exists()
-
-
 # --- secrets ------------------------------------------------------------------------------
 
 
@@ -455,10 +421,9 @@ REQUIRED: dict[tuple[str, ...], list[str]] = {
 BASE: dict[tuple[str, ...], list[str]] = {
     ("setup",): ["--non-interactive", "--no-smoke-test"],
 }
-# Option names that suggest a secret. Allowed: the migration preview's consent token and the
-# improve output cap.
+# Option names that suggest a secret. Allowed: the improve output cap.
 SUSPICIOUS = ("key", "secret", "password", "token", "credential")
-ALLOWED_NAMES = {"preview_token", "max_tokens"}  # a consent digest; an output cap
+ALLOWED_NAMES = {"max_tokens"}  # an output cap
 
 
 def test_no_option_is_named_like_a_secret() -> None:
@@ -524,13 +489,10 @@ def _commands(espanso: Path) -> dict[tuple[str, ...], list[list[str]]]:
         ("config", "set"): [["config", "set", "PROMPT_PROFILE", "general"]],
         ("config", "unset"): [["config", "unset", "PROMPT_PROFILE"]],
         ("config", "validate"): [["config", "validate"]],
-        ("config", "migrate"): [["config", "migrate", "--dry-run"]],
-        ("config", "rollback"): [["config", "rollback", "--dry-run"]],
         ("secrets", "set"): [["secrets", "set", "OPENROUTER_API_KEY", "--stdin"]],
         ("secrets", "status"): [["secrets", "status"]],
         ("secrets", "remove"): [["secrets", "remove", "OPENROUTER_API_KEY", "--yes"]],
         ("profiles", "list"): [["profiles", "list"]],
-        ("profiles", "migrate"): [["profiles", "migrate", "--dry-run"]],
         ("stats",): [["stats"], ["stats", "--json", "--by", "day"]],
         ("history", "export"): [["history", "export"]],
         ("history", "prune"): [["history", "prune"]],
@@ -558,7 +520,7 @@ def _break(kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         )
         return
     monkeypatch.delenv("PROMPTMEND_ENV")
-    directory = config._user_config_dir()
+    directory = config.user_config_dir()
     directory.mkdir(parents=True)
     name = "config.toml" if kind == "toml" else "secrets.toml"
     (directory / name).write_text("this = = not toml\n[[\n", "utf-8")
@@ -913,7 +875,7 @@ def test_history_export_prune_reset(tmp_path: Path, record_ops: Callable[..., No
 
 
 def test_profiles_list(monkeypatch: pytest.MonkeyPatch) -> None:
-    folder = config._user_config_dir() / "profiles"
+    folder = config.user_config_dir() / "profiles"
     folder.mkdir(parents=True)
     (folder / "mine.md").write_text("mine", "utf-8")
     (folder / "general.md").write_text("x", "utf-8")
@@ -922,29 +884,6 @@ def test_profiles_list(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "  default" in result.stdout
     assert "mine: added" in result.stdout
     assert "general: shadowed" in result.stdout
-
-
-def test_profiles_migrate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tty: None) -> None:
-    from promptmend import profiles
-
-    checkout = tmp_path / "checkout"
-    source = checkout / profiles.PROMPTS_PATH
-    source.mkdir(parents=True)
-    (source / "mine.md").write_text("my profile", "utf-8")
-    monkeypatch.setattr(profiles, "git_pristine_profiles", lambda root, rev=None: {})
-    args = ("profiles", "migrate", "--checkout", str(checkout))
-    assert "Dry run" in _run(*args, "--dry-run").stdout
-    target = config._user_config_dir() / "profiles" / "mine.md"
-    assert not target.exists()
-    assert _run(*args, input="n\n").exit_code == 1
-    assert _run(*args, "--yes").exit_code == 0
-    assert target.read_text("utf-8") == "my profile"
-
-
-def test_profiles_migrate_needs_a_checkout() -> None:
-    result = _run("profiles", "migrate")
-    assert result.exit_code == 1
-    assert "--checkout" in result.stderr
 
 
 # --- espanso deploy --dry-run -------------------------------------------------------------
@@ -1016,17 +955,19 @@ def test_setup_smoke_failure_exits_1(
     assert "smoke test failed" in result.stderr
 
 
-def test_setup_offers_migration_and_writes_nothing(
+# --plain is --non-interactive (#244). A .env setup no longer reads is named, never changed.
+def test_setup_names_an_unread_dotenv(
     saved: Path, espanso: Path, fake_run: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(smoke, "run", lambda p: smoke.SmokeResult(True, smoke.REPLY, 1, "ok"))
     env = _dotenv(saved)
-    # --plain is --non-interactive (#244): it only offers it.
-    result = _setup(espanso, "--plain", "--provider", "openrouter", "--profile", "default")
+    before = env.read_bytes()
+    result = _setup(espanso, "--plain", "--provider", "ollama", "--profile", "general")
     assert result.exit_code == 0, result.output
-    assert "config migrate" in result.stdout
-    assert env.is_file()
-    assert not (saved / "config.toml").exists()
+    assert f"{env} is no longer read" in result.stdout
+    assert 'PROMPT_PROFILE = "general"' in (saved / "config.toml").read_text("utf-8")
+    assert env.read_bytes() == before
+    assert KEY not in result.output
 
 
 def test_setup_in_legacy_mode_writes_no_settings(
@@ -1206,17 +1147,6 @@ def smoke_ok(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     monkeypatch.setattr(smoke, "run", fake)
     return calls
-
-
-def test_setup_stops_writing_when_the_dotenv_is_broken(
-    saved: Path, espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
-) -> None:
-    saved.mkdir(parents=True)
-    (saved / ".env").write_text("PROMPT_LOCAL_ONLY=maybe\n", "utf-8")
-    result = _setup(espanso, "--non-interactive")
-    assert result.exit_code == 1
-    assert "fix the current settings first" in result.stderr
-    assert not (saved / "config.toml").exists()
 
 
 def test_setup_local_provider_takes_no_key(
@@ -1463,29 +1393,6 @@ def test_secrets_remove_says_where_a_key_still_comes_from(
     assert "still set, from environment" in result.stdout
     assert KEY not in result.output
     assert "nothing to do" in _run("secrets", "remove", "OPENROUTER_API_KEY").stdout
-
-
-def test_profiles_migrate_nothing_changed_and_default(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from promptmend import profiles
-
-    checkout = tmp_path / "checkout"
-    source = checkout / profiles.PROMPTS_PATH
-    source.mkdir(parents=True)
-    (source / "default.md").write_text("same", "utf-8")
-    args = ("profiles", "migrate", "--checkout", str(checkout), "--yes")
-    monkeypatch.setattr(
-        profiles, "git_pristine_profiles", lambda root, rev=None: {"default": "same"}
-    )
-    assert "--rev <commit>" in _run(*args).stdout
-    assert "nothing to copy" in _run(*args, "--rev", "v0.16.1").stdout
-    monkeypatch.setattr(
-        profiles, "git_pristine_profiles", lambda root, rev=None: {"default": "old"}
-    )
-    result = _run(*args)
-    assert result.exit_code == 0
-    assert "PROMPT_PROFILE_OVERRIDES" in result.stdout
 
 
 # config set saves a persona the gate's patterns match (exit 0) and warns on stderr with the

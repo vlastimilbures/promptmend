@@ -32,11 +32,9 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for key in env_names():
         monkeypatch.delenv(key, raising=False)
     monkeypatch.chdir(tmp_path)
-    # Point the loader at a per-test file so the developer's real repo .env never loads
-    # (PROMPTMEND_ENV; its alias PROMPT_WORKFLOW_ENV is dropped, so unsetting the new name
-    # leaves legacy mode).
+    # Point the loader at a per-test file (PROMPTMEND_ENV, legacy mode): unsetting it leaves
+    # legacy mode.
     monkeypatch.setenv("PROMPTMEND_ENV", str(tmp_path / ".env"))
-    monkeypatch.delenv("PROMPT_WORKFLOW_ENV", raising=False)
     # ...and its real user profile directory is never read either (prompt_builder).
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "config"))
@@ -44,8 +42,8 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for key in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(key, str(tmp_path / "data"))
     # The home the config dir would derive from, and the editable-install root, are per-test
-    # temp dirs too: a test that unsets PROMPTMEND_ENV can never read, write, migrate or move
-    # the developer's real files (config.toml, secrets.toml, a repository .env, the folders).
+    # temp dirs too: a test that unsets PROMPTMEND_ENV can never read or write the developer's
+    # real files (config.toml, secrets.toml, the folders).
     for name in ("HOME", "USERPROFILE"):
         monkeypatch.setenv(name, str(tmp_path / "home"))
     from promptmend import config

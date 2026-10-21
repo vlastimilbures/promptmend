@@ -381,20 +381,6 @@ def test_backup_name_never_clobbers(espanso: Path) -> None:
     assert (first.name, second.name) == ("a.yml.bak-20260101000000", "a.yml.bak-20260101000000-1")
 
 
-@pytest.mark.parametrize(
-    ("launcher", "legacy"),
-    [
-        ("/Users/me/.local/bin/prompt-workflow", True),
-        ("C:/Users/me/.local/bin/prompt-workflow.exe", True),
-        ("C:\\Users\\me\\.local\\bin\\Prompt-Workflow.EXE", True),
-        ("/Users/me/.local/bin/promptmend", False),
-        ("/Users/me/prompt-workflow/bin/promptmend", False),
-    ],
-)
-def test_is_legacy_launcher(launcher: str, legacy: bool) -> None:
-    assert deploy.is_legacy_launcher(launcher) is legacy
-
-
 def test_non_utf8_file_is_foreign(espanso: Path) -> None:
     (espanso / "match" / STATIC).write_bytes(b"\xff\xfe")
     assert _states(espanso)[STATIC] == deploy.FOREIGN

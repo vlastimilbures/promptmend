@@ -1,5 +1,5 @@
 """The setup wizard: `promptmend setup` in a terminal, and Home's "Setup…". One step at a time
-(Welcome, earlier settings, provider, profile, keys, Espanso, test, done), each picked from a
+(Welcome, provider, profile, keys, Espanso, test, done), each picked from a
 list rather than typed, each change made through the same service as its headless command and
 logged as that command. What each step says comes from setup_guide.py (no Textual)."""
 
@@ -27,13 +27,13 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
-from .. import config, config_files, config_store, deploy, setup_guide, smoke
+from .. import config, config_files, deploy, setup_guide, smoke
 from ..commands import common
 from ..commands import settings as settings_cmd
 from ..commands import setup as setup_cmd
 from ..config import secret_names
 from . import teach
-from .base import EXPECTED, confirm_migration, error_message, plan_digest, result_text
+from .base import error_message, plan_digest, result_text
 from .state import State
 
 if TYPE_CHECKING:
@@ -75,16 +75,6 @@ def make_plan(options: SetupOptions) -> tuple[deploy.Plan, str | None]:
     return deploy.plan(target, deploy.launcher_text(launcher), deploy.Manifest.load()), fallback
 
 
-def _earlier() -> bool:
-    """Whether there are settings to take over: a .env to migrate."""
-    if common.legacy_env():
-        return False
-    try:
-        return config_store.plan_migration().status == "ready"
-    except EXPECTED:
-        return False
-
-
 class SetupScreen(Screen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "back", "Back"),
@@ -93,7 +83,7 @@ class SetupScreen(Screen[None]):
     def __init__(self, options: SetupOptions | None = None) -> None:
         super().__init__()
         self.options = options or SetupOptions()
-        self.order = self._steps(earlier=False)
+        self.order = self._steps()
         self.at = "welcome"
         self.plan: deploy.Plan | None = None
         self.plan_error: str | None = None
@@ -111,12 +101,6 @@ class SetupScreen(Screen[None]):
                     with VerticalScroll(id="setup-welcome"):
                         yield Static(setup_guide.WELCOME, markup=False)
                         yield Static("", id="setup-welcome-notes", classes="note", markup=False)
-                    with VerticalScroll(id="setup-earlier"):
-                        yield Static("", id="setup-earlier-text", markup=False)
-                        yield Horizontal(
-                            self._button("setup-migrate-env", "Move the .env settings…"),
-                            classes="buttons",
-                        )
                     with VerticalScroll(id="setup-provider"):
                         yield Static(setup_guide.PROVIDER_INTRO, classes="note", markup=False)
                         yield OptionList(id="setup-providers")
@@ -180,8 +164,8 @@ class SetupScreen(Screen[None]):
             if skip
         ]
 
-    def _steps(self, earlier: bool) -> list[str]:
-        return [s for s in setup_guide.steps(earlier) if s not in self.skipped]
+    def _steps(self) -> list[str]:
+        return [s for s in setup_guide.STEPS if s not in self.skipped]
 
     @staticmethod
     def _button(id_: str, label: str) -> Button:
@@ -203,18 +187,16 @@ class SetupScreen(Screen[None]):
 
     def show(self, state: State) -> None:
         """Fill every step from a fresh State (the app calls this after each reload)."""
-        self.order = self._steps(_earlier())
-        if self.at not in self.order:
-            self.at = "provider"
         notes = []
         if common.legacy_env():
             notes.append(
                 "PROMPTMEND_ENV is set, so your settings and keys stay in that file; this "
                 "setup cannot save them (edit that file instead)."
             )
+        elif unread := setup_guide.unread_env_note(config.unread_env_file()):
+            notes.append(unread)
         notes.append(_history_line(state))
         self.query_one("#setup-welcome-notes", Static).update("\n".join(notes))
-        self._show_earlier()
         self._fill(
             "#setup-providers",
             setup_guide.provider_choices(state.settings, state.triggers),
@@ -240,25 +222,6 @@ class SetupScreen(Screen[None]):
         self.query_one("#setup-servers", Static).update(servers.message if servers else "")
         self._refresh_plan()
         self.go(self.at)
-
-    def _show_earlier(self) -> None:
-        lines = []
-        try:
-            migration = config_store.plan_migration()
-        except EXPECTED as exc:
-            migration = None
-            lines.append(error_message(exc))
-        ready = migration is not None and migration.status == "ready"
-        if ready and migration is not None:
-            lines.append(
-                "Your settings are in a .env. Moving them to config.toml and the secret store "
-                "lets this setup and the interface change them:"
-            )
-            lines += [f"  {line}" for line in migration.describe()]
-        if not lines:
-            lines.append("Nothing to take over.")
-        self.query_one("#setup-earlier-text", Static).update("\n".join(lines))
-        self.query_one("#setup-migrate-env", Button).display = ready
 
     def _fill(self, selector: str, choices: list[setup_guide.Choice], preset: str | None) -> None:
         options = self.query_one(selector, OptionList)
@@ -366,7 +329,7 @@ class SetupScreen(Screen[None]):
             # Nothing can be saved (as headless setup's writable=False): say so and move on.
             if setup_cmd.current_choice(name) != value:
                 self.app.notify(
-                    f"{name} not saved: {config.env_file_var()} is set, so settings stay in "
+                    f"{name} not saved: {config.ENV_FILE_VAR} is set, so settings stay in "
                     f"{legacy}; edit that file instead.",
                     severity="warning",
                     markup=False,
@@ -410,18 +373,6 @@ class SetupScreen(Screen[None]):
     @on(Button.Pressed, "#setup-save-keys")
     def _save_keys_pressed(self) -> None:
         self._save_keys()
-
-    @on(Button.Pressed, "#setup-migrate-env")
-    def _migrate_env(self) -> None:
-        confirm_migration(
-            self,
-            title="Move the .env settings?",
-            confirm="Move",
-            note="A backup is kept.",
-            done=lambda result: (
-                f"Moved; backup in {result.backup}. `promptmend config rollback` undoes it."
-            ),
-        )
 
     # The Espanso step.
 

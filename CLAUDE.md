@@ -6,8 +6,8 @@ user-facing behaviour.
 
 ## What this is
 
-A Python CLI (`promptmend`, PromptMend; the old command `prompt-workflow` stays a deprecated
-alias until 1.0.0) invoked by Espanso text-expansion triggers to rewrite a clipboard/stdin
+A Python CLI (`promptmend`, PromptMend; the old `prompt-workflow` alias was removed in #275)
+invoked by Espanso text-expansion triggers to rewrite a clipboard/stdin
 draft into a more precise prompt via a local or cloud LLM. Espanso match files in
 `espanso/match/` call the CLI from `type: script` vars (an argv list, no shell) and paste back
 stdout. Besides the triggers (`improve`, `persona`) there are management commands
@@ -128,19 +128,20 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   `ValueError` naming the variable (never quoting a secret). API keys are `secret` (out of
   `repr()`), and only `secret_names()` live in the secret store, never in `config.toml`.
 - `ConfigLayers.resolve()` merges, lowest first: built-in default < saved settings
-  (`config.toml`, else a legacy `.env`; `PROMPTMEND_ENV` names a single `.env` instead) < the
-  secret store < the real environment; per-call overrides come after
+  (`config.toml`; `PROMPTMEND_ENV` names a single `.env` instead, the only `.env` ever read) <
+  the secret store < the real environment; per-call overrides come after
   (`Settings.for_call()`/`with_overrides()`). It never reads the cwd, never writes
   `os.environ`, and takes only `env_names()` keys (a `.env` cannot set `HTTPS_PROXY` or
   anything else). Strict mode (the triggers, the Try tab) fails closed with a marker; repair
-  mode (`strict=False`, the management commands) reports findings and falls back a layer.
+  mode (`strict=False`, the management commands) reports findings and falls back a layer,
+  and reports a `.env` left in the config folder (`config.unread_env_file()`, #275).
 - Legacy mode: with `PROMPTMEND_ENV` set (the conftest default) there is no `config.toml` and
   no secret store, and `config set`/`secrets set` refuse.
 - Adding a setting: a field and parser in `config.py`, a row in docs/configuration.md, a line
   in `.env.example` and an entry in `tui/settings_model.SETTINGS`; `tests/test_docs.py` and
   `tests/test_tui_settings_model.py` fail without the last three.
 - File writes go through `config_files.write_atomic()` (mode 600 / owner-only DACL, no
-  plaintext fallback). Migrations and rollbacks back up and rename, never delete.
+  plaintext fallback).
 
 ## Trigger-path import contract
 
@@ -166,17 +167,16 @@ when it runs. `entry.self_command()` is the argv prefix for any child that runs 
 - Errors go to stderr via `@guard` (never a traceback); never prompt without a TTY
   (`stdin_is_tty()`); a key comes only from stdin or `getpass` (`read_secret()`), never from
   an option or argument; `config set` refuses secret names and key-like values.
-- `config migrate|rollback` apply only with an interactive yes or `--yes --preview-token
-  <token printed by the preview>`.
 - `setup` on a terminal opens the wizard (its flags only prefill or skip steps; nothing is
-  written without a press); `--non-interactive`/`--plain` asks nothing, lists a migration
-  as a to-do, deploys only with `--deploy`, and always discloses the usage history (D-HIST-0).
+  written without a press); `--non-interactive`/`--plain` asks nothing, deploys only with
+  `--deploy`, and always discloses the usage history (D-HIST-0).
 - `tests/test_commands.py` walks the whole command tree (no secret-named option, no key saved
   from a value, no traceback on broken config): add a new command to its `_commands()`.
 - `doctor` changes nothing except replaying the history spool and refreshing the
   update-check cache; `doctor --json` keeps
   `schema_version` 1 (only add check ids/keys; `previous_install` was removed in #246 by owner
-  decision, its PATH warning kept as `path_shadow`).
+  decision, its PATH warning kept as `path_shadow`; since #275 `folders` keeps its `legacy`
+  and `conflicts` keys, always empty).
 
 ## Interface (`tui/`)
 

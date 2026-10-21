@@ -25,6 +25,29 @@ All notable changes to this project are documented here. The format follows
   (no intro, no command line, no Previous install), and docs/interface.md no longer calls
   `setup` a question-and-answer alternative.
 
+### Removed
+- **Breaking:** the transition paths from earlier releases (#275), ahead of 1.0.0. This breaks
+  the earlier promise that `prompt-workflow` stays until 1.0.0.
+  - The `prompt-workflow` command (the deprecated alias of `promptmend`) and
+    `PROMPT_WORKFLOW_ENV` (the old name of `PROMPTMEND_ENV`). The install scripts no longer
+    uninstall `espanso-prompt-rewriter`, and `doctor` no longer looks for a `prompt-workflow`
+    launcher. Match files deployed by 0.18.0 or earlier are still recognised, and a deploy
+    replaces them as `stale`.
+  - The rename of the user folders from `prompt-workflow` to `promptmend`, which every
+    management command ran first. `doctor --json` keeps the `folders` check's `legacy` and
+    `conflicts` keys, now always empty.
+  - Reading a `.env` that `PROMPTMEND_ENV` does not name: the one in the config folder, and an
+    editable install's checkout `.env`. With `PROMPTMEND_ENV` set, nothing changes.
+  - `promptmend config migrate`, `promptmend config rollback` and `promptmend profiles migrate`,
+    with the interface's Migrate buttons and setup's "Earlier settings" step.
+
+  **Upgrading:** before you upgrade, run `config migrate` (and, from a checkout install,
+  `profiles migrate --checkout PATH`) with 0.25.0. Afterwards, a `.env` left in the config
+  folder is reported by `doctor` and `config validate`, and named by `setup`, until you remove
+  it: set `PROMPTMEND_ENV` to it to keep using it, or save its settings again with `promptmend
+  setup`. Contributors point `PROMPTMEND_ENV` at the checkout's `.env`. See docs/install.md,
+  "From 0.25 or earlier".
+
 ### Fixed
 - Anthropic calls no longer send `PROMPT_TEMPERATURE` (default 0.2). Current Claude models
   (Opus 4.7, Sonnet 5 and later) reject a temperature with HTTP 400, so the default Anthropic

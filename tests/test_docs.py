@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 from bench_module import bench
 
-from promptmend.config import ENV_FILE_VARS, env_names
+from promptmend.config import ENV_FILE_VAR, env_names
 
 if TYPE_CHECKING:
     from typer._click import Command, Context
@@ -64,10 +64,10 @@ def test_setting_is_documented(name: str) -> None:
     assert re.search(rf"^#? ?{name}=", example, re.MULTILINE), f"{name} missing from .env.example"
 
 
-# The settings tables document nothing Settings does not read (PROMPTMEND_ENV and its alias
-# PROMPT_WORKFLOW_ENV are read by the .env loader itself).
+# The settings tables document nothing Settings does not read (PROMPTMEND_ENV is read by the
+# .env loader itself).
 def test_docs_document_no_stale_settings() -> None:
-    assert _config_rows() - {*env_names(), *ENV_FILE_VARS} == set()
+    assert _config_rows() - {*env_names(), ENV_FILE_VAR} == set()
 
 
 # Every bench output directory the docs mention, and the bench's own default, is gitignored, so
@@ -99,11 +99,10 @@ def test_contributing_tree_lists_every_module() -> None:
 
 
 _FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
-# `prompt-workflow` is the deprecated alias (#169) of the same command tree: checked too.
-_INVOCATION = re.compile(r"(?<![\w/\\-])(?:promptmend|prompt-workflow)(?![\w:=-])([^`\n#]*)")
+_INVOCATION = re.compile(r"(?<![\w/\\-])promptmend(?![\w:=-])([^`\n#]*)")
 _FLAG = re.compile(r"(?<![\w-])(--?[a-zA-Z][\w-]*)")
 # `promptmend config get NAME` / `set NAME VALUE`: the later spans are siblings.
-_SIBLINGS = re.compile(r"`(?:promptmend|prompt-workflow) ([^`]+)`((?:\s*/\s*`[^`]+`)+)")
+_SIBLINGS = re.compile(r"`promptmend ([^`]+)`((?:\s*/\s*`[^`]+`)+)")
 # Options the docs name for other tools: uv, the bench, the retired installer option.
 _OTHER_TOOLS_FLAGS = {"--force", "--persona", "--suite", "--with-config"}
 # A line or span that runs another tool on the package (`uv tool install promptmend -c …`,
@@ -163,6 +162,10 @@ def _cli() -> tuple[Command, Context]:
     return root, root.make_context("promptmend", ["--help"], resilient_parsing=True)
 
 
+# Commands a release removed (#275): the CHANGELOG's notes may still name them.
+_REMOVED = ("config migrate", "config rollback", "profiles migrate")
+
+
 # Every `promptmend <command> [<subcommand>] --flag` the README, the docs pages (and the
 # CHANGELOG's newest notes) name exists in the CLI, so a renamed command or option cannot
 # leave the docs behind. Walks the Click tree; the lazy commands load their modules, never
@@ -177,6 +180,8 @@ def test_documented_commands_and_flags_exist(doc: str) -> None:
     if doc in {"README.md", "CHANGELOG.md", "docs/commands.md"}:
         assert invocations, f"{doc} names no promptmend command; drop or adapt this test"
     for rest in invocations:
+        if doc == "CHANGELOG.md" and rest.strip().startswith(_REMOVED):
+            continue
         command, words = root, rest.split()
         while words and isinstance(command, typer.core.TyperGroup):
             word = words[0]

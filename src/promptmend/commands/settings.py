@@ -19,7 +19,7 @@ config_app = typer.Typer(
     name="config",
     no_args_is_help=True,
     add_completion=False,
-    help="Show, check and change the settings (config.toml); migrate a .env to it.",
+    help="Show, check and change the settings (config.toml).",
 )
 secrets_app = typer.Typer(
     name="secrets",
@@ -53,24 +53,6 @@ def _not_a_secret(name: str, verb: str) -> None:
             f"{name} is a secret: {verb} it with `promptmend secrets {verb} {name}` (a hidden "
             "prompt or --stdin), never as an argument",
             common.USAGE,
-        )
-
-
-def _env_file_in_use() -> Path | None:
-    """The .env read today when config.toml does not exist yet: writing config.toml would make
-    it unread, so its settings would silently stop applying."""
-    if config_files.is_file(config.settings_file()):
-        return None
-    return next((p for p in config._env_file_candidates() if config_files.is_file(p)), None)
-
-
-def _writable_config(what: str) -> None:
-    common.refuse_in_legacy_mode(what)
-    env_file = _env_file_in_use()
-    if env_file is not None:
-        raise common.CommandError(
-            f"your settings are in {env_file}; saving {config_files.SETTINGS_FILE} would stop "
-            "it being read. Run `promptmend config migrate` first, or edit that file"
         )
 
 
@@ -119,7 +101,7 @@ def _warn_after_save(name: str) -> None:
 
 def save_setting(name: str, value: str) -> config_store.SavedSettings:
     """`config set` without the printing, shared with the interface (#93): refuse a secret, a
-    value that looks like a key, legacy mode and an unmigrated .env (CommandError), then save
+    value that looks like a key and legacy mode (CommandError), then save
     ``value`` in config.toml after checking it as the CLI would read it."""
     _not_a_secret(name, "set")
     if common.looks_like_a_key(value, user_patterns=name != common.EXTRA_PATTERNS):
@@ -128,7 +110,7 @@ def save_setting(name: str, value: str) -> config_store.SavedSettings:
             "`promptmend secrets set NAME` for an API key",
             common.USAGE,
         )
-    _writable_config(config_files.SETTINGS_FILE)
+    common.refuse_in_legacy_mode(config_files.SETTINGS_FILE)
     return config_store.save_settings(config_store.read_settings(), {name: value})
 
 
@@ -159,7 +141,7 @@ def layers_lines(layers: ConfigLayers, raw: bool) -> list[str]:
                     lines.append(f"      {name} = {common.shown_value(name, entry)}")
     if common.legacy_env():
         lines.append(
-            f"  ({config.env_file_var()} is set: config.toml and the secret store are not read)"
+            f"  ({config.ENV_FILE_VAR} is set: config.toml and the secret store are not read)"
         )
     return lines
 
@@ -271,79 +253,6 @@ def config_validate() -> None:
     if problems:
         raise typer.Exit(common.PROBLEMS)
     typer.echo("The settings are valid.")
-
-
-def _consent(plan_lines: list[str], token: str, *, dry_run: bool, yes: bool, given: str) -> bool:
-    """Show the preview and its token; True when the change was confirmed for this exact
-    preview: interactively, or by --yes with the --preview-token it printed."""
-    for line in plan_lines:
-        typer.echo(f"  {line}")
-    typer.echo(f"Preview token: {token}")
-    if dry_run:
-        typer.echo("Dry run: nothing was changed.")
-        return False
-    if yes:
-        if given != token:
-            common.fail(
-                "--yes needs --preview-token with the token of this preview, to confirm what you "
-                "saw (it changes whenever the files do)",
-                common.USAGE,
-            )
-        return True
-    common.confirm("Go ahead?", yes=False, hint=f"re-run with --yes --preview-token {token}")
-    return True
-
-
-_DRY_RUN = typer.Option(False, "--dry-run", help="Only show the preview")
-_TOKEN = typer.Option("", "--preview-token", help="The preview's token, required with --yes")
-
-
-@config_app.command(
-    "migrate", short_help="Move the .env in use to config.toml and its keys to the secret store."
-)
-@guard
-def config_migrate(
-    dry_run: bool = _DRY_RUN,
-    yes: bool = _YES,
-    preview_token: str = _TOKEN,
-) -> None:
-    """Move the .env in use to config.toml and its keys to the secret store, with a backup.
-    Shows a preview first; applies only once you confirm it (or --yes --preview-token)."""
-    plan = config_store.plan_migration()
-    if plan.status != "ready":
-        for line in plan.describe():
-            typer.echo(line)
-        return
-    typer.echo("Migration preview:")
-    if not _consent(plan.describe(), plan.token, dry_run=dry_run, yes=yes, given=preview_token):
-        return
-    result = config_store.apply_migration(consent=plan.token)
-    typer.echo(f"Migrated. Backup: {result.backup}")
-    for moved, target in result.moved.items():
-        typer.echo(f"  moved {moved} -> {target}")
-    for left in result.left:
-        common.warn(
-            f"{left} was not moved (edited since the preview, or not movable); it is no longer read"
-        )
-    typer.echo("Undo with `promptmend config rollback`.")
-
-
-@config_app.command(
-    "rollback",
-    short_help="Undo `config migrate`: put each .env back; set config.toml and secrets aside.",
-)
-@guard
-def config_rollback(
-    dry_run: bool = _DRY_RUN, yes: bool = _YES, preview_token: str = _TOKEN
-) -> None:
-    """Undo `config migrate`: put each .env back and set config.toml and the secret store
-    aside in the backup. Shows a preview first, like migrate."""
-    plan = config_store.plan_rollback()
-    typer.echo("Rollback preview:")
-    if not _consent(plan.describe(), plan.token, dry_run=dry_run, yes=yes, given=preview_token):
-        return
-    config_store.apply_rollback(consent=plan.token)
-    typer.echo("Rolled back: the .env is read again." if plan.read_again else "Rolled back.")
 
 
 # --- secrets ------------------------------------------------------------------------------

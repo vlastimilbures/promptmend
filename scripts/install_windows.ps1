@@ -29,16 +29,6 @@ function Assert-Exit([string]$What) {
     }
 }
 
-# The tool's name before the rename (#169). Its `prompt-workflow` launcher sits where this
-# install puts the alias of the same name: uv refuses to install over it, and after a --force
-# install, uninstalling the old tool later would delete the alias. Remove the old tool first.
-$Tools = (uv tool list 2>$null) -join "`n"
-if ($Tools -match '(?m)^espanso-prompt-rewriter ') {
-    Write-Host "Uninstalling espanso-prompt-rewriter, the tool's old name (now promptmend)."
-    uv tool uninstall espanso-prompt-rewriter
-    Assert-Exit "uv tool uninstall espanso-prompt-rewriter"
-}
-
 # `uv tool install` ignores uv.lock, so pass the locked versions as constraints (#34). The
 # tool gets its own isolated environment; dev dependencies are not needed to deploy. Bytecode is
 # compiled now, where a wait is expected, not on the first run (#216).
@@ -67,9 +57,9 @@ if (-not (Test-Path $Cli) -or -not (Test-Path $ToolPython)) {
 & $ToolPython scripts\check_tool_lock.py --python $ToolPython
 Assert-Exit "lock check"
 
-Write-Host "Settings are read from a .env (copy .env.example to %APPDATA%\promptmend\.env;"
-Write-Host "one in $RepoDir is still read), or the saved config.toml and secrets.toml"
-Write-Host "(see docs/configuration.md). Then test -p- and -i- in any text field."
+Write-Host "Save the settings with 'promptmend setup' (config.toml and secrets.toml), or point"
+Write-Host "PROMPTMEND_ENV at a .env (see docs/configuration.md). Then test -p- and -i- in any"
+Write-Host "text field."
 # Last, so its result is the final thing printed: it shows the plan, writes the match files
 # with this launcher (forward slashes, path guards) and restarts Espanso. A match file you
 # edited is kept, never overwritten, and it ends with a WARNING naming each one (exit 0:

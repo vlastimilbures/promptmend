@@ -163,18 +163,7 @@ function Invoke-PromptMendInstall {
     if ((Test-Path -LiteralPath $receipt) -and
             ((Get-Content -Raw -LiteralPath $receipt) -match '(?m)\beditable\s*=')) {
         Write-Host ('Note: promptmend is installed as editable from a checkout; this replaces ' +
-            'it with the release. To copy its .env, see ' +
-            "$Repo/blob/main/docs/install.md#from-a-checkout-install")
-    }
-
-    # The tool's name before 0.19.0 (#169) owns a `prompt-workflow` launcher where promptmend
-    # puts its alias: uv refuses to install over it, so it goes first, only if uv lists it.
-    $tools = Read-Native 'uv' @('tool', 'list')
-    if ($tools -match '(?m)^espanso-prompt-rewriter ') {
-        Write-Step 'Uninstalling espanso-prompt-rewriter, the old name of promptmend'
-        Assert-Native 'uv' @('tool', 'uninstall', 'espanso-prompt-rewriter')
-        Write-Host ('Note: espanso-prompt-rewriter was removed. Its triggers stop working ' +
-            'until the match files are deployed again (promptmend espanso deploy, below).')
+            'it with the release.')
     }
 
     # --force replaces an installed promptmend (an upgrade, or a rerun), always at the same

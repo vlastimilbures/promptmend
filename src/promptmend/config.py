@@ -47,110 +47,54 @@ def _env_text(data: bytes) -> str:
     return data.decode("utf-8-sig")
 
 
-# Root of an editable install (the repo checkout), where the user keeps their .env.
+# Root of an editable install (the repo checkout).
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-# The user folders' name (#169). Folders made by 0.18.0 and earlier have the legacy name until
-# a management command moves them (relocate.py); until then they stay in use as they are.
+# The user folders' name (#169).
 APP_DIR = "promptmend"
-LEGACY_APP_DIR = "prompt-workflow"
-# The .env that replaces config.toml and the secret store (legacy mode): the first variable set
-# (non-empty) wins. PROMPT_WORKFLOW_ENV is the old name, kept as an alias.
-ENV_FILE_VARS = ("PROMPTMEND_ENV", "PROMPT_WORKFLOW_ENV")
-
-
-def env_file_var(environ: Mapping[str, str] = os.environ) -> str:
-    """The name of the variable that names the legacy-mode .env: the one in effect, else the
-    documented one."""
-    return next((name for name in ENV_FILE_VARS if environ.get(name)), ENV_FILE_VARS[0])
+# The .env that replaces config.toml and the secret store (legacy mode), when set (non-empty).
+ENV_FILE_VAR = "PROMPTMEND_ENV"
 
 
 def env_file_override(environ: Mapping[str, str] = os.environ) -> str | None:
-    """The .env PROMPTMEND_ENV (or its alias PROMPT_WORKFLOW_ENV) names, or None: then it alone
-    holds the saved settings. An empty value counts as unset."""
-    return environ.get(env_file_var(environ)) or None
+    """The .env PROMPTMEND_ENV names, or None: then it alone holds the saved settings. An
+    empty value counts as unset."""
+    return environ.get(ENV_FILE_VAR) or None
 
 
-def config_folders(environ: Mapping[str, str] = os.environ) -> tuple[Path, Path]:
-    """The user config folder under its new and its legacy name, in that order."""
+def user_config_dir(environ: Mapping[str, str] = os.environ) -> Path:
+    """The settings, the secret store and the prices: %APPDATA% on Windows, $XDG_CONFIG_HOME
+    or ~/.config elsewhere."""
     if os.name == "nt":
         base = Path(environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
     else:
         base = Path(environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return base / APP_DIR, base / LEGACY_APP_DIR
-
-
-def data_folders(environ: Mapping[str, str] = os.environ) -> tuple[Path, Path]:
-    """The user data folder under its new and its legacy name, in that order."""
-    if os.name == "nt":
-        base = Path(environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    else:
-        base = Path(environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-    return base / APP_DIR, base / LEGACY_APP_DIR
-
-
-def folder_in_use(folders: tuple[Path, Path]) -> Path:
-    """The new folder, unless only the legacy one exists: then that one, for reads and writes
-    alike. Decided on every call and never creates anything, so a trigger run between an
-    upgrade and the move (relocate.py) keeps its settings, keys and history."""
-    new, old = folders
-    return old if not new.is_dir() and old.is_dir() else new
-
-
-def env_file_inside(folder: Path, environ: Mapping[str, str] = os.environ) -> str | None:
-    """The variable (PROMPTMEND_ENV or its alias) whose .env lies inside ``folder``, or None.
-    Moving that folder would leave the variable naming a file that is gone."""
-    named = env_file_override(environ)
-    if named is None:
-        return None
-    try:
-        inside = Path(named).expanduser().resolve().is_relative_to(folder.resolve())
-    except (OSError, RuntimeError):
-        return None
-    return env_file_var(environ) if inside else None
-
-
-def _user_config_dir(environ: Mapping[str, str] = os.environ) -> Path:
-    return folder_in_use(config_folders(environ))
+    return base / APP_DIR
 
 
 def user_data_dir(environ: Mapping[str, str] = os.environ) -> Path:
     """Per-device data (the usage history): never roamed or synced with the settings, since
     it describes this machine's calls. %LOCALAPPDATA% on Windows, $XDG_DATA_HOME or
     ~/.local/share elsewhere."""
-    return folder_in_use(data_folders(environ))
+    if os.name == "nt":
+        base = Path(environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    else:
+        base = Path(environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return base / APP_DIR
 
 
 def settings_file(environ: Mapping[str, str] = os.environ) -> Path:
-    """The user TOML settings file (non-secret settings): once it exists it is the saved
-    source, and no .env is read (unless PROMPTMEND_ENV names one)."""
-    return _user_config_dir(environ) / config_files.SETTINGS_FILE
+    """The user TOML settings file (non-secret settings), the saved source unless
+    PROMPTMEND_ENV names a .env."""
+    return user_config_dir(environ) / config_files.SETTINGS_FILE
 
 
-def _env_file_candidates(environ: Mapping[str, str] = os.environ) -> list[Path]:
-    """Where .env may live, in priority order.
-
-    Deliberately never the current directory or its parents: running the CLI inside an
-    untrusted checkout must not let a planted .env redirect OPENROUTER_BASE_URL (and so the
-    API key) or switch on ALLOW_CLOUD_OVERRIDE.
-    """
-    explicit = env_file_override(environ)
-    if explicit:
-        return [Path(explicit).expanduser()]
-    candidates = [_user_config_dir(environ) / ".env"]
-    if (_PROJECT_ROOT / "pyproject.toml").is_file():
-        candidates.insert(0, _PROJECT_ROOT / ".env")
-    return candidates
-
-
-def _env_file_label(candidate: Path, environ: Mapping[str, str]) -> str:
-    """Which .env an error means, without its path (errors are pasted into the focused app)."""
-    if env_file_override(environ):
-        return f"the .env named by {env_file_var(environ)}"
-    if candidate == _PROJECT_ROOT / ".env":
-        return "the checkout's .env"
-    return "the .env in the user config folder"
+def unread_env_file(environ: Mapping[str, str] = os.environ) -> Path | None:
+    """A .env in the user config folder, which no release since the legacy paths were removed
+    (#275) reads: its settings would be lost without a word, so repair mode reports it."""
+    path = user_config_dir(environ) / ".env"
+    return path if config_files.is_file(path) else None
 
 
 def _parse_env_text(text: str) -> tuple[dict[str, str], list[int], list[str]]:
@@ -177,41 +121,37 @@ def _cut_value_error(key: str) -> str:
     return f"the value of {key} was cut at ' #' (a comment); quote the value"
 
 
-def _find_env_file(
-    environ: Mapping[str, str],
+def _read_env_file(
+    path: Path,
     note: Callable[[str, str], None],
     fail: Callable[..., None],
-) -> tuple[Path, dict[str, str]] | None:
-    """The first readable .env candidate and its pairs, or None when there is none. A
-    candidate that exists but cannot be read is skipped, as is a line without `=`; each is
-    passed to ``note`` (by line number or setting name, never content), as is a persona cut at
-    ` #`. A candidate that is not UTF-8 text goes to ``fail``: its settings are lost, which
-    strict mode must not hide by using the next candidate. So does PROMPT_EXTRA_PATTERNS cut
-    at ` #`: a gate missing part of its patterns fails closed, and repair mode drops the cut
-    value (the next layer's applies)."""
-    for candidate in _env_file_candidates(environ):
-        source = f"file:{candidate}"
-        try:
-            raw_text = _env_text(candidate.read_bytes())
-        except UnicodeDecodeError:
-            label = _env_file_label(candidate, environ)
-            fail(source, f"{label} is not UTF-8 text; save it as UTF-8")
-            continue
-        except OSError:
-            if config_files.lexists(candidate):
-                note(source, ".env cannot be read; it was skipped")
-            continue
-        pairs, skipped, cut = _parse_env_text(raw_text)
-        for number in skipped:
-            note(source, f"line {number} of .env has no '=' and was ignored")
-        for key in cut:
-            if key == "PROMPT_EXTRA_PATTERNS":
-                fail(source, _cut_value_error(key), (key,))
-                del pairs[key]
-            else:
-                note(source, _cut_value_error(key))
-        return candidate, pairs
-    return None
+) -> dict[str, str] | None:
+    """The pairs of the .env PROMPTMEND_ENV names, or None when it cannot be read. A file
+    that exists but cannot be read is noted, as is a line without `=` (by line number or
+    setting name, never content), and a persona cut at ` #`. A file that is not UTF-8 text
+    goes to ``fail``: its settings are lost, which strict mode must not hide. So does
+    PROMPT_EXTRA_PATTERNS cut at ` #`: a gate missing part of its patterns fails closed, and
+    repair mode drops the cut value (the next layer's applies)."""
+    source = f"file:{path}"
+    try:
+        raw_text = _env_text(path.read_bytes())
+    except UnicodeDecodeError:
+        fail(source, f"the .env named by {ENV_FILE_VAR} is not UTF-8 text; save it as UTF-8")
+        return None
+    except OSError:
+        if config_files.lexists(path):
+            note(source, ".env cannot be read; it was skipped")
+        return None
+    pairs, skipped, cut = _parse_env_text(raw_text)
+    for number in skipped:
+        note(source, f"line {number} of .env has no '=' and was ignored")
+    for key in cut:
+        if key == "PROMPT_EXTRA_PATTERNS":
+            fail(source, _cut_value_error(key), (key,))
+            del pairs[key]
+        else:
+            note(source, _cut_value_error(key))
+    return pairs
 
 
 def _saved_layer(
@@ -791,10 +731,9 @@ class ConfigLayers:
     ) -> ConfigLayers:
         """Merge default < saved settings < secret store < ``environ`` (os.environ by default).
 
-        The saved settings are, in order of preference: the .env named by PROMPTMEND_ENV
-        (legacy mode: that file alone, no config.toml or secret store, exactly as before);
-        config.toml in the user config dir once it exists (a .env elsewhere is then ignored,
-        so it can never shadow a saved value); else the first readable .env candidate. The
+        The saved settings are the .env named by PROMPTMEND_ENV (legacy mode: that file alone,
+        no config.toml or secret store), else config.toml in the user config dir. No other
+        .env is ever read: repair mode reports one left in the user config dir (#275). The
         secret store (secrets.toml) is read outside legacy mode.
 
         Only env_names() keys are taken from either source: any other key (HTTP_PROXY,
@@ -802,8 +741,8 @@ class ConfigLayers:
         file is for. Strict mode (``improve``, ``persona``) raises the first problem as a
         ValueError. Repair mode records each as a Finding instead and falls back to the next
         lower layer, so management commands still run on a broken config. Repair mode also
-        notes what strict mode skips silently: a .env that exists but cannot be read, and a
-        line without `=` (by number, never its text).
+        notes what strict mode skips silently: a .env that exists but cannot be read, a line
+        without `=` (by number, never its text), and the unread .env.
 
         With ``only`` (a setting name), strict mode raises only the problems that can change
         that setting: an unreadable settings file, or its own value. Another setting's bad
@@ -843,29 +782,26 @@ class ConfigLayers:
         known = env_names()
         defaults = {f.metadata["env"]: f.metadata["default"] for f in setting_fields()}
         layers = [Layer(DEFAULT_SOURCE, defaults)]
-        legacy = env_file_override(environ) is not None
-        saved = None if legacy else _saved_layer(settings_file(environ), fail, note)
-        if saved is not None:
-            layers.append(saved)
-            if not strict:
-                for candidate in _env_file_candidates(environ):
-                    if config_files.is_file(candidate):
-                        note(
-                            f"file:{candidate}",
-                            f".env is ignored: settings are saved in {config_files.SETTINGS_FILE}",
-                        )
-        elif (found := _find_env_file(environ, note, fail)) is not None:
-            path, pairs = found
-            source = f"file:{path}"
+        named = env_file_override(environ)
+        if named is None:
+            saved = _saved_layer(settings_file(environ), fail, note)
+            if saved is not None:
+                layers.append(saved)
+            if not strict and (unread := unread_env_file(environ)) is not None:
+                note(
+                    f"file:{unread}",
+                    ".env is no longer read: save its settings with `promptmend setup` (or set "
+                    f"{ENV_FILE_VAR} to it), then remove it",
+                )
+            if secrets := _secrets_layer(user_config_dir(environ), strict, fail_secrets, note):
+                layers.append(secrets)
+        elif (pairs := _read_env_file(Path(named).expanduser(), note, fail)) is not None:
+            source = f"file:{Path(named).expanduser()}"
             merged = _merged_lines(pairs)
             for key in merged:
                 fail(source, _merged_line_error(key), (key,))
             values = {k: v for k, v in pairs.items() if k in known and k not in merged}
             layers.append(Layer(source, values))
-        if not legacy and (
-            secrets := _secrets_layer(_user_config_dir(environ), strict, fail_secrets, note)
-        ):
-            layers.append(secrets)
         layers.append(Layer(ENV_SOURCE, {k: environ[k] for k in known if k in environ}))
 
         entries: dict[str, Entry] = {}

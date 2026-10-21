@@ -21,7 +21,7 @@ from ..commands import settings as settings_cmd
 from ..config import secret_names
 from ..factory import PROVIDER_NAMES
 from . import settings_model, teach
-from .base import EXPECTED, Pane, button_row, confirm_migration, error_message
+from .base import EXPECTED, Pane, button_row, error_message
 from .modals import ConfirmModal, EditModal, Field, FormModal, PickModal
 from .state import State
 
@@ -120,7 +120,7 @@ class SettingsPane(Pane):
             yield Static("", id="settings-count", markup=False)
         yield SettingsList(id="settings-list")
         yield Static("", id="settings-help", markup=False)
-        yield button_row(("migrate-env", "Migrate .env"), ("smoke", "Test call (local stub)"))
+        yield button_row(("smoke", "Test call (local stub)"))
         yield self.result()
 
     def show(self, state: State) -> None:
@@ -378,14 +378,6 @@ class SettingsPane(Pane):
             still = common.source_label(entry.source)
             return f"{name} removed from the secret store; it is still set, from {still}."
         return f"{name} removed from the secret store."
-
-    @on(Button.Pressed, "#migrate-env")
-    def _migrate(self) -> None:
-        self.migrate_env()
-
-    def migrate_env(self) -> None:
-        """Preview the .env migration, then apply it on Yes (`config migrate`)."""
-        confirm_migration(self)
 
     @on(Button.Pressed, "#smoke")
     def _smoke(self) -> None:

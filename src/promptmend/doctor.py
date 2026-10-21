@@ -189,35 +189,28 @@ def _install_check(launcher: deploy.Launcher | None, error: str | None) -> Check
 def _path_shadow_check(
     found: deploy.Launcher | None, environ: Mapping[str, str] = os.environ
 ) -> Check:
-    """Whether `promptmend` (or its alias `prompt-workflow`, #169) first on PATH is this
-    install's launcher: another one makes the shell run an older CLI with other settings."""
+    """Whether `promptmend` first on PATH is this install's launcher: another one makes the
+    shell run an older CLI with other settings."""
     if found is None:
         return Check("path_shadow", INFO, "not checked: no launcher found")
-    path = environ.get("PATH", "")
     # shortcut: on Windows, which() also searches the cwd first (Python 3.12+); doctor runs
     # from a terminal, so fine unless someone reports a false warning from a project folder.
-    hits = {c: shutil.which(c, path=path) for c in ("promptmend", deploy.LEGACY_COMMAND)}
-    for command, where in hits.items():
-        if not where:
-            continue
-        own = found.path.with_name(command + found.path.suffix)
-        try:
-            if os.path.samefile(where, own):
-                continue
-        except OSError:
-            pass
-        data = {"command": command, "found": where, "launcher": str(own)}
-        hint = _shadow_hint(environ, Path(where), own)
-        return Check(
-            "path_shadow",
-            WARN,
-            f"`{command}` on PATH is {where}, not the installed launcher {own}: {hint}",
-            data,
-        )
-    where = hits["promptmend"]
+    where = shutil.which("promptmend", path=environ.get("PATH", ""))
     if not where:
         return Check("path_shadow", INFO, "`promptmend` is not on PATH")
     data = {"command": "promptmend", "found": where, "launcher": str(found.path)}
+    try:
+        own = os.path.samefile(where, found.path)
+    except OSError:
+        own = False
+    if not own:
+        hint = _shadow_hint(environ, Path(where), found.path)
+        return Check(
+            "path_shadow",
+            WARN,
+            f"`promptmend` on PATH is {where}, not the installed launcher {found.path}: {hint}",
+            data,
+        )
     return Check("path_shadow", OK, f"`promptmend` on PATH is the installed launcher {where}", data)
 
 
@@ -242,8 +235,6 @@ def _config_check(layers: ConfigLayers, strict_error: str | None) -> Check:
         mode = "legacy"
     elif config_files.is_file(saved):
         mode = "saved"
-    elif any(Path(f).name == ".env" for f in files):
-        mode = "env"
     else:
         mode = "defaults"
     findings = [{"source": f.source, "message": f.message} for f in layers.findings]
@@ -536,15 +527,6 @@ def _launcher_check(current: str | None, manifest: deploy.Manifest | None) -> Ch
             f"the deployed matches call {', '.join(missing)}, which is gone{note}",
             data,
         )
-    legacy = [p for p in deployed if deploy.is_legacy_launcher(p)]
-    if legacy:
-        return Check(
-            "launcher",
-            WARN,
-            f"the deployed matches call {', '.join(legacy)}, the deprecated `prompt-workflow` "
-            f"command (removed in 1.0.0): redeploy with `promptmend espanso deploy`{note}",
-            data,
-        )
     if drift:
         return Check(
             "launcher",
@@ -648,7 +630,14 @@ def _clipboard_check(read: bool) -> Check:
 
 
 def _profiles_check(settings: config.Settings) -> Check:
-    from .prompt_builder import ADDED, OVERRIDES, SHADOWED, system_prompt, user_profiles
+    from .prompt_builder import (
+        ADDED,
+        OVERRIDES,
+        SHADOWED,
+        overrides_hint,
+        system_prompt,
+        user_profiles,
+    )
 
     found = user_profiles(settings.profile_overrides)
     data: dict[str, Any] = {
@@ -663,8 +652,6 @@ def _profiles_check(settings: config.Settings) -> Check:
             return Check("profiles", FAIL, str(exc), data)
     odd = [f"{p.name}: {p.status}" for p in found if p.status not in (ADDED, OVERRIDES)]
     if odd:
-        from .profiles import overrides_hint
-
         shadowed = [p.name for p in found if p.status == SHADOWED]
         hint = overrides_hint(shadowed, settings.profile_overrides)
         return Check("profiles", WARN, "; ".join(odd + ([hint] if hint else [])), data)
@@ -672,43 +659,14 @@ def _profiles_check(settings: config.Settings) -> Check:
 
 
 def _folders_check() -> Check:
-    """The user folders in use (#169). Doctor runs after the move (cli._LazyGroup), so a legacy
-    folder still in use means the move failed, and entries left in one are conflicts: the new
-    folder has its own, and nothing was overwritten."""
-    legacy: list[str] = []
-    conflicts: list[str] = []
-    notes: list[str] = []
-    for new, old in (config.config_folders(), config.data_folders()):
-        in_use = config.folder_in_use((new, old)) == old
-        if in_use:
-            legacy.append(str(old))
-        variable = config.env_file_inside(old) if old.is_dir() else None
-        if old.is_symlink():
-            notes.append(f"{old} is a symlink, which is never moved: move it to {new} by hand")
-        elif variable:
-            notes.append(
-                f"{variable} names a file inside {old}, so it is not moved: point {variable} "
-                f"at the same file under {new}, then run any command"
-            )
-        elif in_use and os.path.lexists(new):
-            notes.append(f"{new} is not a folder, so {old} stays in use: move {new} away")
-        elif in_use:
-            notes.append(f"{old} is still in use under the old name (the move failed)")
-        elif old.is_dir():
-            conflicts.extend(str(entry) for entry in sorted(old.iterdir()))
+    """The user folders. ``legacy`` and ``conflicts`` stay empty: the folders' old names are
+    no longer looked for (#275), and the keys stay for doctor --json schema_version 1."""
     data = {
-        "config_dir": str(config._user_config_dir()),
+        "config_dir": str(config.user_config_dir()),
         "data_dir": str(config.user_data_dir()),
-        "legacy": legacy,
-        "conflicts": conflicts,
+        "legacy": [],
+        "conflicts": [],
     }
-    if conflicts:
-        notes.append(
-            f"left in the old folder, since the new one has its own: {', '.join(conflicts)}; "
-            "merge or remove them by hand"
-        )
-    if notes:
-        return Check("folders", WARN, "; ".join(notes), data)
     return Check(
         "folders", OK, f"settings in {data['config_dir']}, data in {data['data_dir']}", data
     )

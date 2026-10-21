@@ -171,7 +171,7 @@ def show_findings(layers: ConfigLayers) -> None:
 
 
 def legacy_env() -> str | None:
-    """The .env PROMPTMEND_ENV (or its alias) names: then it alone is read, never config.toml
+    """The .env PROMPTMEND_ENV names: then it alone is read, never config.toml
     or the secret store, so a command that would write them refuses."""
     return config.env_file_override()
 
@@ -180,10 +180,10 @@ def refuse_in_legacy_mode(what: str) -> None:
     """Raise CommandError when PROMPTMEND_ENV means ``what`` would not be read."""
     path = legacy_env()
     if path:
-        name = config.env_file_var()
+        name = config.ENV_FILE_VAR
         raise CommandError(
             f"{name} is set ({path}), so {what} would not be read; edit that file, "
-            f"or unset {name} and run `promptmend config migrate`"
+            f"or unset {name} and save the settings with `promptmend setup`"
         )
 
 
