@@ -19,8 +19,7 @@ if TYPE_CHECKING:
     from typer._click import Command, Context
 
 REPO = Path(__file__).resolve().parents[1]
-# The user docs: an explicit list, so an untracked local file in docs/ is never checked, and
-# docs/prompt-candidates/ (an archived decision record) stays out.
+# The user docs: an explicit list, so an untracked local file in docs/ is never checked.
 DOC_PAGES = (
     "README.md",
     "install.md",
@@ -70,16 +69,16 @@ def test_docs_document_no_stale_settings() -> None:
     assert _config_rows() - {*env_names(), ENV_FILE_VAR} == set()
 
 
-# Every bench output directory the docs mention, and the bench's own default, is gitignored, so
-# following the docs cannot commit outputs (with --persona env they hold a private persona).
+# The bench's default output directory and every --outdir the docs mention (none today) are
+# gitignored, so following the docs cannot commit outputs (with --persona env they hold a private
+# persona).
 def test_documented_bench_outdirs_are_ignored() -> None:
     git = shutil.which("git")
     inside = git and subprocess.run([git, "rev-parse"], cwd=REPO, capture_output=True).returncode
     if git is None or inside != 0:
         pytest.skip("not a git checkout")
-    docs = [REPO / "README.md", REPO / "CONTRIBUTING.md", *(REPO / "docs").rglob("*.md")]
+    docs = [REPO / page for page in (*DOCS, "CONTRIBUTING.md")]
     found = {m for p in docs for m in re.findall(r"--outdir[=\s]+(\S+)", p.read_text("utf-8"))}
-    assert found, "the docs no longer suggest any --outdir; drop or adapt this test"
     for outdir in [*found, f"{bench.DEFAULT_OUTDIR}/20261004T120000000000Z"]:
         probe = f"{outdir.rstrip('/')}/results.json"
         ignored = subprocess.run([git, "check-ignore", "-q", probe], cwd=REPO, check=False)
