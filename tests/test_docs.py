@@ -69,7 +69,7 @@ def test_docs_document_no_stale_settings() -> None:
     assert _config_rows() - {*env_names(), ENV_FILE_VAR} == set()
 
 
-# The bench's default output directory and every --outdir the docs mention (none today) are
+# The bench's default output directory and every --outdir the docs mention (if any) are
 # gitignored, so following the docs cannot commit outputs (with --persona env they hold a private
 # persona).
 def test_documented_bench_outdirs_are_ignored() -> None:
@@ -423,5 +423,5 @@ def test_doc_pages_are_listed() -> None:
     )
     if listed.returncode != 0:
         pytest.skip("not a git checkout")
-    tracked = {Path(p).name for p in listed.stdout.split() if p.count("/") == 1}
+    tracked = {p.removeprefix("docs/") for p in listed.stdout.split()}
     assert tracked <= set(DOC_PAGES), f"add {tracked - set(DOC_PAGES)} to DOC_PAGES"

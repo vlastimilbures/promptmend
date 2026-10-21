@@ -47,6 +47,9 @@ All notable changes to this project are documented here. The format follows
   `config validate`, and named by `setup`, until you remove it: set `PROMPTMEND_ENV` to it to keep using it, or save its settings again with `promptmend
   setup`. Contributors point `PROMPTMEND_ENV` at the checkout's `.env`. See docs/install.md,
   "From 0.25 or earlier".
+- `docs/prompt-candidates/PLAN.md`, the decision record of the 2026-10-02 prompt rework (#276):
+  `docs/` now holds only the user documentation. It stays in git
+  (`git show v0.25.0:docs/prompt-candidates/PLAN.md`).
 
 ### Fixed
 - Anthropic calls no longer send `PROMPT_TEMPERATURE` (default 0.2). Current Claude models
