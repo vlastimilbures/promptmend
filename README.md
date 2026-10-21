@@ -177,7 +177,7 @@ More: [docs/install.md](https://github.com/vlastimilbures/promptmend/blob/main/d
    ```
 
 More: [docs/install.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/install.md#set-up)
-(`setup` options, migrating a `.env`) and
+(`setup` options) and
 [docs/troubleshooting.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/troubleshooting.md).
 
 ### Fully local
@@ -257,8 +257,7 @@ promptmend config set PROMPT_HISTORY false      # keep no usage history
 ```
 
 A change applies to the next trigger, with no redeploy. Keys go in with
-`promptmend secrets set OPENROUTER_API_KEY`, never as an argument. Settings still in a `.env`
-move over with `promptmend config migrate`, after a preview.
+`promptmend secrets set OPENROUTER_API_KEY`, never as an argument.
 
 More: [docs/configuration.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/configuration.md)
 (all settings, files and folders) and

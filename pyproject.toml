@@ -54,8 +54,6 @@ Changelog = "https://github.com/vlastimilbures/promptmend/blob/main/CHANGELOG.md
 
 [project.scripts]
 promptmend = "promptmend.entry:main"
-# Deprecated alias until 1.0.0 (#169): management commands print a note on stderr.
-prompt-workflow = "promptmend.entry:main"
 
 # Development tools: `uv sync` installs this group; `uv tool install` never does.
 [dependency-groups]

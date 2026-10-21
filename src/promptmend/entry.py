@@ -1,4 +1,4 @@
-"""The console-script entry point (`promptmend` and the `prompt-workflow` alias).
+"""The console-script entry point (`promptmend`).
 
 Espanso runs the triggers' calls as `type: script` vars (#18), and such a var fails on any
 stderr output, even with exit code 0. So before the CLI and its dependencies are imported, a

@@ -109,12 +109,12 @@ def require_terminal(what: str, hint: str) -> None:
         fail(f"{what} needs an answer, but this is not a terminal; {hint}", NEEDS_TERMINAL)
 
 
-def confirm(question: str, *, yes: bool, hint: str = "pass --yes") -> None:
+def confirm(question: str, *, yes: bool) -> None:
     """Go on when ``yes`` or the person agrees; exit 1 when they decline, NEEDS_TERMINAL
     when there is no terminal to ask."""
     if yes:
         return
-    require_terminal(question.rstrip("?"), hint)
+    require_terminal(question.rstrip("?"), "pass --yes")
     if not typer.confirm(question, default=False):
         fail("not confirmed; nothing was changed")
 
@@ -171,7 +171,7 @@ def show_findings(layers: ConfigLayers) -> None:
 
 
 def legacy_env() -> str | None:
-    """The .env PROMPTMEND_ENV (or its alias) names: then it alone is read, never config.toml
+    """The .env PROMPTMEND_ENV names: then it alone is read, never config.toml
     or the secret store, so a command that would write them refuses."""
     return config.env_file_override()
 
@@ -180,10 +180,10 @@ def refuse_in_legacy_mode(what: str) -> None:
     """Raise CommandError when PROMPTMEND_ENV means ``what`` would not be read."""
     path = legacy_env()
     if path:
-        name = config.env_file_var()
+        name = config.ENV_FILE_VAR
         raise CommandError(
             f"{name} is set ({path}), so {what} would not be read; edit that file, "
-            f"or unset {name} and run `promptmend config migrate`"
+            f"or unset {name} and save the settings with `promptmend setup`"
         )
 
 

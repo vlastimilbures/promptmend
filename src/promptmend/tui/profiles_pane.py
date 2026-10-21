@@ -1,5 +1,5 @@
-"""The Profiles tab: the built-in and your own profiles, the default, editing one of yours
-in $EDITOR and copying them from a checkout (`profiles migrate`)."""
+"""The Profiles tab: the built-in and your own profiles, the default, and editing one of
+yours in $EDITOR."""
 
 from __future__ import annotations
 
@@ -14,19 +14,10 @@ from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Static
 
-from ..commands import common
-from ..commands import profiles as profiles_cmd
 from ..commands import settings as settings_cmd
 from ..prompt_builder import ADDED, ALIASES, PROFILES, user_profiles_dir
 from . import teach
-from .base import (
-    CHECKOUT_FIELD,
-    Pane,
-    add_row,
-    button_row,
-    checkout_path,
-    copy_profiles,
-)
+from .base import Pane, add_row, button_row
 from .modals import Field, FormModal
 from .state import State
 
@@ -66,7 +57,6 @@ class ProfilesPane(Pane):
         yield button_row(
             ("set-profile", "Set default"),
             ("edit-profile", "Edit in $EDITOR"),
-            ("migrate-profiles", "Migrate from checkout"),
         )
         yield self.result()
 
@@ -142,21 +132,3 @@ class ProfilesPane(Pane):
             return
         self.report(f"{path.name}: the editor exited with {code}", error=code != 0)
         self.manage.reload()
-
-    @on(Button.Pressed, "#migrate-profiles")
-    def _migrate(self) -> None:
-        # This editable install's own checkout, else ask where it is (#237).
-        try:
-            profiles_cmd.find_checkout(None)
-        except common.CommandError:
-            self.app.push_screen(
-                FormModal("Which checkout has your profiles?", [CHECKOUT_FIELD], submit="Look"),
-                self._entered,
-            )
-            return
-        copy_profiles(self, None)
-
-    def _entered(self, values: dict[str, str] | None) -> None:
-        root = checkout_path(self, values)
-        if root is not None:
-            copy_profiles(self, root)

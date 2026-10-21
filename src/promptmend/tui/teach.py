@@ -15,21 +15,16 @@ PROGRAM = "promptmend"
 PLACEHOLDER = re.compile(r"<[A-Z][A-Z_]*>")
 WITHHELD = "<value withheld>"
 
-CHECKOUT = "<CHECKOUT>"
-
 # Button id -> the commands it runs, in order.
 BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
     "home-reload": (("doctor",),),
     "home-setup": (("setup",),),
-    "setup-migrate-env": (("config", "migrate"),),
     "setup-save-keys": (("secrets", "set", "<NAME>"),),
     "setup-deploy": (("espanso", "deploy"),),
     "setup-run-test": (("setup",),),
-    "migrate-env": (("config", "migrate"),),
     "smoke": (("setup",),),
     "set-profile": (("config", "set", "PROMPT_PROFILE", "<NAME>"),),
     "edit-profile": (("profiles", "list"),),
-    "migrate-profiles": (("profiles", "migrate", "--checkout", CHECKOUT),),
     "show-diff": (("espanso", "status", "--diff"),),
     "deploy": (("espanso", "deploy"),),
     "detach": (("espanso", "detach"),),

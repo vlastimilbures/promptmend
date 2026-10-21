@@ -247,7 +247,6 @@ FORBIDDEN = (
     "promptmend.doctor",
     "promptmend.smoke",
     "promptmend.config_store",
-    "promptmend.relocate",
     "promptmend.update_check",
     "promptmend.local_probe",
 )

@@ -25,7 +25,6 @@ from .config import (
     Settings,
     check_provider_options,
 )
-from .entry import TRIGGER_COMMANDS
 from .factory import PROVIDER_NAMES, make_provider
 from .gate import GateBlocked, GatedProvider
 from .prompt_builder import (
@@ -68,16 +67,12 @@ class _LazyGroup(TyperGroup):
             return super().make_context(*args, **kwargs)
 
     def main(self, *args: Any, **kwargs: Any) -> Any:
-        # Usage lines name `promptmend` however it was started (the alias, `python -m`).
+        # Usage lines name `promptmend` however it was started (`python -m`).
         if len(args) < 2 and not kwargs.get("prog_name"):
             kwargs["prog_name"] = PROGRAM
         return super().main(*args, **kwargs)
 
     def invoke(self, ctx: Context) -> Any:
-        if _management_command(self, ctx):
-            if _run_as_alias():
-                typer.echo(DEPRECATED_ALIAS, err=True)
-            _relocate_folders()
         with _redacted_usage_errors():
             return super().invoke(ctx)
 
@@ -105,37 +100,6 @@ class _LazyGroup(TyperGroup):
 
 
 PROGRAM = "promptmend"
-# The command's name before the rename (#169): an alias that works until 1.0.0. Only the
-# management commands and the interface say so; the triggers, --version and --help never do.
-LEGACY_PROGRAM = "prompt-workflow"
-DEPRECATED_ALIAS = "`prompt-workflow` is deprecated; use `promptmend` (removed in 1.0.0)"
-
-
-def _management_command(group: _LazyGroup, ctx: Context) -> bool:
-    """A management command or the interface is about to run: not a trigger, completion or a
-    --help (--version is eager and exits before this)."""
-    args = [*ctx._protected_args, *ctx.args]
-    return not (
-        ctx.resilient_parsing
-        or not args
-        or args[0] in TRIGGER_COMMANDS  # Espanso's: they never move a folder
-        or args[0] not in group.list_commands(ctx)
-        or {"--help", "-h"} & set(args)
-    )
-
-
-def _run_as_alias() -> bool:
-    """Started as the deprecated `prompt-workflow` (or `prompt-workflow.exe`), #169."""
-    return bool(sys.argv) and Path(sys.argv[0]).stem.lower() == LEGACY_PROGRAM
-
-
-def _relocate_folders() -> None:
-    """Move the legacy user folders (relocate.py, #169) before any management command or the
-    interface runs, one stderr line per step."""
-    from .relocate import migrate_folders
-
-    for line in migrate_folders():
-        typer.echo(line, err=True)
 
 
 @contextlib.contextmanager

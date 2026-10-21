@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from promptmend import history
-from promptmend.config import LEGACY_APP_DIR, Settings, user_data_dir
+from promptmend.config import Settings, user_data_dir
 from promptmend.history import HistoryError, HistoryStore, load_price_table
 
 SRC = Path(history.__file__).resolve().parents[1]
@@ -792,18 +792,6 @@ def test_health_reads_the_sidecar_only_under_its_lock(
     health = store.health()
     assert (health.spooled, health.tracking_incomplete) == (0, True)
     held.unlink()
-
-
-# #241: a record whose path was chosen before relocate moved the legacy folder away.
-def test_the_moved_legacy_folder_is_never_created_again(tmp_path: Path) -> None:
-    legacy = tmp_path / LEGACY_APP_DIR
-    store = HistoryStore(legacy / history.DB_NAME)
-    assert store.record(_op(), [_attempt()]) is False
-    assert store.record(_op(kind="nope")) is False
-    assert not legacy.exists()
-    nested = HistoryStore(tmp_path / "new" / "promptmend" / history.DB_NAME)
-    assert nested.record(_op())
-    assert nested.path.exists()
 
 
 def test_an_empty_database_file_still_gets_the_creating_budget(

@@ -10,7 +10,7 @@ import io
 import json
 import os
 import re
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,7 +21,6 @@ from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
 from promptmend import config, config_store, deploy, history, smoke
-from promptmend import profiles as profile_service
 from promptmend.history import HistoryStore
 from promptmend.tui import (
     base,
@@ -84,7 +83,7 @@ def espanso(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRunner:
 def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
     """Saved mode: config.toml and the secret store are read and written (per-test dirs)."""
     monkeypatch.delenv("PROMPTMEND_ENV")
-    return config._user_config_dir()
+    return config.user_config_dir()
 
 
 async def settle(pilot: Pilot[int]) -> None:
@@ -538,22 +537,6 @@ def test_an_unexpected_error_is_shown_not_raised(
     drive(scenario)
 
 
-def test_settings_migrate_reports_a_refusal(
-    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def refused(environ: Mapping[str, str] | None = None, *, source: Path | None = None) -> None:
-        raise config_store.MigrationError("the marker is damaged")
-
-    monkeypatch.setattr(config_store, "plan_migration", refused)
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("2")
-        await press(app, pilot, "#migrate-env")
-        assert pane(app, "settings").last_message == "error: the marker is damaged"
-
-    drive(scenario)
-
-
 def test_settings_space_toggles_history(saved: Path, espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         row = settings_rows(app)["PROMPT_HISTORY"]
@@ -936,30 +919,6 @@ def test_settings_change_warns_about_a_flagged_persona(
     assert 'PROMPT_PROFILE = "default"' in (saved / "config.toml").read_text("utf-8")
 
 
-def test_settings_migrate_env_with_preview(saved: Path, espanso: FakeRunner) -> None:
-    saved.mkdir(parents=True)
-    (saved / ".env").write_text(
-        f"PROMPT_PROFILE=general\nOPENROUTER_API_KEY={KEY}\n", encoding="utf-8"
-    )
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("2")
-        await press(app, pilot, "#migrate-env")
-        assert isinstance(app.screen, ConfirmModal)
-        assert KEY not in _dialog(app).preview
-        await pilot.press("n")
-        await settle(pilot)
-        assert (saved / ".env").is_file()
-        await press(app, pilot, "#migrate-env")
-        await press(app, pilot, "#confirm")
-        assert pane(app, "settings").last_message.startswith("Migrated. Backup:")
-        await press(app, pilot, "#migrate-env")
-        assert "already" in pane(app, "settings").last_message
-
-    drive(scenario)
-    assert config_store.saved_secret_names() == ("OPENROUTER_API_KEY",)
-
-
 def test_settings_test_call_uses_the_stub_service(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1083,58 +1042,6 @@ def test_editor_command() -> None:
     assert profiles_pane.editor_command(both, windows=False, which=nowhere) == ["vim"]
 
 
-def test_profiles_migrate_copies_after_confirming(
-    espanso: FakeRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "project" / profile_service.PROMPTS_PATH
-    source.mkdir(parents=True)
-    (source / "general.md").write_text("Edited.", encoding="utf-8")
-    (source / "extra.md").write_text("Mine.", encoding="utf-8")
-    monkeypatch.setattr(
-        profile_service, "git_pristine_profiles", lambda root, rev=None: {"general": "Old."}
-    )
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("3")
-        await press(app, pilot, "#migrate-profiles")
-        assert "extra.md (added)" in _dialog(app).preview
-        await press(app, pilot, "#confirm")
-        assert pane(app, "profiles").last_message == (
-            "extra: copied\ngeneral: copied\nYour general.md replaces the built-in only once "
-            "PROMPT_PROFILE_OVERRIDES lists it: "
-            "`promptmend config set PROMPT_PROFILE_OVERRIDES general`."
-        )
-
-    drive(scenario)
-    from promptmend.prompt_builder import user_profiles_dir
-
-    assert sorted(p.name for p in user_profiles_dir().iterdir()) == ["extra.md", "general.md"]
-
-
-def test_profiles_migrate_default_and_nothing_to_copy(
-    espanso: FakeRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "project" / profile_service.PROMPTS_PATH
-    source.mkdir(parents=True)
-    (source / "default.md").write_text("Edited.", encoding="utf-8")
-    pristine = {"default": "Old."}
-    monkeypatch.setattr(profile_service, "git_pristine_profiles", lambda root, rev=None: pristine)
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("3")
-        await press(app, pilot, "#migrate-profiles")
-        await press(app, pilot, "#cancel")
-        assert pane(app, "profiles").last_message == ""
-        await press(app, pilot, "#migrate-profiles")
-        await press(app, pilot, "#confirm")
-        assert "PROMPT_PROFILE_OVERRIDES default`" in pane(app, "profiles").last_message
-        pristine["default"] = "Edited."
-        await press(app, pilot, "#migrate-profiles")
-        assert pane(app, "profiles").last_message == profile_service.NOTHING_CHANGED
-
-    drive(scenario)
-
-
 def test_profiles_editor_that_cannot_start(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1176,37 +1083,6 @@ def test_run_editor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(subprocess, "run", run)
     assert profiles_pane.run_editor(tmp_path / "mine.md") == 0
     assert seen == [["myeditor", "-w", str(tmp_path / "mine.md")]]
-
-
-def test_profiles_migrate_without_a_checkout_asks_for_one(
-    espanso: FakeRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """No checkout found and no editable install: the button asks for the folder instead
-    of naming a --checkout flag the interface cannot pass (#237)."""
-    elsewhere = tmp_path / "elsewhere"
-    (elsewhere / profile_service.PROMPTS_PATH).mkdir(parents=True)
-    (elsewhere / profile_service.PROMPTS_PATH / "mine.md").write_text("Mine.", "utf-8")
-    monkeypatch.setattr(profile_service, "git_pristine_profiles", lambda root, rev=None: {})
-
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        profiles = pane(app, "profiles")
-        await pilot.press("3")
-        await press(app, pilot, "#migrate-profiles")
-        await fill(app, pilot, checkout_path="  ")
-        assert profiles.last_message == "No path entered."
-        await press(app, pilot, "#migrate-profiles")
-        await fill(app, pilot, checkout_path=str(tmp_path / "nothing"))
-        assert "is it a checkout of this project?" in profiles.last_message
-        assert "--checkout" not in profiles.last_message
-        await press(app, pilot, "#migrate-profiles")
-        await fill(app, pilot, checkout_path="sk-or-v1-" + "ab12" * 16)
-        assert "looks like a key" in profiles.last_message
-        await press(app, pilot, "#migrate-profiles")
-        await fill(app, pilot, checkout_path=f'"{elsewhere}"')
-        assert f"From {elsewhere}:" in _dialog(app).preview
-        assert "mine.md (added)" in _dialog(app).preview
-
-    drive(scenario)
 
 
 # --- Triggers -----------------------------------------------------------------------------

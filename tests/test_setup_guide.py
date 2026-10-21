@@ -16,9 +16,11 @@ def _settings(**kw: Any) -> Settings:
     return dataclasses.replace(common.load_layers()[1], **kw)
 
 
-def test_steps_hide_earlier_unless_needed() -> None:
-    assert "earlier" not in setup_guide.steps(False)
-    assert setup_guide.steps(True)[1] == "earlier"
+def test_unread_env_note(tmp_path: Path) -> None:
+    assert setup_guide.unread_env_note([]) is None
+    note = setup_guide.unread_env_note([tmp_path / ".env"])
+    assert note is not None
+    assert note.startswith(f"{tmp_path / '.env'} is no longer read: choose its settings again")
 
 
 def test_provider_choices_name_their_triggers() -> None:

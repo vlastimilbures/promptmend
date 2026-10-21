@@ -1,19 +1,16 @@
 """The user profile directory (#85): new names, explicit overrides of a built-in, the report
-a doctor command shows, the migration out of a checkout, and the packaged match files."""
+a doctor command shows, and the packaged match files."""
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
-import subprocess
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner, Result
 
-from promptmend import assets, profiles, prompt_builder
+from promptmend import assets, prompt_builder
 from promptmend.cli import app
 from promptmend.config import Settings
 from promptmend.prompt_builder import (
@@ -226,186 +223,6 @@ def test_bad_profile_overrides_reports_inline(
     assert stub_provider.calls == []
 
 
-def _checkout(tmp_path: Path, path: str = profiles.PROMPTS_PATH) -> Path:
-    prompts = tmp_path / "checkout" / path
-    prompts.mkdir(parents=True)
-    for name, text in PROFILES.items():
-        (prompts / f"{name}.md").write_text(text + "\n", "utf-8")
-    return prompts
-
-
-# migrate copies added and modified profiles, never overwrites, never deletes.
-def test_migrate_profiles_copies_only(tmp_path: Path) -> None:
-    prompts = _checkout(tmp_path)
-    (prompts / "general.md").write_text("My own general.", "utf-8")
-    (prompts / "regulation.md").write_text("Regulation.", "utf-8")
-    (prompts / "bad.name.md").write_text("Never selectable.", "utf-8")
-    dest = user_profiles_dir()
-
-    report = profiles.migrate_profiles(prompts, PROFILES)
-    assert [(m.name, m.change, m.status) for m in report] == [
-        ("bad.name", "added", "invalid name"),
-        ("general", "modified", "copied"),
-        ("regulation", "added", "copied"),
-    ]
-    assert (dest / "general.md").read_text("utf-8") == "My own general."
-    assert not (dest / "bad.name.md").exists()
-    assert not (dest / "default.md").exists()
-    assert sorted(p.name for p in prompts.iterdir()) == [
-        "bad.name.md",
-        "default.md",
-        "general.md",
-        "regulation.md",
-    ]
-
-    (dest / "regulation.md").write_text("Edited since.", "utf-8")
-    again = {m.name: m.status for m in profiles.migrate_profiles(prompts, PROFILES)}
-    assert again == {"bad.name": "invalid name", "general": "identical", "regulation": "exists"}
-    assert (dest / "regulation.md").read_text("utf-8") == "Edited since."
-
-
-# A copied general.md stays shadowed until the user opts in.
-def test_migrated_builtin_needs_opt_in(tmp_path: Path) -> None:
-    prompts = _checkout(tmp_path)
-    (prompts / "general.md").write_text("My own general.", "utf-8")
-    profiles.migrate_profiles(prompts, PROFILES)
-    assert system_prompt("general") == system_prompt("general", "", ())
-    assert system_prompt("general", "", ("general",)) == "My own general."
-
-
-def _git(cwd: Path, *args: str) -> None:
-    git = shutil.which("git")
-    assert git
-    ident = [
-        "-c",
-        "user.name=t",
-        "-c",
-        "user.email=t@example.invalid",
-        "-c",
-        "commit.gpgsign=false",
-    ]
-    subprocess.run([git, *ident, *args], cwd=cwd, check=True, capture_output=True, timeout=30)
-
-
-# Against git: an untracked file counts as added, a local commit or an uncommitted edit as
-# modified, compared with the commit the branch shares with its upstream.
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
-def test_git_pristine_profiles(tmp_path: Path) -> None:
-    prompts = _checkout(tmp_path)
-    upstream = prompts.parents[2]
-    _git(upstream, "init", "-q")
-    _git(upstream, "add", ".")
-    _git(upstream, "commit", "-qm", "base")
-    clone = tmp_path / "clone"
-    _git(tmp_path, "clone", "-q", str(upstream), str(clone))
-    cloned = clone / profiles.PROMPTS_PATH
-    (cloned / "general.md").write_text("Committed locally.", "utf-8")
-    _git(clone, "commit", "-qam", "mine")
-    (cloned / "default.md").write_text("Edited, not committed.", "utf-8")
-    (cloned / "regulation.md").write_text("Untracked.", "utf-8")
-
-    pristine = profiles.git_pristine_profiles(clone)
-    assert {k: v.strip() for k, v in pristine.items()} == PROFILES
-    assert profiles.changed_profiles(cloned, pristine) == {
-        "default": "modified",
-        "general": "modified",
-        "regulation": "added",
-    }
-    # Without an upstream, HEAD is the reference: the local commit is no longer a change.
-    _git(clone, "branch", "--unset-upstream")
-    pristine = profiles.git_pristine_profiles(clone)
-    assert set(profiles.changed_profiles(cloned, pristine)) == {"default", "regulation"}
-    with pytest.raises(ValueError, match="git could not read"):
-        profiles.git_pristine_profiles(clone, "no-such-rev")
-
-
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
-def test_git_pristine_profiles_rejects_non_utf8(tmp_path: Path) -> None:
-    prompts = _checkout(tmp_path)
-    (prompts / "latin.md").write_bytes(b"caf\xe9")
-    repo = prompts.parents[2]
-    _git(repo, "init", "-q")
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-qm", "base")
-    with pytest.raises(ValueError, match=r"Cannot read profile latin\.md at HEAD") as info:
-        profiles.git_pristine_profiles(repo)
-    assert str(tmp_path) not in str(info.value)
-
-
-# #169: a checkout from before the rename keeps its profiles under src/prompt_workflow/prompts,
-# and a revision from before the rename too, even once the working tree is renamed.
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
-def test_profiles_of_a_checkout_from_before_the_rename(tmp_path: Path) -> None:
-    prompts = _checkout(tmp_path, profiles.LEGACY_PROMPTS_PATH)
-    repo = prompts.parents[2]
-    assert profiles.prompts_path(repo) == profiles.LEGACY_PROMPTS_PATH
-    (prompts / "regulation.md").write_text("Untracked.", "utf-8")
-    _git(repo, "init", "-q")
-    _git(repo, "add", "src")
-    _git(repo, "commit", "-qm", "base")
-    base = "HEAD"
-    pristine = profiles.git_pristine_profiles(repo)
-    assert profiles.changed_profiles(prompts, pristine) == {}
-    (prompts / "general.md").write_text("Edited.", "utf-8")
-    assert profiles.changed_profiles(prompts, profiles.git_pristine_profiles(repo)) == {
-        "general": "modified"
-    }
-    renamed = repo / profiles.PROMPTS_PATH
-    renamed.parent.mkdir(parents=True)
-    prompts.rename(renamed)
-    assert profiles.prompts_path(repo) == profiles.PROMPTS_PATH
-    pristine = profiles.git_pristine_profiles(repo, base)
-    assert profiles.changed_profiles(renamed, pristine) == {"general": "modified"}
-
-
-def test_prompts_path_prefers_the_new_folder(tmp_path: Path) -> None:
-    assert profiles.prompts_path(tmp_path) == profiles.PROMPTS_PATH  # neither: the new name
-    (tmp_path / profiles.LEGACY_PROMPTS_PATH).mkdir(parents=True)
-    (tmp_path / profiles.PROMPTS_PATH).mkdir(parents=True)
-    assert profiles.prompts_path(tmp_path) == profiles.PROMPTS_PATH
-
-
-# A source the loader could not read either is an error naming the profile, not a crash.
-def test_changed_profiles_reports_unreadable_source(tmp_path: Path) -> None:
-    prompts = _checkout(tmp_path)
-    (prompts / "latin.md").write_bytes(b"caf\xe9")
-    with pytest.raises(ValueError, match=r"Cannot read profile latin\.md \(UnicodeDecode"):
-        profiles.changed_profiles(prompts, PROFILES)
-    (prompts / "latin.md").unlink()
-    (prompts / "folder.md").mkdir()
-    with pytest.raises(ValueError, match=r"Cannot read profile folder\.md") as info:
-        profiles.changed_profiles(prompts, PROFILES)
-    assert str(tmp_path) not in str(info.value)
-
-
-# Whatever already holds a target's name (a folder, a dangling link) is left alone and
-# reported, and the other profiles are still copied.
-def test_migrate_skips_odd_targets(tmp_path: Path) -> None:
-    prompts = _checkout(tmp_path)
-    for name in ("alpha", "beta", "gamma"):
-        (prompts / f"{name}.md").write_text(name, "utf-8")
-    dest = user_profiles_dir()
-    (dest / "alpha.md").mkdir(parents=True)
-    expected = {"alpha": "exists", "beta": "exists", "gamma": "copied"}
-    try:
-        os.symlink(tmp_path / "nowhere.md", dest / "beta.md")
-    except OSError:  # Windows without the symlink privilege
-        expected["beta"] = "copied"
-
-    report = {m.name: m.status for m in profiles.migrate_profiles(prompts, PROFILES)}
-    assert report == expected
-    assert not (tmp_path / "nowhere.md").exists()  # the dangling link was not followed
-    assert (dest / "alpha.md").is_dir()
-    assert (dest / "gamma.md").read_text("utf-8") == "gamma"
-    assert not (tmp_path / "nowhere.md").exists()
-
-
-def test_git_pristine_profiles_needs_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(shutil, "which", lambda name: None)
-    with pytest.raises(ValueError, match="git is not installed"):
-        profiles.git_pristine_profiles(tmp_path)
-
-
 # An editable install reads the match files from the checkout's espanso/match/.
 def test_match_files_from_the_checkout() -> None:
     expected = sorted(p.name for p in (REPO / "espanso" / "match").glob("*.yml"))
@@ -440,21 +257,3 @@ def test_wheel_declares_match_files_only() -> None:
     pyproject = tomllib.loads((REPO / "pyproject.toml").read_text("utf-8"))
     force = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
     assert force == {"espanso/match": "promptmend/espanso/match"}
-
-
-# A refusal with nothing at the target (a read-only folder) is a real error, not "exists".
-def test_migrate_reraises_when_nothing_is_there(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    prompts = _checkout(tmp_path)
-    (prompts / "alpha.md").write_text("alpha", "utf-8")
-    real_open = Path.open
-
-    def refuse(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> IO[Any]:
-        if mode == "xb":
-            raise PermissionError(13, "Permission denied")
-        return real_open(self, mode, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "open", refuse)
-    with pytest.raises(PermissionError):
-        profiles.migrate_profiles(prompts, PROFILES)

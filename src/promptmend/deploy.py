@@ -36,8 +36,6 @@ STAMP = "# promptmend {version} (managed; edit at your own risk)\n"
 _STAMP_LINE = re.compile(
     r"# (?:promptmend|prompt-workflow) \S+ \(managed; edit at your own risk\)\n"
 )
-# The command's name before the rename (#169), kept as a deprecated alias until 1.0.0.
-LEGACY_COMMAND = "prompt-workflow"
 MANIFEST_NAME = "espanso-manifest.json"
 MANIFEST_FORMAT = 1
 # Our backups of one file kept after a deploy; older ones we made are deleted.
@@ -612,13 +610,6 @@ def launchers_in(text: str) -> set[str]:
     path of a shell cmd line (every release before #18 quoted it the same way). Windows
     paths have forward slashes."""
     return {*_SCRIPT_LAUNCHER.findall(text), *_QUOTED_LAUNCHER.findall(text)}
-
-
-def is_legacy_launcher(launcher: str) -> bool:
-    """A launcher deployed before the rename (#169): its file is `prompt-workflow` or
-    `prompt-workflow.exe` (a Windows path deployed with forward slashes, or backslashes)."""
-    name = re.split(r"[\\/]", launcher)[-1].lower()
-    return name in (LEGACY_COMMAND, f"{LEGACY_COMMAND}.exe")
 
 
 def deployed_launchers(espanso: Path) -> set[str]:

@@ -14,7 +14,6 @@ does before you run it. Run any command with `--help` for its full option list.
 - [Reading stats](#reading-stats)
 - [How management commands behave](#how-management-commands-behave)
 - [Exit codes](#exit-codes)
-- [The prompt-workflow alias](#the-prompt-workflow-alias)
 
 ## improve
 
@@ -76,13 +75,12 @@ read gives the `[role]` placeholder. See [Persona](profiles.md#persona).
 |---------|--------------|
 | `promptmend --version` | Prints the installed version |
 | `promptmend` / `promptmend ui` | Opens the [full-screen interface](interface.md) when stdin and stdout are a terminal. Otherwise a bare `promptmend` prints the help and exits 2, and `ui` exits 3 |
-| `promptmend setup` | First run, in a terminal one step at a time on a full screen ([Setup](interface.md#setup)): provider and default profile (saved in `config.toml`), each API key the triggers need (hidden), the match files it installs only when you press Install, and a smoke test against a stub on `127.0.0.1` (never a paid call, never your real key). Offers to migrate a `.env`, changing nothing unless you say yes. The options prefill the wizard: `--provider` and `--profile` preselect a choice, `--deploy` focuses Install, `--no-deploy` and `--no-smoke-test` skip that step. Without a terminal it exits 3. `--non-interactive` (or its alias `--plain`) asks nothing and prints each step: the given options or the current settings, the key only with `--api-key-stdin`, the deploy a preview unless `--deploy`, and a `.env` migration as a to-do with its command |
+| `promptmend setup` | First run, in a terminal one step at a time on a full screen ([Setup](interface.md#setup)): provider and default profile (saved in `config.toml`), each API key the triggers need (hidden), the match files it installs only when you press Install, and a smoke test against a stub on `127.0.0.1` (never a paid call, never your real key). Names a `.env` left in the config folder (or an editable install's checkout), which is no longer read. The options prefill the wizard: `--provider` and `--profile` preselect a choice, `--deploy` focuses Install, `--no-deploy` and `--no-smoke-test` skip that step. Without a terminal it exits 3. `--non-interactive` (or its alias `--plain`) asks nothing and prints each step: the given options or the current settings, the key only with `--api-key-stdin`, and the deploy a preview unless `--deploy` |
 | `promptmend config show [--raw]` | Every setting, its value and where it comes from (default, a file or the environment), and which lower files it overrides. Keys and the persona are shown only as set or not set; a value set to empty on purpose reads `(empty)` |
 | `promptmend config get NAME` / `set NAME VALUE` / `unset NAME` | Reads one setting (the raw value; an empty line for an empty one); saves it in `config.toml` after checking it as the CLI reads it; removes it so the default applies. A key is refused here. `set` warns on stderr, naming the findings only, when the change leaves a `PROMPT_PERSONA` that `config validate` would flag; the value stays saved |
 | `promptmend config validate` | Checks the settings as `improve` reads them and the profiles they name, and flags a `PROMPT_PERSONA` that the gate's patterns match |
-| `promptmend config migrate` / `rollback` | Moves the `.env` in use to `config.toml` and its keys to the secret store, with a backup, or undoes that. See [Migrate a .env](configuration.md#migrate-a-env); for an earlier checkout's `.env`, see [From a checkout install](install.md#from-a-checkout-install) |
 | `promptmend secrets set NAME [--stdin]` / `status` / `remove NAME` | Saves a key from a hidden prompt or stdin (never an argument); shows whether each key is set and where from, never the value; deletes one |
-| `promptmend profiles list` / `migrate` | Lists built-in and your own profiles and their state; copies profiles you added or edited in a checkout to your profile folder (copies only, never overwrites) |
+| `promptmend profiles list` | Lists built-in and your own profiles and their state |
 | `promptmend espanso deploy [--dry-run]` / `status` / `detach` | Writes, checks or removes the match files. See [Managing the match files](usage.md#managing-the-match-files) |
 | `promptmend stats [--by trigger\|provider\|model\|day] [--json] [--verbose]` | Calls, latency, tokens and costs from the [usage history](privacy.md#usage-history); `--verbose` also says what the history records and how to read the numbers (below) |
 | `promptmend history export [--format json\|csv] [-o FILE]` / `prune [--older-than DAYS]` / `reset` | Exports the history (metadata only), deletes old records (asking first when the age is shorter than `PROMPT_HISTORY_RETENTION_DAYS`), or deletes them all |
@@ -111,8 +109,6 @@ ordinary exit codes.
 
 - None of them asks a question without a terminal: pass `--yes`, `--stdin` or
   `--non-interactive` instead.
-- `config migrate` and `rollback` show a preview first and apply only once you
-  confirm it; in a script, pass `--yes --preview-token <token>` from that preview.
 - Each runs on a broken `.env` or `config.toml` and reports what is wrong, without a traceback.
 - Colour is off when `NO_COLOR` is set or output is not a terminal.
 - An option or a mistyped argument that looks like a key is refused and never repeated in an
@@ -129,14 +125,6 @@ ordinary exit codes.
 | 4 | `doctor` or `config validate` found a problem |
 
 `improve` and `persona` always exit 0 (see [Scripting contract](#scripting-contract)).
-
-## The prompt-workflow alias
-
-The command's old name, `prompt-workflow`, stays installed as a deprecated alias of
-`promptmend` until 1.0.0. The triggers and `--help`/`--version` behave exactly the same; every
-other command first prints one line on stderr: "`prompt-workflow` is deprecated; use
-`promptmend` (removed in 1.0.0)". See
-[From 0.18 or earlier](install.md#from-018-or-earlier-the-rename).
 
 ## See also
 

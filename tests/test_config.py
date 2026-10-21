@@ -363,14 +363,6 @@ def test_load_dotenv_exports_only_known_settings(
     assert set(layers.entries) == set(env_names())
 
 
-def _no_explicit_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project: Path, user: Path
-) -> None:
-    monkeypatch.delenv("PROMPTMEND_ENV")
-    monkeypatch.setattr(config, "_PROJECT_ROOT", project)
-    monkeypatch.setattr(config, "_user_config_dir", lambda _environ: user)
-
-
 # A .env in the current directory or its parents is never loaded: a planted file in an
 # untrusted checkout must not redirect the base URL or enable ALLOW_CLOUD_OVERRIDE.
 def test_load_dotenv_ignores_cwd_and_parents(
@@ -381,46 +373,13 @@ def test_load_dotenv_ignores_cwd_and_parents(
     (tmp_path / ".env").write_text("ALLOW_CLOUD_OVERRIDE=true\n")
     (nested / ".env").write_text("ALLOW_CLOUD_OVERRIDE=true\n")
     monkeypatch.chdir(nested)
-    _no_explicit_env(tmp_path, monkeypatch, tmp_path / "none", tmp_path / "none")
+    monkeypatch.delenv("PROMPTMEND_ENV")
 
     layers = ConfigLayers.resolve()
 
     assert layers.settings().allow_cloud_override is False
     assert layers.entries["ALLOW_CLOUD_OVERRIDE"].source == "default"
     assert [layer.source for layer in layers.layers] == ["default", "env"]
-
-
-# The repo .env (editable install) wins over the user config dir .env.
-def test_load_dotenv_prefers_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    project, user = tmp_path / "repo", tmp_path / "cfg"
-    project.mkdir()
-    user.mkdir()
-    (project / "pyproject.toml").write_text("")
-    (project / ".env").write_text("OLLAMA_MODEL=from-repo\n")
-    (user / ".env").write_text("OLLAMA_MODEL=from-user\n")
-    _no_explicit_env(tmp_path, monkeypatch, project, user)
-
-    layers = ConfigLayers.resolve()
-
-    assert layers.settings().ollama_model == "from-repo"
-    assert layers.entries["OLLAMA_MODEL"].source == f"file:{project / '.env'}"
-
-
-# Without a project checkout (no pyproject.toml), the user config dir .env is used.
-def test_load_dotenv_falls_back_to_user_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project, user = tmp_path / "site-packages", tmp_path / "cfg"
-    project.mkdir()
-    user.mkdir()
-    (project / ".env").write_text("OLLAMA_MODEL=from-site-packages\n")
-    (user / ".env").write_text("OLLAMA_MODEL=from-user\n")
-    _no_explicit_env(tmp_path, monkeypatch, project, user)
-
-    layers = ConfigLayers.resolve()
-
-    assert layers.settings().ollama_model == "from-user"
-    assert layers.entries["OLLAMA_MODEL"].source == f"file:{user / '.env'}"
 
 
 # Comment lines, blank lines, and lines without '=' are skipped; '=' inside a
@@ -827,31 +786,22 @@ def test_repair_mode_reports_lines_without_equals(tmp_path: Path) -> None:
     assert layers.settings().ollama_model == "m"
 
 
-# A .env candidate that exists but is not UTF-8 is a finding in repair mode, which goes on to
-# the next one (strict mode refuses it, see test_strict_mode_refuses_undecodable_env); a
-# missing candidate is no finding.
-def test_repair_mode_reports_undecodable_env_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project, user = tmp_path / "repo", tmp_path / "cfg"
-    project.mkdir()
-    user.mkdir()
-    (project / "pyproject.toml").write_text("")
-    (project / ".env").write_bytes(b"OLLAMA_MODEL=\xff\xfe\n")
-    (user / ".env").write_text("OLLAMA_MODEL=from-user\n")
-    _no_explicit_env(tmp_path, monkeypatch, project, user)
-
+# The PROMPTMEND_ENV file that is not UTF-8 is a finding in repair mode, which falls back to
+# the defaults (strict mode refuses it, see test_strict_mode_refuses_undecodable_env); a
+# missing file is no finding.
+def test_repair_mode_reports_undecodable_env_file(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_bytes(b"OLLAMA_MODEL=\xff\xfe\n")
     layers = ConfigLayers.resolve(strict=False)
     assert layers.findings == (
         Finding(
-            f"file:{project / '.env'}",
-            "the checkout's .env is not UTF-8 text; save it as UTF-8",
+            f"file:{tmp_path / '.env'}",
+            "the .env named by PROMPTMEND_ENV is not UTF-8 text; save it as UTF-8",
         ),
     )
-    assert layers.entries["OLLAMA_MODEL"].source == f"file:{user / '.env'}"
+    assert layers.entries["OLLAMA_MODEL"].source == "default"
 
-    (user / ".env").unlink()
-    assert ConfigLayers.resolve(strict=False).findings == layers.findings
+    (tmp_path / ".env").unlink()
+    assert ConfigLayers.resolve(strict=False).findings == ()
 
 
 # A .env saved with a UTF-8 byte order mark (Windows Notepad) keeps its first key (#32).
@@ -866,25 +816,14 @@ def test_env_with_byte_order_mark(tmp_path: Path) -> None:
     }
 
 
-# A .env that is not UTF-8 stops strict mode with an error naming the problem, not a value,
-# instead of falling through to the next candidate (#32).
-def test_strict_mode_refuses_undecodable_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    project, user = tmp_path / "repo", tmp_path / "cfg"
-    project.mkdir()
-    user.mkdir()
-    (project / "pyproject.toml").write_text("")
-    (project / ".env").write_bytes("OLLAMA_MODEL=secret-ish\n".encode("utf-16"))
-    (user / ".env").write_text("OLLAMA_MODEL=from-user\n")
-    _no_explicit_env(tmp_path, monkeypatch, project, user)
+# A .env that is not UTF-8 stops strict mode with an error naming the problem, not a value
+# (#32).
+def test_strict_mode_refuses_undecodable_env(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_bytes("OLLAMA_MODEL=secret-ish\n".encode("utf-16"))
     with pytest.raises(
-        ValueError, match=r"^the checkout's \.env is not UTF-8 text; save it as UTF-8$"
+        ValueError,
+        match=r"^the \.env named by PROMPTMEND_ENV is not UTF-8 text; save it as UTF-8$",
     ):
-        Settings.load()
-    (project / ".env").unlink()
-    (user / ".env").write_bytes("OLLAMA_MODEL=x\n".encode("utf-16"))
-    with pytest.raises(ValueError, match=r"^the \.env in the user config folder is not UTF-8"):
         Settings.load()
 
 

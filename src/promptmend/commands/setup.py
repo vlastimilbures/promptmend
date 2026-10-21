@@ -2,8 +2,7 @@
 options prefilling the steps (#244). With --non-interactive (or --plain) it asks nothing:
 settings and the default profile from the options, the API key from --api-key-stdin, a deploy
 preview (applied with --deploy), and a smoke test against a stub on 127.0.0.1, never a paid
-call. A .env migration is only listed there, with its command: the wizard applies it, with
-consent."""
+call."""
 
 from __future__ import annotations
 
@@ -46,30 +45,17 @@ class _Steps:
 
 
 def _settings_writable(steps: _Steps) -> bool:
-    """Whether setup may write config.toml and the secret store. A .env in use is not
-    migrated here (`config migrate` or the wizard does that, with consent), so nothing is
-    written, since config.toml would make the .env unread."""
+    """Whether setup may write config.toml and the secret store: not in legacy mode, where
+    neither is read."""
     if common.legacy_env():
         steps.later(
-            f"{config.env_file_var()} is set, so settings and keys stay in that file; setup "
+            f"{config.ENV_FILE_VAR} is set, so settings and keys stay in that file; setup "
             "does not write config.toml or the secret store"
         )
         return False
-    try:
-        plan = config_store.plan_migration()
-    except config_store.MigrationError as exc:
-        steps.fail("settings", f"{exc}")
-        return False
-    if plan.status != "ready":
-        return True
-    typer.echo(
-        "  Your settings are in a .env. Moving them to config.toml and the secret store "
-        "would do this:"
-    )
-    for line in plan.describe():
-        typer.echo(f"    {line}")
-    steps.later("move the .env settings: `promptmend config migrate` (setup changed nothing)")
-    return False
+    if unread := setup_guide.unread_env_note(config.unread_env_files()):
+        typer.echo(f"  {unread}")
+    return True
 
 
 # The setting each choice is, and its Settings field.

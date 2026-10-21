@@ -21,7 +21,7 @@ from conftest import read_env_file
 from typer.testing import CliRunner
 
 from promptmend.cli import app
-from promptmend.config import ENV_FILE_VARS
+from promptmend.config import ENV_FILE_VAR
 
 if TYPE_CHECKING:
     from conftest import FakeHttp
@@ -47,9 +47,11 @@ def _has_key(name: str = "OPENROUTER_API_KEY") -> bool:
 
 def _improve(draft: str, command: list[str] = IMPROVE) -> subprocess.CompletedProcess[str]:
     # Run the CLI in a fresh process, the way Espanso does. The autouse fixture stripped
-    # provider env vars and pointed PROMPTMEND_ENV at a temp file; drop that (and its alias)
-    # so the CLI finds the repo .env, which is what configures this call.
-    env = {k: v for k, v in os.environ.items() if k not in ENV_FILE_VARS}
+    # provider env vars and pointed PROMPTMEND_ENV at a temp file; point it at the repo .env
+    # instead (when there is one), which is what configures this call.
+    env = {k: v for k, v in os.environ.items() if k != ENV_FILE_VAR}
+    if (REPO / ".env").is_file():
+        env[ENV_FILE_VAR] = str(REPO / ".env")
     return subprocess.run(
         [sys.executable, "-m", "promptmend.cli", *command],
         input=draft,

@@ -24,7 +24,7 @@ Run `promptmend` (or `promptmend ui`) in a terminal. Without a terminal, a bare 
 prints the help and `ui` exits 3.
 
 The interface does what the management commands do, through the same code. Keys are shown
-only as set or not set. Removing a key, deploying, detaching, migrating or deleting history
+only as set or not set. Removing a key, deploying, detaching or deleting history
 asks first, in a dialog whose Cancel has the focus. No provider is called except by the Test
 call button, which runs `improve` against a stub on `127.0.0.1` with a placeholder key, and by
 a Try tab run you confirm.
@@ -38,8 +38,7 @@ time.
 
 | Step | What you do |
 |------|-------------|
-| Welcome | Read what setup does and what the usage history keeps |
-| Earlier settings | Shown only when there is one: move a `.env` into `config.toml` and the secret store |
+| Welcome | Read what setup does and what the usage history keeps, and which `.env` it no longer reads, if one is left |
 | Provider | Pick the default provider from a list; each line says whether it is cloud or local, whether it needs a key, and which triggers use it |
 | Profile | Pick the default profile; each line says how it rewrites |
 | API keys | Paste each key the triggers need (hidden); the step names the triggers each key is for |
@@ -66,8 +65,8 @@ asks nothing (see [Commands](commands.md#management-commands)).
 | Key | Tab | What it shows and does |
 |-----|-----|------------------------|
 | `1` | Home | Whether you are ready, the most urgent problem and the session log |
-| `2` | Settings | Every setting and key in one list: switch, pick, edit or reset a setting, set or remove a key, migrate a `.env`, run the Test call (see [Settings tab](#settings-tab)) |
-| `3` | Profiles | Built-in and your own profiles; pick the default profile, edit a profile in `$VISUAL` or `$EDITOR`, copy a checkout's profiles (it asks for the checkout's folder when none was found) |
+| `2` | Settings | Every setting and key in one list: switch, pick, edit or reset a setting, set or remove a key, run the Test call (see [Settings tab](#settings-tab)) |
+| `3` | Profiles | Built-in and your own profiles; pick the default profile, edit a profile in `$VISUAL` or `$EDITOR` |
 | `4` | Triggers | The match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
 | `5` | History | Usage statistics by trigger, provider, model or day; export, prune, reset |
 | `6` | Diagnostics | Each provider's model, base URL, key and whether the draft leaves this machine; the settings layers and any problem in the settings files; the `doctor` checks |

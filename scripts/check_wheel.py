@@ -8,11 +8,10 @@ built wheel into a clean venv and runs this with that venv's Python (not from th
 
 It checks that the package was imported from the venv, that every match file under the repo's
 espanso/match/ and every profile under src/promptmend/prompts/ resolves through
-importlib.resources, that espanso/config/ was not shipped, that `promptmend --version` and its
-deprecated alias `prompt-workflow --version` print the version, and that `promptmend persona`
-runs with an empty config. With `--constraints` (the release's constraints.txt, exported from
-uv.lock), every distribution installed next to the package must be pinned there at the
-installed version. Exits nonzero on the first failure.
+importlib.resources, that espanso/config/ was not shipped, that `promptmend --version` prints
+the version, and that `promptmend persona` runs with an empty config. With `--constraints`
+(the release's constraints.txt, exported from uv.lock), every distribution installed next to
+the package must be pinned there at the installed version. Exits nonzero on the first failure.
 """
 
 from __future__ import annotations
@@ -77,16 +76,14 @@ def _exe(name: str) -> Path:
 
 
 def _check_commands() -> None:
-    """`promptmend` and its deprecated alias `prompt-workflow` (until 1.0.0) both run, and
-    --version prints only the version (no deprecation note)."""
+    """`promptmend --version` prints only the version, and nothing on stderr."""
     want = metadata.version("promptmend")
-    for name in ("promptmend", "prompt-workflow"):
-        result = subprocess.run(  # noqa: S603 - the venv's own entry point
-            [str(_exe(name)), "--version"], capture_output=True, check=False, timeout=60
-        )
-        out = result.stdout.decode("utf-8").strip()
-        if (result.returncode, out, result.stderr) != (0, want, b""):
-            _fail(f"{name} --version exited {result.returncode} with {out!r} {result.stderr!r}")
+    result = subprocess.run(  # noqa: S603 - the venv's own entry point
+        [str(_exe("promptmend")), "--version"], capture_output=True, check=False, timeout=60
+    )
+    out = result.stdout.decode("utf-8").strip()
+    if (result.returncode, out, result.stderr) != (0, want, b""):
+        _fail(f"promptmend --version exited {result.returncode} with {out!r} {result.stderr!r}")
 
 
 def _check_persona() -> None:

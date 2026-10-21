@@ -43,7 +43,7 @@ def espanso(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRunner:
 @pytest.fixture
 def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("PROMPTMEND_ENV")
-    return config._user_config_dir()
+    return config.user_config_dir()
 
 
 @pytest.fixture
@@ -214,25 +214,20 @@ def test_wizard_from_home_closes_back_to_it(saved: Path, espanso: FakeRunner) ->
     drive(scenario)
 
 
-def test_wizard_shows_earlier_step_for_a_dotenv(saved: Path, espanso: FakeRunner) -> None:
+# A .env no release reads any more (#275) is named on Welcome; the wizard never touches it.
+def test_wizard_names_an_unread_dotenv(saved: Path, espanso: FakeRunner) -> None:
     saved.mkdir(parents=True, exist_ok=True)
-    (saved / ".env").write_text("PROMPT_PROVIDER=ollama\n", "utf-8")
+    env = saved / ".env"
+    env.write_text("PROMPT_PROVIDER=ollama\n", "utf-8")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         wizard = _wizard(app)
-        assert "earlier" in wizard.order
-        await press(app, pilot, "#setup-next-step")
-        assert wizard.at == "earlier"
-        assert "Your settings are in a .env" in _text(app, "#setup-earlier-text")
-        await press(app, pilot, "#setup-migrate-env")
-        app.screen.query_one("#confirm", Button).press()
-        await settle(pilot)
-        # Migrated: the step is no longer needed.
-        assert "earlier" not in wizard.order
+        assert wizard.order[:2] == ["welcome", "provider"]
+        assert f"{env} is no longer read" in _text(app, "#setup-welcome-notes")
 
     drive(scenario, setup=_options(espanso))
-    assert config.settings_file().is_file()
-    assert common.load_layers()[1].provider == "ollama"
+    assert env.read_text("utf-8") == "PROMPT_PROVIDER=ollama\n"
+    assert common.load_layers()[1].provider == "openrouter"
 
 
 def test_wizard_deploy_refused_when_the_plan_changed(saved: Path, espanso: FakeRunner) -> None:

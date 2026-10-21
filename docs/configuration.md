@@ -11,7 +11,7 @@ the one complete list.
 - [Files and folders](#files-and-folders)
 - [Change a setting](#change-a-setting)
 - [API keys](#api-keys)
-- [Migrate a .env](#migrate-a-env)
+- [Settings in a .env](#settings-in-a-env)
 - [Value syntax](#value-syntax)
 - [Proxies](#proxies)
 - [Settings reference](#settings-reference)
@@ -21,21 +21,17 @@ the one complete list.
 
 Every setting is named like an environment variable (`OPENROUTER_MODEL`, `PROMPT_PERSONA`).
 Espanso starts the CLI without your shell's environment, so the CLI reads its settings from
-files. It reads the first of these that exists:
+files:
 
-1. The `.env` named by `PROMPTMEND_ENV` (or its old name `PROMPT_WORKFLOW_ENV`; the new name
-   wins when both are set). That file alone is used: no `config.toml` or `secrets.toml`.
-2. `config.toml` in the [config folder](#files-and-folders). Once it exists, it is the saved
-   configuration and no `.env` is read, so an old `.env` can never override a saved value.
-3. The `.env` in the repository the CLI was installed from, for an editable install only (see
-   CONTRIBUTING); a release install never reads a checkout.
-4. The `.env` in the config folder.
+- `config.toml` in the [config folder](#files-and-folders), and the API keys in
+  `secrets.toml` next to it.
+- Or, when `PROMPTMEND_ENV` names a `.env`, that file alone: no `config.toml` or
+  `secrets.toml` (legacy mode, see [Settings in a .env](#settings-in-a-env)).
 
-Unless `PROMPTMEND_ENV` is set, API keys are also read from `secrets.toml` in the config
-folder, which wins over a key in a `.env`.
+No other `.env` is read: not one in the config folder, and not a checkout's.
 
-Order of precedence, lowest first: built-in default < `config.toml` or `.env` <
-`secrets.toml` < real environment variable < a trigger's own options.
+Order of precedence, lowest first: built-in default < `config.toml` (or the `PROMPTMEND_ENV`
+file) < `secrets.toml` < real environment variable < a trigger's own options.
 
 The CLI never reads a settings file from the current directory, so running it inside some
 other project cannot change its endpoint or switch off the gate. Only the settings in the
@@ -50,10 +46,8 @@ other project cannot change its endpoint or switch off the gate. Only the settin
 | Data folder | `~/.local/share/promptmend/` (`$XDG_DATA_HOME/promptmend/` when set) | `%LOCALAPPDATA%\promptmend\` |
 | `config.toml` | config folder | config folder |
 | `secrets.toml` | config folder, mode 600 | config folder, readable by your account alone |
-| `.env` (optional) | config folder | config folder |
 | `profiles/<name>.md` | config folder | config folder |
 | `prices.toml` (optional) | config folder | config folder |
-| `backups/`, `migration.json` | config folder (written by `config migrate`) | config folder |
 | `history.sqlite3`, `history.lost` | data folder | data folder |
 | `espanso-manifest.json` | data folder | data folder |
 | `update-check.json` | data folder (the [update check](privacy.md#update-check)'s last answer) | data folder |
@@ -62,8 +56,7 @@ On Windows `XDG_CONFIG_HOME` and `XDG_DATA_HOME` are ignored. `config.toml` hold
 with the same names (`OPENROUTER_MODEL = "…"`, `OLLAMA_THINK = true`) and a `config_version`;
 it never holds a key. A `config.toml` kept as a symlink (into a dotfiles repo, say) stays
 one: saving writes the file it points to, and so does a symlinked `secrets.toml`. Keep
-`secrets.toml` out of any repo you push. Releases up to 0.18.0 used folders named
-`prompt-workflow`; see [The folders' new name](install.md#the-folders-new-name).
+`secrets.toml` out of any repo you push.
 
 ## Change a setting
 
@@ -82,12 +75,8 @@ promptmend config validate                   # check everything as a trigger rea
 refuses a key name or a value that looks like a key. A change applies to the next trigger,
 with no redeploy.
 
-`config set` refuses to write while a `.env` is in use without `config.toml` (the `.env`
-would be orphaned; [migrate](#migrate-a-env) first).
-
-In legacy mode, with `PROMPTMEND_ENV` set, that `.env` stays the only settings file: nothing
-is migrated, and `config set`, `config unset` and `secrets set|remove` refuse to write. Edit
-the file itself.
+In legacy mode, with `PROMPTMEND_ENV` set, that `.env` stays the only settings file:
+`config set`, `config unset` and `secrets set|remove` refuse to write. Edit the file itself.
 
 ## API keys
 
@@ -105,19 +94,18 @@ promptmend secrets remove OPENROUTER_API_KEY
 account alone on Windows. A keychain is not supported yet. Keys are never logged, never shown
 in a traceback, and sent only as the authentication header of their own provider.
 
-## Migrate a .env
+## Settings in a .env
 
-An existing `.env` can be moved to `config.toml` and `secrets.toml`:
+A `.env` is read only when `PROMPTMEND_ENV` names it (for GUI apps, set it in Espanso's
+environment, since Espanso does not inherit your shell). Earlier releases also read a `.env`
+in the config folder, and an editable install the checkout's; those are no longer read
+(#275). If you still have one:
 
-1. `promptmend config migrate` shows a preview (setting names only).
-2. Confirm it, or in a script pass `--yes --preview-token <token>` from that preview.
-3. Values equal to their default are left out, and the `.env` is moved into `backups/` in the
-   config folder rather than deleted.
-
-`promptmend config rollback` restores the `.env` exactly, after the same preview; it puts the
-`.env` back first and only then moves `config.toml` and `secrets.toml` into the backup. It
-also puts back a checkout's `.env` that an earlier version's `config retire` moved. For an
-earlier checkout's `.env`, see [From a checkout install](install.md#from-a-checkout-install).
+- Save its settings again with `promptmend setup`, or `promptmend config set` and
+  `promptmend secrets set` for each one, then remove the file. Until you do, `config validate`
+  and `doctor` report a `.env` left in the config folder, or in the checkout while an
+  editable install runs from it.
+- Or keep using it as it is: set `PROMPTMEND_ENV` to its path.
 
 The repository's `.env.example` sets only the key and the persona and shows every other
 setting commented out with its default, so later default changes still reach you.
@@ -126,8 +114,8 @@ setting commented out with its default, so later default changes still reach you
 
 - Values may be quoted, and an unquoted value may be followed by a ` # comment`.
 - Quote a value that itself contains ` #`. For `PROMPT_EXTRA_PATTERNS` and `PROMPT_PERSONA`,
-  where `#` may be part of the text, `config validate`, `doctor` and `config migrate` report a
-  value cut at ` #` (migrate refuses until it is quoted). A cut `PROMPT_EXTRA_PATTERNS` also
+  where `#` may be part of the text, `config validate` and `doctor` report a value cut at
+  ` #`. A cut `PROMPT_EXTRA_PATTERNS` also
   stops every rewrite trigger with a marker (`-p-` still pastes the persona), so the gate never
   runs on part of your patterns.
 - A `.env` must be UTF-8 (a byte order mark is fine); any other encoding is an error.
@@ -258,7 +246,6 @@ Read from the real environment only, never from a file.
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `PROMPTMEND_ENV` | *(unset)* | Path of the `.env` to load, alone: no `config.toml` or `secrets.toml`. Set it for GUI apps, since Espanso does not inherit your shell |
-| `PROMPT_WORKFLOW_ENV` | *(unset)* | The old name of `PROMPTMEND_ENV`, still read when that one is not set |
 
 ## Ollama context window
 

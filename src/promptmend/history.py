@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal
 
 from . import __version__
-from .config import LEGACY_APP_DIR, MAX_RETENTION_DAYS, _user_config_dir, user_data_dir
+from .config import MAX_RETENTION_DAYS, user_config_dir, user_data_dir
 from .redaction import compile_extra, is_bare_token, scan
 
 if TYPE_CHECKING:
@@ -260,7 +260,7 @@ def history_path(environ: Mapping[str, str] = os.environ) -> Path:
 
 
 def price_table_path(environ: Mapping[str, str] = os.environ) -> Path:
-    return _user_config_dir(environ) / PRICES_NAME
+    return user_config_dir(environ) / PRICES_NAME
 
 
 def new_operation_id() -> str:
@@ -680,7 +680,7 @@ class HistoryStore:
                 raise TimeoutError("history write budget spent")
             return max(1, int(left * 1000))
 
-        _make_folder(self.path.parent)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect(timeout=remaining_ms() / 1000) as conn:
             # Abort a statement that runs past the budget (checked every _PROGRESS_STEPS VM steps).
             conn.set_progress_handler(lambda: int(time.monotonic() > deadline), _PROGRESS_STEPS)
@@ -759,7 +759,7 @@ class HistoryStore:
             count = 0
         payload = json.dumps({"lost_writes": count + dropped, "last_lost_utc": _now()})
         # Not config_files.write_atomic(): its fsync and private-folder chmod do not fit
-        # record()'s budget, and relocate moves this `.<pid>.tmp` name as a companion.
+        # record()'s budget.
         temp = self.lost_path.with_name(f"{LOST_NAME}.{os.getpid()}.tmp")
         temp.write_text(payload, encoding="utf-8")
         os.replace(temp, self.lost_path)
@@ -915,7 +915,7 @@ class HistoryStore:
         nonce is in it removes it. One left by a killed process is broken after _STALE_LOCK.
         Tries at least once, however little time is left."""
         lock = self.lost_path.with_name(f"{LOST_NAME}.lock")
-        _make_folder(lock.parent)
+        lock.parent.mkdir(parents=True, exist_ok=True)
         nonce = uuid.uuid4().hex
         while True:
             try:
@@ -1219,12 +1219,6 @@ class HistoryStore:
                 for row in conn.execute(sql + " ORDER BY operation_id, seq")
             ]
         return ops, attempts
-
-
-def _make_folder(folder: Path) -> None:
-    # Never re-create the legacy folder relocate moved away (#241): the record is dropped uncounted.
-    if folder.name != LEGACY_APP_DIR:
-        folder.mkdir(parents=True, exist_ok=True)
 
 
 def _break_stale(lock: Path) -> bool:
