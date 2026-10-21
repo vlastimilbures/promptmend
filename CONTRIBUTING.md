@@ -528,12 +528,13 @@ local 7-8B model; nothing has measured `general` on Ollama or LM Studio yet. Kee
 ### Known gaps in the default prompt
 
 Both tiers send the `default` profile (flash-lite on the standard tier, gpt-6-luna on the pro
-tier); `default-pro` is an alias of it. The 2026-10-02 rework (see
-`docs/prompt-candidates/PLAN.md`) closed the old gaps 1–4 and 7: fixed wordings are copied word
-for word, document steps name their sections, method choices are stated as assumptions, a
-message to a named person at another organisation gets the independent review, and the
-self-review lines match the format in `OUTPUTS`. The gaps it left, and their state after the
-2026-10 round (its bench runs use `--persona example`):
+tier); `default-pro` is an alias of it. The 2026-10-02 rework (its decision record is in git:
+`git show v0.25.0:docs/prompt-candidates/PLAN.md`; the candidate files, I2 among them, at
+`v0.17.0`) closed the old gaps 1–4 and 7: fixed wordings are copied word for word, document
+steps name their sections, method choices are stated as assumptions, a message to a named
+person at another organisation gets the independent review, and the self-review lines match the
+format in `OUTPUTS`. The gaps it left, and their state after the 2026-10 round (its bench runs
+use `--persona example`):
 
 1. **Published text on flash-lite** (closed 2026-10). The review rule now names its readers
    (only the user, a colleague, their manager or their team take the self-review; everyone
