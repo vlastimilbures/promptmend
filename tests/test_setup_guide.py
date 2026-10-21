@@ -17,8 +17,8 @@ def _settings(**kw: Any) -> Settings:
 
 
 def test_unread_env_note(tmp_path: Path) -> None:
-    assert setup_guide.unread_env_note(None) is None
-    note = setup_guide.unread_env_note(tmp_path / ".env")
+    assert setup_guide.unread_env_note([]) is None
+    note = setup_guide.unread_env_note([tmp_path / ".env"])
     assert note is not None
     assert note.startswith(f"{tmp_path / '.env'} is no longer read: choose its settings again")
 

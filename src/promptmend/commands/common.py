@@ -109,12 +109,12 @@ def require_terminal(what: str, hint: str) -> None:
         fail(f"{what} needs an answer, but this is not a terminal; {hint}", NEEDS_TERMINAL)
 
 
-def confirm(question: str, *, yes: bool, hint: str = "pass --yes") -> None:
+def confirm(question: str, *, yes: bool) -> None:
     """Go on when ``yes`` or the person agrees; exit 1 when they decline, NEEDS_TERMINAL
     when there is no terminal to ask."""
     if yes:
         return
-    require_terminal(question.rstrip("?"), hint)
+    require_terminal(question.rstrip("?"), "pass --yes")
     if not typer.confirm(question, default=False):
         fail("not confirmed; nothing was changed")
 

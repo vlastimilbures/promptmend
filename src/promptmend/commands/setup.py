@@ -53,7 +53,7 @@ def _settings_writable(steps: _Steps) -> bool:
             "does not write config.toml or the secret store"
         )
         return False
-    if unread := setup_guide.unread_env_note(config.unread_env_file()):
+    if unread := setup_guide.unread_env_note(config.unread_env_files()):
         typer.echo(f"  {unread}")
     return True
 

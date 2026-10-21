@@ -243,7 +243,8 @@ After any install, run one of these in a terminal:
 - `promptmend` opens the [full-screen interface](interface.md), which does the same through
   its tabs.
 
-`setup` also names a `.env` left in the config folder, which is no longer read (see
+`setup` also names a `.env` left in the config folder (or an editable install's checkout),
+which is no longer read (see
 [From 0.25 or earlier](#from-025-or-earlier-settings-in-a-env)). In a script, pass the key on
 stdin and nothing is asked:
 
@@ -357,8 +358,9 @@ Before you upgrade, while 0.25.0 is still installed:
 2. From a checkout install (one made with the install scripts), `profiles migrate --checkout
    PATH` copies the profiles you added or edited there into your profile folder.
 
-Already upgraded? Your settings are not lost: the `.env` is still there, and `doctor` and
-`config validate` report it. Set `PROMPTMEND_ENV` to it to keep using it, or save its settings
+Already upgraded? Your settings are not lost: the `.env` is still there. `doctor` and
+`config validate` report one in the config folder, or in the checkout while an editable
+install runs from it (not once a release replaced it). Set `PROMPTMEND_ENV` to it to keep using it, or save its settings
 again with `promptmend setup` (see [Settings in a .env](configuration.md#settings-in-a-env)).
 Copy a profile you edited in a checkout into the profile folder by hand
 ([Profiles](profiles.md)).

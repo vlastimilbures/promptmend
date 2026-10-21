@@ -134,7 +134,7 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   `os.environ`, and takes only `env_names()` keys (a `.env` cannot set `HTTPS_PROXY` or
   anything else). Strict mode (the triggers, the Try tab) fails closed with a marker; repair
   mode (`strict=False`, the management commands) reports findings and falls back a layer,
-  and reports a `.env` left in the config folder (`config.unread_env_file()`, #275).
+  and reports a `.env` earlier releases read (`config.unread_env_files()`, #275).
 - Legacy mode: with `PROMPTMEND_ENV` set (the conftest default) there is no `config.toml` and
   no secret store, and `config set`/`secrets set` refuse.
 - Adding a setting: a field and parser in `config.py`, a row in docs/configuration.md, a line

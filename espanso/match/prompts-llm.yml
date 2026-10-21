@@ -6,8 +6,8 @@
 # The CLI placeholder is replaced with the absolute CLI path by `promptmend espanso deploy`
 # (or the install scripts), because GUI-launched Espanso does not inherit shell PATH.
 # A script var fails on any stderr output, so the CLI keeps stderr empty. The CLI finds its
-# settings on its own (its config folder, an editable checkout's .env, or
-# PROMPTMEND_ENV), so no `cd`.
+# settings on its own (config.toml and secrets.toml in its config folder, or the .env
+# PROMPTMEND_ENV names), so no `cd`.
 matches:
   # Rewrites the clipboard draft into the golden template (see prompts-template.yml).
   # This is the live cloud trigger: it runs on OpenRouter, so the clipboard

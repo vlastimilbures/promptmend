@@ -363,11 +363,6 @@ def test_load_dotenv_exports_only_known_settings(
     assert set(layers.entries) == set(env_names())
 
 
-def _no_explicit_env(monkeypatch: pytest.MonkeyPatch, project: Path) -> None:
-    monkeypatch.delenv("PROMPTMEND_ENV")
-    monkeypatch.setattr(config, "_PROJECT_ROOT", project)
-
-
 # A .env in the current directory or its parents is never loaded: a planted file in an
 # untrusted checkout must not redirect the base URL or enable ALLOW_CLOUD_OVERRIDE.
 def test_load_dotenv_ignores_cwd_and_parents(
@@ -378,7 +373,7 @@ def test_load_dotenv_ignores_cwd_and_parents(
     (tmp_path / ".env").write_text("ALLOW_CLOUD_OVERRIDE=true\n")
     (nested / ".env").write_text("ALLOW_CLOUD_OVERRIDE=true\n")
     monkeypatch.chdir(nested)
-    _no_explicit_env(monkeypatch, tmp_path / "none")
+    monkeypatch.delenv("PROMPTMEND_ENV")
 
     layers = ConfigLayers.resolve()
 

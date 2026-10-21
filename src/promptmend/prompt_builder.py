@@ -43,7 +43,7 @@ PROFILE_NAME = re.compile(r"(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a
 
 
 def user_profiles_dir() -> Path:
-    """The user's own profiles, `<name>.md` in the config dir that also holds .env. An
+    """The user's own profiles, `<name>.md` in the config dir that also holds config.toml. An
     upgrade never touches it, unlike the package's prompts/."""
     return user_config_dir() / "profiles"
 

@@ -41,9 +41,11 @@ if [ ! -x "$cli_path" ] || [ ! -x "$tool_python" ]; then
 fi
 "$tool_python" scripts/check_tool_lock.py --python "$tool_python"
 
-# The .env holds API keys: keep it readable by this user only.
+# The .env holds API keys: keep it readable by this user only. It is read only when
+# PROMPTMEND_ENV names it (#275).
 if [ -f "$repo_dir/.env" ]; then
   chmod 600 "$repo_dir/.env"
+  echo "Note: $repo_dir/.env is read only when PROMPTMEND_ENV names it."
 fi
 
 echo "Save the settings with 'promptmend setup' (config.toml and secrets.toml), or point"

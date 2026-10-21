@@ -43,7 +43,8 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(key, str(tmp_path / "data"))
     # The home the config dir would derive from, and the editable-install root, are per-test
     # temp dirs too: a test that unsets PROMPTMEND_ENV can never read or write the developer's
-    # real files (config.toml, secrets.toml, the folders).
+    # real files (config.toml, secrets.toml, the folders), nor have repair mode report the
+    # checkout's .env (config.unread_env_files) or doctor call the install editable.
     for name in ("HOME", "USERPROFILE"):
         monkeypatch.setenv(name, str(tmp_path / "home"))
     from promptmend import config

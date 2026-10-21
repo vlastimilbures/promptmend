@@ -193,7 +193,7 @@ class SetupScreen(Screen[None]):
                 "PROMPTMEND_ENV is set, so your settings and keys stay in that file; this "
                 "setup cannot save them (edit that file instead)."
             )
-        elif unread := setup_guide.unread_env_note(config.unread_env_file()):
+        elif unread := setup_guide.unread_env_note(config.unread_env_files()):
             notes.append(unread)
         notes.append(_history_line(state))
         self.query_one("#setup-welcome-notes", Static).update("\n".join(notes))

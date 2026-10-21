@@ -65,14 +65,15 @@ def legacy_keys_intro(env_file: str) -> str:
     )
 
 
-def unread_env_note(env_file: Path | None) -> str | None:
-    """What setup says about ``env_file`` (config.unread_env_file()): a .env no release reads
-    any more (#275), whose settings this setup saves again; None without one."""
-    if env_file is None:
+def unread_env_note(env_files: Sequence[Path]) -> str | None:
+    """What setup says about ``env_files`` (config.unread_env_files()): .env files no release
+    reads any more (#275), whose settings this setup saves again; None without one."""
+    if not env_files:
         return None
+    files = ", ".join(map(str, env_files))
     return (
-        f"{env_file} is no longer read: choose its settings again here (they are saved in "
-        "config.toml and the secret store), then remove that file."
+        f"{files} is no longer read: choose its settings again here (they are saved in "
+        "config.toml and the secret store), then remove it."
     )
 
 

@@ -43,8 +43,8 @@ All notable changes to this project are documented here. The format follows
 
   **Upgrading:** before you upgrade, run `config migrate` (and, from a checkout install,
   `profiles migrate --checkout PATH`) with 0.25.0. Afterwards, a `.env` left in the config
-  folder is reported by `doctor` and `config validate`, and named by `setup`, until you remove
-  it: set `PROMPTMEND_ENV` to it to keep using it, or save its settings again with `promptmend
+  folder (or in the checkout of an editable install) is reported by `doctor` and
+  `config validate`, and named by `setup`, until you remove it: set `PROMPTMEND_ENV` to it to keep using it, or save its settings again with `promptmend
   setup`. Contributors point `PROMPTMEND_ENV` at the checkout's `.env`. See docs/install.md,
   "From 0.25 or earlier".
 

@@ -195,7 +195,7 @@ def test_documented_commands_and_flags_exist(doc: str) -> None:
             assert flag in known, f"{doc}: `promptmend{rest}`: no option {flag}"
 
 
-# A code span that is only options (`--keep-static`, `--yes --preview-token <token>`) names
+# A code span that is only options (`--keep-static`, `--yes --stdin`) names
 # options of some command: each must exist somewhere in the CLI. docs/benchmark.md documents
 # the bench script's own options, so it is left out.
 @pytest.mark.parametrize("doc", [d for d in DOCS if d != "docs/benchmark.md"])

@@ -103,7 +103,8 @@ in the config folder, and an editable install the checkout's; those are no longe
 
 - Save its settings again with `promptmend setup`, or `promptmend config set` and
   `promptmend secrets set` for each one, then remove the file. Until you do, `config validate`
-  and `doctor` report a `.env` left in the config folder.
+  and `doctor` report a `.env` left in the config folder, or in the checkout while an
+  editable install runs from it.
 - Or keep using it as it is: set `PROMPTMEND_ENV` to its path.
 
 The repository's `.env.example` sets only the key and the persona and shows every other

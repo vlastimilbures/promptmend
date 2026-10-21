@@ -106,8 +106,9 @@ def test_saved_layers_precedence(saved_mode: Path, monkeypatch: pytest.MonkeyPat
 
 
 # Outside legacy mode no .env is read, with config.toml or without (#275): neither the
-# checkout's nor one in the user config folder. Repair mode reports the latter, so its settings
-# never vanish without a word; strict mode (the triggers) stays silent.
+# checkout's nor one in the user config folder. Repair mode reports both (the checkout's for
+# an editable install), so their settings never vanish without a word; strict mode (the
+# triggers) stays silent.
 @pytest.mark.parametrize("saved", [True, False], ids=["config.toml", "no-config.toml"])
 def test_no_dotenv_is_read_outside_legacy_mode(
     saved_mode: Path, project: Path, saved: bool
@@ -121,12 +122,17 @@ def test_no_dotenv_is_read_outside_legacy_mode(
     assert settings.openrouter_model == ("x/saved" if saved else Settings().openrouter_model)
     assert settings.ollama_model == Settings().ollama_model
     repair = ConfigLayers.resolve(strict=False)
+    message = (
+        ".env is no longer read: save its settings with `promptmend setup`, then remove it; "
+        "or set PROMPTMEND_ENV to it"
+    )
     assert [(f.source, f.message) for f in repair.findings] == [
-        (
-            f"file:{saved_mode / '.env'}",
-            ".env is no longer read: save its settings with `promptmend setup` (or set "
-            "PROMPTMEND_ENV to it), then remove it",
-        )
+        (f"file:{saved_mode / '.env'}", message),
+        (f"file:{project / '.env'}", message),  # an editable install's checkout
+    ]
+    (project / "pyproject.toml").unlink()  # a release install: the package dir is no checkout
+    assert [f.source for f in ConfigLayers.resolve(strict=False).findings] == [
+        f"file:{saved_mode / '.env'}"
     ]
     assert ConfigLayers.resolve().findings == ()
     assert not any(layer.source.endswith(".env") for layer in repair.layers)

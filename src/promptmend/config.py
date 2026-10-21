@@ -90,11 +90,14 @@ def settings_file(environ: Mapping[str, str] = os.environ) -> Path:
     return user_config_dir(environ) / config_files.SETTINGS_FILE
 
 
-def unread_env_file(environ: Mapping[str, str] = os.environ) -> Path | None:
-    """A .env in the user config folder, which no release since the legacy paths were removed
-    (#275) reads: its settings would be lost without a word, so repair mode reports it."""
-    path = user_config_dir(environ) / ".env"
-    return path if config_files.is_file(path) else None
+def unread_env_files(environ: Mapping[str, str] = os.environ) -> list[Path]:
+    """The .env files earlier releases read and this one does not (#275): the user config
+    folder's, and an editable install's checkout's. Their settings would be lost without a
+    word, so repair mode and setup name them."""
+    candidates = [user_config_dir(environ) / ".env"]
+    if (_PROJECT_ROOT / "pyproject.toml").is_file():
+        candidates.append(_PROJECT_ROOT / ".env")
+    return [path for path in candidates if config_files.is_file(path)]
 
 
 def _parse_env_text(text: str) -> tuple[dict[str, str], list[int], list[str]]:
@@ -787,16 +790,16 @@ class ConfigLayers:
             saved = _saved_layer(settings_file(environ), fail, note)
             if saved is not None:
                 layers.append(saved)
-            if not strict and (unread := unread_env_file(environ)) is not None:
+            for unread in [] if strict else unread_env_files(environ):
                 note(
                     f"file:{unread}",
-                    ".env is no longer read: save its settings with `promptmend setup` (or set "
-                    f"{ENV_FILE_VAR} to it), then remove it",
+                    ".env is no longer read: save its settings with `promptmend setup`, then "
+                    f"remove it; or set {ENV_FILE_VAR} to it",
                 )
             if secrets := _secrets_layer(user_config_dir(environ), strict, fail_secrets, note):
                 layers.append(secrets)
-        elif (pairs := _read_env_file(Path(named).expanduser(), note, fail)) is not None:
-            source = f"file:{Path(named).expanduser()}"
+        elif (pairs := _read_env_file(path := Path(named).expanduser(), note, fail)) is not None:
+            source = f"file:{path}"
             merged = _merged_lines(pairs)
             for key in merged:
                 fail(source, _merged_line_error(key), (key,))
