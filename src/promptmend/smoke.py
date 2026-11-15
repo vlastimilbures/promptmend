@@ -129,6 +129,8 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class _StubServer(ThreadingHTTPServer):
+    # Room for many near-simultaneous connects (the slow-trigger test), above TCPServer's 5.
+    request_queue_size = 64
     paths: list[str]
     delay: float
     trickle: float
@@ -163,7 +165,8 @@ def stub_server(delay: float = 0.0, *, trickle: float = 0.0) -> Iterator[Stub]:
     server.paths = []
     server.delay, server.trickle = delay, trickle
     server.stopping = threading.Event()
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    # A short poll so stopping takes ~0.05 s, not serve_forever's default 0.5 s per stub.
+    thread = threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True)
     thread.start()
     try:
         yield Stub(int(server.server_address[1]), server.paths)
