@@ -47,15 +47,29 @@ All notable changes to this project are documented here. The format follows
 - The interface's Home no longer waits for pypi.org (#315). The update check runs beside the
   rest of a reload: until it answers, the Version row says `checking` (About: `checking
   pypi.org…`), then fills in on every tab at once; a proxy that blocks pypi.org (up to 3 s)
-  no longer delays any other row. Ollama and LM Studio are asked at the same time, in the
-  interface and in `doctor` (one probe timeout instead of two). A reload resolves the
-  settings, looks up the launcher, reads the deploy manifest and builds the deploy plan once,
-  shared with doctor's checks. A uv install's launcher is read from uv's `uv-receipt.toml`,
-  so neither the interface nor `doctor` runs `uv tool dir` (still the fallback when the
-  receipt is missing or does not name an existing launcher). On Windows the Espanso queries
-  of one reload or `doctor` run enumerate the processes once, and the uninstall registry is
-  read only when Espanso is not found elsewhere. `doctor` and `doctor --json` output is
-  unchanged.
+  no longer delays any other row, and quitting never waits for it. Ollama and LM Studio are
+  asked at the same time, in the interface and in `doctor` (one probe timeout instead of
+  two). A reload resolves the settings, looks up the launcher, reads the deploy manifest and
+  builds the deploy plan once, shared with doctor's checks. A uv install's launcher is read
+  from uv's `uv-receipt.toml`, so neither the interface nor `doctor` runs `uv tool dir`
+  (still the fallback when the receipt is missing or does not name an existing launcher).
+  On Windows the Espanso queries of one reload or `doctor` run enumerate the processes
+  once, and the uninstall registry is read only when Espanso is not found elsewhere.
+  `doctor` and `doctor --json` output is unchanged, except that a uv tool install is now
+  recognised (channel `uv`) even when `uv` is not on PATH.
+- The triggers start faster and load fewer native modules, each a file an endpoint scanner
+  inspects on Windows (#312): the built-in profiles are read as plain files on first use (no
+  longer through `importlib.resources`, which pulled in zipfile, bz2 and lzma), and hashlib,
+  ctypes, tempfile and unicodedata load only in the functions that need them (the
+  data-protection gate skips unicodedata for an ASCII draft, with the same findings).
+  `persona` and `improve` up to its provider call, with a local or a cloud provider, now load
+  no extension module of their own: `_hashlib` and `unicodedata` are gone, and on macOS and
+  Linux so is `_ctypes`, which the clipboard probe now loads only when the clipboard is read.
+  Not fixed yet: the ones `import typer` loads itself (`_bz2`, `_lzma`, `_uuid`, and
+  depending on the platform and Python version `select`, `_zstd`, or on Windows `_wmi` and
+  `_ctypes`, for its console support) stay until a trigger entry runs without Typer (#313);
+  on Windows Typer has therefore loaded `_ctypes` before the probe needs it. On macOS, Python
+  3.13, `improve` adds 145 modules up to the provider call (167 before). No output changes.
 
 ### Removed
 - **Breaking:** the transition paths from earlier releases (#275), ahead of 1.0.0. This breaks

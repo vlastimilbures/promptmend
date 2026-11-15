@@ -275,6 +275,32 @@ the version. `import promptmend.history` adds 87 modules (127 before) and no
 `importlib.metadata` (macOS, Python 3.13, 2026-11-15); a trigger run loads it only to record
 the run. A test that fakes the version patches `<module>.installed_version`.
 
+Since #312 (2026-11-15, same machine, Python 3.13): on Windows every extension module outside
+`pythonXY.dll` is its own `.pyd` that a scanner inspects as it loads, so the trigger path
+loads none of its own before the provider call. The built-in profiles are plain files read on
+first use (`importlib.resources` brought zipfile, bz2 and lzma), and hashlib, ctypes (the
+clipboard probe), tempfile and unicodedata are imported in the functions that need them; the
+gate's `redaction._normalize()` returns an ASCII draft as is, which the full fold would
+leave unchanged too (`tests/test_redaction.py` checks every ASCII code point).
+`improve` up to its provider call and `persona` (history off) add 145 modules each (167
+before). On macOS these modules are linked into the interpreter, so the time saved here is
+small and noisy: a stubbed `improve` run with the history off went from about 38 to 32 ms of
+`-X importtime` self time and from 50 to 44 ms of wall time (median of 9, two interleaved
+rounds); the Windows gain, a scanned file per module, is #304's to measure.
+
+**Out of scope for #312:** the extension modules `import typer` loads itself still load on
+every trigger: `_bz2` and `_lzma` (shutil), `_uuid`, and by platform and Python version
+`select` (subprocess, POSIX), `_wmi` (platform, Windows 3.12+), `_zstd` (shutil, 3.14) and,
+on Windows, `_ctypes` (Typer's vendored click, for the console). They go only with a trigger
+entry that does not import Typer (#313). So the clipboard probe's lazy ctypes keeps `_ctypes`
+out of a trigger that reads no clipboard on macOS and Linux; on Windows Typer has already
+loaded it. `tests/test_trigger_contract.py` lists the Windows `.pyd` modules that matter to
+the trigger path (`WINDOWS_EXTENSIONS`),
+measures what `import typer` loads of them in a fresh interpreter (held to
+`TYPER_EXTENSIONS_ALLOWED`), allows only those before the call (local and cloud provider)
+and for `persona`, and checks with Typer imported first that the trigger path adds none;
+`PERSONA_CEILING` and `IMPROVE_CEILING` are 175.
+
 On Windows (#306), every CI run (each pull request and each push to `main`) times both
 channels on `windows-latest` with `promptmend doctor --timing` and writes the table to the job
 summary, with whether Defender's real-time protection was on as the runner reports it: the

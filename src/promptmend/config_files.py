@@ -3,18 +3,17 @@
 config services (config_store.py) build on.
 
 This module is on the trigger path (ConfigLayers.resolve reads both files), so it stays
-light: tomllib is imported only when a file exists, and the writer (tomli_w) and subprocess
-only when something is written.
+light: tomllib is imported only when a file exists, the writer (tomli_w), tempfile and
+subprocess only when something is written, and hashlib (OpenSSL's libcrypto, a native module
+on Windows, #312) only when a digest is computed.
 """
 
 from __future__ import annotations
 
 import contextlib
 import errno
-import hashlib
 import os
 import re
-import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -54,6 +53,8 @@ def _position(exc: Exception) -> str:
 
 
 def digest(data: bytes) -> str:
+    import hashlib  # only the management commands compute a digest (#312)
+
     return hashlib.sha256(data).hexdigest()
 
 
@@ -386,6 +387,8 @@ def write_atomic(path: Path, data: bytes, *, private: bool) -> None:
     path = Path(os.path.realpath(path))
     if path.is_dir():
         raise IsADirectoryError(errno.EISDIR, "it is a folder, not a file", str(path))
+    import tempfile  # only when something is written (#312)
+
     fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     temp = Path(name)
     try:
