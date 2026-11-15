@@ -39,7 +39,7 @@ def test_good_output_passes() -> None:
         (lambda t: t.replace("3/", "4/", 1), "struct: step numbering"),
         (lambda t: t.replace("1/ ", "1. ", 1), "struct: used 1. instead of 1/"),
         (
-            lambda t: t.replace("Load and validate all inputs", "Check inputs"),
+            lambda t: t.replace(bench.MANDATORY["validate-inputs"], "Check inputs"),
             "struct: missing validate-inputs step",
         ),
         (lambda t: t.replace("I want", "The user wants"), "struct: third-person CONTEXT"),
@@ -225,7 +225,7 @@ def test_check_unscored_branches() -> None:
     assert bench.check(GOOD, wants_plan=None, wants_independent=None) == []
     failed = bench.check(GOOD, wants_plan=False, wants_independent=None)
     assert failed == ["branch: wrong planning branch"]
-    both = GOOD.replace("3/ Analyse", "3/ Execute, but state assumptions up front. Analyse")
+    both = GOOD.replace("3/ Analyse", f"3/ {bench.EXECUTE_NOW}. Analyse")
     assert "struct: planning branch absent or both emitted" in bench.check(both, None, None)
 
 
@@ -1328,3 +1328,29 @@ def test_template_candidate_without_marker_is_scored_as_template(
     candidate = PROFILES["default"].replace(TEMPLATE_MARKER, "<format>")
     result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0), candidate)
     assert "struct: no <CONTEXT>" in result.failed
+
+
+_NEEDLE_CHANGE = (
+    "a needle change changes benchmark scores: ask the owner to re-run the benchmark (CLAUDE.md)"
+)
+
+
+# A tripwire, not a second source: the needles come from prompts/default.md (#283), and a
+# change to any of them changes what the bench scores.
+def test_needles_are_unchanged() -> None:
+    assert bench.PLAN_FIRST == "Plan the task thoroughly", _NEEDLE_CHANGE
+    assert bench.EXECUTE_NOW == "Execute, but state assumptions up front", _NEEDLE_CHANGE
+    assert bench.INDEPENDENT == "Use a separate agent with", _NEEDLE_CHANGE
+    assert bench.SELF_REVIEW == "Review your own output against these checks", _NEEDLE_CHANGE
+    assert bench.MANDATORY == {
+        "validate-inputs": "Load and validate all inputs",
+        "flag-judgment": "Flag material judgment calls",
+    }, _NEEDLE_CHANGE
+    outputs = "structured .md, well formatted with clear headings/subheadings"
+    assert outputs == bench.DEFAULT_OUTPUTS, _NEEDLE_CHANGE
+
+
+def test_opening_stays_on_the_first_line() -> None:
+    assert bench.opening("Check it, then fix:\n  - One.", 2) == "Check it"
+    with pytest.raises(ValueError, match="first line"):
+        bench.opening("Check it:\n  - One.", 3)
