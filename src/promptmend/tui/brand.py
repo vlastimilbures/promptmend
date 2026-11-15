@@ -7,7 +7,7 @@ from __future__ import annotations
 import platform
 from collections.abc import Mapping
 
-from .. import __version__, config, config_store, update_check
+from .. import config, config_store, installed_version, update_check
 
 # The interface's display name: the header, the wordmark and About all read it
 # here, so a rename (#169) changes this one line (and the snapshots).
@@ -66,7 +66,7 @@ def about_facts(
     else:
         news = _UPDATE_WORDS.get(update.state, update.state)
     return [
-        f"Version:   {NAME} {version or __version__}",
+        f"Version:   {NAME} {version or installed_version()}",
         f"Update:    {news}",
         f"Installed: {channel}",
         f"Runs on:   Python {found['python']}, Textual {found['textual']}",

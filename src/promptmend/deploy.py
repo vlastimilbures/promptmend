@@ -26,7 +26,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import __version__, assets
+from . import assets, installed_version
 from .config import user_data_dir
 from .match_history import KNOWN_SOURCES
 
@@ -547,7 +547,9 @@ def _read(path: Path) -> str | None:
 def render(source: str, launcher: str, version: str | None = None) -> str:
     """A deployed match file: the version stamp (#25), then the shipped file with the
     launcher in place of the placeholder (literally, so no character in it is special)."""
-    return STAMP.format(version=version or __version__) + source.replace(PLACEHOLDER, launcher)
+    return STAMP.format(version=version or installed_version()) + source.replace(
+        PLACEHOLDER, launcher
+    )
 
 
 @dataclass
@@ -566,7 +568,7 @@ class FileStep:
             (self.current or "").splitlines(keepends=True),
             self.rendered.splitlines(keepends=True),
             fromfile=f"{self.target} ({'missing' if self.current is None else 'on disk'})",
-            tofile=f"{self.target} (promptmend {__version__})",
+            tofile=f"{self.target} (promptmend {installed_version()})",
         )
         return "".join(line if line.endswith("\n") else line + "\n" for line in lines)
 
@@ -807,7 +809,7 @@ def apply(the_plan: Plan, choices: Mapping[str, str] | None = None) -> Outcome:
             _write(step.target, step.rendered)
         manifest.entries[str(step.target)] = Entry(
             target=str(step.target),
-            asset_version=__version__,
+            asset_version=installed_version(),
             digest=_digest(step.rendered),
             launcher=the_plan.launcher,
             calls_cli=step.calls_cli,

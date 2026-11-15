@@ -185,8 +185,8 @@ def fixed_state(
 def fixed_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     """The paths a pane reads itself (the history file, the profile folder) are fixed too,
     and so is the version in the header."""
-    monkeypatch.setattr(app_module, "__version__", VERSION)
-    monkeypatch.setattr(home, "__version__", VERSION)
+    monkeypatch.setattr(app_module, "installed_version", lambda: VERSION)
+    monkeypatch.setattr(home, "installed_version", lambda: VERSION)
     # About's runtime line (#112) differs by CI runner.
     monkeypatch.setattr(brand, "runtime", lambda: {"python": "3.14.0", "textual": "8.2.8"})
     monkeypatch.delenv("PROMPTMEND_ENV")

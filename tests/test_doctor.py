@@ -136,7 +136,7 @@ def _install(channel: str, editable: bool = False) -> doctor.Check:
 
 
 def test_version_with_a_newer_release(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(doctor, "__version__", "0.21.0")
+    monkeypatch.setattr(doctor, "installed_version", lambda: "0.21.0")
     update = update_check.UpdateStatus(update_check.AVAILABLE, "0.22.0", "2026-10-07T12:00:00Z")
     check = doctor._version_check(update, _install("homebrew"))
     assert check.status == doctor.INFO
@@ -162,7 +162,7 @@ def test_version_with_a_newer_release(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_version_without_a_newer_release(
     monkeypatch: pytest.MonkeyPatch, state: str, available: bool | None
 ) -> None:
-    monkeypatch.setattr(doctor, "__version__", "0.21.0")
+    monkeypatch.setattr(doctor, "installed_version", lambda: "0.21.0")
     check = doctor._version_check(update_check.UpdateStatus(state), _install("uv"))
     assert (check.status, check.message) == (doctor.INFO, "promptmend 0.21.0")
     assert check.data["update_available"] is available

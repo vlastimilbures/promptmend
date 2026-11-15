@@ -31,7 +31,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal
 
-from . import __version__
+from . import installed_version
 from .config import MAX_RETENTION_DAYS, user_config_dir, user_data_dir
 from .redaction import compile_extra, is_bare_token, scan
 
@@ -64,8 +64,9 @@ PRICES_NAME = "prices.toml"
 # sidecar marker. The trigger waits for it while the user waits for the paste, so it stays at
 # what a person barely notices even under contention; a write that would take longer is
 # dropped and counted as lost. A file-system call the OS itself blocks (a stalled network
-# drive) cannot be interrupted, and neither can the interpreter's own pauses; those are the
-# only things outside it.
+# drive) cannot be interrupted, and neither can the interpreter's own pauses; those, and the
+# first read of the version (record() does it before the clock starts, #318), are the only
+# things outside it.
 _BUDGET = 0.25
 # The database's share of _BUDGET (its busy timeout), the rest is for the sidecar marker.
 # SQLite's own lock retries overshoot the busy timeout by up to ~0.06 s (measured in WAL mode
@@ -378,7 +379,8 @@ def _operation_row(
         _ident(op.get("profile_id"), _PROFILE, extra),
         outcome,
         _float(op.get("latency_ms")),
-        _ident(op.get("app_version", __version__), _VERSION, extra) or "unknown",
+        _ident(op["app_version"] if "app_version" in op else installed_version(), _VERSION, extra)
+        or "unknown",
     )
 
 
@@ -600,6 +602,11 @@ class HistoryStore:
         there is nothing to delete."""
         if not self.enabled:
             return True
+        # Read the version (for app_version) before the clock starts: the first read loads
+        # importlib.metadata, which is not the write's cost (#318). _operation_row() then
+        # finds it cached.
+        with contextlib.suppress(Exception):
+            installed_version()
         start = time.monotonic()
         extra_time = _CREATE_EXTRA
         with contextlib.suppress(Exception):
