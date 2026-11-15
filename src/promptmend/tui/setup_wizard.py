@@ -27,7 +27,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
-from .. import config, config_files, deploy, setup_guide, smoke
+from .. import config, deploy, setup_guide, smoke
 from ..commands import common
 from ..commands import settings as settings_cmd
 from ..commands import setup as setup_cmd
@@ -510,15 +510,3 @@ def _history_line(state: State) -> str:
         "your text or keys, kept on this device. Off: `promptmend config set PROMPT_HISTORY "
         "false`."
     )
-
-
-def needs_setup(state: State) -> bool:
-    """Nothing is set up yet: no config.toml, no key, and no match file installed. A bare
-    `promptmend` then opens the wizard by itself, once."""
-    if common.legacy_env() or state.plan is None:
-        return False
-    if config_files.is_file(config.settings_file()):
-        return False
-    if any(state.layers.entries[name].value for name in secret_names()):
-        return False
-    return all(step.state == deploy.MISSING for step in state.plan.steps)

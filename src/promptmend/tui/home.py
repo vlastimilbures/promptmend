@@ -22,7 +22,8 @@ NOTE = "note"
 HOW_TO_UPDATE = "a: how to update"
 _RANK = {OK: 0, WARN: 1, FAIL: 2}
 
-# Tab id -> its label; the digit in each label is its key (app.TABS adds the panes).
+# Tab id -> its label; the digit in each label is its key (app.TABS adds each pane's module
+# and class, imported when its tab first opens).
 TAB_LABELS = {
     "home": "1 Home",
     "settings": "2 Settings",

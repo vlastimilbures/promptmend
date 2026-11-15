@@ -1,12 +1,19 @@
 """The interface's app: seven tabs over one State, read again in a worker thread after every
 change, a high-contrast theme, and key bindings that every terminal delivers (letters, digits
-and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself."""
+and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself.
+
+Only Home is built at start (#316): every other tab's pane, and its module, the first time
+that tab opens, and the setup wizard the first time it is opened, so the first paint loads
+none of them (tests/test_ui_startup.py pins what it loads). A pane built later shows the
+current State as it mounts (Pane.on_mount)."""
 
 from __future__ import annotations
 
+import importlib
+import sys
 from collections.abc import Callable
 from concurrent.futures import Future
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -20,17 +27,13 @@ from .. import installed_version
 from ..update_check import UpdateStatus
 from . import brand, teach
 from .base import Pane
-from .diagnostics_pane import DiagnosticsPane
-from .history_pane import HistoryPane
 from .home import TAB_LABELS, pill
 from .home_pane import HomePane
 from .intro import AboutScreen
-from .profiles_pane import ProfilesPane
-from .settings_pane import SettingsPane
-from .setup_wizard import SetupOptions, SetupScreen, needs_setup
-from .state import State, gather
-from .triggers_pane import TriggersPane
-from .try_pane import TryPane
+from .state import State, gather, needs_setup
+
+if TYPE_CHECKING:
+    from .setup_wizard import SetupOptions, SetupScreen
 
 DEFAULT_THEME = "textual-dark"
 HIGH_CONTRAST = Theme(
@@ -48,19 +51,34 @@ HIGH_CONTRAST = Theme(
     dark=True,
 )
 
-# Tab id -> (label, pane). The digit in each label is its key.
-_PANES: dict[str, type[Pane]] = {
-    "home": HomePane,
-    "settings": SettingsPane,
-    "profiles": ProfilesPane,
-    "triggers": TriggersPane,
-    "history": HistoryPane,
-    "diagnostics": DiagnosticsPane,
-    "try": TryPane,
+# Tab id -> (label, the pane's module and class in this package). The digit in each label is
+# its key. Named, not imported: a pane's module loads when its tab first opens (#316).
+_PANES: dict[str, tuple[str, str]] = {
+    "home": ("home_pane", "HomePane"),
+    "settings": ("settings_pane", "SettingsPane"),
+    "profiles": ("profiles_pane", "ProfilesPane"),
+    "triggers": ("triggers_pane", "TriggersPane"),
+    "history": ("history_pane", "HistoryPane"),
+    "diagnostics": ("diagnostics_pane", "DiagnosticsPane"),
+    "try": ("try_pane", "TryPane"),
 }
-TABS: dict[str, tuple[str, type[Pane]]] = {
+TABS: dict[str, tuple[str, tuple[str, str]]] = {
     tab: (TAB_LABELS[tab], pane) for tab, pane in _PANES.items()
 }
+_SETUP_MODULE = f"{__package__}.setup_wizard"
+
+
+def pane_class(tab: str) -> type[Pane]:
+    """``tab``'s pane, its module imported now if it is not yet."""
+    module, name = _PANES[tab]
+    return cast("type[Pane]", getattr(importlib.import_module(f".{module}", __package__), name))
+
+
+def _setup_screen_class() -> type[SetupScreen]:
+    from .setup_wizard import SetupScreen
+
+    return SetupScreen
+
 
 CSS = """
 Pane { padding: 0 1; }
@@ -143,23 +161,53 @@ class MainScreen(Screen[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         with TabbedContent(initial="home"):
-            for tab, (label, pane) in TABS.items():
+            for tab, (label, _) in TABS.items():
                 with TabPane(label, id=tab):
-                    yield pane(id=f"{tab}-pane")
+                    if tab == "home":
+                        yield HomePane(id="home-pane")
         yield Footer()
 
-    def action_show(self, tab: str) -> None:
+    def built(self, tab: str) -> Pane | None:
+        """``tab``'s pane, or None while that tab has not been opened."""
+        found = self.query(f"#{tab}-pane").results(Pane)
+        return next(found, None)
+
+    async def build(self, tab: str) -> Pane:
+        """``tab``'s pane, built (and its module imported) the first time; it shows the
+        current State as it mounts."""
+        pane = self.built(tab)
+        if pane is None:
+            pane = pane_class(tab)(id=f"{tab}-pane")
+            await self.query_one(f"TabPane#{tab}", TabPane).mount(pane)
+        return pane
+
+    async def action_show(self, tab: str) -> None:
+        # Built before it is shown, so a digit never shows the tab empty for a frame.
+        await self.build(tab)
         self.query_one(TabbedContent).active = tab
 
     @on(TabbedContent.TabActivated)
-    def _tab_shown(self, event: TabbedContent.TabActivated) -> None:
-        """The Settings list takes the focus as its tab opens (#199), so the arrows move in it
-        at once; leaving the tab drops it, so its keys (`u`, Space) never act unseen."""
-        settings = self.query_one("#settings-pane")
-        if event.pane.id == "settings":
-            self.call_after_refresh(settings.query_one("#settings-list").focus)
+    async def _tab_shown(self, event: TabbedContent.TabActivated) -> None:
+        """A tab opened by a click or the arrows is built here. The Settings list takes the
+        focus as its tab opens (#199), so the arrows move in it at once; leaving the tab drops
+        it, so its keys (`u`, Space) never act unseen."""
+        tab = event.pane.id
+        if tab in TABS:
+            await self.build(tab)
+        settings = self.built("settings")
+        if settings is None:
+            return
+        if tab == "settings":
+            self.call_after_refresh(self._focus_settings_list)
         elif self.focused is not None and settings in self.focused.ancestors_with_self:
             self.set_focus(None)
+
+    def _focus_settings_list(self) -> None:
+        """After the refresh, once the Settings pane is mounted and filled (looked up then, so
+        a tab activated while it is still mounting never queries a list not there yet)."""
+        settings = self.built("settings")
+        if settings is not None and settings.ready:
+            settings.query_one("#settings-list").focus()
 
 
 class ManageApp(App[int]):
@@ -203,7 +251,7 @@ class ManageApp(App[int]):
         self.reload()
         if self.setup_options is not None:
             self.first_run = False
-            self.push_screen(SetupScreen(self.setup_options))
+            self.push_screen(_setup_screen_class()(self.setup_options))
 
     def _about_facts(self) -> list[str]:
         report = self.state.report if self.state else None
@@ -287,16 +335,24 @@ class ManageApp(App[int]):
         for pane in self.main.query(Pane):
             if pane.ready:
                 pane.show(state)
-        for screen in self.screen_stack:
-            if isinstance(screen, SetupScreen) and screen.is_mounted:
-                screen.show(state)
+        wizard = self._open_wizard()
+        if wizard is not None and wizard.is_mounted:
+            wizard.show(state)
         self._maybe_offer()
+
+    def _open_wizard(self) -> SetupScreen | None:
+        """The setup wizard when it is open. Its module is imported only when it opens, so
+        until then there is none to look for."""
+        if _SETUP_MODULE not in sys.modules:
+            return None
+        wizard = _setup_screen_class()
+        return next((s for s in self.screen_stack if isinstance(s, wizard)), None)
 
     def _maybe_offer(self) -> None:
         """Open the setup wizard by itself, once, when nothing is set up yet."""
         if self.state is None or not self.first_run:
             return
-        if any(isinstance(s, SetupScreen) for s in self.screen_stack):
+        if self._open_wizard() is not None:
             return
         self.first_run = False
         if needs_setup(self.state):
@@ -304,5 +360,5 @@ class ManageApp(App[int]):
 
     def open_setup(self) -> None:
         """Show the setup wizard over the tabs, unless it is already open."""
-        if not any(isinstance(s, SetupScreen) for s in self.screen_stack):
-            self.push_screen(SetupScreen())
+        if self._open_wizard() is None:
+            self.push_screen(_setup_screen_class()())

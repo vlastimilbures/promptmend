@@ -23,6 +23,9 @@ Settings and Try tabs and the keys. Everything it does, a headless command does 
 Run `promptmend` (or `promptmend ui`) in a terminal. Without a terminal, a bare `promptmend`
 prints the help and `ui` exits 3.
 
+It opens on Home; each other tab is built the first time you open it, so the first screen
+comes up without loading them.
+
 The interface does what the management commands do, through the same code. Keys are shown
 only as set or not set. Removing a key, deploying, detaching or deleting history
 asks first, in a dialog whose Cancel has the focus. No provider is called except by the Test

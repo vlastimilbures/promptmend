@@ -15,10 +15,10 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 
-from .. import assets, deploy, doctor, espanso_windows, history, update_check
+from .. import assets, config, config_files, deploy, doctor, espanso_windows, history, update_check
 from ..commands import common
 from ..commands.usage import store
-from ..config import ConfigLayers, Settings
+from ..config import ConfigLayers, Settings, secret_names
 from ..prompt_builder import UserProfile, user_profiles
 
 CHECKING = update_check.UpdateStatus(update_check.CHECKING)
@@ -174,3 +174,16 @@ def gather(group_by: str = "trigger") -> State:
     )
     # Landed already (a cached answer, the check turned off): one State, no "checking".
     return state.settled() if pending.done() else state
+
+
+def needs_setup(state: State) -> bool:
+    """Nothing is set up yet: no config.toml, no key, and no match file installed. A bare
+    `promptmend` then opens the wizard by itself, once. Here, not in setup_wizard.py, so
+    the app asks without importing the wizard (#316)."""
+    if common.legacy_env() or state.plan is None:
+        return False
+    if config_files.is_file(config.settings_file()):
+        return False
+    if any(state.layers.entries[name].value for name in secret_names()):
+        return False
+    return all(step.state == deploy.MISSING for step in state.plan.steps)
