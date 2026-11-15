@@ -28,7 +28,7 @@ release = threading.Event()
 seen = {}
 
 
-def loader(group_by):
+def loader(group_by, first=None):
     release.wait(30)
     raise RuntimeError("the stub loader reads nothing")
 

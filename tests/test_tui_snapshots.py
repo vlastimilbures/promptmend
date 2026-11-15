@@ -244,7 +244,11 @@ def _shoot(
     # With ``setup``, the setup wizard as `setup` opens it, moved on that many steps.
     options = SetupOptions(standalone=True) if setup is not None else None
     # The first stage is the same fixed State's (#317), never a read of this machine.
-    app = ManageApp(loader=loader, quick_loader=lambda g: quick_of(loader(g)), setup=options)
+    app = ManageApp(
+        loader=lambda g, _first: loader(g),
+        quick_loader=lambda g: quick_of(loader(g)),
+        setup=options,
+    )
     # The active tab's underline slides into place; a snapshot must not catch it midway.
     app.animation_level = "none"
     shots: list[str] = []

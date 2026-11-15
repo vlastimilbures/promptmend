@@ -102,7 +102,7 @@ class Seen:
 
 def drive(scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]]) -> Seen:
     # A fixed State: the tab reads the (per-test) settings itself when it runs.
-    app = ManageApp(loader=fixed_state, quick_loader=quick_fixed_state)
+    app = ManageApp(loader=lambda g, _first: fixed_state(g), quick_loader=quick_fixed_state)
     seen: list[Seen] = []
 
     async def main() -> None:

@@ -33,8 +33,10 @@ def _cost(row: history.StatsRow) -> str:
 
 
 class HistoryPane(Pane):
-    # They delete what the stats show, so they wait until the stats are read (#317). Export
-    # writes a new file from the store itself, so it never waits.
+    # Gated on purpose (#317): they delete what the stats table shows, and on a quick State
+    # those stats are stand-ins (empty), so the person would decide on nothing. Prune and Reset
+    # read the store themselves, but stay disabled until the real stats are on screen. Export
+    # writes a new file from the store and deletes nothing, so it never waits.
     FULL_ONLY = ("prune", "reset")
 
     def compose(self) -> ComposeResult:

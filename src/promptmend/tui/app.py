@@ -227,7 +227,7 @@ class ManageApp(App[int]):
     def __init__(
         self,
         *,
-        loader: Callable[[str], State] = gather,
+        loader: Callable[[str, State | None], State] = gather,
         quick_loader: Callable[[str], State] | None = quick,
         setup: SetupOptions | None = None,
         first_run: bool = False,
@@ -235,6 +235,8 @@ class ManageApp(App[int]):
         super().__init__()
         # Read here, not at import, so the snapshot tests can pin it and a release changes none.
         self.title = f"{self.TITLE} {installed_version()}"
+        # The full read: given the group-by and this reload's quick State (or None), whose
+        # settings, profiles and triggers it reuses (gather's ``first``).
         self.loader = loader
         # The first stage (#317); None: one stage, the loader's State only.
         self.quick_loader = quick_loader
@@ -298,13 +300,14 @@ class ManageApp(App[int]):
         first: State | None = None
         if self.quick_loader is not None:
             try:
-                first = self.quick_loader(self.group_by)
+                # The update answer on screen stays until the full State has its own.
+                first = self.quick_loader(self.group_by).known_update(self.state)
             except Exception:  # noqa: S110 - the full read below reads the same and reports it
                 pass
             else:
                 self.call_from_thread(self._show, first, generation)
         try:
-            state = self.loader(self.group_by)
+            state = self.loader(self.group_by, first)
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             self.call_from_thread(
@@ -377,16 +380,23 @@ class ManageApp(App[int]):
 
     def _maybe_offer(self) -> None:
         """Open the setup wizard by itself, once, when nothing is set up yet: asked of the
-        full State only, which has the plan (#317)."""
+        full State only, which has the plan (#317). The offer is used up once the wizard is
+        open (opened by hand during the quick stage, say); a dialog or About over the tabs
+        keeps it for the next State, so it never opens over them."""
         if self.state is None or not self.state.full or not self.first_run:
             return
         if self._open_wizard() is not None:
+            self.first_run = False
+            return
+        if self.screen is not self.main:
             return
         self.first_run = False
         if needs_setup(self.state):
             self.open_setup()
 
     def open_setup(self) -> None:
-        """Show the setup wizard over the tabs, unless it is already open."""
+        """Show the setup wizard over the tabs, unless it is already open. Opened by hand, it
+        uses up the first run's offer."""
+        self.first_run = False
         if self._open_wizard() is None:
             self.push_screen(_setup_screen_class()())

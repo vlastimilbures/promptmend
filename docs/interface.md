@@ -105,10 +105,12 @@ Home appears at once, in two steps. The rows that need only your settings (what 
 `-ip-` run, the output mode) fill in first; the match files and Espanso, the usage history
 and the checks need `doctor` and the deploy plan, which can take a moment (Espanso is asked),
 so until they are read their rows show `…` and say `checking`, the headline says
-`Checking Espanso, the match files and the history…` and the header says `checking`. Every
-tab shows the same step, and the whole screen fills in together when the checks are done;
-this happens again after every change and every `r`. If the checks cannot run, those rows say
-`not checked` and `r` tries again.
+`Checking Espanso, the match files and the history…` (without the history when it is off)
+and the header says `checking`. Every tab shows the same step, and the whole screen fills in
+together when the checks are done, keeping your place (a table's cursor, a field you are
+typing in); this happens again after every change and every `r`. If the checks cannot run, those rows say
+`not checked` and point to `r`, which tries again. The Version row keeps the answer it
+already had while a reload checks again.
 
 Buttons that act on what is still being checked wait for it: Show diff, Deploy and Detach on
 the Triggers tab and Prune and Reset on the History tab are greyed out until then (pressed

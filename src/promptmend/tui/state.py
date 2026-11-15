@@ -71,6 +71,17 @@ class State:
         unknown = update_check.UpdateStatus(update_check.UNKNOWN)
         return replace(self, failed=error, update=unknown, pending=None)
 
+    def known_update(self, previous: State | None) -> State:
+        """This quick State with the update answer ``previous`` (the full State on screen)
+        settled, so a reload's Version row does not go back to `checking` (#317). Not when
+        either says off: the settings just read decide that."""
+        off = update_check.OFF
+        if self.full or self.update.state == off or previous is None or not previous.full:
+            return self
+        if previous.update.state in (update_check.CHECKING, off):
+            return self
+        return replace(self, update=previous.update)
+
     def with_update(self, update: update_check.UpdateStatus) -> State:
         """This moment with ``update`` in Home's Version row, About and doctor's version
         check; nothing else is read again."""
@@ -154,7 +165,8 @@ def _once(runner: deploy.Runner) -> deploy.Runner:
 def quick(group_by: str = "trigger") -> State:
     """The first stage (#317): the settings, the profiles and the triggers, local reads only
     (no command, no doctor, no history, no network), so Home paints at once. Everything else
-    is a placeholder and the State is not full."""
+    is a placeholder and the State is not full. The update check says off at once when the
+    settings turn it off, else checking (see known_update())."""
     layers, settings = common.load_layers()
     return State(
         layers=layers,
@@ -167,18 +179,20 @@ def quick(group_by: str = "trigger") -> State:
         group_by=group_by,
         stats=[],
         stats_error=None,
-        update=CHECKING,
+        update=CHECKING if settings.update_check else update_check.UpdateStatus(update_check.OFF),
         stage=QUICK,
     )
 
 
-def gather(group_by: str = "trigger") -> State:
+def gather(group_by: str = "trigger", first: State | None = None) -> State:
     """Everything the screens show. Read-only: doctor without the clipboard, the deploy plan,
     the profiles, the usage stats and the update check (cached for a day, so a reload asks
     PyPI no more often; never waited for, see the module), each failure kept to show instead
-    of raised."""
+    of raised. ``first`` is this reload's quick State (#317): its settings, profiles and
+    triggers are reused, so a reload reads them once; without it they are read here."""
     pending = _beside(update_check.check_configured, "promptmend-reload-update-check")
-    first = quick(group_by)
+    if first is None or first.full or first.group_by != group_by:
+        first = quick(group_by)
     layers, settings = first.layers, first.settings
     # Only read-only commands may go through it: a cached `espanso restart` would be skipped.
     run = _once(deploy.run_command)
@@ -211,6 +225,7 @@ def gather(group_by: str = "trigger") -> State:
         plan_error=plan_error,
         stats=stats,
         stats_error=stats_error,
+        update=CHECKING,
         pending=pending,
         stage=FULL,
     )

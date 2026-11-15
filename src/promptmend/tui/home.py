@@ -25,6 +25,10 @@ NOTE = "note"
 # headline says the checks are running instead of Ready.
 WAIT = "checking"
 CHECKING_HEADLINE = "Checking Espanso, the match files and the history…"
+# The same with PROMPT_HISTORY=false: the History row says off, it is not checked.
+CHECKING_HEADLINE_NO_HISTORY = "Checking Espanso and the match files…"
+# A not-checked row's pointer (#317): r reads everything again; no tab fixes it.
+CHECK_AGAIN = "r: check again"
 # The Version row's pointer to the update command, which About (`a`) shows in full: every
 # channel's command is too long for the row at 70 columns.
 HOW_TO_UPDATE = "a: how to update"
@@ -138,7 +142,7 @@ def _waiting(state: State, label: str, text: str, jump: str) -> HomeRow:
     if state.failed is None:
         return HomeRow(WAIT, label, f"checking {text}", "", jump)
     problem = f"the checks could not run ({state.failed}); r checks again"
-    return HomeRow(WARN, label, "not checked", "", jump, problem)
+    return HomeRow(WARN, label, "not checked", CHECK_AGAIN, None, problem)
 
 
 def _triggers_row(state: State) -> HomeRow:
@@ -223,8 +227,12 @@ def headline(rows: list[HomeRow]) -> tuple[str, str | None]:
     equally bad rows wins, so the reading order decides."""
     status = worst(*(r.status for r in rows))
     if status == OK:
-        waiting = any(r.status == WAIT for r in rows)
-        return (CHECKING_HEADLINE, None) if waiting else (READY, None)
+        waiting = {r.label for r in rows if r.status == WAIT}
+        if not waiting:
+            return READY, None
+        if "History" in waiting:
+            return CHECKING_HEADLINE, None
+        return CHECKING_HEADLINE_NO_HISTORY, None
     row = next(r for r in rows if r.status == status)
     lead = "Not ready" if status == FAIL else "Almost ready"
     # A doctor message marks a command with Markdown backticks, shown literally here (#174).

@@ -119,22 +119,25 @@ class Pane(Reports, VerticalScroll):
         self.ready = True
         if self.state is not None:
             self.paint(self.state)
+        else:
+            self.gate(None)
 
     def paint(self, state: State) -> None:
         """Show ``state`` (each stage of a reload, #317) and enable what it allows."""
         self.show(state)
         self.gate(state)
 
-    def gate(self, state: State) -> None:
-        """FULL_ONLY's buttons disabled while ``state`` is the quick one. Before any State
-        they stay as they were: each action reads what it acts on itself, or says it has
-        nothing."""
+    def gate(self, state: State | None) -> None:
+        """FULL_ONLY's buttons enabled only once a full State is shown: disabled before any
+        State (None) and while ``state`` is the quick one."""
         for id_ in self.FULL_ONLY:
-            self.query_one(f"#{id_}", Button).disabled = not state.full
+            self.query_one(f"#{id_}", Button).disabled = state is None or not state.full
 
     def waits(self) -> bool:
         """Whether an action that needs the full State must wait for it: refused, visibly
-        (never queued, so nothing runs later unasked), while only the quick State is in."""
+        (never queued, so nothing runs later unasked), while only the quick State is in.
+        Before any State its button is disabled; a call then goes on, as the action reads
+        what it acts on itself or says it has nothing."""
         state = self.state
         if state is None or state.full:
             return False

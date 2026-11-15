@@ -221,15 +221,29 @@ class SetupScreen(Screen[None]):
             self.query_one(f"#setup-line-{row.name}", Static).update(setup_guide.key_line(row))
         servers = next((c for c in state.report.checks if c.id == "local_servers"), None)
         line = servers.message if servers else ""
-        if not state.full and state.failed is None:  # a quick State (#317)
-            line = "Checking whether a local server answers…"
+        if not state.full:  # a quick State (#317)
+            line = (
+                "Checking whether a local server answers…"
+                if state.failed is None
+                else "Not checked whether a local server answers: the checks could not run."
+            )
         self.query_one("#setup-servers", Static).update(line)
         # The Espanso step reads its own plan: once per reload (its full State), and at once
         # the first time, so a quick State never asks Espanso twice.
         if state.full or not self.plan_asked:
             self.plan_asked = True
             self._refresh_plan()
-        self.go(self.at)
+        # Each stage of a reload comes here (#317): the person's place (a typed key field, a
+        # button) keeps the focus; it moves only when nothing in this step has it.
+        self.go(self.at, refocus=not self._focus_in_step())
+
+    def _focus_in_step(self) -> bool:
+        """Whether the focus is in the current step or on its Back/Next row."""
+        focused = self.focused
+        if focused is None:
+            return False
+        holders = (self.query_one(f"#setup-{self.at}"), self.query_one("#setup-nav"))
+        return any(holder in focused.ancestors_with_self for holder in holders)
 
     def _fill(self, selector: str, choices: list[setup_guide.Choice], preset: str | None) -> None:
         options = self.query_one(selector, OptionList)
@@ -248,7 +262,7 @@ class SetupScreen(Screen[None]):
             except OptionDoesNotExist:
                 options.highlighted = 0
 
-    def go(self, step: str) -> None:
+    def go(self, step: str, *, refocus: bool = True) -> None:
         self.at = step
         self.query_one("#setup-steps", ContentSwitcher).current = f"setup-{step}"
         n = self.order.index(step) + 1 if step in self.order else 1
@@ -270,6 +284,8 @@ class SetupScreen(Screen[None]):
             and not self.query_one("#setup-deploy", Button).disabled
         ):
             focus = "#setup-deploy"
+        if not refocus:
+            return
         if focus:
             self.call_after_refresh(self.query_one(focus).focus)
         else:
