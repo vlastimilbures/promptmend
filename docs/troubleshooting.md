@@ -49,8 +49,40 @@ deployed trigger uses it.
 | Windows: `promptmend` or `espanso` is not recognized right after installing it | Windows Terminal gives a new tab or window the environment it started with, so it misses the PATH an install just changed. Close every Windows Terminal window (or sign out and in), then open a new one. For `espanso`, open Espanso once from the Start menu first and accept its PATH offer; see [Espanso on Windows](install.md#espanso-on-windows) |
 | Windows: two Espanso instances run, or the triggers work only some of the time, after installing Espanso next to a portable copy | Each starts from its own shortcut at sign-in and reads its own configuration folder. Keep one: delete the other's shortcut in `shell:startup`, then run `promptmend espanso status` to see which folder PromptMend deploys to. See [Espanso on Windows](install.md#espanso-on-windows) |
 | Expansion is slow | Use a faster model or endpoint (see the [benchmark](benchmark.md)); Espanso waits for the CLI. Or switch to [clipboard output](usage.md#output-paste-or-clipboard) |
+| The trigger stays and nothing happens: no rewrite, no marker | Espanso shows nothing while the CLI runs, up to the call's time limit, and a run still going blocks every later trigger. See [The trigger stays and nothing happens](#the-trigger-stays-and-nothing-happens) |
 | Slow start on Windows: the first run after an install takes several seconds, and every later command or trigger more than a second | Windows antivirus and endpoint protection scan each Python file a process opens, and a file without its compiled bytecode is compiled on first use. The installers (`install.ps1`, `install_windows.ps1`) compile the bytecode at install since 0.23.0; after a manual install, run `uv tool install --force --compile-bytecode …` with the same arguments. If every start stays slow, ask for an antivirus exclusion of uv's folders, or put them on a [Dev Drive](https://learn.microsoft.com/windows/dev-drive/) (which scans less): set `UV_TOOL_DIR` and `UV_PYTHON_INSTALL_DIR` to folders there (by default under `%APPDATA%\uv`), then install again. To measure it, run `promptmend doctor --timing`: it times `--version`, `persona` and a stub `-i-` trigger through the launcher and through the interpreter, cold and warm, without calling a provider (see [Timing start-up](commands.md#timing-start-up)) |
 | `[promptmend: Clipboard unavailable: Pyperclip could not find a copy/paste mechanism …]` on Linux | Install `xclip` or `xsel` (X11) or `wl-clipboard` (Wayland) |
+
+### The trigger stays and nothing happens
+
+Espanso shows nothing while the CLI runs, up to the call's time limit:
+`PROMPT_TIMEOUT_SECONDS`, `PROMPT_PRO_TIMEOUT_SECONDS` on the OpenRouter pro tier (`-ip-`),
+or the timeout picked in the [-if- form](usage.md#the--if--form). A run still going blocks
+every later trigger until it ends. Every run ends by its limit plus 2 s, plus Python's
+start-up, with a rewrite or a marker (see [While it runs](usage.md#while-it-runs)); nothing at
+all after that means the process never finished (still starting, say) or Espanso lost the
+paste. To tell the cases apart:
+
+- Find the run in `promptmend history export` (`--format csv` puts each attempt on its
+  operation's row) by its `occurred_at_utc` time, in UTC. `promptmend stats --by trigger
+  --verbose` shows each trigger's last use and its p50/p95 latency, not the last run's.
+  - Outcome `ok`, or any outcome but a timeout (`gate_blocked`, `validation_failed`,
+    `clipboard_failed`, …), with its `latency_ms`: the CLI printed its rewrite or marker and
+    Espanso did not paste it.
+  - Outcome `error_marker` with `latency_ms` near the limit and an attempt whose
+    `error_kind` is `timeout` (or no attempt, when it stalled before its request): the call
+    stalled, and its timed-out marker was not pasted either.
+  - No row usually means the process never finished. A row can also be lost (see
+    [Usage history](#usage-history) and `promptmend doctor`'s `history` line), and with
+    `PROMPT_HISTORY=false` nothing is recorded.
+- Run the trigger's own call in a terminal to see the time and the marker without Espanso;
+  for `-ip-`: `time promptmend improve --provider openrouter --tier pro --source argument --text "…"`
+  (in PowerShell: `Measure-Command { promptmend improve … | Out-Default }`). It adds a row of
+  its own, as a direct call.
+- `promptmend doctor --timing` measures the start-up alone (see
+  [Timing start-up](commands.md#timing-start-up)).
+- On a slow machine, `PROMPT_OUTPUT=clipboard` is the robust mode: the rewrite is on the
+  clipboard even when the paste is lost (see [clipboard output](usage.md#output-paste-or-clipboard)).
 
 ## Settings and keys
 
