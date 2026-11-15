@@ -28,7 +28,6 @@ from textual.widgets import (
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
 from .. import config, deploy, setup_flow, setup_guide, smoke
-from ..commands import common
 from ..config import secret_names
 from . import teach
 from .base import error_message, plan_digest, result_text
@@ -193,7 +192,7 @@ class SetupScreen(Screen[None]):
             self.options.profile,
         )
         self.keys = setup_guide.key_rows(state.layers, state.settings, state.triggers)
-        legacy = common.legacy_env()
+        legacy = setup_flow.storage().legacy
         self.query_one("#setup-keys-intro", Static).update(
             setup_guide.legacy_keys_intro(legacy) if legacy else setup_guide.KEYS_INTRO
         )
@@ -340,7 +339,7 @@ class SetupScreen(Screen[None]):
         if option is None or option.id is None:
             return True
         value = option.id
-        legacy = common.legacy_env()
+        legacy = setup_flow.storage().legacy
         if legacy:
             # Nothing can be saved (as headless setup's writable=False): say so and move on.
             if setup_flow.current_choice(name) != value:
@@ -369,7 +368,7 @@ class SetupScreen(Screen[None]):
             for name in secret_names()
             if (field := self.query_one(f"#setup-key-{name}", Input)).value.strip()
         ]
-        if not typed or common.legacy_env():
+        if not typed or setup_flow.storage().legacy:
             return True
         command = "; ".join(teach.for_setting("set-key", name) for name, _ in typed)
         ok = self.attempt(lambda: setup_flow.save_keys(typed), command=command)
@@ -414,7 +413,7 @@ class SetupScreen(Screen[None]):
         lines += [f"  {name:<{width}}  {words}" for name, words in setup_guide.file_rows(plan)]
         lines += ["", setup_guide.deploy_summary(plan)]
         self.query_one("#setup-files", Static).update("\n".join(lines))
-        button.disabled = plan.is_noop or plan.only_forgets
+        button.disabled = setup_flow.in_sync(plan)
         if self.at == "done":
             self._show_done(focus=not self._focus_in_step())
 
@@ -492,7 +491,12 @@ class SetupScreen(Screen[None]):
             return
         summary = Text()
         for row in setup_guide.done_rows(
-            state.settings, self.keys, self.plan, self.tested, common.legacy_env(), self.skipped
+            state.settings,
+            self.keys,
+            self.plan,
+            self.tested,
+            setup_flow.storage().legacy,
+            self.skipped,
         ):
             summary.append("✓ " if row.ok else "✗ ", style="green" if row.ok else "yellow")
             summary.append(f"{row.label}: ", style="bold")
