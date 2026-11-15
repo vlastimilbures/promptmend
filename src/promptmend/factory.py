@@ -252,13 +252,16 @@ def _build(
             label=spec.label,
         )
     if spec.protocol == "anthropic":
+        # The Messages API requires max_tokens; an anthropic spec sets cap
+        # (tests/test_registry.py), so this is never None.
+        if max_tokens is None:
+            raise ProviderError(f"{spec.label} has no output cap setting")
         return AnthropicProvider(
             base_url=base_url,
             model=model,
             api_key=api_key or "",  # an anthropic spec sets key: _require() raised
             timeout=cfg.timeout,
-            # An anthropic spec sets cap (tests/test_registry.py): its own, always an int.
-            max_tokens=max_tokens or 0,
+            max_tokens=max_tokens,
             temperature=temperature,
             observer=observer,
             name=spec.name,

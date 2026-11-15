@@ -35,6 +35,8 @@ class ProviderSpec:
     key: str | None = None
     # The Settings field of its own output cap, which --max-tokens also sets; None: it has no
     # cap setting, and only a --max-tokens (Settings.call_max_tokens) caps it.
+    # cap, temperature and effort each have a reader twin below (read_cap, read_temperature,
+    # read_effort); test_accessors_read_the_settings_they_name ties each pair.
     cap: str | None = None
     # The Settings field of its own temperature; None: PROMPT_TEMPERATURE (Settings.temperature).
     temperature: str | None = None

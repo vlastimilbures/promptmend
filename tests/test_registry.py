@@ -4,7 +4,7 @@ gate")."""
 
 from __future__ import annotations
 
-import re
+import ast
 from dataclasses import fields, replace
 from pathlib import Path
 from typing import Any
@@ -247,15 +247,47 @@ def test_provider_takes_name_and_label_from_its_spec(spec: ProviderSpec) -> None
     assert (inner.name, inner.label) == (spec.name, spec.label)
 
 
-# A provider's settings are read through its spec's typed accessors, never by rebuilding a field
-# name for getattr, which mypy cannot check (#319): no getattr with an f-string name, and none
-# on a Settings (``cfg``/``settings``) at all.
+# The getattr calls in src/ whose attribute name is not a string literal, each with why it
+# cannot be a typed access: (path below src/, the call as ast.unparse() prints it).
+DYNAMIC_GETATTR = {
+    # A lazily imported management command: the attribute comes from cli._LAZY_COMMANDS.
+    ("promptmend/cli.py", "getattr(module, attr)"),
+    # pyperclip's paste or copy, imported only once a run touches the clipboard (#223).
+    ("promptmend/pipeline.py", "getattr(pyperclip, op)"),
+}
+
+
+def _dynamic_getattrs(src: Path) -> set[tuple[str, str]]:
+    found = set()
+    for path in sorted(src.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            literal = (
+                isinstance(node, ast.Call)
+                and len(node.args) > 1
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            )
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and not literal
+            ):
+                found.add((path.relative_to(src).as_posix(), ast.unparse(node)))
+    return found
+
+
+# A provider's settings are read through its spec's typed accessors, never by building a field
+# name for getattr, which mypy cannot check (#319): every getattr whose name is not a string
+# literal is one of the allowlisted ones above, and each of those still exists.
 def test_no_settings_field_name_is_built_for_getattr() -> None:
-    src = Path(__file__).resolve().parents[1] / "src"
-    built = re.compile(r"""getattr\(\s*[^,()]+,\s*f["']|getattr\(\s*(?:cfg|settings)\b""")
-    hits = [
-        str(path.relative_to(src))
-        for path in sorted(src.rglob("*.py"))
-        if built.search(path.read_text(encoding="utf-8"))
-    ]
-    assert hits == []
+    assert _dynamic_getattrs(Path(__file__).resolve().parents[1] / "src") == DYNAMIC_GETATTR
+
+
+# The Messages API requires max_tokens, so an anthropic spec without its own cap is refused
+# rather than sent without one (the real spec has one: test_spec_names_its_settings).
+def test_anthropic_spec_without_a_cap_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    capless = replace(PROVIDERS["anthropic"], cap=None, read_cap=None)
+    monkeypatch.setitem(PROVIDERS, "anthropic", capless)
+    with pytest.raises(ProviderError, match=r"^Anthropic has no output cap setting$"):
+        make_provider("anthropic", _keyed(Settings()))
