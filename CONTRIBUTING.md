@@ -290,9 +290,12 @@ rounds); the Windows gain, a scanned file per module, is #304's to measure.
 
 **Out of scope for #312:** the extension modules `import typer` loads itself still load on
 every trigger: `_bz2` and `_lzma` (shutil), `_uuid`, and by platform and Python version
-`select` (subprocess, POSIX), `_wmi` (platform, Windows 3.12+) or `_zstd` (shutil, 3.14).
-They go only with a trigger entry that does not import Typer (#313).
-`tests/test_trigger_contract.py` lists the Windows `.pyd` modules (`WINDOWS_EXTENSIONS`),
+`select` (subprocess, POSIX), `_wmi` (platform, Windows 3.12+), `_zstd` (shutil, 3.14) and,
+on Windows, `_ctypes` (Typer's vendored click, for the console). They go only with a trigger
+entry that does not import Typer (#313). So the clipboard probe's lazy ctypes keeps `_ctypes`
+out of a trigger that reads no clipboard on macOS and Linux; on Windows Typer has already
+loaded it. `tests/test_trigger_contract.py` lists the Windows `.pyd` modules that matter to
+the trigger path (`WINDOWS_EXTENSIONS`),
 measures what `import typer` loads of them in a fresh interpreter (held to
 `TYPER_EXTENSIONS_ALLOWED`), allows only those before the call (local and cloud provider)
 and for `persona`, and checks with Typer imported first that the trigger path adds none;

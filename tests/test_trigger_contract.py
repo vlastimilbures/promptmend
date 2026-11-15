@@ -19,6 +19,7 @@ from promptmend.cli import app
 from promptmend.config import env_names
 from promptmend.providers.base import ProviderError
 from promptmend.providers.openai_compatible import OpenAICompatibleProvider
+from promptmend.smoke import PLACEHOLDER_KEY
 
 if TYPE_CHECKING:
     from conftest import FakeHttp, StubProvider
@@ -428,8 +429,9 @@ VERSION_CEILING = 150
 IMPROVE_CEILING = 175
 PERSONA_CEILING = 175
 
-# The extension modules a Windows CPython ships as their own .pyd in DLLs/ (everything else
-# it needs is built into pythonXY.dll). An endpoint scanner inspects each as it loads (#312),
+# The extension modules a Windows CPython ships as their own .pyd in DLLs/ that matter to the
+# trigger path (not every one shipped: the test modules and the like are left out; the rest
+# is built into pythonXY.dll). An endpoint scanner inspects each as it loads (#312),
 # so none loads before the provider call (or, for persona, at all) unless the call needs it:
 # the clipboard probe's _ctypes only when the clipboard is read, the HTTP client's _socket
 # and _ssl only for the call, the usage history's _sqlite3 and _decimal only after the output.
@@ -458,10 +460,13 @@ WINDOWS_EXTENSIONS = (
 )
 # What `import typer` itself may load of them: typer.main imports shutil (which tries bz2,
 # lzma and, from 3.14, compression.zstd), subprocess (select, on POSIX only), uuid and
-# platform (_wmi, on Windows from 3.12). Which ones load depends on the OS and the Python
-# version, so the typer_extensions fixture measures them in a fresh interpreter, held to this
-# ceiling. They stay until a trigger entry runs without Typer (#313).
-TYPER_EXTENSIONS_ALLOWED = ("_bz2", "_lzma", "select", "_uuid", "_wmi", "_zstd")
+# platform (_wmi, on Windows from 3.12); on Windows its vendored click also imports ctypes
+# for the console (typer._click._compat -> _winconsole), so _ctypes is Typer's there too.
+# Which ones load depends on the OS and the Python version, so the typer_extensions fixture
+# measures them in a fresh interpreter, held to this ceiling. They stay until a trigger entry
+# runs without Typer (#313). Because Typer has already loaded _ctypes on Windows, "the
+# clipboard probe's _ctypes only when the clipboard is read" is effectively checked on POSIX.
+TYPER_EXTENSIONS_ALLOWED = ("_bz2", "_ctypes", "_lzma", "select", "_uuid", "_wmi", "_zstd")
 
 
 def _isolated_env(tmp: Path) -> dict[str, str]:
@@ -541,22 +546,32 @@ def test_improve_startup_budget(tmp_path: Path, typer_extensions: set[str]) -> N
 
 
 # The same through a gated cloud provider (OpenRouter, a placeholder key): the gate scans the
-# draft before the call, and an ASCII draft needs no unicodedata for that (#312).
+# draft before the call, and an ASCII draft needs no unicodedata for that (#312). The single
+# HTTP function is stubbed both where the provider calls it and at its source, and every
+# proxy points at a closed loopback port, so a stray call cannot leave the machine.
 _CLOUD_RUN = (
     _IMPROVE_RUN.replace('"ollama"', '"openrouter"')
-    .replace("import ollama", "import openai_compatible")
-    .replace("ollama.post_json", "openai_compatible.post_json")
+    .replace("import ollama", "import base, openai_compatible")
+    .replace(
+        "ollama.post_json = post_json",
+        "openai_compatible.post_json = post_json\nbase.post_json = post_json",
+    )
     .replace(
         '{"message": {"content": "done"}, "done_reason": "stop"}',
         '{"choices": [{"message": {"content": "done"}, "finish_reason": "stop"}]}',
     )
 )
-# Built at runtime, so no key-shaped literal lands in the repo.
-CLOUD_KEY = {"OPENROUTER_API_KEY": "-".join(("test", "key"))}
+_DEAD_PROXY = "http://127.0.0.1:9"
+CLOUD_KEY = {
+    "OPENROUTER_API_KEY": PLACEHOLDER_KEY,
+    **dict.fromkeys(("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"), _DEAD_PROXY),
+    "NO_PROXY": "",
+}
 
 
 def test_cloud_improve_startup_budget(tmp_path: Path, typer_extensions: set[str]) -> None:
     assert "ollama" not in _CLOUD_RUN
+    assert "base.post_json = post_json" in _CLOUD_RUN
     stdout, data = _startup(_CLOUD_RUN, tmp_path, CLOUD_KEY)
     assert (stdout, data["code"]) == (b"done", 0)
     assert "promptmend.gate" in data["added"]
