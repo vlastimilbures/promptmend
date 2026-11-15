@@ -83,6 +83,15 @@ All notable changes to this project are documented here. The format follows
   default (no temperature is sent); `PROMPT_TEMPERATURE` still applies to OpenRouter, Ollama
   and LM Studio.
 
+### Documentation
+- Troubleshooting: "The trigger stays and nothing happens" (#308), telling the cases apart
+  with `promptmend history export` and `promptmend stats --by trigger --verbose` (`ok` with
+  its latency: Espanso did not paste; a `timeout`: the call stalled; no row: the process
+  never finished), a run still going that blocks later triggers, the same call in a
+  terminal, `promptmend doctor --timing` and `PROMPT_OUTPUT=clipboard` on a slow machine.
+  README's "Never a blank paste" adds that Espanso shows nothing while the CLI runs, and
+  docs/usage.md "While it runs" links the new entry.
+
 ## 0.25.0 - 2026-10-14
 
 ### Changed

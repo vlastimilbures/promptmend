@@ -126,6 +126,9 @@ the write that creates the file).
 on success, so switching windows during a long wait is safe. Espanso still erases the trigger
 where the focus is, so do not type.
 
+If the trigger stays and nothing is pasted, see "The trigger stays and nothing happens" in
+[Troubleshooting](troubleshooting.md#triggers-and-espanso).
+
 ## Output: paste or clipboard
 
 By default every improve trigger pastes the rewrite in place of the trigger. With

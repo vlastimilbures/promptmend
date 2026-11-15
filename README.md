@@ -37,7 +37,8 @@ interface and plain commands set it up and manage it.
 - **Data-protection gate.** Keys, cards, IDs, emails and your own patterns never leave unless
   you override.
 - **Your persona, once.** `PROMPT_PERSONA` opens every rewrite with your role.
-- **Never a blank paste.** Errors arrive inline as `[promptmend: …]`.
+- **Never a blank paste.** Errors arrive inline as `[promptmend: …]`. While the CLI runs,
+  up to the call's time limit, Espanso shows nothing.
 - **Clean output.** No reasoning block, control characters or invisible Unicode.
 - **Interface and commands.** A full-screen interface, headless commands and
   `promptmend doctor`.
