@@ -1,8 +1,8 @@
 """`espanso deploy`, `status` and `detach`: thin Typer wrappers over the deploy service,
 mounted through cli._LAZY_COMMANDS like the other management commands, so a trigger never
 loads it; each command still imports deploy only when it runs, so `promptmend --help` does
-not load deploy either. make_plan() and restart() are
-public: setup's deploy step (commands/setup.py) uses them too."""
+not load deploy either. make_plan() and restart() are public: setup's deploy step
+(commands/setup.py) uses them too."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 """What the interface shows, read in one go from the services, so every screen shows the same
-moment. It is read again after every change, so no screen keeps a stale value (#83).
+moment. It is read again after every change, so no screen keeps a stale value.
 
 One read resolves the settings once, looks up the launcher and the manifest once, makes
 one deploy plan that doctor reuses, and asks each command once. The update check runs beside it

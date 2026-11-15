@@ -37,7 +37,8 @@ DEFAULTS = {f.metadata["env"]: f.metadata["default"] for f in setting_fields()}
 class Storage:
     """Where setup may save: ``legacy`` is the .env PROMPTMEND_ENV names (then neither
     config.toml nor the secret store is read, so nothing is saved), and ``unread`` setup's
-    note on a .env no release reads, looked for only outside legacy mode."""
+    note on a .env this release does not read (config.unread_env_files()), looked for only
+    outside legacy mode."""
 
     legacy: str | None
     unread: str | None

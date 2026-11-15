@@ -10,7 +10,7 @@ current State as it mounts (Pane.on_mount).
 Each reload has two stages, one after the other in its worker: the quick State
 (settings, profiles, triggers; local reads of a few milliseconds) is read on the app's loop
 and shown at once, the full one, read in a thread, replaces it. Every screen gets
-the same State object at each stage (#83). The generation guard orders them: a stage of an
+the same State object at each stage. The generation guard orders them: a stage of an
 older reload never replaces a newer reload's, so a screen goes quick, full, late update
 within one reload, and a newer reload's quick State supersedes everything older."""
 
@@ -373,8 +373,9 @@ class ManageApp(App[int]):
             try:
                 # On the loop, not in a thread: local reads of a few milliseconds, so the
                 # first paint never waits for a thread to be scheduled (on Windows with
-                # Python 3.12 one can take seconds while the app runs). The update answer
-                # on screen stays until the full State has its own.
+                # Python 3.12 a thread can wait seconds for its turn while the app runs;
+                # see threads_get_their_turn()). The update answer on screen stays until
+                # the full State has its own.
                 first = quick_loader(group_by).known_update(self.state)
             except Exception:  # noqa: S110 - the full read below reads the same and reports it
                 pass

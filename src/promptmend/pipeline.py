@@ -4,10 +4,10 @@ argument, with the concealed-item check), rewrite() through factory.make_provide
 gate, the marker that words a failure, its history outcome, the sent-despite note, and the
 delivery of a finished rewrite to the clipboard.
 
-It imports neither Typer nor the CLI, so the interface uses it without the command
-wiring and a Typer-free trigger entry (#313) can build on it. Printing
-(trigger._emit()) and improve's watchdog stay in trigger.py: both need Typer (typer.echo,
-typer.Exit), and the watchdog is the one decision of what a trigger run prints."""
+It imports neither Typer nor the CLI, so the interface uses it without the command wiring
+and a Typer-free trigger entry (#313) can build on it. Printing (trigger._emit()) and
+improve's watchdog stay in trigger.py: both need Typer (typer.echo, typer.Exit), and the
+watchdog is the one decision of what a trigger run prints."""
 
 from __future__ import annotations
 
@@ -185,9 +185,9 @@ def rewrite(
     )
     ran.built = built
     # Cleaned first, so an invisible character cannot hide a fence from the strip. A reply
-    # wrapped in one code fence would be pasted with the fence (flash-lite wrapped 16 of 36
-    # in one benchmark run). A stop note is split off first, since it would leave the
-    # fence short of the reply's end.
+    # wrapped in one code fence would be pasted with the fence (a model can wrap its whole
+    # reply in one; seen in benchmark runs). A stop note is split off first, since it would
+    # leave the fence short of the reply's end.
     body, stop = split_stop_note(clean(built.generate(draft, system)))
     body = strip_outer_fence(body)
     if TEMPLATE_MARKER in system:

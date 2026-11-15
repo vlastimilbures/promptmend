@@ -31,8 +31,8 @@ def _checks(report: doctor.Report, ids: Sequence[str] | None = None) -> Text:
 
 def show_routes(pane: Pane, state: State) -> None:
     """The providers at a glance (read-only): the PROMPT_LOCAL_ONLY and PROMPT_PROVIDER
-    policy, and each provider's model, base URL, whether
-    the draft leaves this machine and whether its key is set."""
+    policy, and each provider's model, base URL, whether the draft leaves this machine and
+    whether its key is set."""
     entries = state.layers.entries
     cfg = state.settings
     policy = (

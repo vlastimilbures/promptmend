@@ -235,7 +235,8 @@ def headline(rows: list[HomeRow]) -> tuple[str, str | None]:
         return CHECKING_HEADLINE_NO_HISTORY, None
     row = next(r for r in rows if r.status == status)
     lead = "Not ready" if status == FAIL else "Almost ready"
-    # A doctor message marks a command with Markdown backticks, which plain text shows literally.
+    # A doctor message marks a command with Markdown backticks; stripped, since plain text
+    # would show them literally.
     problem = (row.problem or f"{row.label}: {row.text}").replace("`", "").rstrip(".")
     return f"{lead}: {problem}.", row.jump
 

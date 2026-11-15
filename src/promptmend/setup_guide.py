@@ -85,8 +85,9 @@ def legacy_keys_intro(env_file: str) -> str:
 
 
 def unread_env_note(env_files: Sequence[Path]) -> str | None:
-    """What setup says about ``env_files`` (config.unread_env_files()): .env files no release
-    reads, whose settings this setup saves again; None without one."""
+    """What setup says about ``env_files`` (config.unread_env_files()): .env files earlier
+    releases read and this one does not, whose settings this setup saves again; None without
+    one."""
     if not env_files:
         return None
     files = ", ".join(map(str, env_files))

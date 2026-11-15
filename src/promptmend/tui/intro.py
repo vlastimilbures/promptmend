@@ -1,4 +1,5 @@
-"""The About screen on `a`: static text in a Textual border."""
+"""The About screen on `a`: static text in a Textual border. (The module is named for the
+intro screen it no longer holds.)"""
 
 from __future__ import annotations
 

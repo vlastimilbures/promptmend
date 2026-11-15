@@ -38,7 +38,7 @@ _HASH_IN_VALUE = frozenset({"PROMPT_EXTRA_PATTERNS", "PROMPT_PERSONA"})
 _EXTRA = "PROMPT_EXTRA_PATTERNS"
 # Names that are no longer settings: a saved one is skipped without a finding, since the user
 # saved it when it was a setting (and `config unset` does not take the name).
-RETIRED = frozenset({"PROMPT_UI_INTRO"})  # the interface's intro
+RETIRED = frozenset({"PROMPT_UI_INTRO"})  # the switch for the intro screen, which was removed
 
 
 def _env_text(data: bytes) -> str:

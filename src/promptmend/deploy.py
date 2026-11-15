@@ -710,8 +710,8 @@ class Plan:
 
 def launchers_in(text: str) -> set[str]:
     """The launcher paths a match file calls: each script var's first arg, or the quoted
-    path of a shell cmd line (as files deployed by older releases hold it). Windows
-    paths have forward slashes."""
+    path of a shell cmd line (every release before the script vars quoted it the same way).
+    Windows paths have forward slashes."""
     return {*_SCRIPT_LAUNCHER.findall(text), *_QUOTED_LAUNCHER.findall(text)}
 
 
