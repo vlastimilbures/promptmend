@@ -810,3 +810,46 @@ def test_safe_repr_honours_user_patterns(monkeypatch: pytest.MonkeyPatch) -> Non
     assert redaction.redact_words("got PRJ-12345") == "got <redacted, 9 chars>"
     redaction.set_user_patterns(())
     assert safe_repr("PRJ-12345") == "'PRJ-12345'"
+
+
+# _normalize() returns ASCII text as is, without unicodedata (#312): exactly what the full
+# fold gives, for every ASCII code point and for random ASCII strings (controls, tabs and
+# newlines included), so the gate's findings cannot change.
+def test_normalize_ascii_fast_path_equals_the_fold() -> None:
+    import random
+
+    from promptmend import redaction
+
+    for code in range(128):
+        assert redaction._fold(chr(code)) == chr(code) == redaction._normalize(chr(code))
+    every = "".join(map(chr, range(128)))
+    assert redaction._fold(every) == every
+    rng = random.Random(312)  # noqa: S311 - test data, not a secret
+    for _ in range(2000):
+        text = "".join(chr(rng.randrange(128)) for _ in range(rng.randrange(1, 80)))
+        assert redaction._fold(text) == text == redaction._normalize(text)
+
+
+# The gate's findings for ASCII drafts are the same with the full fold in place of the fast
+# path.
+def test_scan_findings_unchanged_by_the_ascii_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend import redaction
+
+    drafts = [
+        "card 4111 1111 1111 1111",
+        "contact john.doe@example.com\tCONFIDENTIAL\r\n",
+        "IBAN DE89 3704 0044 0532 0130 00\x00\x1b[0m",
+        "password: hunter2\x7f",
+        "plain text, nothing to flag",
+    ]
+    fast = [scan_draft(d) for d in drafts]
+    monkeypatch.setattr(redaction, "_normalize", redaction._fold)
+    assert [scan_draft(d) for d in drafts] == fast
+    assert any(fast)
+
+
+# Non-ASCII text still takes the fold: fullwidth digits become ASCII, a zero-width space goes.
+def test_normalize_folds_non_ascii() -> None:
+    from promptmend import redaction
+
+    assert redaction._normalize("\uff14\uff11\uff11\uff11\u200b") == "4111"

@@ -235,6 +235,7 @@ def test_make_zip_nests_the_onedir_folder(tmp_path: Path) -> None:
         "promptmend/_internal/promptmend/espanso/match/prompts-llm.yml",
         "promptmend/_internal/promptmend/espanso/match/prompts-template.yml",
         "promptmend/_internal/promptmend/prompts/default.md",
+        "promptmend/_internal/promptmend/prompts/general.md",
         "promptmend/promptmend.exe",
     ]
     with zipfile.ZipFile(out) as archive:

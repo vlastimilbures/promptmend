@@ -44,6 +44,19 @@ All notable changes to this project are documented here. The format follows
   so importing the usage history, doctor, deploy, the update check or the interface no longer
   loads `importlib.metadata`; a trigger that records its run reads it only when it writes the
   row, after its output. The version shown is unchanged.
+- The triggers start faster and load fewer native modules, each a file an endpoint scanner
+  inspects on Windows (#312): the built-in profiles are read as plain files on first use (no
+  longer through `importlib.resources`, which pulled in zipfile, bz2 and lzma), and hashlib,
+  ctypes, tempfile and unicodedata load only in the functions that need them (the
+  data-protection gate skips unicodedata for an ASCII draft, with the same findings).
+  `persona` and `improve` up to its provider call, with a local or a cloud provider, now load
+  no extension module of their own: `_hashlib` and `unicodedata` are gone, and on macOS and
+  Linux so is `_ctypes`, which the clipboard probe now loads only when the clipboard is read.
+  Not fixed yet: the ones `import typer` loads itself (`_bz2`, `_lzma`, `_uuid`, and
+  depending on the platform and Python version `select`, `_zstd`, or on Windows `_wmi` and
+  `_ctypes`, for its console support) stay until a trigger entry runs without Typer (#313);
+  on Windows Typer has therefore loaded `_ctypes` before the probe needs it. On macOS, Python
+  3.13, `improve` adds 145 modules up to the provider call (167 before). No output changes.
 
 ### Removed
 - **Breaking:** the transition paths from earlier releases (#275), ahead of 1.0.0. This breaks

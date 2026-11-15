@@ -266,7 +266,7 @@ jobs:
           $root = "$env:LOCALAPPDATA\Programs\promptmend-ci"
           Expand-Archive $zip.FullName -DestinationPath $root
           $exe = "$root\promptmend\promptmend.exe"
-          foreach ($data in "_internal", "_internal\promptmend\espanso\match\prompts-llm.yml", "_internal\promptmend\prompts\default.md") {
+          foreach ($data in "_internal", "_internal\promptmend\espanso\match\prompts-llm.yml", "_internal\promptmend\prompts\default.md", "_internal\promptmend\prompts\general.md") {
             if (-not (Test-Path "$root\promptmend\$data")) { throw "the zip lacks $data" }
           }
           $installed = (& $exe --version).Trim()

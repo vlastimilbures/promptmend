@@ -36,6 +36,33 @@ def test_default_profile_offers_both_branches() -> None:
     assert "Review your own output against these checks" in text
 
 
+# The built-in profiles are real files next to the module (the wheel and the frozen build both
+# ship them so), read on first use, once, in name order (#312).
+def test_builtin_profiles_load_on_first_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend import prompt_builder
+
+    folder = Path(prompt_builder.__file__).parent / "prompts"
+    assert folder == prompt_builder._PROMPT_DIR
+    expected = {p.stem: p.read_text(encoding="utf-8").strip() for p in folder.glob("*.md")}
+    reads: list[int] = []
+    real = prompt_builder._load_profiles
+
+    def load() -> dict[str, str]:
+        reads.append(1)
+        return real()
+
+    monkeypatch.setattr(prompt_builder, "_load_profiles", load)
+    profiles = prompt_builder._BuiltinProfiles()
+    assert reads == []
+    assert dict(profiles) == expected
+    assert list(profiles) == sorted(expected)
+    assert len(profiles) == len(expected)
+    assert ("default" in profiles, profiles.get("nope")) == (True, None)
+    assert repr(profiles) == repr(dict(profiles))
+    assert reads == [1]
+    assert dict(PROFILES) == expected
+
+
 # The retired default-pro profile (an old .env's PROMPT_PRO_PROFILE) renders default.
 def test_default_pro_alias() -> None:
     assert "default-pro" not in PROFILES

@@ -7,7 +7,6 @@ trigger run share it without importing the CLI; it builds on redaction.DEFAULT_I
 from __future__ import annotations
 
 import re
-import unicodedata
 
 from .redaction import DEFAULT_IGNORABLE
 
@@ -55,6 +54,8 @@ def _keep_run(match: re.Match[str]) -> str:
 def clean(text: str) -> str:
     text = _UNSAFE_CHARS.sub("", text.replace("\r\n", "\n").translate(_LINE_BREAKS))
     if not text.isascii():  # ASCII holds no format characters
+        import unicodedata  # a native module on Windows: only for non-ASCII text (#312)
+
         text = "".join(c for c in text if c in _KEEP_CF or unicodedata.category(c) != "Cf")
     # After every other removal, so a dropped character cannot split a run into allowed pieces.
     return _SELECTOR_RUN.sub(_keep_run, text)
