@@ -255,8 +255,8 @@ The largest parts of the import are `importlib.metadata` (about 50 ms cumulative
 `-X importtime`, for `__version__` in `promptmend/__init__.py`), httpx (about 30 ms) and
 Typer (about 19 ms). The `importlib.metadata` figure overstates its real cost: the modules it
 pulls in (email, zipfile, csv) load anyway, so a literal `__version__` saves only about 2 ms of
-wall time per run (median of 30 in a clean wheel venv, 3.12 and 3.14, 2026-10-06, #132). CI runner numbers
-(Linux, Windows) are still to be recorded from a CI run.
+wall time per run (median of 30 in a clean wheel venv, 3.12 and 3.14, 2026-10-06, #132). The
+Windows CI runner numbers are below; Linux runner numbers are still to be recorded.
 
 Since #223 (2026-10-08, same machine, Python 3.12, load average about 10, medians of 25
 interleaved runs): `promptmend --version` is answered in `entry.main()` before the CLI is
@@ -267,6 +267,21 @@ about 41 ms cumulative (135 ms). `--version` adds 108 modules (221), 49 ms wall 
 `smoke`'s stub adds 288 modules (299) and its wall time is unchanged. `tests/test_trigger_contract.py`
 holds these as ceilings (`VERSION_CEILING`, `IMPROVE_CEILING`, up to the provider call) and
 forbids httpx, pyperclip and sqlite3 before it.
+
+On Windows (#306), each pull request's CI run times both channels on `windows-latest`
+(Defender on) with `promptmend doctor --timing` and writes the table to the job summary: the
+`install-script` job through uv's `promptmend.exe` shim after a real `uv tool` install, the
+`frozen-windows` job through the unzipped exe, with the file count and size of its `_internal`
+folder. The rows below come from one CI run; the ms are its first run, then the median of 5
+warm runs. CI asserts no time (runner noise would make it flaky); the module ceilings above
+stay the gate.
+
+<!-- TODO(#306): fill in from the PR's CI run: its date, its URL and both job summaries. -->
+
+| Channel (CI run of TODO-DATE, TODO-RUN-URL) | `--version` | `persona` | `improve` (`-i-`) | `_internal` |
+| --- | --- | --- | --- | --- |
+| uv tool install, through the shim | TODO | TODO | TODO | n/a |
+| Frozen exe (the Windows zip) | TODO | TODO | TODO | TODO files, TODO MB |
 
 Re-measure with:
 
