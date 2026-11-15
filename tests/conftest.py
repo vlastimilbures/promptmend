@@ -97,21 +97,28 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-UPDATE_CHECK_THREADS = ("promptmend-reload-update-check", "promptmend-update-check")
+# Every background thread a test can leave behind: the update checks (#315) and the interface's
+# reload reads (#317, state._beside()).
+BACKGROUND_THREADS = (
+    "promptmend-reload",
+    "promptmend-reload-update-check",
+    "promptmend-update-check",
+)
 
 
 @pytest.fixture(autouse=True)
-def update_checks_end_with_the_test(isolated_env: None) -> Iterator[None]:
-    """The interface's update check runs in a daemon thread beside a reload (#315): each one a
-    test started must end inside the test, while its fakes (no pypi.org, the temp HOME) still
-    hold. Torn down before isolated_env's patches are undone; a thread still running after
-    the wait fails the test rather than reach the real network or folders later."""
+def background_threads_end_with_the_test(isolated_env: None) -> Iterator[None]:
+    """The update check (#315) and the interface's reload reads (#317) run in daemon threads:
+    each one a test started must end inside the test, while its fakes (no pypi.org, no
+    Espanso, the temp HOME) still hold, so a reload a newer one cancelled cannot run gather()
+    after them. Torn down before isolated_env's patches are undone; a thread still running
+    after the wait fails the test rather than reach the real network or folders later."""
     import threading
 
-    before = {t for t in threading.enumerate() if t.name in UPDATE_CHECK_THREADS}
+    before = {t for t in threading.enumerate() if t.name in BACKGROUND_THREADS}
     yield
     for thread in threading.enumerate():
-        if thread.name in UPDATE_CHECK_THREADS and thread not in before:
+        if thread.name in BACKGROUND_THREADS and thread not in before:
             thread.join(10)
             if thread.is_alive():
                 pytest.fail(f"{thread.name} outlived the test")

@@ -39,6 +39,7 @@ from promptmend.tui.state import FULL, QUICK, State, gather, quick
 
 if TYPE_CHECKING:
     from conftest import SeedHistory
+    from textual.app import App
     from textual.widget import Widget
     from typer.testing import Result
 
@@ -250,7 +251,7 @@ class BlockedPypi:
         )
 
     def __call__(self) -> update_check.UpdateStatus:
-        assert self.release.wait(10), "never released"
+        assert self.release.wait(10), f"never released\n{threads_now()}"
         return self.answer
 
 
@@ -469,16 +470,36 @@ def test_a_late_update_of_an_older_reload_is_dropped(
 # --- Two stages (#317) ----------------------------------------------------------------------
 
 
+def threads_now(app: App[Any] | None = None) -> str:
+    """Every thread's stack (and the app's workers): what a wait that never ended was held by,
+    for a CI run no one can step through (the Windows 3.12 runs of #317)."""
+    import sys
+    import threading
+    import traceback
+
+    frames = sys._current_frames()
+    parts: list[str] = []
+    for thread in threading.enumerate():
+        frame = frames.get(thread.ident or -1)
+        stack = "".join(traceback.format_stack(frame)) if frame else "  (no frame)\n"
+        parts.append(f"--- thread {thread.name!r} daemon={thread.daemon}\n{stack}")
+    if app is not None:
+        workers = [f"{w.group}/{w.name}: {w.state.name}" for w in app.workers]
+        parts.append(f"--- workers {workers}")
+    return "\n".join(parts)
+
+
 async def until(
     pilot: Pilot[int], done: Callable[[], bool], why: Callable[[], object] = lambda: ""
 ) -> None:
     """Pause (at most ~10 s of pauses) until ``done()``: for a scenario whose full load is
-    blocked, which settle() would wait for. ``why()`` says what was seen when it never is."""
+    blocked, which settle() would wait for. ``why()`` says what was seen when it never is,
+    followed by every thread's stack."""
     for _ in range(1000):
         if done():
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"never happened: {why()}")
+    raise AssertionError(f"never happened: {why()}\n{threads_now(pilot.app)}")
 
 
 class BlockedLoad:
@@ -494,7 +515,7 @@ class BlockedLoad:
     def __call__(self, group_by: str, first: State | None = None) -> State:
         self.calls += 1
         self.firsts.append(first)
-        assert self.release.wait(10), "never released"
+        assert self.release.wait(10), f"never released\n{threads_now()}"
         return gather(group_by, first)
 
 
@@ -652,6 +673,82 @@ def test_a_failed_full_read_leaves_the_quick_state_not_checked(
         assert servers.startswith("Not checked whether a local server answers")
 
     drive(scenario, loader=broken)
+
+
+def test_a_reload_that_reads_nothing_leaves_no_state_checking(espanso: FakeRunner) -> None:
+    """Review of #317: a reload whose quick and full reads both fail, while an older reload's
+    quick State is on screen (its full State, read later, is dropped), shows that quick
+    State `not checked`, never `checking` for ever."""
+    import threading
+
+    release = threading.Event()
+    calls: list[str] = []
+
+    def quick_loader(group_by: str) -> State:
+        calls.append("quick")
+        if len(calls) > 1:
+            raise RuntimeError("no settings")
+        return quick(group_by)
+
+    def loader(group_by: str, first: State | None = None) -> State:
+        calls.append("full")
+        if first is None:
+            raise RuntimeError("boom")
+        assert release.wait(10), f"never released\n{threads_now()}"
+        return gather(group_by, first)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: calls == ["quick", "full"])
+        older = _state(app)
+        assert (older.stage, older.failed) == (QUICK, None)
+        app.reload()
+        await until(pilot, lambda: app.shown == 2, lambda: (calls, app.shown))
+        state = _state(app)
+        assert (state.stage, state.failed) == (QUICK, "RuntimeError: boom")
+        assert state.layers is older.layers
+        assert "checking" not in _home_text(app)
+        release.set()
+        await settle(pilot)
+        assert app.state is state  # the older reload's full State is dropped
+
+    drive(scenario, settled=False, loader=loader, quick_loader=quick_loader)
+
+
+def test_a_held_reload_key_runs_at_most_a_few_full_reads(espanso: FakeRunner) -> None:
+    """Review of #317: with every full read hanging (Espanso does not answer) and `r` pressed
+    again and again, at most FULL_READS of them run; each reload still shows its quick State,
+    and once the reads end the newest one's full State is shown."""
+    import threading
+
+    from promptmend.tui.app import FULL_READS
+
+    release = threading.Event()
+    entered: list[int] = []
+
+    def loader(group_by: str, first: State | None = None) -> State:
+        entered.append(1)
+        assert release.wait(10), f"never released\n{threads_now()}"
+        return gather(group_by, first)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        reloads = FULL_READS + 3
+        for number in range(1, reloads + 1):
+            if number > 1:
+                app.reload()
+            await until(pilot, lambda: app.shown == app.generation, lambda: (app.shown, entered))
+            if number <= FULL_READS:
+                await until(pilot, lambda: len(entered) == app.generation, lambda: entered)
+        for _ in range(10):
+            await pilot.pause()
+        assert len(entered) == FULL_READS
+        assert not _state(app).full
+        release.set()
+        await until(pilot, lambda: _state(app).full, lambda: (app.shown, entered))
+        assert app.shown == reloads
+        # The reloads cancelled while they waited for a slot never read.
+        assert len(entered) == FULL_READS + 1
+
+    drive(scenario, settled=False, loader=loader)
 
 
 def test_the_full_stage_keeps_the_persons_place(espanso: FakeRunner) -> None:
@@ -925,7 +1022,7 @@ def test_the_stages_of_an_older_reload_never_replace_a_newer_one(
             return gather(group_by, first)
         # The first reload's full read is the slow one.
         started.set()
-        assert release.wait(10)
+        assert release.wait(10), f"never released\n{threads_now()}"
         try:
             return gather(group_by, first)
         finally:

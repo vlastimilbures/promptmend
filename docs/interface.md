@@ -109,7 +109,9 @@ so until they are read their rows show `…` and say `checking`, the headline sa
 and the header says `checking`. Every tab shows the same step, and the whole screen fills in
 together when the checks are done, keeping your place (a table's cursor, a field you are
 typing in); this happens again after every change and every `r`. If the checks cannot run, those rows say
-`not checked` and point to `r`, which tries again. While a reload reads the rest, the
+`not checked` and point to `r`, which tries again. At most three checks run at once: with
+Espanso not answering, pressing `r` again and again still shows the settings rows each time,
+and the newest press is checked once an earlier check ends. While a reload reads the rest, the
 Version row keeps the answer it already had; it may then say `checking` again until that
 reload's update check lands.
 

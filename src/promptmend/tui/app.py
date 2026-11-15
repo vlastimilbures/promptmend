@@ -16,6 +16,7 @@ within one reload, and a newer reload's quick State supersedes everything older.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import sys
 from collections.abc import Callable
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
     from .setup_wizard import SetupOptions, SetupScreen
 
 DEFAULT_THEME = "textual-dark"
+# Full reads (doctor, the plan, the stats) running at once, see ManageApp._read_full().
+FULL_READS = 3
 HIGH_CONTRAST = Theme(
     name="high-contrast",
     primary="#ffff00",
@@ -253,6 +256,9 @@ class ManageApp(App[int]):
         self.generation = 0
         # The reload whose State is on screen (0: none yet).
         self.shown = 0
+        # Full reads at once, a cancelled reload's thread counted until it ends: a hung
+        # Espanso and a held `r` cannot start thread after thread (and child after child).
+        self.full_reads = asyncio.Semaphore(FULL_READS)
         self.main = MainScreen()
         # This session's actions as commands (#111), shown on Home.
         self.session: list[teach.Entry] = []
@@ -310,6 +316,25 @@ class ManageApp(App[int]):
         the thread still ends on its own and its answer is dropped."""
         return await asyncio.wrap_future(_beside(read, "promptmend-reload"))
 
+    async def _read_full[T](self, read: Callable[[], T]) -> T:
+        """_read() once fewer than FULL_READS full reads are running. The slot is given back
+        when the thread ends, not when this reload is cancelled: a thread cannot be stopped.
+        A newer reload waiting for one still shows its quick State."""
+        await self.full_reads.acquire()
+        loop = asyncio.get_running_loop()
+
+        def free(_: Future[T]) -> None:
+            with contextlib.suppress(RuntimeError):  # the app's loop closed: nothing to free
+                loop.call_soon_threadsafe(self.full_reads.release)
+
+        try:
+            future = _beside(read, "promptmend-reload")
+        except BaseException:  # no thread started (RuntimeError: can't start new thread)
+            self.full_reads.release()
+            raise
+        future.add_done_callback(free)
+        return await asyncio.wrap_future(future)
+
     @work(exclusive=True, group="load", exit_on_error=False)
     async def _load(self, generation: int) -> None:
         """One reload: the quick State, then the full one (each read in its own thread),
@@ -326,13 +351,16 @@ class ManageApp(App[int]):
             else:
                 self._show(first, generation)
         try:
-            state = await self._read(lambda: self.loader(group_by, first))
+            state = await self._read_full(lambda: self.loader(group_by, first))
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             self.notify(f"Could not read the state: {error}", severity="error", markup=False)
-            if first is not None:
-                # The quick State stays, its waiting rows saying they were not checked.
-                self._show(first.not_checked(error), generation)
+            # The quick State stays, its waiting rows saying they were not checked. With no
+            # quick State of its own, a still-waiting one on screen (an older reload's, whose
+            # full State the guard drops) says so too, never `checking` for ever.
+            waiting = self.state if first is None else first
+            if waiting is not None and not waiting.full and waiting.failed is None:
+                self._show(waiting.not_checked(error), generation)
             return
         self._show(state, generation)
         if state.pending is not None:

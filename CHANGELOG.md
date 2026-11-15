@@ -39,7 +39,7 @@ All notable changes to this project are documented here. The format follows
   offers the setup only once it knows nothing is installed. When the checks cannot run, their
   rows say `not checked` instead of the screen staying empty. With a slow Espanso the first
   rows appear in about 60 ms instead of after the whole check (1.5 s in a test with a slow
-  doctor and plan).
+  doctor and plan). Holding `r` while Espanso hangs runs at most three checks at once.
 - `--effort` is accepted with `--provider openai` too (it sets `OPENAI_REASONING_EFFORT` for
   the call); `--tier pro` stays OpenRouter only. The refusal names which providers take each
   option.
