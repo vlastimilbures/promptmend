@@ -254,7 +254,7 @@ DYNAMIC_GETATTR = {
     ("promptmend/cli.py", "getattr(module, attr)"),
     # pyperclip's paste or copy, imported only once a run touches the clipboard (#223).
     ("promptmend/pipeline.py", "getattr(pyperclip, op)"),
-    # A tab's pane class, its module imported when the tab first opens (app._PANES, #316).
+    # A pane class imported on first use: (module, class) come from the static tui/app._PANES.
     ("promptmend/tui/app.py", "getattr(importlib.import_module(f'.{module}', __package__), name)"),
 }
 
