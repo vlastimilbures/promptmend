@@ -332,8 +332,9 @@ promptmend/
 │   ├── pipeline.py               the rewrite's steps (input, rewrite(), markers, delivery),
 │   │                             Typer-free, shared with the interface's Try tab
 │   ├── entry.py                  console-script entry: empty stderr for a trigger
-│   ├── commands/                 setup, config, secrets, profiles, stats, history, doctor, ui:
-│   │                             thin Typer wrappers over the services (common.py: exit codes)
+│   ├── commands/                 espanso, setup, config, secrets, profiles, stats, history,
+│   │                             doctor, ui: thin Typer wrappers over the services
+│   │                             (common.py: exit codes)
 │   ├── tui/                      the full-screen Textual interface; only `ui` (commands/ui.py,
 │   │                             also a bare promptmend and `setup` on a terminal) loads it
 │   ├── doctor.py                 the doctor report (stable JSON, never a key or persona)

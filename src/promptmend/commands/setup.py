@@ -166,10 +166,10 @@ def _deploy_step(
     launcher: str | None,
     no_restart: bool,
 ) -> None:
-    from ..cli import _make_plan, _restart
+    from .espanso import make_plan, restart
 
     try:
-        the_plan = _make_plan(espanso_dir, launcher)
+        the_plan = make_plan(espanso_dir, launcher)
     except (deploy.DeployError, ValueError, OSError) as exc:
         steps.fail("deploy", str(exc))
         return
@@ -199,7 +199,7 @@ def _deploy_step(
     for line in outcome.lines:
         typer.echo(f"  {line}")
     if outcome.changed:
-        _restart(no_restart)
+        restart(no_restart)
     if outcome.kept:
         steps.later("files you edited were kept: `promptmend espanso deploy` to choose")
 
