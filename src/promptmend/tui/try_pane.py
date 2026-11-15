@@ -25,7 +25,7 @@ from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, Select, Static, TextArea
 
-from .. import cli, recorder, smoke
+from .. import cli, recorder, sanitize, smoke
 from ..commands import common
 from ..config import TIERS, ConfigLayers, Settings, check_provider_options, has_pro_tier
 from ..factory import PROVIDER_NAMES, check_base_url, leaves_machine
@@ -191,7 +191,7 @@ class TryPane(Pane):
             cfg = layers.settings().for_call(tier, provider=provider)
             check_provider_options(provider, tier, None)
         except Exception as exc:
-            self._finish(Outcome(cli.clean(cli.marker(exc)), True, "", None), None)
+            self._finish(Outcome(sanitize.clean(cli.marker(exc)), True, "", None), None)
             return
         if target == STUB:
             self._start(draft, provider, profile, cfg, None)
@@ -333,7 +333,7 @@ class TryPane(Pane):
             if rec is not None:
                 rec.outcome = cli.failure_outcome(exc, rec)
         # Cleaned as improve's output is (_emit()), the sent-despite note included.
-        shown = cli.clean(cli.sent_despite_note(ran.built) + text)
+        shown = sanitize.clean(cli.sent_despite_note(ran.built) + text)
         outcome = Outcome(
             shown, error, usage_line(attempts, latency, stub=command is None), requests
         )

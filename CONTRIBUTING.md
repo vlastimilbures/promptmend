@@ -344,6 +344,7 @@ promptmend/
 │   ├── gate.py                   GatedProvider: scans every draft that can leave the machine
 │   ├── clipboard_guard.py        refuses password-manager (concealed) clipboard items
 │   ├── redaction.py              the gate's sensitive-content patterns
+│   ├── sanitize.py               clean(): strips control and invisible characters
 │   ├── history.py                local usage history (SQLite, metadata only, fail-open)
 │   ├── recorder.py               records each improve/persona run in the usage history
 │   ├── prompt_builder.py         loads built-in and user profiles, fills in the persona rule
