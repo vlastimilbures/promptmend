@@ -579,13 +579,19 @@ def _no_runner(argv: Sequence[str]) -> str:
 
 
 def test_resolve_uv_from_its_receipt_runs_nothing(tmp_path: Path) -> None:
+    """On this host's own rule, as resolve_launcher() runs in production (``windows`` is
+    os.name == "nt"): on a Windows runner a real `D:\\...` receipt under tmp_path goes
+    through the Windows rule, on macOS and Linux a POSIX one through the POSIX rule."""
+    windows = os.name == "nt"
     prefix = tmp_path / "uv" / "tools" / "promptmend"
-    launcher = _exe(tmp_path / "bin" / "promptmend")
+    launcher = _exe(tmp_path / "bin" / ("promptmend.exe" if windows else "promptmend"))
     _receipt(prefix, str(launcher))
     found = deploy.resolve_launcher(
-        runner=_no_runner, prefix=prefix, script=tmp_path / "x", windows=False
+        runner=_no_runner, prefix=prefix, script=tmp_path / "x", windows=windows
     )
     assert found == deploy.Launcher(launcher, "uv")
+    if windows:  # the canonical spelling: the bin folder joined with promptmend.exe
+        assert str(found.path) == str(launcher.parent / "promptmend.exe")
 
 
 WIN_BIN = r"C:\Users\me\.local\bin"
