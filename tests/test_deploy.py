@@ -705,22 +705,29 @@ def test_a_receipt_without_our_entry_point_is_not_trusted(text: str) -> None:
 
 
 def test_an_unusable_receipt_falls_back_to_uv_tool_dir(tmp_path: Path) -> None:
-    """A receipt naming a file that is gone, a relative path (a Windows path read on POSIX),
-    one that cannot be read or is a link: `uv tool dir` decides, as before."""
+    """A receipt naming a file that is gone, a relative path, one that cannot be read or is
+    a link: `uv tool dir` decides, as before. On this host's own rule (as in production), and
+    only after the same receipt with the real launcher is taken, so each case falls back for
+    its own reason."""
+    windows = os.name == "nt"
+    exe = "promptmend.exe" if windows else "promptmend"
     tools, bin_dir = tmp_path / "uv" / "tools", tmp_path / "bin"
-    launcher = _exe(bin_dir / "promptmend")
+    launcher = _exe(bin_dir / exe)
     prefix = tools / "promptmend"
     answers = {"uv tool dir": f"{tools}\n", "uv tool dir --bin": f"{bin_dir}\n"}
 
     def resolve() -> tuple[deploy.Launcher, list[list[str]]]:
         fake = FakeRunner(answers)
         found = deploy.resolve_launcher(
-            runner=fake, prefix=prefix, script=tmp_path / "x", windows=False
+            runner=fake, prefix=prefix, script=tmp_path / "x", windows=windows
         )
         return found, fake.calls
 
+    _receipt(prefix, str(launcher))
+    assert resolve() == (deploy.Launcher(launcher, "uv"), [])
     spawned = [["uv", "tool", "dir"], ["uv", "tool", "dir", "--bin"]]
-    for install_path in (str(tmp_path / "gone" / "promptmend"), "bin/promptmend"):
+    relative = f"bin\\{exe}" if windows else f"bin/{exe}"
+    for install_path in (str(tmp_path / "gone" / exe), relative):
         _receipt(prefix, install_path)
         assert resolve() == (deploy.Launcher(launcher, "uv"), spawned)
     receipt = prefix / deploy.UV_RECEIPT
@@ -730,7 +737,12 @@ def test_an_unusable_receipt_falls_back_to_uv_tool_dir(tmp_path: Path) -> None:
     real = tmp_path / "real-receipt.toml"
     _receipt(tmp_path / "elsewhere", str(launcher))
     (tmp_path / "elsewhere" / deploy.UV_RECEIPT).rename(real)
-    receipt.symlink_to(real)
+    try:
+        receipt.symlink_to(real)
+    except OSError:
+        if windows:
+            return  # symlinks need a privilege there; the other cases ran
+        raise
     assert resolve() == (deploy.Launcher(launcher, "uv"), spawned)
 
 
