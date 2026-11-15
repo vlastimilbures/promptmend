@@ -81,6 +81,11 @@ class UsageObserver(Protocol):
     def __call__(self, usage: AttemptUsage, /) -> None: ...
 
 
+class RunEnded(Exception):
+    """Raised by an observer's ``begin`` when the run it records is over (improve's watchdog
+    printed its marker, #307): the attempt is not sent, nor any after it."""
+
+
 # Adds what a provider's response body reports to the transport facts of an attempt.
 UsageParser = Callable[[Mapping[str, object], AttemptUsage], AttemptUsage]
 
@@ -100,12 +105,13 @@ class Meter:
     def begin(self, *, loopback: bool, attempt: int) -> None:
         """An attempt is starting. An observer with a ``begin`` method (the CLI's recorder)
         gets the record the attempt will have if it never ends: a ``timeout`` with no status,
-        which improve's watchdog stores when it ends the process first (#307). Nothing raised
-        here reaches the caller; an observer without ``begin`` is not told."""
+        which improve's watchdog stores when it ends the process first (#307). Only RunEnded
+        reaches the caller, which then sends nothing; an observer without ``begin`` is not
+        told."""
         started = getattr(self.observer, "begin", None)
         if started is None:
             return
-        with contextlib.suppress(Exception):
+        try:
             started(
                 AttemptUsage(
                     provider=self.provider,
@@ -118,6 +124,10 @@ class Meter:
                     cost_state="not_applicable" if self.local else "unknown",
                 )
             )
+        except RunEnded:
+            raise
+        except Exception:  # noqa: S110 - an observer never changes the call
+            pass
 
     def record(
         self,

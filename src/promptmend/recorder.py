@@ -77,9 +77,13 @@ class _Collector:
                 self.attempts.append(usage)
 
     def begin(self, usage: AttemptUsage, /) -> None:
+        """An attempt is starting; once closed, it must not (RunEnded)."""
         with self._lock:
-            if not self._closed:
-                self._pending = (usage, time.monotonic())
+            if self._closed:
+                from .providers.usage import RunEnded
+
+                raise RunEnded("improve's watchdog ended the run")
+            self._pending = (usage, time.monotonic())
 
     def close(self) -> None:
         """Keep the attempt in flight, if any, as the timeout it became, lasting until now,
@@ -115,8 +119,10 @@ class Recorder:
 
     @property
     def observer(self) -> UsageObserver | None:
-        """For make_provider(observer=...): collects each attempt; None when not recording."""
-        return self._collector if self._settings is not None else None
+        """For make_provider(observer=...): collects each attempt, and stops any attempt from
+        starting once improve's watchdog has ended the run (timed_out()). Given even when the
+        run is not recorded (finish() then writes nothing), so that stop always holds."""
+        return self._collector
 
     @property
     def answered(self) -> bool:

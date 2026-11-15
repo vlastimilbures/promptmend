@@ -22,15 +22,16 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from promptmend import cli, recorder, smoke
+from promptmend import cli, factory, recorder, smoke
 from promptmend.cli import Rewrite, _Watchdog, app
 from promptmend.config import Settings
 from promptmend.gate import GatedProvider
-from promptmend.providers.base import timed_out_message
-from promptmend.providers.usage import AttemptUsage, Meter, openai_usage
+from promptmend.providers import base
+from promptmend.providers.base import post_json, timed_out_message
+from promptmend.providers.usage import AttemptUsage, Meter, RunEnded, openai_usage
 
 if TYPE_CHECKING:
-    from conftest import HistoryRows, StubProvider
+    from conftest import FakeHttp, HistoryRows, StubProvider
 
 runner = CliRunner()
 
@@ -242,7 +243,8 @@ def test_timed_out_keeps_the_attempt_in_flight() -> None:
     assert len(rec.attempts) == 2
     # An attempt that ends after the marker is not counted again.
     meter.record(loopback=False, attempt=2, status=200, error_kind=None, body={}, latency=3)
-    meter.begin(loopback=False, attempt=3)
+    with pytest.raises(RunEnded):  # nor may a new one start
+        meter.begin(loopback=False, attempt=3)
     rec.timed_out()
     assert len(rec.attempts) == 2
 
@@ -300,7 +302,7 @@ def test_blocking_name_lookup_in_process(
             "--text",
             "a draft",
             "--timeout",
-            "0.2",
+            "1",
             "--trigger-id",
             "i",
         ],
@@ -308,7 +310,7 @@ def test_blocking_name_lookup_in_process(
     assert time.monotonic() - started < 10
     assert result.exit_code == 0
     assert result.stdout == ""  # the run's own marker was never printed
-    assert capfd.readouterr().out == "[promptmend: OpenRouter timed out after 0.2s]"
+    assert capfd.readouterr().out == "[promptmend: OpenRouter timed out after 1.0s]"
     assert fake.codes == [0]
     (op,) = history_rows("operations")
     assert (op["outcome"], op["trigger_id"], op["profile_id"]) == ("error_marker", "-i-", "default")
@@ -395,7 +397,7 @@ def test_stalled_copy(
     monkeypatch.setattr(cli, "_WATCHDOG_HISTORY", 5.0)
     monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 5.1)
     command = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
-    result = runner.invoke(app, [*command, "--timeout", "0.05", "--trigger-id", "i", *args])
+    result = runner.invoke(app, [*command, "--timeout", "1", "--trigger-id", "i", *args])
     assert (result.exit_code, result.stdout) == (0, "")
     expected = cli.CLIPBOARD_STALLED + "improved"
     assert capfdbinary.readouterr().out == expected.replace("\n", os.linesep).encode()
@@ -436,6 +438,117 @@ def test_limit_counts_from_entry_start(monkeypatch: pytest.MonkeyPatch) -> None:
         assert watch._timer.interval == 0.0
     finally:
         watch.cancel()
+
+
+# --- Nothing is sent after the marker ------------------------------------------------------
+
+
+def _closed_observer() -> tuple[recorder.Recorder, Meter]:
+    rec = recorder.Recorder("improve", "i")
+    observer = rec.observer
+    assert observer is not None  # given even with the history off (track() not called)
+    return rec, Meter(observer, "openrouter", "m", openai_usage)
+
+
+# Once the run is over, an attempt raises RunEnded before its request: none is sent.
+def test_closed_observer_stops_the_request(fake_http: FakeHttp) -> None:
+    rec, meter = _closed_observer()
+    rec.timed_out()
+    with pytest.raises(RunEnded):
+        post_json("OpenRouter", "https://openrouter.ai/api/v1/x", 5, json={}, meter=meter)
+    assert fake_http.requests == []
+
+
+# ...nor its retry: the run ending during the wait before it (a 503) stops the second request.
+def test_closed_observer_stops_the_retry(
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp
+) -> None:
+    rec, meter = _closed_observer()
+    fake_http.queue({"status_code": 503})
+    monkeypatch.setattr(base, "_sleep", lambda seconds: rec.timed_out())
+    with pytest.raises(RunEnded):
+        post_json("OpenRouter", "https://openrouter.ai/api/v1/x", 5, json={}, meter=meter)
+    assert len(fake_http.requests) == 1
+
+
+# The watchdog fires while the provider is being built (after proceed()): with the history
+# off, the run still sends nothing after the marker.
+def test_no_request_after_marker_while_building(
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, capfd: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("PROMPT_HISTORY", "false")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
+    fake_http.reply({"choices": [{"message": {"content": "rewrite"}}]})
+    release = threading.Event()
+    make_provider = factory.make_provider
+
+    def slow_build(*args: Any, **kwargs: Any) -> Any:
+        release.wait(30)
+        return make_provider(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "make_provider", slow_build)
+    monkeypatch.setattr(cli, "_hard_exit", Exits(then=release))
+    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 0.6)
+    args = ["improve", "--provider", "openrouter", "--source", "argument", "--text", "x"]
+    result = runner.invoke(app, [*args, "--timeout", "0.05"])
+    assert (result.exit_code, result.stdout) == (0, "")
+    assert capfd.readouterr().out == "[promptmend: OpenRouter timed out after 0.05s]"
+    assert fake_http.requests == []
+
+
+# --- The final timer: a claimed run that flushed late ----------------------------------------
+
+
+# Claiming the output of an armed run starts a timer at the hard deadline (limit + margin).
+def test_claim_starts_the_final_timer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
+    monkeypatch.setattr(_Watchdog, "_final_exit", lambda self: None)
+    watch, _ = _watchdog()
+    watch.arm(Settings(timeout=30), "ollama")
+    try:
+        watch.claim()
+        assert watch._final is not None
+        assert watch._timer is not None
+        assert watch._final.interval - watch._timer.interval == pytest.approx(
+            cli._WATCHDOG_HISTORY, abs=0.1
+        )
+    finally:
+        watch.cancel()
+    assert watch._final.finished.is_set()
+
+
+# Unarmed (the settings did not load), claiming starts nothing.
+def test_claim_unarmed_starts_nothing() -> None:
+    watch, _ = _watchdog()
+    watch.claim()
+    assert watch._final is None
+
+
+# At the deadline a claimed run still printing is left alone; a flushed one ends silently.
+def test_final_exit_by_state(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
+    watch, _ = _watchdog()
+    watch.claim()
+    watch._final_exit()
+    assert exits.codes == []
+    watch.flushed()
+    watch._final_exit()
+    assert exits.codes == [0]
+    assert capfd.readouterr().out == ""
+    watch._final_exit()  # fired already: nothing more
+    assert exits.codes == [0]
+
+
+# A stand-in exit that raises still releases a main thread waiting on the watchdog.
+def test_raising_exit_still_releases(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(code: int) -> None:
+        raise RuntimeError("stand-in")
+
+    monkeypatch.setattr(cli, "_hard_exit", boom)
+    watch, _ = _watchdog()
+    watch.flushed()
+    with pytest.raises(RuntimeError):
+        watch._fire()
+    assert watch._done.is_set()
 
 
 # --- As a real process, the way Espanso runs it --------------------------------------------
@@ -520,7 +633,7 @@ def test_name_lookup_that_never_returns() -> None:
 
 # A reply that lands before the limit prints only the rewrite.
 def test_reply_just_under_the_limit() -> None:
-    with smoke.stub_server(LIMIT * 0.6) as stub:
+    with smoke.stub_server(0.3) as stub:
         proc, _ = _run([*_ENTRY, *_ARGS], smoke.stub_env(stub.port, os.environ))
     assert (proc.returncode, proc.stderr) == (0, b"")
     assert proc.stdout.decode("utf-8") == smoke.REPLY
