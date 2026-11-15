@@ -658,7 +658,7 @@ class Settings:
         destination = _override(output, "--output", _output)
         changes: dict[str, Any] = {}
         if slug:
-            changes |= dict.fromkeys((f"{name}_model" for name in PROVIDERS), slug)
+            changes |= dict.fromkeys((spec.model_field for spec in PROVIDERS.values()), slug)
         if endpoint is not None:
             changes["openrouter_provider"] = endpoint
         if effort not in (None, KEEP):

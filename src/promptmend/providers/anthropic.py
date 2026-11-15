@@ -25,6 +25,10 @@ class AnthropicProvider:
     temperature: float | None = None
     # Receives one AttemptUsage per HTTP attempt; see providers/usage.py.
     observer: UsageObserver | None = field(default=None, repr=False, compare=False)
+    # The provider in each usage record and how messages name it; make_provider() passes
+    # its registry spec's name and label.
+    name: str = "anthropic"
+    label: str = "Anthropic"
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
@@ -44,12 +48,12 @@ class AnthropicProvider:
         if self.temperature is not None:
             payload["temperature"] = self.temperature
         meter = (
-            Meter(self.observer, "anthropic", self.model, anthropic_usage)
+            Meter(self.observer, self.name, self.model, anthropic_usage)
             if self.observer is not None
             else None
         )
         data = post_json(
-            "Anthropic",
+            self.label,
             f"{self.base_url}/v1/messages",
             self.timeout,
             headers=headers,
@@ -69,8 +73,8 @@ class AnthropicProvider:
             ok = texts and all(isinstance(text, str) for text in texts)
             content = "".join(texts) if ok else None
         except (KeyError, TypeError, AttributeError) as exc:
-            raise ProviderError("Anthropic response was malformed") from exc
+            raise ProviderError(f"{self.label} response was malformed") from exc
 
         return finalize_content(
-            content, "Anthropic", stop_reason=data.get("stop_reason"), capped=True
+            content, self.label, stop_reason=data.get("stop_reason"), capped=True
         )
