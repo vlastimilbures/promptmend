@@ -1,13 +1,13 @@
 """The setup wizard: `promptmend setup` in a terminal, and Home's "Setup…". One step at a time
 (Welcome, provider, profile, keys, Espanso, test, done), each picked from a
 list rather than typed, each change made through the same service as its headless command and
-logged as that command. What each step says comes from setup_guide.py (no Textual)."""
+logged as that command. What each step says comes from setup_guide.py, and what it decides and
+writes from setup_flow.py, shared with `setup --non-interactive` (neither imports Textual)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.text import Text
@@ -27,10 +27,8 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
-from .. import config, deploy, setup_guide, smoke
+from .. import config, deploy, setup_flow, setup_guide, smoke
 from ..commands import common
-from ..commands import settings as settings_cmd
-from ..commands import setup as setup_cmd
 from ..config import secret_names
 from . import teach
 from .base import error_message, plan_digest, result_text
@@ -60,19 +58,7 @@ class SetupOptions:
 def make_plan(options: SetupOptions) -> tuple[deploy.Plan, str | None]:
     """The deploy plan for ``options`` (as `setup --espanso-dir --launcher` makes it), and why
     the default Espanso folder was used when `espanso path config` gave none."""
-    fallback = None
-    if options.espanso_dir is not None:
-        common.no_key(options.espanso_dir, "--espanso-dir")
-        target = Path(options.espanso_dir).expanduser().resolve()
-    else:
-        found = deploy.locate_espanso_dir()
-        target, fallback = found.path.resolve(), found.fallback
-    if options.launcher is not None:
-        common.no_key(options.launcher, "--launcher")
-        launcher = options.launcher
-    else:
-        launcher = str(deploy.resolve_launcher().path)
-    return deploy.plan(target, deploy.launcher_text(launcher), deploy.Manifest.load()), fallback
+    return setup_flow.read_plan(options.espanso_dir, options.launcher)
 
 
 class SetupScreen(Screen[None]):
@@ -189,14 +175,12 @@ class SetupScreen(Screen[None]):
     def show(self, state: State) -> None:
         """Fill every step from a fresh State (the app calls this after each reload)."""
         notes = []
-        if common.legacy_env():
-            notes.append(
-                "PROMPTMEND_ENV is set, so your settings and keys stay in that file; this "
-                "setup cannot save them (edit that file instead)."
-            )
-        elif unread := setup_guide.unread_env_note(config.unread_env_files()):
-            notes.append(unread)
-        notes.append(_history_line(state))
+        where = setup_flow.storage()
+        if where.legacy:
+            notes.append(setup_guide.LEGACY_NOTE)
+        elif where.unread:
+            notes.append(where.unread)
+        notes.append(setup_guide.history_line(state.settings.history))
         self.query_one("#setup-welcome-notes", Static).update("\n".join(notes))
         self._fill(
             "#setup-providers",
@@ -359,7 +343,7 @@ class SetupScreen(Screen[None]):
         legacy = common.legacy_env()
         if legacy:
             # Nothing can be saved (as headless setup's writable=False): say so and move on.
-            if setup_cmd.current_choice(name) != value:
+            if setup_flow.current_choice(name) != value:
                 self.app.notify(
                     f"{name} not saved: {config.ENV_FILE_VAR} is set, so settings stay in "
                     f"{legacy}; edit that file instead.",
@@ -368,9 +352,9 @@ class SetupScreen(Screen[None]):
                 )
             return True
         try:
-            message, argv = setup_cmd.save_choice(name, value)
+            message, argv = setup_flow.save_choice(name, value)
         except Exception as exc:
-            command = teach.equivalent("config", *setup_cmd.choice_command(name, value))
+            command = teach.equivalent("config", *setup_flow.choice_command(name, value))
             self.report(error_message(exc), error=True, command=command)
             return False
         if message:
@@ -387,16 +371,8 @@ class SetupScreen(Screen[None]):
         ]
         if not typed or common.legacy_env():
             return True
-
-        def save() -> str:
-            saved = []
-            for name, value in typed:
-                settings_cmd.store_key(name, value)
-                saved.append("; ".join([f"{name} saved", *settings_cmd.after_save(name)]))
-            return "; ".join(saved)
-
         command = "; ".join(teach.for_setting("set-key", name) for name, _ in typed)
-        ok = self.attempt(save, command=command)
+        ok = self.attempt(lambda: setup_flow.save_keys(typed), command=command)
         if ok:
             for name, _ in typed:
                 self.query_one(f"#setup-key-{name}", Input).value = ""
@@ -459,7 +435,7 @@ class SetupScreen(Screen[None]):
                     "the match files changed since they were read; nothing was written. "
                     "Look at the new list and install again"
                 )
-            outcome = deploy.apply(plan, {})  # an edited file is kept, never overwritten
+            outcome = setup_flow.install(plan)  # an edited file is kept, never overwritten
             lines = list(outcome.lines)
             if outcome.changed:
                 if options.no_restart:
@@ -535,13 +511,3 @@ class SetupScreen(Screen[None]):
             self.app.exit(0)
         else:
             self.dismiss()
-
-
-def _history_line(state: State) -> str:
-    if not state.settings.history:
-        return "Usage history is off; nothing is recorded."
-    return (
-        "Usage history is on: metadata only (trigger, model, outcome, tokens, cost), never "
-        "your text or keys, kept on this device. Off: `promptmend config set PROMPT_HISTORY "
-        "false`."
-    )
