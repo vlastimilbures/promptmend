@@ -44,6 +44,18 @@ All notable changes to this project are documented here. The format follows
   so importing the usage history, doctor, deploy, the update check or the interface no longer
   loads `importlib.metadata`; a trigger that records its run reads it only when it writes the
   row, after its output. The version shown is unchanged.
+- The interface's Home no longer waits for pypi.org (#315). The update check runs beside the
+  rest of a reload: until it answers, the Version row says `checking` (About: `checking
+  pypi.org…`), then fills in on every tab at once; a proxy that blocks pypi.org (up to 3 s)
+  no longer delays any other row. Ollama and LM Studio are asked at the same time, in the
+  interface and in `doctor` (one probe timeout instead of two). A reload resolves the
+  settings, looks up the launcher, reads the deploy manifest and builds the deploy plan once,
+  shared with doctor's checks. A uv install's launcher is read from uv's `uv-receipt.toml`,
+  so neither the interface nor `doctor` runs `uv tool dir` (still the fallback when the
+  receipt is missing or does not name an existing launcher). On Windows the Espanso queries
+  of one reload or `doctor` run enumerate the processes once, and the uninstall registry is
+  read only when Espanso is not found elsewhere. `doctor` and `doctor --json` output is
+  unchanged.
 
 ### Removed
 - **Breaking:** the transition paths from earlier releases (#275), ahead of 1.0.0. This breaks

@@ -1,14 +1,14 @@
 """The `doctor` service: one report of everything a broken trigger can come from (#25, #92).
 
 Read-only: it runs only `espanso path config`, `espanso status` and the launcher lookup
-(`uv tool dir`, `brew --prefix`) through deploy.run_command, reads the settings in repair
-mode, asks PyPI for the newest release at most once a day (update_check, unless
-PROMPT_UPDATE_CHECK is false), asks a loopback Ollama or LM Studio whether it answers
-(local_probe), reads the deployed match files, and reads the clipboard only to report its
-length. The report never holds a key, the persona or clipboard text, since people paste it
-into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and keys are only ever added
-(the one exception: the previous_install check, removed with the migration code in #246;
-its PATH warning lives on as path_shadow).
+(uv's receipt, else `uv tool dir`; `brew --prefix`) through deploy.run_command, reads the
+settings in repair mode, asks PyPI for the newest release at most once a day (update_check,
+unless PROMPT_UPDATE_CHECK is false), asks a loopback Ollama and LM Studio at the same time
+whether they answer (local_probe), reads the deployed match files, and reads the clipboard
+only to report its length. The report never holds a key, the persona or clipboard text,
+since people paste it into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and
+keys are only ever added (the one exception: the previous_install check, removed with the
+migration code in #246; its PATH warning lives on as path_shadow).
 """
 
 from __future__ import annotations
@@ -160,6 +160,15 @@ def _version_check(update: update_check.UpdateStatus, install: Check | None) -> 
     if available:
         message += f", {update.latest} available: {upgrade_hint(install.data if install else {})}"
     return Check("version", INFO, message, data)
+
+
+def with_update(report: Report, update: update_check.UpdateStatus) -> Report:
+    """``report`` with its version check made again for ``update``: the interface's update
+    check, when it lands after the rest (#315)."""
+    install = next((c for c in report.checks if c.id == "install"), None)
+    return Report(
+        tuple(_version_check(update, install) if c.id == "version" else c for c in report.checks)
+    )
 
 
 def _cli_check() -> Check:
@@ -337,12 +346,17 @@ def _local_servers_check(
     used = _rewrites(triggers, settings)
     servers: dict[str, dict[str, Any]] = {}
     notes = []
+    asked = {
+        provider: getattr(settings, f"{provider}_base_url").rstrip("/") + spec.probe_path
+        for provider, spec in PROVIDERS.items()
+        if spec.probe_path is not None and used.get(provider)
+    }
+    replies = _probe_all(asked)
     for provider, spec in PROVIDERS.items():
         names = used.get(provider)
-        if spec.probe_path is None or not names:
+        if provider not in asked or not names:
             continue
-        base_url = getattr(settings, f"{provider}_base_url")
-        answers = local_probe.answers(base_url.rstrip("/") + spec.probe_path)
+        answers = replies[provider]
         servers[provider] = {"answers": answers, "triggers": names}
         if answers is None:
             notes.append(f"{spec.label} ({', '.join(names)}) is not on this machine; not asked")
@@ -355,6 +369,19 @@ def _local_servers_check(
         probed = " or ".join(s.label for s in PROVIDERS.values() if s.probe_path)
         return Check("local_servers", INFO, f"no trigger uses {probed}", data)
     return Check("local_servers", INFO, "; ".join(notes), data)
+
+
+def _probe_all(urls: Mapping[str, str]) -> dict[str, bool | None]:
+    """local_probe.answers() for each URL, at the same time (#315): each one that answers
+    nothing waits out its own timeout, so asking in turn would add them up. Every probe runs to
+    its end; a probe that raised raises here, in ``urls`` order, as asking in turn did."""
+    if len(urls) < 2:
+        return {key: local_probe.answers(url) for key, url in urls.items()}
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=len(urls), thread_name_prefix="promptmend-probe") as pool:
+        futures = {key: pool.submit(local_probe.answers, url) for key, url in urls.items()}
+    return {key: future.result() for key, future in futures.items()}
 
 
 def persona_findings(settings: config.Settings) -> list[str]:
@@ -473,7 +500,12 @@ def _espanso_check(runner: deploy.Runner, espanso_dir: Path | None) -> tuple[Che
     return Check("espanso", OK, f"running (config: {target})", data), target
 
 
-def _match_check(target: Path, launcher: str | None, manifest: deploy.Manifest | None) -> Check:
+def _match_check(
+    target: Path,
+    launcher: str | None,
+    manifest: deploy.Manifest | None,
+    planned: deploy.Plan | None = None,
+) -> Check:
     # "legacy" (the pre-0.9 base.yml, no longer looked for since #246) stays for the schema.
     data: dict[str, Any] = {"espanso_dir": str(target), "files": [], "legacy": False}
     if launcher is None or manifest is None:
@@ -481,7 +513,15 @@ def _match_check(target: Path, launcher: str | None, manifest: deploy.Manifest |
         return Check("match_files", WARN, f"cannot compare: {why} (pass --launcher)", data)
     if not (target / "match").is_dir():
         return Check("match_files", WARN, f"no Espanso match folder in {target}", data)
-    the_plan = deploy.plan(target, deploy.launcher_text(launcher), manifest)
+    text = deploy.launcher_text(launcher)
+    # The caller's plan when it is this very comparison (the interface's, #315), else our own.
+    same = (
+        planned is not None
+        and planned.espanso_dir == target
+        and planned.launcher == text
+        and planned.manifest is manifest
+    )
+    the_plan = planned if same and planned is not None else deploy.plan(target, text, manifest)
     data["files"] = [{"name": s.name, "state": s.state} for s in the_plan.steps]
     broken = [s for s in the_plan.steps if s.state in (deploy.STALE, deploy.MISSING)]
     edited = [s for s in the_plan.steps if s.state in (deploy.MODIFIED, deploy.FOREIGN)]
@@ -682,6 +722,43 @@ def _folders_check() -> Check:
     )
 
 
+@dataclass(frozen=True)
+class Lookups:
+    """This install's launcher and the deploy manifest, each looked up once, so the interface's
+    plan and doctor share them (#315). ``launcher`` is None with ``launcher_error`` saying why;
+    ``manifest`` is None when it cannot be read, with ``manifest_error``."""
+
+    launcher: deploy.Launcher | None
+    launcher_error: str | None
+    manifest: deploy.Manifest | None
+    manifest_error: str | None
+
+
+def lookups(
+    runner: deploy.Runner | None = None, durations: dict[str, float] | None = None
+) -> Lookups:
+    """resolve_launcher() and Manifest.load(), their failures kept. ``durations`` gets the
+    first's seconds as install and the second's as launcher (doctor --timing)."""
+    spent = durations if durations is not None else {}
+    started = time.perf_counter()
+    found: deploy.Launcher | None = None
+    launcher_error = None
+    try:
+        found = deploy.resolve_launcher(runner=runner or deploy.run_command)
+    except deploy.DeployError as exc:
+        launcher_error = str(exc)
+    spent["install"] = spent.get("install", 0.0) + time.perf_counter() - started
+    started = time.perf_counter()
+    manifest: deploy.Manifest | None = None
+    manifest_error = None
+    try:
+        manifest = deploy.Manifest.load()
+    except deploy.DeployError as exc:
+        manifest_error = str(exc)
+    spent["launcher"] = spent.get("launcher", 0.0) + time.perf_counter() - started
+    return Lookups(found, launcher_error, manifest, manifest_error)
+
+
 def _safely(check_id: str, build: Callable[[], Check]) -> Check:
     """One check that fails on its own never stops the report."""
     try:
@@ -698,14 +775,50 @@ def run(
     runner: deploy.Runner | None = None,
     update: update_check.UpdateStatus | None = None,
     durations: dict[str, float] | None = None,
+    layers: ConfigLayers | None = None,
+    found: Lookups | None = None,
+    plan: deploy.Plan | None = None,
 ) -> Report:
     """Every check in CHECK_IDS. ``launcher`` and ``espanso_dir`` override the lookups;
-    ``update`` is an update check already made (the interface's). ``durations``, when given,
-    gets each check's seconds (`doctor --timing`, #305), the lookups a check reports counted
-    in it: the update check in version, the launcher lookup in install, both settings reads
-    in config, the Espanso queries in espanso; history and sqlite share one read (history)."""
+    ``update`` is an update check already made (the interface's). The interface also passes
+    what its reload already read (#315): ``layers`` (repair mode, as load_layers() makes them),
+    ``found`` (lookups()) and its deploy ``plan``, used for match_files when it compares the
+    same folder, launcher and manifest. Without them doctor reads its own, with the same
+    report. ``durations``, when given, gets each check's seconds (`doctor --timing`, #305),
+    the lookups a check reports counted in it: the update check in version, the launcher
+    lookup in install, both settings reads in config, the Espanso queries in espanso; history
+    and sqlite share one read (history)."""
     spent = durations if durations is not None else {}
+    run_command = runner or deploy.run_command
+    # On Windows, `espanso path config` and `status` share one look at the processes.
+    from .espanso_windows import one_look
 
+    with one_look():
+        return _run(
+            espanso_dir=espanso_dir,
+            launcher=launcher,
+            clipboard=clipboard,
+            run_command=run_command,
+            update=update,
+            spent=spent,
+            layers=layers,
+            found=found,
+            plan=plan,
+        )
+
+
+def _run(
+    *,
+    espanso_dir: Path | None,
+    launcher: str | None,
+    clipboard: bool,
+    run_command: deploy.Runner,
+    update: update_check.UpdateStatus | None,
+    spent: dict[str, float],
+    layers: ConfigLayers | None,
+    found: Lookups | None,
+    plan: deploy.Plan | None,
+) -> Report:
     def clock(check_id: str, started: float) -> None:
         spent[check_id] = spent.get(check_id, 0.0) + time.perf_counter() - started
 
@@ -715,9 +828,9 @@ def run(
         clock(check_id, started)
         return check
 
-    run_command = runner or deploy.run_command
     started = time.perf_counter()
-    layers = ConfigLayers.resolve(strict=False)
+    if layers is None:
+        layers = ConfigLayers.resolve(strict=False)
     settings = layers.settings()
     clock("config", started)
     if update is None:
@@ -732,21 +845,9 @@ def run(
         strict_error = str(exc)
     clock("config", started)
 
-    found: deploy.Launcher | None = None
-    launcher_error = None
-    started = time.perf_counter()
-    try:
-        found = deploy.resolve_launcher(runner=run_command)
-    except deploy.DeployError as exc:
-        launcher_error = str(exc)
-    clock("install", started)
-    current = launcher or (str(found.path) if found else None)
-    started = time.perf_counter()
-    try:
-        manifest: deploy.Manifest | None = deploy.Manifest.load()
-    except deploy.DeployError:
-        manifest = None
-    clock("launcher", started)
+    looked = found or lookups(run_command, spent)
+    current = launcher or (str(looked.launcher.path) if looked.launcher else None)
+    manifest = looked.manifest
     compare = current
     if compare is None and manifest and manifest.entries:
         # Compare with what was deployed, so a missing launcher still shows each file's state;
@@ -756,12 +857,12 @@ def run(
 
     # The version check names the install channel's update command, so it is built after the
     # install check; the report keeps CHECK_IDS order.
-    install = timed("install", lambda: _install_check(found, launcher_error))
+    install = timed("install", lambda: _install_check(looked.launcher, looked.launcher_error))
     checks: list[Check] = [
         timed("version", lambda: _version_check(update, install)),
         timed("cli", _cli_check),
         install,
-        timed("path_shadow", lambda: _path_shadow_check(found)),
+        timed("path_shadow", lambda: _path_shadow_check(looked.launcher)),
         timed("config", lambda: _config_check(layers, strict_error)),
     ]
     started = time.perf_counter()
@@ -782,7 +883,7 @@ def run(
         timed("persona", lambda: _persona_check(settings, _persona_readable())),
         espanso,
     ]
-    checks.append(timed("match_files", lambda: _match_check(target, compare, manifest)))
+    checks.append(timed("match_files", lambda: _match_check(target, compare, manifest, plan)))
     checks.append(timed("launcher", lambda: _launcher_check(current, manifest)))
     started = time.perf_counter()
     try:

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import subprocess
 from collections.abc import Sequence
@@ -236,3 +237,74 @@ def test_not_found_names_where_it_looked(monkeypatch: pytest.MonkeyPatch) -> Non
         "espanso was not found (PATH, %LOCALAPPDATA%\\Programs\\Espanso, registry)"
     )
     assert CommandFailure().describe(["uv"]) == "uv was not found on PATH"
+
+
+# --- one look per reload (#315) -------------------------------------------------------------
+
+
+def test_the_registry_is_walked_only_when_nothing_earlier_is_found(box: Fakes) -> None:
+    walks: list[int] = []
+
+    def registry() -> list[Path]:
+        walks.append(1)
+        return box.registry
+
+    on_path = box.exe(box.tmp / "path")
+    box.on_path["espansod"] = str(on_path)
+    system = dataclasses.replace(box.system(), registry=registry)
+    assert espanso_windows.find_daemon(system) == on_path
+    assert walks == []
+    box.on_path.clear()
+    installed = box.exe(box.tmp / "registry")
+    box.registry = [installed.parent]
+    assert espanso_windows.find_daemon(system) == installed
+    assert walks == [1]
+
+
+def test_once_remembers_each_probe_and_its_failure(box: Fakes) -> None:
+    looks = {"images": 0, "registry": 0}
+
+    def images() -> list[str]:
+        looks["images"] += 1
+        raise OSError("no process list")
+
+    def registry() -> list[Path]:
+        looks["registry"] += 1
+        return []
+
+    system = dataclasses.replace(box.system(), images=images, registry=registry).once()
+    box.pipes = None  # so status would fall back to the process list
+    for _ in range(2):
+        assert espanso_windows.run(["espanso", "path", "config"], system) == CommandFailure()
+        assert espanso_windows.run(["espanso", "status"], system) == CommandFailure()
+        assert espanso_windows.is_running(system) is None
+    assert looks == {"images": 1, "registry": 1}
+
+
+def test_one_look_shares_the_process_list_between_queries(
+    box: Fakes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inside one_look(), `path config` and `status` enumerate the processes once; a start
+    looks again (it polls for the daemon), and so does a query after the look."""
+    daemon = box.exe(box.tmp / "running")
+    box.pipes = None
+    enumerations: list[int] = []
+
+    def images() -> list[str]:
+        enumerations.append(1)
+        return [str(daemon)]
+
+    fake = dataclasses.replace(box.system(), images=images)
+    monkeypatch.setattr(espanso_windows, "System", lambda: fake)
+    with espanso_windows.one_look():
+        with espanso_windows.one_look():  # a nested one keeps the outer look
+            assert espanso_windows.run(["espanso", "path", "config"]) == (
+                f"{box.tmp / 'roaming' / 'espanso'}\n"
+            )
+        assert espanso_windows.run(["espanso", "status"]) == "espanso is running\n"
+        assert len(enumerations) == 1
+        assert espanso_windows.run(["espanso", "start"]) == ""
+        assert len(enumerations) > 1
+    before = len(enumerations)
+    assert espanso_windows.run(["espanso", "status"]) == "espanso is running\n"
+    assert len(enumerations) == before + 2  # find_daemon, then is_running

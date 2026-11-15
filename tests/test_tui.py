@@ -20,7 +20,7 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
-from promptmend import config, config_store, deploy, history, smoke
+from promptmend import config, config_store, deploy, history, smoke, update_check
 from promptmend.history import HistoryStore
 from promptmend.tui import (
     base,
@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from textual.widget import Widget
     from typer.testing import Result
 
+# Kept at import, before the espanso fixture replaces it.
+REAL_RESOLVE_LAUNCHER = deploy.resolve_launcher
 # Built at runtime, so no key-shaped literal lands in the repo (gitleaks).
 KEY = "sk-or-v1-" + "cd34" * 16
 SIZE = (120, 50)
@@ -143,6 +145,197 @@ def test_gather_asks_each_command_once(
     calls = [" ".join(call) for call in espanso.calls]
     assert calls.count("espanso path config") == 1
     assert calls.count("uv tool dir") == 1
+
+
+def test_a_uv_install_starts_without_a_child_process(
+    espanso: FakeRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: the launcher comes from uv's receipt, so a reload runs no `uv` (nor `brew`):
+    only the two read-only Espanso queries, each once."""
+    import sys
+
+    monkeypatch.setattr(deploy, "resolve_launcher", REAL_RESOLVE_LAUNCHER)
+    prefix = tmp_path / "uv" / "tools" / "promptmend"
+    prefix.mkdir(parents=True)
+    exe = "promptmend.exe" if os.name == "nt" else "promptmend"
+    launcher = tmp_path / "uv-bin" / exe
+    launcher.parent.mkdir()
+    launcher.write_text("", encoding="utf-8")
+    (prefix / deploy.UV_RECEIPT).write_text(
+        "[tool]\nentrypoints = [\n"
+        f"    {{ name = 'promptmend', install-path = '{launcher}', from = 'promptmend' }},\n]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    state = gather()
+    assert state.plan is not None
+    assert state.plan.launcher == deploy.launcher_text(launcher)
+    install = next(c for c in state.report.checks if c.id == "install")
+    assert install.data["channel"] == "uv"
+    assert sorted(" ".join(c) for c in espanso.calls) == ["espanso path config", "espanso status"]
+
+
+def test_gather_makes_one_plan_one_manifest_load_and_one_repair_resolve(
+    espanso: FakeRunner, saved: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: doctor reuses the reload's settings, launcher, manifest and plan."""
+    counts = {"plan": 0, "load": 0, "repair": 0}
+    real_plan, real_load = deploy.plan, deploy.Manifest.load
+    real_resolve = config.ConfigLayers.resolve
+
+    def plan(*args: Any, **kwargs: Any) -> deploy.Plan:
+        counts["plan"] += 1
+        return real_plan(*args, **kwargs)
+
+    def load(path: Path | None = None) -> deploy.Manifest:
+        counts["load"] += 1
+        return real_load(path)
+
+    def resolve(*args: Any, **kwargs: Any) -> config.ConfigLayers:
+        counts["repair"] += kwargs.get("strict") is False
+        return real_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(deploy, "plan", plan)
+    monkeypatch.setattr(deploy.Manifest, "load", staticmethod(load))
+    monkeypatch.setattr(config.ConfigLayers, "resolve", staticmethod(resolve))
+    state = gather()
+    assert state.plan is not None
+    assert counts == {"plan": 1, "load": 1, "repair": 1}
+    match_files = next(c for c in state.report.checks if c.id == "match_files")
+    assert match_files.data["files"] == [
+        {"name": s.name, "state": s.state} for s in state.plan.steps
+    ]
+
+
+def test_gather_shows_the_same_report_as_doctor(espanso: FakeRunner, saved: Path) -> None:
+    """What the reload passes doctor changes nothing in its report (#315)."""
+    from promptmend import doctor
+
+    state = gather().settled()
+    assert state.pending is None
+    alone = doctor.run(clipboard=False, update=state.update)
+    assert state.report.to_json() == alone.to_json()
+
+
+class BlockedPypi:
+    """An update check that waits until released, as a proxy that drops pypi.org does."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self.release = threading.Event()
+        self.answer = update_check.UpdateStatus(
+            update_check.AVAILABLE, "99.0.0", "2026-11-15T09:00:00+00:00"
+        )
+
+    def __call__(self) -> update_check.UpdateStatus:
+        assert self.release.wait(10), "never released"
+        return self.answer
+
+
+def test_a_blocked_pypi_delays_no_other_row(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from promptmend.tui.home import home_rows
+
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+    state = gather()  # returns while the check still waits
+    assert state.update.state == update_check.CHECKING
+    assert state.pending is not None
+    assert not state.pending.done()
+    rows = {row.label: row for row in home_rows(state)}
+    assert rows["Version"].text.endswith(" · checking")
+    assert rows["Triggers"].text.endswith("Espanso running")
+    version = next(c for c in state.report.checks if c.id == "version")
+    assert version.data["update_available"] is None
+    blocked.release.set()
+    later = state.settled()
+    assert later.update == blocked.answer
+    assert later.pending is None
+    assert home_rows(later)[0].text == "99.0.0 available"
+    version = next(c for c in later.report.checks if c.id == "version")
+    assert version.data["latest"] == "99.0.0"
+    assert "99.0.0 available" in version.message
+    # Only the version check changed; everything else is the same moment.
+    assert [c for c in later.report.checks if c.id != "version"] == [
+        c for c in state.report.checks if c.id != "version"
+    ]
+    assert later.plan is state.plan
+    assert later.layers is state.layers
+
+
+def test_an_update_check_that_never_lands_is_unknown(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from concurrent.futures import Future
+
+    from promptmend.tui import state as state_module
+
+    monkeypatch.setattr(state_module, "SETTLE_TIMEOUT", 0.0)
+    never: Future[update_check.UpdateStatus] = Future()
+    monkeypatch.setattr(state_module, "_beside", lambda work, name: never)
+    state = gather()
+    assert state.settled().update == update_check.UpdateStatus(update_check.UNKNOWN)
+    broken: Future[update_check.UpdateStatus] = Future()
+    broken.set_exception(RuntimeError("boom"))
+    monkeypatch.setattr(state_module, "_beside", lambda work, name: broken)
+    # Already landed (here: failed), so gather settles it itself.
+    assert gather().update == update_check.UpdateStatus(update_check.UNKNOWN)
+
+
+def test_a_landed_update_check_makes_one_state(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cached answer lands before the rest is read: no `checking`, nothing pending."""
+    from concurrent.futures import Future
+
+    from promptmend.tui import state as state_module
+
+    landed: Future[update_check.UpdateStatus] = Future()
+    landed.set_result(update_check.UpdateStatus(update_check.LATEST, "0.1.0", "x"))
+    monkeypatch.setattr(state_module, "_beside", lambda work, name: landed)
+    state = gather()
+    assert state.pending is None
+    assert state.update.state == update_check.LATEST
+    assert state.settled() is state
+
+
+def test_the_version_row_fills_in_on_every_screen(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315 and #83: the first State says `checking`; when pypi.org answers, the app shows
+    the next State, the same object on every screen, from the same reload."""
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+    shown: list[tuple[int, str, int]] = []
+    real_show = ManageApp._show
+
+    def show(self: ManageApp, state: State, generation: int) -> None:
+        shown.append((id(state), state.update.state, generation))
+        real_show(self, state, generation)
+        if state.update.state == update_check.CHECKING:
+            home = self.main.query_one("#home-pane", home_pane.HomePane)
+            assert "· checking" in _rendered(home, "#home-rows")
+            blocked.release.set()  # pypi.org answers once the first State is on screen
+
+    monkeypatch.setattr(ManageApp, "_show", show)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        state = _state(app)
+        assert state.update == blocked.answer
+        assert {p.state is state for p in app.main.query(base.Pane)} == {True}
+        home = app.main.query_one("#home-pane", home_pane.HomePane)
+        assert "99.0.0 available" in _rendered(home, "#home-rows")
+        version = next(c for c in state.report.checks if c.id == "version")
+        assert version.data["latest"] == "99.0.0"
+
+    app = drive(scenario)
+    assert [(kind, generation) for _, kind, generation in shown] == [
+        (update_check.CHECKING, 1),
+        (update_check.AVAILABLE, 1),
+    ]
+    assert shown[-1][0] == id(app.state)
 
 
 def pane(app: ManageApp, tab: str) -> base.Pane:

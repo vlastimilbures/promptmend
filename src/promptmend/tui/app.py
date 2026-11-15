@@ -229,6 +229,10 @@ class ManageApp(App[int]):
             )
             return
         self.call_from_thread(self._show, state, generation)
+        if state.pending is not None and generation == self.generation:
+            # The update check lands after the rest (#315): every screen gets the next State,
+            # this one with the Version row filled in, as after a reload.
+            self.call_from_thread(self._show, state.settled(), generation)
 
     def _show(self, state: State, generation: int) -> None:
         if generation != self.generation:

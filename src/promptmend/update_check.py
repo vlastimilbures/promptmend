@@ -29,6 +29,9 @@ MAX_AGE = timedelta(hours=24)
 RETRY_AFTER = timedelta(hours=1)
 CACHE_FILE = "update-check.json"
 LATEST, AVAILABLE, UNKNOWN, OFF = "latest", "available", "unknown", "off"
+# Only the interface's, while the check still runs beside the rest of a reload (#315): doctor
+# and check() never answer it.
+CHECKING = "checking"
 # A final release only: X.Y.Z, no pre, dev, rc, post or local suffix.
 _RELEASE = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 # What makes an installed X.Y.Z older than the final X.Y.Z (PEP 440 pre and dev releases).
@@ -59,8 +62,9 @@ _last: tuple[str | None, str] | None = None
 
 @dataclass(frozen=True)
 class UpdateStatus:
-    """``state`` is latest, available, unknown or off; ``latest`` the newest release PyPI
-    lists and ``checked_at`` when it was asked (ISO-8601 UTC), when known."""
+    """``state`` is latest, available, unknown or off (checking only in the interface);
+    ``latest`` the newest release PyPI lists and ``checked_at`` when it was asked (ISO-8601
+    UTC), when known."""
 
     state: str = UNKNOWN
     latest: str | None = None
