@@ -28,7 +28,10 @@ def _load_profiles() -> dict[str, str]:
 
 class _BuiltinProfiles(Mapping[str, str]):
     """The built-in profiles, name -> text, read from _PROMPT_DIR on first use rather than at
-    import (#312): `persona` and a trigger that fails before its prompt never read them."""
+    import (#312): `persona` and a trigger that fails before its prompt never read them. So a
+    broken install (a missing or unreadable prompts/ folder) raises on that first access (an
+    OSError, which a trigger reports as its `[promptmend: ...]` marker), no longer when the
+    module is imported."""
 
     def __init__(self) -> None:
         self._profiles: dict[str, str] | None = None

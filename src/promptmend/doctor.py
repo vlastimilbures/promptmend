@@ -23,7 +23,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import __version__, assets, config, config_files, deploy, factory, local_probe, update_check
+from . import (
+    assets,
+    config,
+    config_files,
+    deploy,
+    factory,
+    installed_version,
+    local_probe,
+    update_check,
+)
 from .config import ConfigLayers, secret_names
 from .providers.registry import PROVIDERS
 
@@ -114,7 +123,7 @@ class Report:
     def to_json(self) -> dict[str, Any]:
         return {
             "schema_version": SCHEMA_VERSION,
-            "version": __version__,
+            "version": installed_version(),
             "status": self.status,
             "checks": {
                 c.id: {
@@ -140,14 +149,14 @@ def _version_check(update: update_check.UpdateStatus, install: Check | None) -> 
     available = update.state == update_check.AVAILABLE
     known = update.state in (update_check.AVAILABLE, update_check.LATEST)
     data = {
-        "version": __version__,
+        "version": installed_version(),
         "python": platform.python_version(),
         "platform": sys.platform,
         "latest": update.latest,
         "update_available": available if known else None,
         "checked_at": update.checked_at,
     }
-    message = f"promptmend {__version__}"
+    message = f"promptmend {installed_version()}"
     if available:
         message += f", {update.latest} available: {upgrade_hint(install.data if install else {})}"
     return Check("version", INFO, message, data)
@@ -948,7 +957,7 @@ def timing(
         trigger_problem = None
     except (LookupError, OSError, ValueError) as exc:
         trigger, trigger_problem = None, f"the {smoke.TRIGGER} args cannot be read: {exc}"
-    version = smoke.expect_output(__version__, strip=True, show=True)
+    version = smoke.expect_output(installed_version(), strip=True, show=True)
     commands: list[tuple[str, list[str] | None, smoke.Expect, str | None]] = [
         ("--version", ["--version"], version, None),
         ("persona", ["persona"], smoke.expect_output(PERSONA_PLACEHOLDER), None),

@@ -14,7 +14,7 @@ from textual.screen import Screen
 from textual.theme import Theme
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
-from .. import __version__
+from .. import installed_version
 from . import brand, teach
 from .base import Pane
 from .diagnostics_pane import DiagnosticsPane
@@ -166,7 +166,7 @@ class ManageApp(App[int]):
     ) -> None:
         super().__init__()
         # Read here, not at import, so the snapshot tests can pin it and a release changes none.
-        self.title = f"{self.TITLE} {__version__}"
+        self.title = f"{self.TITLE} {installed_version()}"
         self.loader = loader
         self.group_by = "trigger"
         self.state: State | None = None
@@ -196,7 +196,7 @@ class ManageApp(App[int]):
             next((c.data for c in report.checks if c.id == "install"), None) if report else None
         )
         update = self.state.update if self.state else None
-        self.push_screen(AboutScreen(brand.about_facts(install, __version__, update)))
+        self.push_screen(AboutScreen(brand.about_facts(install, installed_version(), update)))
 
     def log_action(self, entry: teach.Entry) -> None:
         """Keep an action in the session log and show it on Home."""

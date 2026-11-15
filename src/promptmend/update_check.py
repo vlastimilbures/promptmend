@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import __version__, config, config_files
+from . import config, config_files, installed_version
 
 URL = "https://pypi.org/pypi/promptmend/json"
 SETTING = "PROMPT_UPDATE_CHECK"
@@ -85,7 +85,7 @@ def _release(text: object) -> tuple[int, int, int] | None:
 def _installed() -> tuple[int, int, int, int] | None:
     """The running version as numbers: its leading X.Y.Z, then 0 for a pre or dev release
     (older than the final X.Y.Z) and 1 otherwise (a post release or a local build)."""
-    match = re.match(r"(\d+)\.(\d+)\.(\d+)(.*)", __version__)
+    match = re.match(r"(\d+)\.(\d+)\.(\d+)(.*)", installed_version())
     if match is None:
         return None
     major, minor, patch = (int(part) for part in match.groups()[:3])
@@ -110,7 +110,7 @@ def _fetch() -> str:
     test reaches pypi.org."""
     import httpx
 
-    headers = {"User-Agent": f"promptmend/{__version__}"}
+    headers = {"User-Agent": f"promptmend/{installed_version()}"}
     # Per phase (connect, read, ...); _within() bounds the whole call.
     with httpx.Client(timeout=httpx.Timeout(TIMEOUT)) as client:
         response = client.get(URL, headers=headers)

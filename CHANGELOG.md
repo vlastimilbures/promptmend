@@ -40,14 +40,21 @@ All notable changes to this project are documented here. The format follows
 - `cli.py` is split into `sanitize.py` (the sanitiser), `pipeline.py` (the rewrite's
   steps, which the interface's Try tab now uses), `trigger.py` (the single output sink and
   improve's watchdog) and `commands/espanso.py` (#281). No command, option or output changes.
+- The version is read from the installed metadata only where it is shown or recorded (#318),
+  so importing the usage history, doctor, deploy, the update check or the interface no longer
+  loads `importlib.metadata`; a trigger that records its run reads it only when it writes the
+  row, after its output. The version shown is unchanged.
 - The triggers start faster and load fewer native modules, each a file an endpoint scanner
   inspects on Windows (#312): the built-in profiles are read as plain files on first use (no
   longer through `importlib.resources`, which pulled in zipfile, bz2 and lzma), and hashlib,
-  ctypes, tempfile and unicodedata load only in the functions that need them. `persona` and
-  `improve` up to its provider call now load no extension module of their own (`_hashlib`,
-  `_ctypes` and `unicodedata` are gone; `_bz2`, `_lzma`, `_uuid` and `select` remain, all
-  from Typer itself); the clipboard probe's `_ctypes` loads only when the clipboard is read.
-  `improve` adds 145 modules up to the provider call (167 before). No output changes.
+  ctypes, tempfile and unicodedata load only in the functions that need them (the
+  data-protection gate skips unicodedata for an ASCII draft, with the same findings).
+  `persona` and `improve` up to its provider call, with a local or a cloud provider, now load
+  no extension module of their own: `_hashlib`, `_ctypes` and `unicodedata` are gone, and the
+  clipboard probe's `_ctypes` loads only when the clipboard is read. Not fixed yet: the ones
+  `import typer` loads itself (`_bz2`, `_lzma`, `_uuid`, and depending on the platform and
+  Python version `select`, `_wmi` or `_zstd`) stay until a trigger entry runs without Typer
+  (#313). `improve` adds 145 modules up to the provider call (167 before). No output changes.
 
 ### Removed
 - **Breaking:** the transition paths from earlier releases (#275), ahead of 1.0.0. This breaks

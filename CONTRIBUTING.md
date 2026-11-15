@@ -269,21 +269,34 @@ about 41 ms cumulative (135 ms). `--version` adds 108 modules (221), 49 ms wall 
 holds these as ceilings (`VERSION_CEILING`, `IMPROVE_CEILING`, up to the provider call) and
 forbids httpx, pyperclip and sqlite3 before it.
 
+Since #318 no module imports `__version__` at module scope (that is a first use, so it read
+the metadata on import); each calls `promptmend.installed_version()` where it shows or records
+the version. `import promptmend.history` adds 87 modules (127 before) and no
+`importlib.metadata` (macOS, Python 3.13, 2026-11-15); a trigger run loads it only to record
+the run. A test that fakes the version patches `<module>.installed_version`.
+
 Since #312 (2026-11-15, same machine, Python 3.13): on Windows every extension module outside
 `pythonXY.dll` is its own `.pyd` that a scanner inspects as it loads, so the trigger path
 loads none of its own before the provider call. The built-in profiles are plain files read on
 first use (`importlib.resources` brought zipfile, bz2 and lzma), and hashlib, ctypes (the
-clipboard probe), tempfile and unicodedata are imported in the functions that need them.
+clipboard probe), tempfile and unicodedata are imported in the functions that need them; the
+gate's `redaction._normalize()` returns an ASCII draft as is, which the full fold would
+leave unchanged too (`tests/test_redaction.py` checks every ASCII code point).
 `improve` up to its provider call and `persona` (history off) add 145 modules each (167
 before). On macOS these modules are linked into the interpreter, so the time saved here is
 small and noisy: a stubbed `improve` run with the history off went from about 38 to 32 ms of
 `-X importtime` self time and from 50 to 44 ms of wall time (median of 9, two interleaved
-rounds); the Windows gain, a scanned file per module, is #304's to measure. `_bz2`, `_lzma`, `_uuid` and `select` still
-load, all from `import typer` (shutil, subprocess, uuid), until #313.
+rounds); the Windows gain, a scanned file per module, is #304's to measure.
+
+**Out of scope for #312:** the extension modules `import typer` loads itself still load on
+every trigger: `_bz2` and `_lzma` (shutil), `_uuid`, and by platform and Python version
+`select` (subprocess, POSIX), `_wmi` (platform, Windows 3.12+) or `_zstd` (shutil, 3.14).
+They go only with a trigger entry that does not import Typer (#313).
 `tests/test_trigger_contract.py` lists the Windows `.pyd` modules (`WINDOWS_EXTENSIONS`),
-allows only Typer's (`TYPER_EXTENSIONS`) before the call and for `persona`, and checks with
-Typer imported first that the trigger path adds none of them; `PERSONA_CEILING` and
-`IMPROVE_CEILING` are 175.
+measures what `import typer` loads of them in a fresh interpreter (held to
+`TYPER_EXTENSIONS_ALLOWED`), allows only those before the call (local and cloud provider)
+and for `persona`, and checks with Typer imported first that the trigger path adds none;
+`PERSONA_CEILING` and `IMPROVE_CEILING` are 175.
 
 On Windows (#306), every CI run (each pull request and each push to `main`) times both
 channels on `windows-latest` with `promptmend doctor --timing` and writes the table to the job

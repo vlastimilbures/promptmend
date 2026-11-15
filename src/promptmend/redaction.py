@@ -349,8 +349,17 @@ def _normalize(text: str) -> str:
     """Fold look-alike characters so they cannot split a pattern: NFKC turns no-break and
     thin spaces into spaces and fullwidth digits/letters into ASCII, and invisible characters
     (zero-width space/joiner, soft hyphen, variation selectors, Hangul fillers, any other
-    format character) are dropped."""
-    import unicodedata  # a native module on Windows: only once a draft is scanned (#312)
+    format character) are dropped. ASCII text is returned as is, without unicodedata (a
+    native module on Windows, #312): NFKC maps every ASCII character to itself, and none is
+    in _INVISIBLE or of category Cf (tests/test_redaction.py checks all 128)."""
+    if text.isascii():
+        return text
+    return _fold(text)
+
+
+def _fold(text: str) -> str:
+    """_normalize() for any text, ASCII or not."""
+    import unicodedata
 
     folded = _INVISIBLE.sub("", unicodedata.normalize("NFKC", text))
     return "".join(ch for ch in folded if unicodedata.category(ch) != "Cf")

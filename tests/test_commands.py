@@ -803,14 +803,14 @@ def test_doctor_drift_case_reports_stale_and_no_secret(
     config_store_secret(saved)
     _run("config", "set", "PROMPT_PERSONA", PERSONA)
     real = assets.read_match
-    monkeypatch.setattr(deploy, "__version__", "0.15.0")
+    monkeypatch.setattr(deploy, "installed_version", lambda: "0.15.0")
     monkeypatch.setattr(
         assets,
         "read_match",
         lambda name: "# old\nmatches: []\n" if name == "prompts-template.yml" else real(name),
     )
     deploy.apply(deploy.plan(espanso, LAUNCHER, deploy.Manifest.load()))
-    monkeypatch.setattr(deploy, "__version__", "0.16.0")
+    monkeypatch.setattr(deploy, "installed_version", lambda: "0.16.0")
     monkeypatch.setattr(assets, "read_match", real)
 
     text = _doctor("--espanso-dir", str(espanso))

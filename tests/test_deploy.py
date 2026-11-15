@@ -320,14 +320,14 @@ def test_status_reports_stale_after_an_upgrade(
 ) -> None:
     old_source = "# old template\nmatches: []\n"
     real = assets.read_match
-    monkeypatch.setattr(deploy, "__version__", "0.15.0")
+    monkeypatch.setattr(deploy, "installed_version", lambda: "0.15.0")
     monkeypatch.setattr(
         assets,
         "read_match",
         lambda name: old_source if name == "prompts-template.yml" else real(name),
     )
     deploy.apply(_plan(espanso))
-    monkeypatch.setattr(deploy, "__version__", "0.16.0")
+    monkeypatch.setattr(deploy, "installed_version", lambda: "0.16.0")
     monkeypatch.setattr(assets, "read_match", real)
 
     states = _states(espanso)
@@ -1372,10 +1372,10 @@ def test_0_18_prompts_core_with_prompt_form_is_replaced(
     assert hashlib.sha256(old.encode()).hexdigest() == _CORE_0_18  # v0.18.0's file, exactly
     assert _CORE_0_18 in KNOWN_SOURCES[STATIC]
     real = assets.read_match
-    monkeypatch.setattr(deploy, "__version__", "0.18.0")
+    monkeypatch.setattr(deploy, "installed_version", lambda: "0.18.0")
     monkeypatch.setattr(assets, "read_match", lambda name: old if name == STATIC else real(name))
     deploy.apply(_plan(espanso))
-    monkeypatch.setattr(deploy, "__version__", VERSION)
+    monkeypatch.setattr(deploy, "installed_version", lambda: VERSION)
     monkeypatch.setattr(assets, "read_match", real)
     if not manifest:
         (user_data_dir() / deploy.MANIFEST_NAME).unlink()

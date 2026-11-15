@@ -200,6 +200,19 @@ pyperclip.paste = lambda: "rewrite this draft"
 copied = []
 pyperclip.copy = copied.append
 
+# Whether the version was read by the time each output was printed (#318).
+import promptmend.trigger as trigger
+
+real_emit, at_output = trigger._emit, []
+
+
+def emit(*args, **kwargs):
+    real_emit(*args, **kwargs)
+    at_output.append("importlib.metadata" in sys.modules)
+
+
+trigger._emit = cli._emit = emit
+
 local = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
 cloud = ["improve", "--provider", "openrouter", "--source", "clipboard"]
 scenarios = [
@@ -226,6 +239,7 @@ for argv, env, code in scenarios:
 result = {
     "codes": codes,
     "copied": copied,
+    "at_output": at_output,
     "added": sorted(set(sys.modules) - started),
     "loaded": sorted(sys.modules),
 }
@@ -436,15 +450,18 @@ WINDOWS_EXTENSIONS = (
     "_uuid",
     "_wmi",
     "_zoneinfo",
+    "_zstd",
     "pyexpat",
     "select",
     "unicodedata",
     "winsound",
 )
-# Loaded by `import typer` itself (typer.main imports shutil, which tries bz2 and lzma, plus
-# subprocess and uuid), so they stay until a trigger entry runs without Typer (#313).
-# test_trigger_path_adds_no_windows_extension_of_its_own proves Typer is their only source.
-TYPER_EXTENSIONS = ("_bz2", "_lzma", "select", "_uuid")
+# What `import typer` itself may load of them: typer.main imports shutil (which tries bz2,
+# lzma and, from 3.14, compression.zstd), subprocess (select, on POSIX only), uuid and
+# platform (_wmi, on Windows from 3.12). Which ones load depends on the OS and the Python
+# version, so the typer_extensions fixture measures them in a fresh interpreter, held to this
+# ceiling. They stay until a trigger entry runs without Typer (#313).
+TYPER_EXTENSIONS_ALLOWED = ("_bz2", "_lzma", "select", "_uuid", "_wmi", "_zstd")
 
 
 def _isolated_env(tmp: Path) -> dict[str, str]:
@@ -492,12 +509,60 @@ def test_version_startup_budget(tmp_path: Path) -> None:
     assert len(data["added"]) <= VERSION_CEILING, f"--version added {len(data['added'])}"
 
 
-def test_improve_startup_budget(tmp_path: Path) -> None:
+_TYPER_RUN = """
+import sys
+out = sys.argv[1]
+started = set(sys.modules)
+import typer
+import json
+from pathlib import Path
+Path(out).write_text(json.dumps({"added": sorted(set(sys.modules) - started)}), encoding="utf-8")
+"""
+
+
+@pytest.fixture(scope="module")
+def typer_extensions(tmp_path_factory: pytest.TempPathFactory) -> set[str]:
+    """The WINDOWS_EXTENSIONS that `import typer` loads in a fresh interpreter, on this OS and
+    Python: the only ones a trigger may load before its provider call."""
+    _, data = _startup(_TYPER_RUN, tmp_path_factory.mktemp("typer"))
+    return set(_loaded(data["added"], WINDOWS_EXTENSIONS))
+
+
+def test_typer_loads_only_the_allowed_extensions(typer_extensions: set[str]) -> None:
+    assert typer_extensions <= set(TYPER_EXTENSIONS_ALLOWED)
+
+
+def test_improve_startup_budget(tmp_path: Path, typer_extensions: set[str]) -> None:
     stdout, data = _startup(_IMPROVE_RUN, tmp_path)
     assert (stdout, data["code"]) == (b"done", 0)
     assert _loaded(data["added"], IMPROVE_FORBIDDEN) == []
     assert len(data["added"]) <= IMPROVE_CEILING, f"improve added {len(data['added'])}"
-    assert set(_loaded(data["added"], WINDOWS_EXTENSIONS)) <= set(TYPER_EXTENSIONS)
+    assert set(_loaded(data["added"], WINDOWS_EXTENSIONS)) <= typer_extensions
+
+
+# The same through a gated cloud provider (OpenRouter, a placeholder key): the gate scans the
+# draft before the call, and an ASCII draft needs no unicodedata for that (#312).
+_CLOUD_RUN = (
+    _IMPROVE_RUN.replace('"ollama"', '"openrouter"')
+    .replace("import ollama", "import openai_compatible")
+    .replace("ollama.post_json", "openai_compatible.post_json")
+    .replace(
+        '{"message": {"content": "done"}, "done_reason": "stop"}',
+        '{"choices": [{"message": {"content": "done"}, "finish_reason": "stop"}]}',
+    )
+)
+# Built at runtime, so no key-shaped literal lands in the repo.
+CLOUD_KEY = {"OPENROUTER_API_KEY": "-".join(("test", "key"))}
+
+
+def test_cloud_improve_startup_budget(tmp_path: Path, typer_extensions: set[str]) -> None:
+    assert "ollama" not in _CLOUD_RUN
+    stdout, data = _startup(_CLOUD_RUN, tmp_path, CLOUD_KEY)
+    assert (stdout, data["code"]) == (b"done", 0)
+    assert "promptmend.gate" in data["added"]
+    assert _loaded(data["added"], IMPROVE_FORBIDDEN) == []
+    assert len(data["added"]) <= IMPROVE_CEILING, f"improve added {len(data['added'])}"
+    assert set(_loaded(data["added"], WINDOWS_EXTENSIONS)) <= typer_extensions
 
 
 # The whole persona run (the -p- snippet), with the usage history off: with it on, the
@@ -521,24 +586,26 @@ Path(out).write_text(json.dumps({"added": added}), encoding="utf-8")
 """
 
 
-def test_persona_startup_budget(tmp_path: Path) -> None:
+def test_persona_startup_budget(tmp_path: Path, typer_extensions: set[str]) -> None:
     stdout, data = _startup(_PERSONA_RUN, tmp_path, NO_HISTORY)
     assert stdout == PLACEHOLDER
     assert _loaded(data["added"], IMPROVE_FORBIDDEN) == []
     assert len(data["added"]) <= PERSONA_CEILING, f"persona added {len(data['added'])}"
-    assert set(_loaded(data["added"], WINDOWS_EXTENSIONS)) <= set(TYPER_EXTENSIONS)
+    assert set(_loaded(data["added"], WINDOWS_EXTENSIONS)) <= typer_extensions
 
 
 # With Typer imported before the count starts, the trigger path itself adds no Windows
-# extension module: TYPER_EXTENSIONS above are Typer's, not a module of ours that hides
-# behind it. Its own clipboard probe stays out too: a --text draft reads no clipboard.
-@pytest.mark.parametrize("script", [_IMPROVE_RUN, _PERSONA_RUN], ids=["improve", "persona"])
+# extension module: the ones it loads are Typer's, not a module of ours hiding behind it.
+# Its own clipboard probe stays out too: a --text draft reads no clipboard.
+@pytest.mark.parametrize(
+    "script", [_IMPROVE_RUN, _CLOUD_RUN, _PERSONA_RUN], ids=["improve", "cloud", "persona"]
+)
 def test_trigger_path_adds_no_windows_extension_of_its_own(tmp_path: Path, script: str) -> None:
     after_typer = script.replace(
         "started = set(sys.modules)", "import typer\nstarted = set(sys.modules)", 1
     )
     assert after_typer != script
-    _, data = _startup(after_typer, tmp_path, NO_HISTORY)
+    _, data = _startup(after_typer, tmp_path, {**NO_HISTORY, **CLOUD_KEY})
     assert "typer" not in data["added"]
     assert _loaded(data["added"], WINDOWS_EXTENSIONS) == []
 
@@ -591,6 +658,29 @@ def test_try_pane_does_not_import_cli(tmp_path: Path) -> None:
     loaded = _imports("promptmend.tui.try_pane", tmp_path)
     assert "promptmend.pipeline" in loaded
     assert _loaded(loaded, ("promptmend.cli", "promptmend.trigger")) == []
+
+
+# The version is read where it is used, never at import (#318): importing the usage history
+# does not load importlib.metadata, and a trigger run reads the installed metadata only to
+# record the run (its app_version), after the output is printed: not yet loaded when the first
+# output is printed, and never with tracking off (which also catches a dependency that starts
+# importing importlib.metadata eagerly). Later outputs in the same process follow the first
+# run's record, so only the first is checked in the tracking-on run.
+def test_history_import_does_not_read_the_version(tmp_path: Path) -> None:
+    loaded = _imports("promptmend.history", tmp_path)
+    assert "promptmend.history" in loaded
+    assert _loaded(loaded, ("importlib.metadata",)) == []
+
+
+def test_trigger_run_reads_the_version_only_after_output_to_record(
+    trigger_run: tuple[list[bytes], dict[str, Any]],
+) -> None:
+    _, data = trigger_run
+    assert len(data["at_output"]) == 7  # one output per scenario
+    assert data["at_output"][0] is False
+    if not data["tracking"]:
+        assert not any(data["at_output"])
+    assert ("importlib.metadata" in data["loaded"]) is data["tracking"]
 
 
 # The headless management commands, --help and the bare command without a terminal never load
