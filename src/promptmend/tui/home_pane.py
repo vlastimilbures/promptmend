@@ -15,7 +15,7 @@ from .. import doctor
 from ..commands import doctor as doctor_cmd
 from . import teach
 from .base import Pane, button_row
-from .home import NOTE, TAB_LABELS, HomeRow, headline, home_rows
+from .home import NOTE, TAB_LABELS, WAIT, HomeRow, headline, home_rows
 from .state import State
 
 
@@ -26,6 +26,9 @@ def _jump(tab: str | None) -> str:
 # Home's word and colour for a newer release (#197): its own, apart from doctor's four, so the
 # word says it in either theme and without colour.
 _NOTE_LABEL = ("new", "bold magenta")
+# A row still being checked (#317): muted; its text says `checking`.
+_WAIT_LABEL = ("…", "dim")
+_OWN_LABELS = {NOTE: _NOTE_LABEL, WAIT: _WAIT_LABEL}
 
 
 def home_table(rows: Sequence[HomeRow]) -> Table:
@@ -38,9 +41,9 @@ def home_table(rows: Sequence[HomeRow]) -> Table:
     grid.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
     grid.add_column(no_wrap=True, justify="right")
     for row in rows:
-        label, color = _NOTE_LABEL if row.status == NOTE else doctor_cmd.LABEL[row.status]
+        label, color = _OWN_LABELS.get(row.status) or doctor_cmd.LABEL[row.status]
         side = [row.detail] if row.detail else []
-        if row.status not in (doctor.OK, NOTE):
+        if row.status not in (doctor.OK, NOTE, WAIT):
             side.append(_jump(row.jump))
         grid.add_row(
             Text(label, style=color),

@@ -28,6 +28,9 @@ def _servers_down(state: State) -> set[str]:
 
 
 class TriggersPane(Pane):
+    # Each shows or changes what the plan compares (#317): they wait for the full State.
+    FULL_ONLY = ("show-diff", "deploy", "detach")
+
     def compose(self) -> ComposeResult:
         yield Static(
             "Each trigger names its provider in its command line, so PROMPT_PROVIDER does not "
@@ -52,6 +55,9 @@ class TriggersPane(Pane):
 
     def show(self, state: State) -> None:
         states = {s.name: s.state for s in state.plan.steps} if state.plan else {}
+        # A quick State has no plan yet (#317): each file is being compared.
+        unread = "checking" if state.failed is None else "not checked"
+        unknown = "unknown" if state.full else unread
         down = _servers_down(state)
         table = self.query_one("#triggers", DataTable)
         table.clear()
@@ -65,14 +71,20 @@ class TriggersPane(Pane):
             else:
                 provider = "prints PROMPT_PERSONA" if t.command == "persona" else "static snippet"
                 profile = tier = "-"
-            where = states.get(t.file, "unknown") if t.active else "commented out"
+            where = states.get(t.file, unknown) if t.active else "commented out"
             # Once its file is there, what typing it needs beats the file's state (#220).
-            deployed = where not in (deploy.MISSING, "unknown")
+            deployed = where not in (deploy.MISSING, unknown)
             if deployed and t.active and t.command == "improve" and t.provider in down:
                 where = f"needs {PROVIDER_LABELS[t.provider]}"
             add_row(table, t.trigger, provider, tier, profile, where, t.file)
         target = self.query_one("#deploy-target", Static)
-        if state.plan is None:
+        if not state.full:
+            target.update(
+                "Checking the match files and Espanso… Show diff, Deploy and Detach wait for it."
+                if state.failed is None
+                else f"Not compared with Espanso: the checks could not run ({state.failed})."
+            )
+        elif state.plan is None:
             target.update(f"Cannot compare with Espanso: {state.plan_error}")
         else:
             text = (
@@ -90,6 +102,8 @@ class TriggersPane(Pane):
 
     @on(Button.Pressed, "#show-diff")
     def _diff(self) -> None:
+        if self.waits():
+            return
         plan = self.state.plan if self.state else None
         if plan is None:
             self.report("No plan: Espanso's folder or this install's launcher was not found.")
@@ -108,7 +122,9 @@ class TriggersPane(Pane):
 
     def claim(self) -> bool:
         """Start a deploy or detach unless one is already open: a second dialog would apply
-        a plan the first one already changed."""
+        a plan the first one already changed. Never on the quick State (#317)."""
+        if self.waits():
+            return False
         if self.busy:
             self.report("A deploy or detach is already in progress; finish or cancel it first.")
             return False

@@ -31,6 +31,17 @@ All notable changes to this project are documented here. The format follows
   `--json` adds a `timing` key (`schema_version` stays 1); plain `doctor` is unchanged.
 
 ### Changed
+- The interface paints Home at once (#317): the rows that need only the settings (what `-i-`
+  and `-ip-` run, the output mode) appear first, and the match files and Espanso, the usage
+  history and the checks say `checking` until `doctor` and the deploy plan are read, then the
+  whole screen fills in together (after every change and `r` too). Show diff, Deploy and
+  Detach (Triggers) and Prune and Reset (History) are greyed out until then, and a first run
+  offers the setup only once it knows nothing is installed. When the checks cannot run, their
+  rows say `not checked` instead of the screen staying empty. With a slow Espanso the first
+  rows appear in about 60 ms instead of after the whole check (1.5 s in a test with a slow
+  doctor and plan). Holding `r` while Espanso hangs runs at most three checks at once.
+  On Windows with Python 3.12 the interface now gives its background reads their turn
+  (#348); the effect is still to be measured on a real machine.
 - `--effort` is accepted with `--provider openai` too (it sets `OPENAI_REASONING_EFFORT` for
   the call); `--tier pro` stays OpenRouter only. The refusal names which providers take each
   option.

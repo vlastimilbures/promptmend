@@ -468,6 +468,8 @@ def secret_store(directory: Path) -> FileSecretStore:
     Espanso-launched (non-TTY) process on macOS, including after the interpreter path changes,
     and on Windows. It must raise SecretStoreError on any keyring failure; it must never fall
     back to this file. Import keyring lazily (it is forbidden on the trigger path). Bring
-    back a SecretStore Protocol then, for the two stores.
+    back a SecretStore Protocol then, for the two stores. The store is also read on the
+    interface's loop thread by tui.state.quick() (#317, #348), so a keyring store must stay
+    off the loop there (quick() needs only whether each key is set).
     """
     return FileSecretStore(directory / SECRETS_FILE)

@@ -4,7 +4,7 @@ results and errors, and the deploy preview's digest."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import typer
 from rich.text import Text
@@ -96,20 +96,53 @@ class Reports(_Mixin):
             self.manage.reload()
 
 
+# What a button that waits for the full State says when it is pressed anyway (#317).
+WAITING = "Still checking; this waits until the checks are done."
+NOT_CHECKED = "The checks could not run, so this cannot either; r checks again."
+
+
 class Pane(Reports, VerticalScroll):
-    """One tab. ``show()`` fills it from a fresh State; ``report()`` shows an action's result
+    """One tab. ``paint()`` fills it from a fresh State; ``report()`` shows an action's result
     on the pane and as a notification."""
 
     ready = False
     # A deploy or detach dialog is open or running (TriggersPane).
     busy = False
+    # The buttons whose action reads, or acts on, what only the full State holds (the plan,
+    # the doctor report, the stats): disabled until it is shown (#317). Each action checks
+    # waits() too, for a call that does not come from its button.
+    FULL_ONLY: ClassVar[tuple[str, ...]] = ()
 
     def on_mount(self) -> None:
         # A State read before this pane was composed is shown now (the load runs in a thread).
         self.setup()
         self.ready = True
         if self.state is not None:
-            self.show(self.state)
+            self.paint(self.state)
+        else:
+            self.gate(None)
+
+    def paint(self, state: State) -> None:
+        """Show ``state`` (each stage of a reload, #317) and enable what it allows."""
+        self.show(state)
+        self.gate(state)
+
+    def gate(self, state: State | None) -> None:
+        """FULL_ONLY's buttons enabled only once a full State is shown: disabled before any
+        State (None) and while ``state`` is the quick one."""
+        for id_ in self.FULL_ONLY:
+            self.query_one(f"#{id_}", Button).disabled = state is None or not state.full
+
+    def waits(self) -> bool:
+        """Whether an action that needs the full State must wait for it: refused, visibly
+        (never queued, so nothing runs later unasked), while only the quick State is in.
+        Before any State its button is disabled; a call then goes on, as the action reads
+        what it acts on itself or says it has nothing."""
+        state = self.state
+        if state is None or state.full:
+            return False
+        self.report(WAITING if state.failed is None else NOT_CHECKED)
+        return True
 
     def setup(self) -> None:
         """Add the table columns; called once the pane's widgets exist."""

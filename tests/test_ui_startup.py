@@ -14,7 +14,8 @@ from test_trigger_contract import _loaded, _startup
 
 # The app up to Textual's Ready event (sent once the first frame is displayed), then the Try
 # tab opened, to show that what was left out is loaded on first use. The loader blocks until
-# then: no State, no doctor run, no Espanso query, nothing read from the network.
+# then, both stages (#317): no State, no doctor run, no Espanso query, nothing read from the
+# network.
 _UI_RUN = """
 import sys
 started = set(sys.modules)
@@ -27,9 +28,14 @@ release = threading.Event()
 seen = {}
 
 
-def loader(group_by):
+def loader(group_by, first=None):
     release.wait(30)
     raise RuntimeError("the stub loader reads nothing")
+
+
+def quick_loader(group_by):
+    # Read on the app's loop (#348), so it cannot wait: it reads nothing at once.
+    raise RuntimeError("the stub quick loader reads nothing")
 
 
 class FirstPaint(ManageApp):
@@ -42,7 +48,7 @@ class FirstPaint(ManageApp):
         self.exit(0)
 
 
-app = FirstPaint(loader=loader)
+app = FirstPaint(loader=loader, quick_loader=quick_loader)
 app.run(headless=True, size=(110, 36))
 import json
 from pathlib import Path

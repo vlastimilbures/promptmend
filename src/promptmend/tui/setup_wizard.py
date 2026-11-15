@@ -28,7 +28,6 @@ from textual.widgets import (
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
 from .. import config, deploy, setup_flow, setup_guide, smoke
-from ..commands import common
 from ..config import secret_names
 from . import teach
 from .base import error_message, plan_digest, result_text
@@ -73,6 +72,7 @@ class SetupScreen(Screen[None]):
         self.at = "welcome"
         self.plan: deploy.Plan | None = None
         self.plan_error: str | None = None
+        self.plan_asked = False
         self.tested: bool | None = None
         self.working = False
         self.keys: list[setup_guide.KeyRow] = []
@@ -192,7 +192,7 @@ class SetupScreen(Screen[None]):
             self.options.profile,
         )
         self.keys = setup_guide.key_rows(state.layers, state.settings, state.triggers)
-        legacy = common.legacy_env()
+        legacy = where.legacy
         self.query_one("#setup-keys-intro", Static).update(
             setup_guide.legacy_keys_intro(legacy) if legacy else setup_guide.KEYS_INTRO
         )
@@ -203,9 +203,30 @@ class SetupScreen(Screen[None]):
         for row in self.keys:
             self.query_one(f"#setup-line-{row.name}", Static).update(setup_guide.key_line(row))
         servers = next((c for c in state.report.checks if c.id == "local_servers"), None)
-        self.query_one("#setup-servers", Static).update(servers.message if servers else "")
-        self._refresh_plan()
-        self.go(self.at)
+        line = servers.message if servers else ""
+        if not state.full:  # a quick State (#317)
+            line = (
+                "Checking whether a local server answers…"
+                if state.failed is None
+                else "Not checked whether a local server answers: the checks could not run."
+            )
+        self.query_one("#setup-servers", Static).update(line)
+        # The Espanso step reads its own plan: once per reload (its full State), and at once
+        # the first time, so a quick State never asks Espanso twice.
+        if state.full or not self.plan_asked:
+            self.plan_asked = True
+            self._refresh_plan()
+        # Each stage of a reload comes here (#317): the person's place (a typed key field, a
+        # button) keeps the focus; it moves only when nothing in this step has it.
+        self.go(self.at, refocus=not self._focus_in_step())
+
+    def _focus_in_step(self) -> bool:
+        """Whether the focus is in the current step or on its Back/Next row."""
+        focused = self.focused
+        if focused is None:
+            return False
+        holders = (self.query_one(f"#setup-{self.at}"), self.query_one("#setup-nav"))
+        return any(holder in focused.ancestors_with_self for holder in holders)
 
     def _fill(self, selector: str, choices: list[setup_guide.Choice], preset: str | None) -> None:
         options = self.query_one(selector, OptionList)
@@ -224,7 +245,7 @@ class SetupScreen(Screen[None]):
             except OptionDoesNotExist:
                 options.highlighted = 0
 
-    def go(self, step: str) -> None:
+    def go(self, step: str, *, refocus: bool = True) -> None:
         self.at = step
         self.query_one("#setup-steps", ContentSwitcher).current = f"setup-{step}"
         n = self.order.index(step) + 1 if step in self.order else 1
@@ -235,10 +256,18 @@ class SetupScreen(Screen[None]):
             mark = "▶ " if id_ == step else "✓ " if i < n - 1 else "  "
             rail.append(f"{mark}{setup_guide.STEPS[id_]}\n", style="bold" if id_ == step else "")
         self.query_one("#setup-rail", Static).update(rail)
-        self.query_one("#setup-back", Button).disabled = step == self.order[0]
-        self.query_one("#setup-nav").display = step != "done"
+        done = step == "done"
+        # Hidden on the last step, and disabled too: Textual can focus a button whose row is
+        # hidden (focusable ignores an ancestor's display), so a focus already on its way to
+        # Next, or Next's hiding moving the focus to its sibling Back, would leave the focus
+        # on a button nobody sees (#317). Disabled, neither can take it.
+        self.query_one("#setup-back", Button).disabled = step == self.order[0] or done
+        self.query_one("#setup-next-step", Button).disabled = done
+        self.query_one("#setup-nav").display = not done
         if step == "done":
-            self._show_done()
+            # Its own focus (Quit): the hidden Next must not take it after.
+            self._show_done(focus=refocus)
+            return
         focus = {"provider": "#setup-providers", "profile": "#setup-profiles"}.get(step)
         if (
             step == "espanso"
@@ -246,6 +275,8 @@ class SetupScreen(Screen[None]):
             and not self.query_one("#setup-deploy", Button).disabled
         ):
             focus = "#setup-deploy"
+        if not refocus:
+            return
         if focus:
             self.call_after_refresh(self.query_one(focus).focus)
         else:
@@ -308,7 +339,7 @@ class SetupScreen(Screen[None]):
         if option is None or option.id is None:
             return True
         value = option.id
-        legacy = common.legacy_env()
+        legacy = setup_flow.storage().legacy
         if legacy:
             # Nothing can be saved (as headless setup's writable=False): say so and move on.
             if setup_flow.current_choice(name) != value:
@@ -337,7 +368,7 @@ class SetupScreen(Screen[None]):
             for name in secret_names()
             if (field := self.query_one(f"#setup-key-{name}", Input)).value.strip()
         ]
-        if not typed or common.legacy_env():
+        if not typed or setup_flow.storage().legacy:
             return True
         command = "; ".join(teach.for_setting("set-key", name) for name, _ in typed)
         ok = self.attempt(lambda: setup_flow.save_keys(typed), command=command)
@@ -382,9 +413,9 @@ class SetupScreen(Screen[None]):
         lines += [f"  {name:<{width}}  {words}" for name, words in setup_guide.file_rows(plan)]
         lines += ["", setup_guide.deploy_summary(plan)]
         self.query_one("#setup-files", Static).update("\n".join(lines))
-        button.disabled = plan.is_noop or plan.only_forgets
+        button.disabled = setup_flow.in_sync(plan)
         if self.at == "done":
-            self._show_done()
+            self._show_done(focus=not self._focus_in_step())
 
     @on(Button.Pressed, "#setup-deploy")
     def _deploy(self) -> None:
@@ -452,19 +483,27 @@ class SetupScreen(Screen[None]):
 
     # The last step.
 
-    def _show_done(self) -> None:
+    def _show_done(self, *, focus: bool = True) -> None:
+        """The checklist; ``focus`` puts the focus on Quit (Close), off when a refresh comes
+        while the person is already somewhere in this step (#317)."""
         state = self.manage.state
         if state is None:
             return
         summary = Text()
         for row in setup_guide.done_rows(
-            state.settings, self.keys, self.plan, self.tested, common.legacy_env(), self.skipped
+            state.settings,
+            self.keys,
+            self.plan,
+            self.tested,
+            setup_flow.storage().legacy,
+            self.skipped,
         ):
             summary.append("✓ " if row.ok else "✗ ", style="green" if row.ok else "yellow")
             summary.append(f"{row.label}: ", style="bold")
             summary.append(f"{row.text}\n")
         self.query_one("#setup-summary", Static).update(summary)
-        self.call_after_refresh(self.query_one("#setup-quit").focus)
+        if focus:
+            self.call_after_refresh(self.query_one("#setup-quit").focus)
 
     @on(Button.Pressed, "#setup-open")
     def _open(self) -> None:

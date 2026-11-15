@@ -101,6 +101,30 @@ fixes it. Below, each row has a status word (ok, warn, FAIL) and the tab that fi
 The header shows the same status (`ok`, or `1 problem, 2 warnings`). Home also lists this
 session's commands, or a few useful ones before you have done anything.
 
+Home appears at once, in two steps. The rows that need only your settings (what `-i-` and
+`-ip-` run, the output mode) fill in first; the match files and Espanso, the usage history
+and the checks need `doctor` and the deploy plan, which can take a moment (Espanso is asked),
+so until they are read their rows show `…` and say `checking`, the headline says
+`Checking Espanso, the match files and the history…` (without the history when it is off)
+and the header says `checking`. Every tab shows the same step, and the whole screen fills in
+together when the checks are done, keeping your place (a table's cursor, a field you are
+typing in); this happens again after every change and every `r`. If the checks cannot run, those rows say
+`not checked` and point to `r`, which tries again. At most three checks run at once: with
+Espanso not answering, pressing `r` again and again still shows the settings rows each time,
+and the newest press is checked once an earlier check ends. On Windows with Python 3.12 the
+interface now gives its background reads their turn (#348); the effect is still to be
+measured on a real machine. While a reload reads the rest, the Version row keeps the
+answer it already had; it may then say `checking` again until that reload's update check
+lands.
+
+Buttons that act on what is still being checked wait for it: Show diff, Deploy and Detach on
+the Triggers tab and Prune and Reset on the History tab are greyed out until then (pressed
+anyway, they say they wait; nothing is queued to run later), and a first run offers the
+setup only once it knows nothing is installed. Everything that needs only your settings
+(the Settings, Profiles and Try tabs, Home's buttons, Export) works at once.
+
+![Home while the checks still run](../tests/snapshots/home-quick.svg)
+
 ## Settings tab
 
 The Settings tab (`2`) lists every setting and both API keys, grouped (Output, Keys, Privacy,

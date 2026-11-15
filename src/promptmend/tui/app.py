@@ -5,15 +5,24 @@ and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself.
 Only Home is built at start (#316): every other tab's pane, and its module, the first time
 that tab opens, and the setup wizard the first time it is opened, so the first paint loads
 none of them (tests/test_ui_startup.py pins what it loads). A pane built later shows the
-current State as it mounts (Pane.on_mount)."""
+current State as it mounts (Pane.on_mount).
+
+Each reload has two stages (#317), one after the other in its worker: the quick State
+(settings, profiles, triggers; local reads of a few milliseconds) is read on the app's loop
+and shown at once, the full one, read in a thread, replaces it. Every screen gets
+the same State object at each stage (#83). The generation guard orders them: a stage of an
+older reload never replaces a newer reload's, so a screen goes quick, full, late update
+within one reload, and a newer reload's quick State supersedes everything older."""
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import importlib
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -27,15 +36,42 @@ from .. import installed_version
 from ..update_check import UpdateStatus
 from . import brand, teach
 from .base import Pane
-from .home import TAB_LABELS, pill
+from .home import TAB_LABELS, status_pill
 from .home_pane import HomePane
 from .intro import AboutScreen
-from .state import State, gather, needs_setup
+from .state import State, _beside, gather, needs_setup, quick
 
 if TYPE_CHECKING:
     from .setup_wizard import SetupOptions, SetupScreen
 
 DEFAULT_THEME = "textual-dark"
+# Full reads (doctor, the plan, the stats) running at once, see ManageApp._read_full().
+FULL_READS = 3
+# The GIL switch interval while the interface runs on Windows with Python 3.12, see
+# threads_get_their_turn().
+WINDOWS_312_SWITCH_INTERVAL = 0.0005
+
+
+@contextlib.contextmanager
+def threads_get_their_turn() -> Iterator[None]:
+    """While the interface runs on Windows with Python < 3.13, a shorter GIL switch interval,
+    the previous one restored after. There the app's loop keeps the GIL so much that every
+    other thread (the full read, the update check, the setup plan) waits about one interval
+    each time it gets it back after a system call: a quick() that takes 3 ms on the loop
+    took 11-13 s in a thread while the app ran, against 3 ms on 3.13 and 3.14 (#348).
+    Process-wide, so only for the interface's run: never the triggers or the headless
+    commands, which never import this module."""
+    if sys.platform != "win32" or sys.version_info >= (3, 13):
+        yield
+        return
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(WINDOWS_312_SWITCH_INTERVAL)
+    try:
+        yield
+    finally:
+        sys.setswitchinterval(previous)
+
+
 HIGH_CONTRAST = Theme(
     name="high-contrast",
     primary="#ffff00",
@@ -202,6 +238,11 @@ class MainScreen(Screen[None]):
         elif self.focused is not None and settings in self.focused.ancestors_with_self:
             self.set_focus(None)
 
+    def on_screen_resume(self) -> None:
+        """Back on the tabs (a dialog or About closed): a first-run offer held back while it
+        was open comes now (#317); it does nothing when there is none."""
+        cast("ManageApp", self.app)._maybe_offer()
+
     def _focus_settings_list(self) -> None:
         """After the refresh, once the Settings pane is mounted and filled (looked up then, so
         a tab activated while it is still mounting never queries a list not there yet)."""
@@ -221,14 +262,19 @@ class ManageApp(App[int]):
     def __init__(
         self,
         *,
-        loader: Callable[[str], State] = gather,
+        loader: Callable[[str, State | None], State] = gather,
+        quick_loader: Callable[[str], State] | None = quick,
         setup: SetupOptions | None = None,
         first_run: bool = False,
     ) -> None:
         super().__init__()
         # Read here, not at import, so the snapshot tests can pin it and a release changes none.
         self.title = f"{self.TITLE} {installed_version()}"
+        # The full read: given the group-by and this reload's quick State (or None), whose
+        # settings, profiles and triggers it reuses (gather's ``first``).
         self.loader = loader
+        # The first stage (#317); None: one stage, the loader's State only.
+        self.quick_loader = quick_loader
         self.group_by = "trigger"
         self.state: State | None = None
         # Each reload's number. A thread cannot be stopped, so a slower, older load may finish
@@ -236,6 +282,9 @@ class ManageApp(App[int]):
         self.generation = 0
         # The reload whose State is on screen (0: none yet).
         self.shown = 0
+        # Full reads at once, a cancelled reload's thread counted until it ends: a hung
+        # Espanso and a held `r` cannot start thread after thread (and child after child).
+        self.full_reads = asyncio.Semaphore(FULL_READS)
         self.main = MainScreen()
         # This session's actions as commands (#111), shown on Home.
         self.session: list[teach.Entry] = []
@@ -245,6 +294,12 @@ class ManageApp(App[int]):
         self.first_run = first_run
         self.register_theme(HIGH_CONTRAST)
         self.theme = DEFAULT_THEME
+
+    async def _process_messages(self, *args: Any, **kwargs: Any) -> None:
+        """The whole of the app's run, run() and run_test() alike (Textual's own entry point
+        for both), with threads_get_their_turn() around it (#348)."""
+        with threads_get_their_turn():
+            await super()._process_messages(*args, **kwargs)
 
     def on_mount(self) -> None:
         self.push_screen(self.main)
@@ -258,6 +313,8 @@ class ManageApp(App[int]):
         install = (
             next((c.data for c in report.checks if c.id == "install"), None) if report else None
         )
+        if self.state is not None and not self.state.full and self.state.failed is None:
+            install = {"channel": "checking"}  # doctor's install check is still running
         update = self.state.update if self.state else None
         return brand.about_facts(install, installed_version(), update)
 
@@ -282,28 +339,70 @@ class ManageApp(App[int]):
     def action_toggle_contrast(self) -> None:
         self.theme = DEFAULT_THEME if self.theme == HIGH_CONTRAST.name else HIGH_CONTRAST.name
 
-    @work(thread=True, exclusive=True, group="load", exit_on_error=False)
-    def _load(self, generation: int) -> None:
+    async def _read_full[T](self, read: Callable[[], T]) -> T:
+        """``read()`` in a daemon thread of its own (state._beside), awaited here, once fewer
+        than FULL_READS full reads are running. Not a thread worker: those share asyncio's
+        default thread pool, which a slow full read (doctor waiting on Espanso) would hold,
+        and on Windows Textual's own timers sleep in that pool too (#317). Cancelled (a newer
+        reload), the thread still ends on its own and its answer is dropped; its slot is given
+        back when the thread ends, since a thread cannot be stopped. A newer reload waiting
+        for one still shows its quick State."""
+        await self.full_reads.acquire()
+        loop = asyncio.get_running_loop()
+
+        def free(_: Future[T]) -> None:
+            with contextlib.suppress(RuntimeError):  # the app's loop closed: nothing to free
+                loop.call_soon_threadsafe(self.full_reads.release)
+
         try:
-            state = self.loader(self.group_by)
+            future = _beside(read, "promptmend-reload")
+        except BaseException:  # no thread started (RuntimeError: can't start new thread)
+            self.full_reads.release()
+            raise
+        future.add_done_callback(free)
+        return await asyncio.wrap_future(future)
+
+    @work(exclusive=True, group="load", exit_on_error=False)
+    async def _load(self, generation: int) -> None:
+        """One reload: the quick State, read here on the app's loop, then the full one, read
+        in a thread; both shown here. A newer reload cancels this one (exclusive), and the
+        generation guard in _show() drops whatever an older one would still show."""
+        first: State | None = None
+        group_by, quick_loader = self.group_by, self.quick_loader
+        if quick_loader is not None:
+            try:
+                # On the loop, not in a thread: local reads of a few milliseconds, so the
+                # first paint never waits for a thread to be scheduled (on Windows with
+                # Python 3.12 one took seconds while the app ran, #348). The update answer
+                # on screen stays until the full State has its own.
+                first = quick_loader(group_by).known_update(self.state)
+            except Exception:  # noqa: S110 - the full read below reads the same and reports it
+                pass
+            else:
+                self._show(first, generation)
+        try:
+            state = await self._read_full(lambda: self.loader(group_by, first))
         except Exception as exc:
-            self.call_from_thread(
-                self.notify,
-                f"Could not read the state: {type(exc).__name__}: {exc}",
-                severity="error",
-                markup=False,
-            )
+            error = f"{type(exc).__name__}: {exc}"
+            self.notify(f"Could not read the state: {error}", severity="error", markup=False)
+            # The quick State stays, its waiting rows saying they were not checked. With no
+            # quick State of its own, a still-waiting one on screen (an older reload's, whose
+            # full State the guard drops) says so too, never `checking` for ever.
+            waiting = self.state if first is None else first
+            if waiting is not None and not waiting.full and waiting.failed is None:
+                self._show(waiting.not_checked(error), generation)
             return
-        self.call_from_thread(self._show, state, generation)
+        self._show(state, generation)
         if state.pending is not None:
             # The update check lands after the rest (#315). Nothing waits for it, so this
             # worker ends now and quitting never waits either; when it lands, its thread
-            # posts the next State (post_message is thread-safe and never blocks).
-            first = state
+            # posts the next State (post_message is thread-safe and never blocks). Only a
+            # full State has one pending.
+            full = state
 
             def landed(done: Future[UpdateStatus]) -> None:
                 if generation == self.shown:
-                    self.post_message(LateUpdate(first.landed(done), generation))
+                    self.post_message(LateUpdate(full.landed(done), generation))
 
             state.pending.add_done_callback(landed)
 
@@ -313,12 +412,12 @@ class ManageApp(App[int]):
         object (#83), but only what shows the update repaints (Home, Diagnostics' checks, an
         open About), so no table cursor moves and the setup screen keeps its focus."""
         # The reload on screen: a newer one that failed showed nothing, so this one's Version
-        # row still fills in; one that showed its own State drops this.
-        if message.generation != self.shown or self.state is None:
+        # row still fills in; one that showed its own State (quick or full) drops this.
+        if message.generation != self.shown or self.state is None or not self.state.full:
             return
         state = message.state
         self.state = state
-        self.sub_title = f"{pill(state.report)} · {self.SUB_TITLE}"
+        self.sub_title = f"{status_pill(state)} · {self.SUB_TITLE}"
         for pane in self.main.query(Pane):
             if pane.ready:
                 pane.show_update(state)
@@ -327,17 +426,23 @@ class ManageApp(App[int]):
                 screen.show_facts(self._about_facts())
 
     def _show(self, state: State, generation: int) -> None:
+        """One stage of reload ``generation`` on every screen: the same State object for
+        each (#83). A stage of an older reload is dropped; within one reload the worker shows
+        the quick State before the full one."""
         if generation != self.generation:
             return  # an older load that finished late
         self.state = state
         self.shown = generation
-        self.sub_title = f"{pill(state.report)} · {self.SUB_TITLE}"
+        self.sub_title = f"{status_pill(state)} · {self.SUB_TITLE}"
         for pane in self.main.query(Pane):
             if pane.ready:
-                pane.show(state)
+                pane.paint(state)
         wizard = self._open_wizard()
         if wizard is not None and wizard.is_mounted:
             wizard.show(state)
+        for screen in self.screen_stack:
+            if isinstance(screen, AboutScreen) and screen.is_mounted:
+                screen.show_facts(self._about_facts())
         self._maybe_offer()
 
     def _open_wizard(self) -> SetupScreen | None:
@@ -349,16 +454,24 @@ class ManageApp(App[int]):
         return next((s for s in self.screen_stack if isinstance(s, wizard)), None)
 
     def _maybe_offer(self) -> None:
-        """Open the setup wizard by itself, once, when nothing is set up yet."""
-        if self.state is None or not self.first_run:
+        """Open the setup wizard by itself, once, when nothing is set up yet: asked of the
+        full State only, which has the plan (#317). The offer is used up once the wizard is
+        open (opened by hand during the quick stage, say); a dialog or About over the tabs
+        keeps it for the next State, so it never opens over them."""
+        if self.state is None or not self.state.full or not self.first_run:
             return
         if self._open_wizard() is not None:
+            self.first_run = False
+            return
+        if self.screen is not self.main:
             return
         self.first_run = False
         if needs_setup(self.state):
             self.open_setup()
 
     def open_setup(self) -> None:
-        """Show the setup wizard over the tabs, unless it is already open."""
+        """Show the setup wizard over the tabs, unless it is already open. Opened by hand, it
+        uses up the first run's offer."""
+        self.first_run = False
         if self._open_wizard() is None:
             self.push_screen(_setup_screen_class()())
