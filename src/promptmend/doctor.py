@@ -515,9 +515,11 @@ def _match_check(
         return Check("match_files", WARN, f"no Espanso match folder in {target}", data)
     text = deploy.launcher_text(launcher)
     # The caller's plan when it is this very comparison (the interface's, #315), else our own.
+    # Its folder is resolved (as a deploy writes the manifest's keys), so a linked Espanso
+    # folder shares it too, with the states the Triggers tab and a deploy see.
     same = (
         planned is not None
-        and planned.espanso_dir == target
+        and planned.espanso_dir in (target, deploy.resolved(target))
         and planned.launcher == text
         and planned.manifest is manifest
     )

@@ -78,6 +78,9 @@ class DiagnosticsPane(Pane):
             "Provider", "Model", "Base URL", "The draft", "Key"
         )
 
+    def show_update(self, state: State) -> None:
+        self.query_one("#all-checks", Static).update(_checks(state.report))
+
     def show(self, state: State) -> None:
         show_routes(self, state)
         layers = state.layers

@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import pytest
@@ -588,13 +588,64 @@ def test_resolve_uv_from_its_receipt_runs_nothing(tmp_path: Path) -> None:
     assert found == deploy.Launcher(launcher, "uv")
 
 
-def test_resolve_uv_windows_exe_from_its_receipt(tmp_path: Path) -> None:
+WIN_BIN = r"C:\Users\me\.local\bin"
+
+
+@pytest.mark.parametrize(
+    "install_path",
+    [
+        WIN_BIN + r"\promptmend.exe",
+        WIN_BIN + r"\PromptMend.EXE",  # odd case: still the canonical spelling
+        "C:/Users/me/.local/bin/promptmend.exe",
+    ],
+)
+def test_resolve_uv_windows_exe_from_its_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, install_path: str
+) -> None:
+    """The launcher is the bin folder joined with `promptmend.exe`, as `uv tool dir --bin`
+    gave it, whatever case the receipt spells it in."""
+    canonical = str(PureWindowsPath(WIN_BIN) / "promptmend.exe")
+    real_is_file = Path.is_file
+    monkeypatch.setattr(Path, "is_file", lambda self: str(self) == canonical or real_is_file(self))
     prefix = tmp_path / "tools" / "promptmend"
-    launcher = _exe(tmp_path / "bin" / "promptmend.exe")
-    _receipt(prefix, str(launcher))
+    _receipt(prefix, install_path)
     found = deploy.resolve_launcher(
         runner=_no_runner, prefix=prefix, script=tmp_path / "x", windows=True
     )
+    assert (str(found.path), found.channel) == (canonical, "uv")
+
+
+@pytest.mark.parametrize(
+    "install_path",
+    [
+        r"\\?\C:\Users\me\.local\bin\promptmend.exe",  # verbatim
+        r"\\.\C:\Users\me\.local\bin\promptmend.exe",  # device
+        r"\\server\share\bin\promptmend.exe",  # UNC
+        "//server/share/bin/promptmend.exe",  # UNC, forward slashes
+        r"\Users\me\.local\bin\promptmend.exe",  # no drive
+        r"C:promptmend.exe",  # drive-relative
+        r"bin\promptmend.exe",
+    ],
+)
+def test_a_windows_receipt_path_that_is_not_a_plain_drive_path_falls_back(
+    install_path: str,
+) -> None:
+    assert deploy._receipt_launcher_path(install_path, "promptmend.exe", windows=True) is None
+
+
+def test_a_windows_receipt_without_a_drive_path_runs_uv(tmp_path: Path) -> None:
+    """A POSIX path read as a Windows one has no drive: `uv tool dir` decides."""
+    tools, bin_dir = tmp_path / "tools", tmp_path / "bin"
+    launcher = _exe(bin_dir / "promptmend.exe")
+    _receipt(tools / "promptmend", str(launcher))
+    fake = FakeRunner({"uv tool dir": str(tools), "uv tool dir --bin": str(bin_dir)})
+    found = deploy.resolve_launcher(
+        runner=fake, prefix=tools / "promptmend", script=tmp_path / "x", windows=True
+    )
+    if os.name == "nt":  # a real drive path there: taken from the receipt
+        assert fake.calls == []
+    else:
+        assert len(fake.calls) == 2
     assert found == deploy.Launcher(launcher, "uv")
 
 

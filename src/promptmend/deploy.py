@@ -357,11 +357,34 @@ def _receipt_entry_point(text: str, exe: str, *, windows: bool) -> str | None:
     return None
 
 
+# A Windows path uv writes for a tool's bin dir: a drive letter, then the rest (`C:\\...`).
+_DRIVE = re.compile(r"[A-Za-z]:")
+
+
+def _receipt_launcher_path(where: str, exe: str, *, windows: bool) -> Path | None:
+    """The launcher an entry point's ``install-path`` names, spelled as the `uv tool dir
+    --bin` lookup spells it: its folder joined with ``exe``. On Windows only a plain drive
+    path (`C:\\Users\\...`): a verbatim (`\\\\?\\`), device (`\\\\.\\`) or UNC
+    (`\\\\server\\share`) path is None, so the match files never get one. On POSIX an
+    absolute path, as written."""
+    if windows:
+        from pathlib import PureWindowsPath
+
+        if where.startswith(("\\\\", "//", "\\/", "/\\")):
+            return None
+        pure = PureWindowsPath(where)
+        if not _DRIVE.fullmatch(pure.drive) or not pure.is_absolute():
+            return None
+        return Path(str(pure.parent / exe))
+    path = Path(where)
+    return path if path.is_absolute() else None
+
+
 def _uv_receipt_launcher(prefix: Path, exe: str, *, windows: bool) -> Path | None:
     """This tool's launcher from the uv receipt in ``prefix``, without running `uv` (#315):
     only when the receipt is a readable file, names promptmend's entry point, and that entry
-    point is an absolute path to an existing file. Anything else is None: then `uv tool dir`
-    decides, as before."""
+    point is an absolute path (on Windows a plain drive path) to an existing file. Anything
+    else is None: then `uv tool dir` decides, as before."""
     receipt = prefix / UV_RECEIPT
     try:
         if receipt.is_symlink() or not receipt.is_file():
@@ -370,11 +393,9 @@ def _uv_receipt_launcher(prefix: Path, exe: str, *, windows: bool) -> Path | Non
     except (OSError, UnicodeDecodeError):
         return None
     where = _receipt_entry_point(text, exe, windows=windows)
-    if where is None:
-        return None
-    path = Path(where)
+    path = None if where is None else _receipt_launcher_path(where, exe, windows=windows)
     try:
-        return path if path.is_absolute() and path.is_file() else None
+        return path if path is not None and path.is_file() else None
     except OSError:
         return None
 

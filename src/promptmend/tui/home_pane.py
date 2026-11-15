@@ -107,6 +107,10 @@ class HomePane(Pane):
         self.query_one("#home-headline", Static).update(home_headline(self.rows))
         self.query_one("#home-rows", Static).update(home_table(self.rows))
 
+    def show_update(self, state: State) -> None:
+        # Home is two Statics, nothing to keep: its Version row and headline are redrawn.
+        self.show(state)
+
     def setup(self) -> None:
         self.query_one("#home-copy", Button).disabled = not self.manage.session
 

@@ -49,6 +49,29 @@ def test_install_reports_the_channel(tmp_path: Path) -> None:
     assert (check.status, check.data["channel"], check.data["launcher"]) == ("ok", "uv", str(exe))
 
 
+def test_a_uv_install_is_recognised_without_uv_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: the tool's own uv receipt names the launcher, so the install check says uv even
+    when `uv` is not on PATH (every command answers not found here). Before, it fell back
+    to the running console script."""
+    prefix = tmp_path / "uv" / "tools" / "promptmend"
+    prefix.mkdir(parents=True)
+    exe = tmp_path / "bin" / f"promptmend{EXE}"
+    exe.parent.mkdir()
+    exe.write_text("", "utf-8")
+    (prefix / deploy.UV_RECEIPT).write_text(
+        f"[tool]\nentrypoints = [{{ name = 'promptmend', install-path = '{exe}' }}]\n", "utf-8"
+    )
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    monkeypatch.setattr(sys, "argv", [str(exe)])
+    espanso = tmp_path / "espanso"
+    (espanso / "match").mkdir(parents=True)
+    report = doctor.run(espanso_dir=espanso, clipboard=False, runner=lambda argv: None)
+    install = _status("install", report)
+    assert (install.data["channel"], install.data["launcher"]) == ("uv", str(exe))
+
+
 def test_install_without_a_launcher_guesses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -424,15 +447,24 @@ def test_a_given_plan_counts_only_for_the_same_comparison(tmp_path: Path) -> Non
     found = doctor.Lookups(deploy.Launcher(Path(LAUNCHER), "uv"), None, manifest, None)
     text = deploy.launcher_text(LAUNCHER)
 
-    def files(plan: deploy.Plan) -> list[str]:
+    def files(plan: deploy.Plan, where: Path = espanso) -> list[str]:
         report = doctor.run(
-            espanso_dir=espanso, clipboard=False, runner=_runner(), found=found, plan=plan
+            espanso_dir=where, clipboard=False, runner=_runner(), found=found, plan=plan
         )
         return [f["state"] for f in _status("match_files", report).data["files"]]
 
     for planned in (deploy.plan(espanso, text, manifest), deploy.plan(tmp_path, text, manifest)):
         planned.steps[0].state = "marked"
         assert ("marked" in files(planned)) == (planned.espanso_dir == espanso)
+    # A linked folder: the interface's plan is of the resolved one, and is shared.
+    link = tmp_path / "linked-espanso"
+    try:
+        link.symlink_to(espanso, target_is_directory=True)
+    except OSError:
+        return  # no symlinks here (Windows without the privilege)
+    planned = deploy.plan(deploy.resolved(link), text, manifest)
+    planned.steps[0].state = "marked"
+    assert "marked" in files(planned, link)
 
 
 def test_local_servers_never_ask_another_host(monkeypatch: pytest.MonkeyPatch) -> None:

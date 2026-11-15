@@ -6,6 +6,7 @@ test calls a provider."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import io
 import json
 import os
@@ -301,41 +302,137 @@ def test_a_landed_update_check_makes_one_state(
     assert state.settled() is state
 
 
+async def landed(app: ManageApp, pilot: Pilot[int]) -> State:
+    """Wait (pausing, at most ~10 s) until the late update check is on screen."""
+    for _ in range(1000):
+        if app.state is not None and app.state.update.state != update_check.CHECKING:
+            return app.state
+        await pilot.pause(0.01)
+    raise AssertionError("the update check never landed")
+
+
 def test_the_version_row_fills_in_on_every_screen(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#315 and #83: the first State says `checking`; when pypi.org answers, the app shows
-    the next State, the same object on every screen, from the same reload."""
+    """#315 and #83: the first State says `checking`; nothing waits for pypi.org (the load
+    worker has ended), and when it answers every pane has the same next State, from the same
+    reload; an open About screen says so too."""
+    from promptmend.tui.intro import AboutScreen
+
     blocked = BlockedPypi()
     monkeypatch.setattr(update_check, "check_configured", blocked)
-    shown: list[tuple[int, str, int]] = []
-    real_show = ManageApp._show
-
-    def show(self: ManageApp, state: State, generation: int) -> None:
-        shown.append((id(state), state.update.state, generation))
-        real_show(self, state, generation)
-        if state.update.state == update_check.CHECKING:
-            home = self.main.query_one("#home-pane", home_pane.HomePane)
-            assert "· checking" in _rendered(home, "#home-rows")
-            blocked.release.set()  # pypi.org answers once the first State is on screen
-
-    monkeypatch.setattr(ManageApp, "_show", show)
+    seen: list[str] = []
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        state = _state(app)
-        assert state.update == blocked.answer
-        assert {p.state is state for p in app.main.query(base.Pane)} == {True}
+        first = _state(app)  # settle() returned: no worker waits for the check
+        assert first.update.state == update_check.CHECKING
         home = app.main.query_one("#home-pane", home_pane.HomePane)
+        assert "· checking" in _rendered(home, "#home-rows")
+        await pilot.press("a")
+        await settle(pilot)
+        assert isinstance(app.screen, AboutScreen)
+        seen.append(_rendered(app.screen, "#about-facts"))
+        blocked.release.set()
+        state = await landed(app, pilot)
+        await pilot.pause()
+        assert state.update == blocked.answer
+        assert state.plan is first.plan
+        assert {p.state is state for p in app.main.query(base.Pane)} == {True}
         assert "99.0.0 available" in _rendered(home, "#home-rows")
+        assert "99.0.0 available" in _rendered(app.screen, "#about-facts")
+        diagnostics = pane(app, "diagnostics")
+        assert "99.0.0 available" in _rendered(diagnostics, "#all-checks")
         version = next(c for c in state.report.checks if c.id == "version")
         assert version.data["latest"] == "99.0.0"
 
-    app = drive(scenario)
-    assert [(kind, generation) for _, kind, generation in shown] == [
-        (update_check.CHECKING, 1),
-        (update_check.AVAILABLE, 1),
-    ]
-    assert shown[-1][0] == id(app.state)
+    drive(scenario)
+    assert "checking pypi.org" in seen[0]
+
+
+def test_a_late_update_keeps_cursors_and_focus(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: only what shows the update repaints; a table keeps its cursor and the setup
+    screen its focused key field (and what was typed in it)."""
+    from textual.widgets import DataTable
+
+    from promptmend.tui.setup_wizard import SetupScreen
+
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("3")
+        await settle(pilot)
+        table = pane(app, "profiles").query_one("#profiles", DataTable)
+        assert table.row_count > 1
+        table.move_cursor(row=1)
+        app.open_setup()
+        await settle(pilot)
+        wizard = app.screen
+        assert isinstance(wizard, SetupScreen)
+        wizard.go("keys")
+        await pilot.pause()
+        field = wizard.query_one("#setup-key-OPENROUTER_API_KEY", Input)
+        field.focus()
+        field.value = "typed"
+        await pilot.pause()
+        blocked.release.set()
+        await landed(app, pilot)
+        await pilot.pause()
+        assert wizard.at == "keys"
+        assert app.screen is wizard
+        assert app.focused is field
+        assert field.value == "typed"
+        assert table.cursor_row == 1
+
+    drive(scenario)
+
+
+def test_a_late_update_of_an_older_reload_is_dropped(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from promptmend.tui.app import LateUpdate
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        state = _state(app)
+        newer = dataclasses.replace(
+            state, update=update_check.UpdateStatus(update_check.LATEST, "1.0.0", "x")
+        )
+        app.post_message(LateUpdate(newer, app.generation - 1))
+        await pilot.pause()
+        assert app.state is state
+
+    drive(scenario)
+
+
+def test_a_late_answer_that_cannot_be_shown_is_unknown(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: the Version row never stays `checking`, even when the answer breaks the
+    version check."""
+    from concurrent.futures import Future
+
+    from promptmend import doctor
+
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+    blocked.release.set()
+    state = gather()
+    real = doctor.with_update
+
+    def broken(report: doctor.Report, update: update_check.UpdateStatus) -> doctor.Report:
+        if update.state == update_check.AVAILABLE:
+            raise RuntimeError("cannot show it")
+        return real(report, update)
+
+    monkeypatch.setattr(doctor, "with_update", broken)
+    done: Future[update_check.UpdateStatus] = Future()
+    done.set_result(blocked.answer)
+    assert state.landed(done).update.state == update_check.UNKNOWN
+    monkeypatch.setattr(doctor, "with_update", lambda *_: 1 / 0)
+    later = state.landed(done)
+    assert (later.update.state, later.pending) == (update_check.UNKNOWN, None)
 
 
 def pane(app: ManageApp, tab: str) -> base.Pane:

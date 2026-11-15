@@ -9,6 +9,7 @@ which the app gives every screen, as it does a reload."""
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future
@@ -52,16 +53,31 @@ class State:
         report = doctor.with_update(self.report, update)
         return replace(self, update=update, report=report, pending=None)
 
+    def landed(self, done: Future[update_check.UpdateStatus]) -> State:
+        """The next State for the finished update check ``done``. Never raises and never
+        stays `checking`: a failed check, or one whose answer cannot be shown, is unknown."""
+        unknown = update_check.UpdateStatus(update_check.UNKNOWN)
+        try:
+            update = done.result(timeout=0)
+        except Exception:
+            update = unknown
+        for answer in (update, unknown):
+            try:
+                return self.with_update(answer)
+            except Exception:  # noqa: S112 - fall back to unknown, then to no report change
+                continue
+        return replace(self, update=unknown, pending=None)
+
     def settled(self) -> State:
         """This State once its update check has landed (unknown if it never does within
-        SETTLE_TIMEOUT); itself when nothing is pending. Blocks: call it off the UI thread."""
+        SETTLE_TIMEOUT); itself when nothing is pending. Blocks, so the app never calls it
+        (it waits with a callback); for tests and scripts."""
         if self.pending is None:
             return self
-        try:
-            update = self.pending.result(timeout=SETTLE_TIMEOUT)
-        except Exception:
-            update = update_check.UpdateStatus(update_check.UNKNOWN)
-        return self.with_update(update)
+        # landed() makes a failed or late check unknown.
+        with contextlib.suppress(Exception):
+            self.pending.result(timeout=SETTLE_TIMEOUT)
+        return self.landed(self.pending)
 
 
 def _beside[T](work: Callable[[], T], name: str) -> Future[T]:
