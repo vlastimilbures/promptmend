@@ -13,9 +13,11 @@ import pytest
 from typer.testing import CliRunner
 
 import promptmend.cli as cli
+import promptmend.pipeline as pipeline
 from promptmend import config
-from promptmend.cli import _read_input, app
+from promptmend.cli import app
 from promptmend.config import Settings
+from promptmend.pipeline import _read_input
 from promptmend.prompt_builder import system_prompt
 from promptmend.providers.base import TRUNCATED_NOTE, ProviderError
 
@@ -584,7 +586,7 @@ def test_concealed_clipboard_is_refused(
 ) -> None:
     pasted: list[int] = []
     copied: list[str] = []
-    monkeypatch.setattr(cli, "is_concealed", lambda: True)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
 
     def paste() -> str:
         pasted.append(1)
@@ -608,7 +610,7 @@ def test_concealed_clipboard_is_refused(
 def test_concealed_clipboard_refused_when_clearing_fails(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
 ) -> None:
-    monkeypatch.setattr(cli, "is_concealed", lambda: True)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
     monkeypatch.setattr(pyperclip, "copy", _no_clipboard)
     result = improve("--provider", "openrouter", "--source", "clipboard")
     assert "password-manager item" in result.stdout
@@ -620,7 +622,7 @@ def test_concealed_clipboard_refused_when_clearing_fails(
 def test_unconcealed_clipboard_is_read(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, verdict: bool | None
 ) -> None:
-    monkeypatch.setattr(cli, "is_concealed", lambda: verdict)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: verdict)
     monkeypatch.setattr(pyperclip, "paste", lambda: "summarise the minutes")
     result = improve("--provider", "openrouter", "--source", "clipboard")
     assert result.stdout == "improved"
@@ -631,7 +633,7 @@ def test_unconcealed_clipboard_is_read(
 def test_other_sources_skip_the_probe(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
 ) -> None:
-    monkeypatch.setattr(cli, "is_concealed", lambda: True)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
     assert improve("--source", "argument", "--text", "draft").stdout == "improved"
 
 
@@ -1211,7 +1213,7 @@ def test_clipboard_output_copy_failure_pastes_the_rewrite(
 def test_clipboard_output_concealed_refusal(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, copied: list[str]
 ) -> None:
-    monkeypatch.setattr(cli, "is_concealed", lambda: True)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
     result = improve("--output", "clipboard", "--provider", "ollama", "--source", "clipboard")
     assert "password-manager item" in result.stdout
     assert copied == [""]

@@ -27,11 +27,11 @@ runner = CliRunner()
 
 PLACEHOLDER = b"I am working as [role] in [company]."
 
-# What a newline in the output becomes on this platform. _emit() writes text to sys.stdout,
-# which on Windows translates "\n" to "\r\n" (CPython opens the standard streams with
-# newline=None there, and _main()'s reconfigure() keeps that), so a multi-line rewrite and the
-# "sent despite" note reach Espanso with CRLF on Windows and LF elsewhere. CliRunner's stdout
-# wrapper translates the same way. Frozen as it is, so a change either way fails here.
+# What a newline in the output becomes on this platform. trigger._emit() writes text to
+# sys.stdout, which on Windows translates "\n" to "\r\n" (CPython opens the standard streams
+# with newline=None there, and _main()'s reconfigure() keeps that), so a multi-line rewrite and
+# the "sent despite" note reach Espanso with CRLF on Windows and LF elsewhere. CliRunner's
+# stdout wrapper translates the same way. Frozen as it is, so a change either way fails here.
 EOL = os.linesep.encode()
 
 
@@ -172,6 +172,7 @@ import httpx
 import pyperclip
 
 import promptmend.cli as cli
+import promptmend.pipeline as pipeline
 from promptmend.providers import base
 
 real_client = httpx.Client
@@ -194,7 +195,7 @@ def client(*args, **kwargs):
 
 httpx.Client = client
 base._sleep = lambda seconds: None
-cli.is_concealed = lambda: None
+pipeline.is_concealed = lambda: None
 pyperclip.paste = lambda: "rewrite this draft"
 copied = []
 pyperclip.copy = copied.append

@@ -199,7 +199,7 @@ def post_json(
 
     ``timeout`` is checked only as httpx's per-operation timers and each arriving chunk allow:
     name resolution, system proxy discovery or a server that trickles its headers a byte at a
-    time are not bounded here. The hard deadline is improve's watchdog (cli._Watchdog, #307),
+    time are not bounded here. The hard deadline is improve's watchdog (trigger._Watchdog, #307),
     which ends the process with this module's timed-out marker shortly after the limit.
     """
     encoded = _encode_headers(label, headers)
