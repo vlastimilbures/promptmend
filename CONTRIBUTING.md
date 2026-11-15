@@ -53,6 +53,13 @@ Run these before opening a pull request. CI runs the same, except that it runs t
 It runs lint and type checks once, and the tests on macOS, Windows and Linux with Python 3.12
 to 3.14. Gitleaks scans every push for secrets.
 
+```bash
+uv run pytest                                   # unit tests, no network
+uv run ruff check . && uv run ruff format --check .
+uv run mypy                                     # strict: src, scripts and tests
+uv run pre-commit run --all-files               # also YAML checks, gitleaks and zizmor
+```
+
 The `audit` workflow (`.github/workflows/audit.yml`) checks the locked dependencies for known
 vulnerabilities with pip-audit. It **fails** on any finding in the runtime set, exported
 exactly as the release pins it into `constraints.txt` (`uv export --frozen --no-dev
@@ -69,13 +76,6 @@ uvx pip-audit==2.10.1 --requirement runtime.txt --disable-pip --require-hashes -
 
 Locally, pip-audit skips packages whose environment marker does not match your platform; the
 workflow cuts the markers first.
-
-```bash
-uv run pytest                                   # unit tests, no network
-uv run ruff check . && uv run ruff format --check .
-uv run mypy                                     # strict: src, scripts and tests
-uv run pre-commit run --all-files               # also YAML checks, gitleaks and zizmor
-```
 
 If you change a screen of the interface (`src/promptmend/tui/`), its SVG snapshots fail
 until you regenerate them, review the new SVGs and commit them (Linux or macOS):

@@ -46,7 +46,8 @@ jobs:
       # The runtime export is release.yml's constraints.txt command, with hashes. pip-audit
       # evaluates environment markers against this Linux runner and would silently skip
       # Windows- or macOS-only packages (colorama), so the markers are cut: every platform's
-      # packages are audited (--quiet: no echo of the export). The summary script is shared by both audit steps.
+      # packages are audited (--quiet: no echo of the export). The summary script is shared
+      # by both audit steps.
       - name: Export the locked sets
         run: |
           AUDIT_DIR="$RUNNER_TEMP/audit"
