@@ -42,8 +42,8 @@ All notable changes to this project are documented here. The format follows
   improve's watchdog) and `commands/espanso.py` (#281). No command, option or output changes.
 - The version is read from the installed metadata only where it is shown or recorded (#318),
   so importing the usage history, doctor, deploy, the update check or the interface no longer
-  loads `importlib.metadata`: a trigger with tracking off never loads it, and one with
-  tracking on only when it records the run, after its output. The version shown is unchanged.
+  loads `importlib.metadata`; a trigger that records its run reads it only when it writes the
+  row, after its output. The version shown is unchanged.
 
 ### Removed
 - **Breaking:** the transition paths from earlier releases (#275), ahead of 1.0.0. This breaks

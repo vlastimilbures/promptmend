@@ -85,9 +85,8 @@ def test_one_unyanked_file_keeps_a_release(pypi: FakeHttp) -> None:
 def test_an_install_newer_than_pypi_is_the_latest(
     pypi: FakeHttp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        update_check, "installed_version", lambda: "0.22.0.dev3+g1234"
-    )  # an editable build
+    # an editable build
+    monkeypatch.setattr(update_check, "installed_version", lambda: "0.22.0.dev3+g1234")
     pypi.reply(_releases("0.21.0"))
     assert check(_cfg(), NOW).state == LATEST
 

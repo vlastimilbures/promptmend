@@ -64,8 +64,9 @@ PRICES_NAME = "prices.toml"
 # sidecar marker. The trigger waits for it while the user waits for the paste, so it stays at
 # what a person barely notices even under contention; a write that would take longer is
 # dropped and counted as lost. A file-system call the OS itself blocks (a stalled network
-# drive) cannot be interrupted, and neither can the interpreter's own pauses; those are the
-# only things outside it.
+# drive) cannot be interrupted, and neither can the interpreter's own pauses; those, and the
+# first read of the version (record() does it before the clock starts, #318), are the only
+# things outside it.
 _BUDGET = 0.25
 # The database's share of _BUDGET (its busy timeout), the rest is for the sidecar marker.
 # SQLite's own lock retries overshoot the busy timeout by up to ~0.06 s (measured in WAL mode
@@ -601,6 +602,11 @@ class HistoryStore:
         there is nothing to delete."""
         if not self.enabled:
             return True
+        # Read the version (for app_version) before the clock starts: the first read loads
+        # importlib.metadata, which is not the write's cost (#318). _operation_row() then
+        # finds it cached.
+        with contextlib.suppress(Exception):
+            installed_version()
         start = time.monotonic()
         extra_time = _CREATE_EXTRA
         with contextlib.suppress(Exception):

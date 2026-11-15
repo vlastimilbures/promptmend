@@ -200,6 +200,19 @@ pyperclip.paste = lambda: "rewrite this draft"
 copied = []
 pyperclip.copy = copied.append
 
+# Whether the version was read by the time each output was printed (#318).
+import promptmend.trigger as trigger
+
+real_emit, at_output = trigger._emit, []
+
+
+def emit(*args, **kwargs):
+    real_emit(*args, **kwargs)
+    at_output.append("importlib.metadata" in sys.modules)
+
+
+trigger._emit = cli._emit = emit
+
 local = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
 cloud = ["improve", "--provider", "openrouter", "--source", "clipboard"]
 scenarios = [
@@ -226,6 +239,7 @@ for argv, env, code in scenarios:
 result = {
     "codes": codes,
     "copied": copied,
+    "at_output": at_output,
     "added": sorted(set(sys.modules) - started),
     "loaded": sorted(sys.modules),
 }
@@ -504,17 +518,24 @@ def test_try_pane_does_not_import_cli(tmp_path: Path) -> None:
 
 # The version is read where it is used, never at import (#318): importing the usage history
 # does not load importlib.metadata, and a trigger run reads the installed metadata only to
-# record the run (its app_version), after the output is printed, so never with tracking off.
+# record the run (its app_version), after the output is printed: not yet loaded when the first
+# output is printed, and never with tracking off (which also catches a dependency that starts
+# importing importlib.metadata eagerly). Later outputs in the same process follow the first
+# run's record, so only the first is checked in the tracking-on run.
 def test_history_import_does_not_read_the_version(tmp_path: Path) -> None:
     loaded = _imports("promptmend.history", tmp_path)
     assert "promptmend.history" in loaded
     assert _loaded(loaded, ("importlib.metadata",)) == []
 
 
-def test_trigger_run_reads_the_version_only_to_record(
+def test_trigger_run_reads_the_version_only_after_output_to_record(
     trigger_run: tuple[list[bytes], dict[str, Any]],
 ) -> None:
     _, data = trigger_run
+    assert len(data["at_output"]) == 7  # one output per scenario
+    assert data["at_output"][0] is False
+    if not data["tracking"]:
+        assert not any(data["at_output"])
     assert ("importlib.metadata" in data["loaded"]) is data["tracking"]
 
 
