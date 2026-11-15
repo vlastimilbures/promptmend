@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -95,6 +95,23 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor, "_path_shadow_check", functools.partial(doctor._path_shadow_check, environ={})
     )
+
+
+@pytest.fixture(autouse=True)
+def no_hard_exit(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """improve's watchdog (#307) ends the process with os._exit: in a test that would end
+    pytest itself with exit code 0, skipping the rest and fail_under. Every test gets a
+    stand-in that fails it instead; a test of the watchdog patches its own over this one
+    (test_watchdog.py's ``exits``). The start time entry.main() leaves for the watchdog is
+    dropped too, so no run counts its limit from an earlier test's."""
+    import promptmend.cli as cli
+    from promptmend import entry
+
+    calls: list[int] = []
+    monkeypatch.setattr(cli, "_hard_exit", calls.append)
+    monkeypatch.setattr(entry, "_started", None)
+    yield
+    assert not calls, "improve's watchdog fired and would have ended pytest (cli._hard_exit)"
 
 
 # Headers httpx adds to every request on its own; calls[i]["headers"] leaves them out so a

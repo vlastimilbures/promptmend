@@ -73,10 +73,30 @@ def _watchdog(provider: str = "openrouter") -> tuple[_Watchdog, recorder.Recorde
 # --- The lock: exactly one result --------------------------------------------------------
 
 
-def test_claim_is_taken_once() -> None:
+# Once the watchdog has fired, every later step of the main thread ends the run instead.
+@pytest.mark.parametrize("step", ["proceed", "claim", "flushed", "delivering"])
+def test_steps_after_firing_end_the_run(exits: Exits, step: str) -> None:
     watch, _ = _watchdog()
-    assert watch.claim()
-    assert not watch.claim()
+    watch._fire()
+    call = (
+        (lambda: watch.delivering("", "the rewrite"))
+        if step == "delivering"
+        else getattr(watch, step)
+    )
+    with pytest.raises(typer.Exit):
+        call()
+
+
+# The output is out and flushed, only the history is left: the deadline ends the process
+# silently, without a second result or a second history row.
+def test_flushed_run_ends_silently(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
+    watch, rec = _watchdog()
+    cli._emit("the rewrite", watch)
+    watch.flushed()
+    watch._fire()
+    assert capfd.readouterr().out == "the rewrite"
+    assert exits.codes == [0]
+    assert rec.outcome == recorder.OK
 
 
 # The run printed first: the watchdog firing afterwards writes nothing and never exits.
@@ -103,7 +123,7 @@ def test_watchdog_first_wins_alone(exits: Exits, capfd: pytest.CaptureFixture[st
     assert rec.outcome == recorder.ERROR_MARKER
 
 
-# A race of the two from many threads still prints exactly one result.
+# A race of the two prints exactly one result, every round.
 def test_race_prints_exactly_one(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
     for _ in range(20):
         watch, _ = _watchdog()
@@ -120,8 +140,7 @@ def test_race_prints_exactly_one(exits: Exits, capfd: pytest.CaptureFixture[str]
         with contextlib.suppress(typer.Exit):
             cli._emit("the rewrite", watch)
         thread.join()
-    out = capfd.readouterr().out
-    assert out.count("the rewrite") + out.count(MARKER) == 20
+        assert capfd.readouterr().out in ("the rewrite", MARKER)
 
 
 # The marker is cleaned like every other output, keeps a sent-despite note, and a newline
@@ -138,7 +157,8 @@ def test_marker_is_cleaned_with_note(
     watch._ran.built = Built()
     watch._marker = "[promptmend: x\x1b[201~ timed out]"
     watch._fire()
-    eol = os.linesep.encode()
+    # What sys.stdout writes for "\n" here (see test_trigger_contract.EOL), spelled out.
+    eol = b"\r\n" if sys.platform == "win32" else b"\n"
     note = b"[promptmend: sent despite: email]" + eol + eol
     assert capfdbinary.readouterr().out == note + b"[promptmend: x[201~ timed out]"
 
@@ -220,6 +240,11 @@ def test_timed_out_keeps_the_attempt_in_flight() -> None:
     assert second.cost_state == "unknown"
     rec.timed_out()  # nothing in flight any more: nothing added
     assert len(rec.attempts) == 2
+    # An attempt that ends after the marker is not counted again.
+    meter.record(loopback=False, attempt=2, status=200, error_kind=None, body={}, latency=3)
+    meter.begin(loopback=False, attempt=3)
+    rec.timed_out()
+    assert len(rec.attempts) == 2
 
 
 def test_finished_attempt_is_not_pending() -> None:
@@ -295,16 +320,122 @@ def test_blocking_name_lookup_in_process(
     )
 
 
-# A run that ends normally cancels its timer, so no watchdog fires after it.
+# A run that ends normally cancels its timer: the timer's thread ends without firing.
 def test_normal_run_cancels_the_timer(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, exits: Exits
 ) -> None:
-    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 0.55)
-    monkeypatch.setattr(cli, "_WATCHDOG_HISTORY", 0.5)
+    timers: list[threading.Timer] = []
+    arm = _Watchdog.arm
+
+    def recorded(self: _Watchdog, cfg: Settings, provider: str) -> None:
+        arm(self, cfg, provider)
+        assert self._timer is not None
+        timers.append(self._timer)
+
+    monkeypatch.setattr(_Watchdog, "arm", recorded)
     args = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
-    result = runner.invoke(app, [*args, "--timeout", "0.1"])
+    result = runner.invoke(app, args)
     assert (result.exit_code, result.stdout) == (0, "improved")
-    assert not exits.called.wait(0.5)
+    (timer,) = timers
+    timer.join(5)
+    assert not timer.is_alive()
+    assert timer.finished.is_set()
+    assert exits.codes == []
+
+
+# A watchdog that fired while the draft was being read stops the run before the provider
+# call: nothing is sent after the marker.
+def test_no_provider_call_after_the_marker(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_provider: StubProvider,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    release = threading.Event()
+
+    def stalled(op: str, *args: str) -> str:
+        release.wait(30)
+        return "a draft"
+
+    monkeypatch.setattr(cli, "_clipboard", stalled)
+    fake = Exits(then=release)
+    monkeypatch.setattr(cli, "_hard_exit", fake)
+    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 0.6)
+    result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "0.05"])
+    assert (result.exit_code, result.stdout) == (0, "")
+    assert capfd.readouterr().out == "[promptmend: Ollama timed out after 0.05s]"
+    assert stub_provider.calls == []
+
+
+# The rewrite came back but its clipboard copy (clipboard output, or --copy) stalls: the
+# watchdog says so, pastes the rewrite instead, and records clipboard_failed.
+@pytest.mark.parametrize(
+    ("args", "env"),
+    [([], {"PROMPT_OUTPUT": "clipboard"}), (["--copy"], {})],
+    ids=["clipboard-output", "paste-with-copy"],
+)
+def test_stalled_copy(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_provider: StubProvider,
+    capfdbinary: pytest.CaptureFixture[bytes],
+    history_rows: HistoryRows,
+    args: list[str],
+    env: dict[str, str],
+) -> None:
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    release = threading.Event()
+
+    def stalled(op: str, *args: str) -> None:
+        assert op == "copy"
+        release.wait(30)
+
+    monkeypatch.setattr(cli, "_clipboard", stalled)
+    fake = Exits(then=release)
+    monkeypatch.setattr(cli, "_hard_exit", fake)
+    monkeypatch.setattr(cli, "_WATCHDOG_HISTORY", 5.0)
+    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 5.1)
+    command = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
+    result = runner.invoke(app, [*command, "--timeout", "0.05", "--trigger-id", "i", *args])
+    assert (result.exit_code, result.stdout) == (0, "")
+    expected = cli.CLIPBOARD_STALLED + "improved"
+    assert capfdbinary.readouterr().out == expected.replace("\n", os.linesep).encode()
+    assert fake.codes == [0]
+    (op,) = history_rows("operations")
+    assert op["outcome"] == "clipboard_failed"
+
+
+# entry.main() leaves the time it started an improve run for that run's watchdog, read once;
+# other commands leave none.
+def test_entry_start_is_taken_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend import entry
+
+    monkeypatch.setattr(sys, "argv", ["promptmend", "improve"])
+    monkeypatch.setattr("promptmend.cli.app", lambda: None)
+    monkeypatch.setattr(entry, "quiet_trigger", lambda argv: False)
+    before = time.monotonic()
+    entry.main()
+    started = entry.take_start()
+    assert started is not None
+    assert before <= started <= time.monotonic()
+    assert entry.take_start() is None
+    monkeypatch.setattr(sys, "argv", ["promptmend", "persona"])
+    entry.main()
+    assert entry.take_start() is None
+
+
+# The limit counts from that start: a run that began long ago fires at once.
+def test_limit_counts_from_entry_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend import entry
+
+    monkeypatch.setattr(entry, "_started", time.monotonic() - 100)
+    watch, _ = _watchdog()
+    monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
+    watch.arm(Settings(timeout=1), "ollama")
+    try:
+        assert watch._timer is not None
+        assert watch._timer.interval == 0.0
+    finally:
+        watch.cancel()
 
 
 # --- As a real process, the way Espanso runs it --------------------------------------------
@@ -347,7 +478,8 @@ def _assert_marker(proc: subprocess.CompletedProcess[bytes], seconds: float) -> 
 _ENTRY = [sys.executable, "-m", "promptmend.entry"]
 
 
-# Accepts the request and never answers: the provider's own read timeout words the marker.
+# Accepts the request and never answers: httpx's read timeout (the provider's own limit) ends
+# this one and words the marker, before the watchdog would; it guards that path stays bounded.
 def test_never_answering_server() -> None:
     with smoke.stub_server(math.inf) as stub:
         proc, seconds = _run([*_ENTRY, *_ARGS], smoke.stub_env(stub.port, os.environ))

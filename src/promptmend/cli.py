@@ -176,25 +176,43 @@ def _emit(text: str, watch: _Watchdog | None = None) -> None:
     """The only way anything reaches Espanso: unsafe characters stripped, and no trailing
     newline, since Espanso inserts stdout verbatim. With improve's ``watch``, it first claims
     the output; if the watchdog already has, nothing is printed and the run ends there."""
-    if watch is not None and not watch.claim():
-        watch.wait()  # returns only where _hard_exit does not end the process (the tests)
-        raise typer.Exit(0)
+    if watch is not None:
+        watch.claim()
     typer.echo(clean(text), nl=False)
 
 
 # improve's hard deadline (#307): the process ends within the call's time limit plus this many
-# seconds of improve starting, with the timed-out marker, whatever blocks: name resolution, a
-# proxy lookup, the clipboard, a server trickling its reply. Past the limit, so that the
-# provider's own timeout (providers/base.py), which words the same marker and records the
-# attempt itself, ends an ordinarily slow call first. Documented in docs/usage.md.
+# seconds, counted from entry.main() (from improve() when the CLI is started another way),
+# with the timed-out marker, whatever blocks: name resolution, a proxy lookup, the clipboard,
+# a server trickling its reply. Past the limit, so that the provider's own timeout
+# (providers/base.py), which words the same marker and records the attempt itself, ends an
+# ordinarily slow call first. Documented in docs/usage.md.
 WATCHDOG_MARGIN = 2.0
 # Of WATCHDOG_MARGIN, the most the watchdog waits for the usage history after its marker.
 _WATCHDOG_HISTORY = 0.5
 # Names the call in the watchdog's marker when the provider name is not one of ours.
 _UNKNOWN_LABEL = "The call"
+# The watchdog's marker when the copy of a finished rewrite (clipboard output, --copy) has
+# not returned by the deadline: the rewrite is pasted after it, as when a copy fails.
+CLIPBOARD_STALLED = (
+    "[promptmend: the clipboard did not answer in time, so the rewrite may not have been "
+    "copied; it is pasted instead]\n\n"
+)
 # How the watchdog ends the process: os._exit, since the main thread may be stuck where no
-# exception reaches it, and nothing is left to flush. Patched by the tests.
+# exception reaches it. Replaced in every test (conftest's no_hard_exit), so a watchdog can
+# never end pytest.
 _hard_exit: Callable[[int], object] = os._exit
+
+# The watchdog's states. The main thread moves idle -> (delivering ->) claimed -> flushed;
+# the watchdog moves any state but claimed to fired.
+_IDLE = "idle"
+# A finished rewrite is being copied to the clipboard (clipboard output or --copy).
+_DELIVERING = "delivering"
+# _emit() is printing the run's own output; the watchdog leaves it alone.
+_CLAIMED = "claimed"
+# The output is out and flushed; only the history is left.
+_FLUSHED = "flushed"
+_FIRED = "fired"
 
 
 def _write_fd(fd: int, data: bytes) -> None:
@@ -206,24 +224,41 @@ class _Watchdog:
     """improve's hard time limit (#307), and the one decision of what is printed: the run's
     own output (_emit()) or the watchdog's marker, exactly one of them.
 
-    arm() starts a daemon timer once the call's limit is known. If it fires before _emit() has
-    claimed the output, it writes the timed-out marker (cleaned, UTF-8, with this platform's
-    newlines as sys.stdout writes them) straight to file descriptor 1: sys.stdout's lock may
-    be held by the stuck main thread, which has printed nothing, so there is nothing to flush.
-    It then gives the usage history (outcome error_marker, the attempt in flight kept as a
-    timeout) at most _WATCHDOG_HISTORY seconds in a thread of its own, and ends the process
-    with exit code 0. A run that claimed the output first is never touched; nor is one whose
-    settings did not load (there is no limit yet, and the marker is already on its way).
+    arm() starts a daemon timer once the call's limit is known. When it fires, by state:
+
+    - idle (the run is still reading its input or calling the provider): it writes the
+      timed-out marker, the sent-despite note first, cleaned, UTF-8, with this platform's
+      newlines as sys.stdout writes them, straight to file descriptor 1 (sys.stdout's lock may
+      be held by the stuck main thread, which has printed nothing, so nothing is left to
+      flush). History: outcome error_marker, the attempt in flight kept as a timeout.
+    - delivering (the rewrite came back, its clipboard copy has not returned): CLIPBOARD_STALLED
+      and the rewrite, the way a failed copy prints them; outcome clipboard_failed.
+    - claimed (_emit() is printing): nothing; the run finishes on its own.
+    - flushed (only the run's history write is left): the process ends at once, silently.
+
+    After its own marker the history gets at most _WATCHDOG_HISTORY seconds in a thread of
+    its own, then the process ends with exit code 0. That is less than the very first write
+    may take (history._BUDGET plus its _CREATE_EXTRA, for the file it creates), so such a
+    run's row can be lost; a later write is not affected.
+
+    The main thread may run on for up to _WATCHDOG_HISTORY seconds after the marker: proceed()
+    stops it before the provider call, the observer it reports to ignores attempts that end
+    after the marker, and post_json() cannot start its retry this late, since its own deadline
+    lies before the watchdog's. A run whose settings did not load has no watchdog (no limit is
+    known, and its marker is already on its way).
     """
 
     def __init__(self, rec: recorder.Recorder, ran: Rewrite) -> None:
+        from . import entry
+
         self._rec, self._ran = rec, ran
-        self._started = time.monotonic()
+        self._started = entry.take_start() or time.monotonic()
         self._lock = threading.Lock()
-        self._claimed = False
+        self._state = _IDLE
         self._done = threading.Event()
         self._timer: threading.Timer | None = None
         self._marker = ""
+        self._delivered = ("", "")
 
     def arm(self, cfg: Settings, provider: str) -> None:
         spec = PROVIDERS.get(provider)
@@ -240,37 +275,69 @@ class _Watchdog:
         if self._timer is not None:
             self._timer.cancel()
 
-    def claim(self) -> bool:
-        """Take the output; False when it is already taken."""
+    def _move(self, state: str) -> None:
+        """Move the main thread's state on, or, once the watchdog has fired, wait for it to
+        end the process (the run's own output must not follow its marker)."""
         with self._lock:
-            if self._claimed:
-                return False
-            self._claimed = True
-            return True
+            fired = self._state == _FIRED
+            if not fired:
+                self._state = state
+        if fired:
+            self._done.wait()  # returns only where _hard_exit does not end the process
+            raise typer.Exit(0)
 
-    def wait(self) -> None:
-        """Wait for the watchdog to finish, which ends the process."""
-        self._done.wait()
+    def proceed(self) -> None:
+        """Before the provider call: a run the watchdog has ended sends nothing."""
+        self._move(_IDLE)
+
+    def delivering(self, note: str, rewrite: str) -> None:
+        """Before the clipboard copy of a finished rewrite: the sent-despite ``note`` and the
+        ``rewrite``, which the watchdog prints around CLIPBOARD_STALLED if the copy stalls."""
+        self._delivered = (note, rewrite)
+        self._move(_DELIVERING)
+
+    def claim(self) -> None:
+        """Take the output for _emit()."""
+        self._move(_CLAIMED)
+
+    def flushed(self) -> None:
+        """The output is out and flushed."""
+        self._move(_FLUSHED)
 
     def _fire(self) -> None:
-        if not self.claim():
-            return
+        with self._lock:
+            was = self._state
+            if was in (_CLAIMED, _FIRED):
+                return
+            self._state = _FIRED
         # Nothing raised here may stop the exit below.
         try:
-            with contextlib.suppress(Exception):
-                text = clean(sent_despite_note(self._ran.built) + self._marker)
-                _write_fd(1, text.replace("\n", os.linesep).encode("utf-8"))
-            with contextlib.suppress(Exception):
-                self._rec.profile_id = self._ran.profile_id
-                self._rec.emitted()
-                self._rec.timed_out()
-                # Bounded: a locked or slow history must not keep the process past its limit.
-                writer = threading.Thread(target=self._rec.finish, daemon=True)
-                writer.start()
-                writer.join(_WATCHDOG_HISTORY)
+            if was != _FLUSHED:
+                self._finish_run(delivering=was == _DELIVERING)
         finally:
             _hard_exit(0)
             self._done.set()  # reached only where _hard_exit returns (the tests)
+
+    def _finish_run(self, *, delivering: bool) -> None:
+        """Print the watchdog's marker, then give the history its bounded write."""
+        rec = self._rec
+        with contextlib.suppress(Exception):
+            if delivering:
+                note, rewrite = self._delivered
+                text = note + CLIPBOARD_STALLED + rewrite
+            else:
+                text = sent_despite_note(self._ran.built) + self._marker
+            _write_fd(1, clean(text).replace("\n", os.linesep).encode("utf-8"))
+        with contextlib.suppress(Exception):
+            rec.profile_id = self._ran.profile_id
+            rec.emitted()
+            rec.timed_out()
+            if delivering:
+                rec.outcome = recorder.CLIPBOARD_FAILED
+            # Bounded: a locked or slow history must not keep the process past its limit.
+            writer = threading.Thread(target=rec.finish, daemon=True)
+            writer.start()
+            writer.join(_WATCHDOG_HISTORY)
 
 
 def _show_version(value: bool) -> None:
@@ -585,6 +652,7 @@ def _improve(
         if provider in PROVIDER_NAMES:
             check_provider_options(provider, tier, effort)
         raw = _read_input(source, text)
+        watch.proceed()
         # The rewrite comes back cleaned, which matters here too: --copy and clipboard output
         # put it on the clipboard.
         result = rewrite(
@@ -595,6 +663,7 @@ def _improve(
         # visible bracketed marker instead of a blank expansion.
         _emit(sent_despite_note(ran.built) + marker(exc), watch)
         rec.emitted()
+        _flushed(watch)
         rec.profile_id = ran.profile_id
         rec.outcome = failure_outcome(exc, rec)
         # After the paste text is out, so history can never change it (see recorder.py).
@@ -603,6 +672,10 @@ def _improve(
 
     rec.profile_id = ran.profile_id
     note = sent_despite_note(ran.built)
+    if cfg.output == CLIPBOARD or copy:
+        # Before the copy, so a watchdog firing during it says the clipboard stalled, not that
+        # the call timed out.
+        watch.delivering(note, result)
     if cfg.output == CLIPBOARD:
         _emit(_deliver(result, note, rec), watch)
     else:
@@ -610,7 +683,15 @@ def _improve(
         printed = note + (_copy_failed(split_stop_note(result)[0], rec) if copy else "") + result
         _emit(printed, watch)
     rec.emitted()
+    _flushed(watch)
     rec.finish()
+
+
+def _flushed(watch: _Watchdog) -> None:
+    """Flush the output, then tell the watchdog only the history is left."""
+    with contextlib.suppress(Exception):
+        sys.stdout.flush()
+    watch.flushed()
 
 
 PERSONA_PLACEHOLDER = "I am working as [role] in [company]."

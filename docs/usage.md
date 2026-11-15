@@ -95,10 +95,18 @@ A rewrite takes a few seconds on `-i-` and longer on `-ip-` (measured times are 
 
 That limit is a hard one. Whatever blocks a run (a name lookup or proxy discovery that never
 returns, a clipboard that does not answer, a server that sends its reply a byte at a time), it
-ends no later than the limit plus 2 seconds after it started: the result is then the
+ends no later than the limit plus 2 seconds, counted from the moment the `promptmend` command
+starts its own code; Python's start-up before that is not counted. The result is then the
 `[promptmend: … timed out after …s]` marker, exit code 0, and nothing else. Usually the
 provider's own timeout prints that marker at the limit; the 2-second watchdog only catches
-what that timeout cannot see.
+what that timeout cannot see. If the rewrite came back but copying it to the clipboard
+([clipboard output](#output-paste-or-clipboard) or `--copy`) stalls, the marker says the
+clipboard did not answer and the rewrite is pasted instead.
+
+The watchdog is a thread, so a long step that holds Python's lock (a regular expression
+running over a huge draft, say) can delay it until that step ends. After its marker the run
+may go on for up to half a second while the history is written, but it starts no provider
+call and no retry in that time.
 
 Do not type or switch windows while it runs. Espanso pastes the result wherever the focus is
 when the answer arrives, and other triggers do not expand until it finishes. Writing the
