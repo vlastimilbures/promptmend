@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from promptmend.wordings import DOMAIN, default_wordings
+
 __all__ = ["GOOD", "bench"]
 
 if TYPE_CHECKING:
@@ -20,8 +22,10 @@ else:
     sys.modules["bench_models"] = bench
     _spec.loader.exec_module(bench)
 
-# A rewrite that satisfies every check for a plan-first, independent-review draft.
-GOOD = """<CONTEXT>
+# A rewrite that satisfies every check for a plan-first, independent-review draft. Its fixed
+# wordings come from prompts/default.md, like the bench's own (#283).
+_W = default_wordings()
+GOOD = f"""<CONTEXT>
 I am working as a Head of Data at Example Corp. I want a board paper.
 </CONTEXT>
 
@@ -30,14 +34,11 @@ A board-ready paper on collections model risk.
 </GOAL>
 
 <INSTRUCTIONS>
-1/ Plan the task thoroughly, list any assumptions and open questions, and validate the plan \
-with me before executing.
-2/ Load and validate all inputs. If anything is missing, ambiguous, or contradictory, ask me \
-up to 5 targeted questions before drafting.
+1/ {_W.plan}
+2/ {_W.inputs}
 3/ Analyse the NPL spike.
-4/ Use a separate agent with credit risk domain knowledge if you can run one, otherwise review \
-as an independent expert in that domain would: perform a critical review.
-5/ Flag material judgment calls or trade-offs and let me decide.
+4/ {_W.independent.replace(DOMAIN, "credit risk")}
+5/ {_W.judgment}
 </INSTRUCTIONS>
 
 <CONSTRAINTS>
@@ -49,5 +50,5 @@ NPL data.
 </INPUTS>
 
 <OUTPUTS>
-structured .md, well formatted with clear headings/subheadings
+{_W.outputs}
 </OUTPUTS>"""

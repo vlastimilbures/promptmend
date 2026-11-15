@@ -385,6 +385,7 @@ promptmend/
 │   ├── history.py                local usage history (SQLite, metadata only, fail-open)
 │   ├── recorder.py               records each improve/persona run in the usage history
 │   ├── prompt_builder.py         loads built-in and user profiles, fills in the persona rule
+│   ├── wordings.py               the fixed wordings, parsed from prompts/default.md (#283)
 │   ├── assets.py                 the packaged Espanso match files (importlib.resources)
 │   ├── deploy.py                 espanso deploy/status/detach: manifest, states, stable launcher
 │   ├── espanso_windows.py        Espanso on Windows without reading its output (#209-#211)
@@ -408,6 +409,7 @@ promptmend/
 │   ├── build_windows.py          release: the frozen Windows zip (PyInstaller), trigger timing
 │   ├── check_tool_lock.py        the tool venv's packages match uv.lock (#34)
 │   ├── update_match_history.py   regenerate match_history.py from the release tags
+│   ├── render_prompt_template.py the -p- template's wording lines from prompts/default.md
 │   ├── bench_models.py           score models on template fidelity, latency, cost
 │   ├── check_wheel.py            CI: what an installed wheel really contains
 │   ├── brew_formula.py           release: the tap's Homebrew formula from uv.lock
@@ -542,9 +544,30 @@ literal lands in the repo. Patterns specific to one organisation belong in the u
 
 ### Change the default prompt
 
-Template wording is scored by `scripts/bench_models.py`, and `tests/test_bench.py` checks the
-scored phrases still exist in `prompts/default.md` and in the static `-p-` template
-(`espanso/match/prompts-template.yml`), so change all three together. A/B a change on both the
+`prompts/default.md` is the only source of the fixed wordings: the planning and review variants
+(`<variant id="a">`/`"b"`), the inputs and judgment steps (the line after `Always...:`) and the
+document OUTPUTS line (after `use exactly this line:`). `promptmend.wordings` parses them, and
+nothing else carries a copy (#283):
+
+- the static `-p-` template (`espanso/match/prompts-template.yml`) stays a checked-in match
+  file, but its wording lines (steps `1a/ 1b/ 2/ 4a/ 4b/ 5/` and the line after `<OUTPUTS>`)
+  are written by `scripts/render_prompt_template.py`, which turns `[domain]` into the
+  template's `[XXX]` and keeps every other line; `tests/test_wordings.py` fails while the
+  file is not what the script writes;
+- `scripts/bench_models.py` scores the opening words of each wording (`opening()`), and
+  `tests/bench_module.py`'s sample rewrite is built from them.
+
+So to change a wording, edit it in `prompts/default.md` only, then run:
+
+```bash
+uv run python scripts/render_prompt_template.py     # rewrites the -p- template's wording lines
+uv run python scripts/update_match_history.py       # the match file changed
+```
+
+Keep `default.md`'s layout (`parse()` fails loudly on a missing step, variant or rule rather
+than guessing). The template's own text (its CONTEXT, GOAL, step 3, CONSTRAINTS, INPUTS and the
+`[pick one …]` lines) is still edited in the YAML. The README's example output is a real
+rewrite of a named release and is not regenerated. A/B a change on both the
 standard and pro defaults, on both suites, before proposing it, and include the before/after
 pass rates in the pull request (the report's split by kind, with its Wilson intervals:
 rates whose intervals overlap are not shown to differ), with each run's `meta.json` (commit, prompt hash, persona

@@ -39,7 +39,7 @@ def test_good_output_passes() -> None:
         (lambda t: t.replace("3/", "4/", 1), "struct: step numbering"),
         (lambda t: t.replace("1/ ", "1. ", 1), "struct: used 1. instead of 1/"),
         (
-            lambda t: t.replace("Load and validate all inputs", "Check inputs"),
+            lambda t: t.replace(bench.MANDATORY["validate-inputs"], "Check inputs"),
             "struct: missing validate-inputs step",
         ),
         (lambda t: t.replace("I want", "The user wants"), "struct: third-person CONTEXT"),
@@ -225,7 +225,7 @@ def test_check_unscored_branches() -> None:
     assert bench.check(GOOD, wants_plan=None, wants_independent=None) == []
     failed = bench.check(GOOD, wants_plan=False, wants_independent=None)
     assert failed == ["branch: wrong planning branch"]
-    both = GOOD.replace("3/ Analyse", "3/ Execute, but state assumptions up front. Analyse")
+    both = GOOD.replace("3/ Analyse", f"3/ {bench.EXECUTE_NOW}. Analyse")
     assert "struct: planning branch absent or both emitted" in bench.check(both, None, None)
 
 

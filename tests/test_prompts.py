@@ -29,11 +29,13 @@ def test_default_profile_emits_golden_template() -> None:
 # default profile's system prompt describes both the plan-first/execute-now and
 # independent-review/self-review instruction branches for the model to choose between.
 def test_default_profile_offers_both_branches() -> None:
+    from promptmend.wordings import DOMAIN, default_wordings
+
     text = system_prompt("default")
-    assert "Plan the task thoroughly" in text
-    assert "Execute, but state assumptions up front." in text
-    assert "Use a separate agent with [domain] domain knowledge if you can run one" in text
-    assert "Review your own output against these checks" in text
+    wordings = default_wordings()
+    for variant in (wordings.plan, wordings.execute, wordings.independent, wordings.self_review):
+        assert f">{variant}</variant>" in text
+    assert DOMAIN in wordings.independent
 
 
 # The built-in profiles are real files next to the module (the wheel and the frozen build both
