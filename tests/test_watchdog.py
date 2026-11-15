@@ -1,10 +1,10 @@
 """improve's hard time limit (#307): whatever blocks (name resolution, a proxy lookup, the
 clipboard, a server that never answers or trickles its reply), the run ends within its limit
-plus cli.WATCHDOG_MARGIN with exactly one result on stdout, exit code 0 and empty stderr.
+plus trigger.WATCHDOG_MARGIN with exactly one result on stdout, exit code 0 and empty stderr.
 
-The in-process tests patch cli._hard_exit, so the watchdog never ends pytest; the real-process
-tests run the CLI the way Espanso does, against smoke.stub_server()'s slow modes, with a 1 s
-limit to keep the suite fast."""
+The in-process tests patch trigger._hard_exit, so the watchdog never ends pytest; the
+real-process tests run the CLI the way Espanso does, against smoke.stub_server()'s slow modes,
+with a 1 s limit to keep the suite fast."""
 
 from __future__ import annotations
 
@@ -22,13 +22,15 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from promptmend import cli, factory, recorder, smoke
-from promptmend.cli import Rewrite, _Watchdog, app
+from promptmend import factory, pipeline, recorder, smoke, trigger
+from promptmend.cli import app
 from promptmend.config import Settings
 from promptmend.gate import GatedProvider
+from promptmend.pipeline import Rewrite
 from promptmend.providers import base
 from promptmend.providers.base import post_json, timed_out_message
 from promptmend.providers.usage import AttemptUsage, Meter, RunEnded, openai_usage
+from promptmend.trigger import _Watchdog
 
 if TYPE_CHECKING:
     from conftest import FakeHttp, HistoryRows, StubProvider
@@ -60,7 +62,7 @@ class Exits:
 @pytest.fixture
 def exits(monkeypatch: pytest.MonkeyPatch) -> Exits:
     fake = Exits()
-    monkeypatch.setattr(cli, "_hard_exit", fake)
+    monkeypatch.setattr(trigger, "_hard_exit", fake)
     return fake
 
 
@@ -92,7 +94,7 @@ def test_steps_after_firing_end_the_run(exits: Exits, step: str) -> None:
 # silently, without a second result or a second history row.
 def test_flushed_run_ends_silently(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
     watch, rec = _watchdog()
-    cli._emit("the rewrite", watch)
+    trigger._emit("the rewrite", watch)
     watch.flushed()
     watch._fire()
     assert capfd.readouterr().out == "the rewrite"
@@ -105,7 +107,7 @@ def test_emit_first_leaves_the_watchdog_nothing(
     exits: Exits, capfd: pytest.CaptureFixture[str]
 ) -> None:
     watch, _ = _watchdog()
-    cli._emit("the rewrite", watch)
+    trigger._emit("the rewrite", watch)
     watch._fire()
     assert capfd.readouterr().out == "the rewrite"
     assert exits.codes == []
@@ -117,7 +119,7 @@ def test_watchdog_first_wins_alone(exits: Exits, capfd: pytest.CaptureFixture[st
     watch, rec = _watchdog()
     watch._fire()
     with pytest.raises(typer.Exit) as raised:
-        cli._emit("the rewrite", watch)
+        trigger._emit("the rewrite", watch)
     assert raised.value.exit_code == 0
     assert capfd.readouterr().out == MARKER
     assert exits.codes == [0]
@@ -139,7 +141,7 @@ def test_race_prints_exactly_one(exits: Exits, capfd: pytest.CaptureFixture[str]
         started.wait()
         # The loser of the race is _emit() when its Exit says so.
         with contextlib.suppress(typer.Exit):
-            cli._emit("the rewrite", watch)
+            trigger._emit("the rewrite", watch)
         thread.join()
         assert capfd.readouterr().out in ("the rewrite", MARKER)
 
@@ -168,7 +170,7 @@ def test_marker_is_cleaned_with_note(
 def test_slow_history_does_not_delay_exit(
     monkeypatch: pytest.MonkeyPatch, exits: Exits, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli, "_WATCHDOG_HISTORY", 0.1)
+    monkeypatch.setattr(trigger, "_WATCHDOG_HISTORY", 0.1)
     watch, rec = _watchdog()
     release = threading.Event()
     monkeypatch.setattr(rec, "finish", release.wait)
@@ -187,7 +189,7 @@ def test_failures_still_exit(monkeypatch: pytest.MonkeyPatch, exits: Exits) -> N
     def broken(*args: Any) -> None:
         raise OSError("closed")
 
-    monkeypatch.setattr(cli, "_write_fd", broken)
+    monkeypatch.setattr(trigger, "_write_fd", broken)
     monkeypatch.setattr(rec, "timed_out", broken)
     watch._fire()
     assert exits.codes == [0]
@@ -284,10 +286,10 @@ def test_blocking_name_lookup_in_process(
 
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
     fake = Exits(then=release)
-    monkeypatch.setattr(cli, "_hard_exit", fake)
+    monkeypatch.setattr(trigger, "_hard_exit", fake)
     # Fires 0.1 s after the limit, with time for history_rows' generous write budget.
-    monkeypatch.setattr(cli, "_WATCHDOG_HISTORY", 5.0)
-    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 5.1)
+    monkeypatch.setattr(trigger, "_WATCHDOG_HISTORY", 5.0)
+    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 5.1)
     monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
     monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.invalid/api/v1")
     started = time.monotonic()
@@ -358,10 +360,10 @@ def test_no_provider_call_after_the_marker(
         release.wait(30)
         return "a draft"
 
-    monkeypatch.setattr(cli, "_clipboard", stalled)
+    monkeypatch.setattr(pipeline, "_clipboard", stalled)
     fake = Exits(then=release)
-    monkeypatch.setattr(cli, "_hard_exit", fake)
-    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 0.6)
+    monkeypatch.setattr(trigger, "_hard_exit", fake)
+    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
     result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")
     assert capfd.readouterr().out == "[promptmend: Ollama timed out after 0.05s]"
@@ -391,15 +393,15 @@ def test_stalled_copy(
         assert op == "copy"
         release.wait(30)
 
-    monkeypatch.setattr(cli, "_clipboard", stalled)
+    monkeypatch.setattr(pipeline, "_clipboard", stalled)
     fake = Exits(then=release)
-    monkeypatch.setattr(cli, "_hard_exit", fake)
-    monkeypatch.setattr(cli, "_WATCHDOG_HISTORY", 5.0)
-    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 5.1)
+    monkeypatch.setattr(trigger, "_hard_exit", fake)
+    monkeypatch.setattr(trigger, "_WATCHDOG_HISTORY", 5.0)
+    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 5.1)
     command = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
     result = runner.invoke(app, [*command, "--timeout", "1", "--trigger-id", "i", *args])
     assert (result.exit_code, result.stdout) == (0, "")
-    expected = cli.CLIPBOARD_STALLED + "improved"
+    expected = trigger.CLIPBOARD_STALLED + "improved"
     assert capfdbinary.readouterr().out == expected.replace("\n", os.linesep).encode()
     assert fake.codes == [0]
     (op,) = history_rows("operations")
@@ -486,9 +488,9 @@ def test_no_request_after_marker_while_building(
         release.wait(30)
         return make_provider(*args, **kwargs)
 
-    monkeypatch.setattr(cli, "make_provider", slow_build)
-    monkeypatch.setattr(cli, "_hard_exit", Exits(then=release))
-    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 0.6)
+    monkeypatch.setattr(pipeline, "make_provider", slow_build)
+    monkeypatch.setattr(trigger, "_hard_exit", Exits(then=release))
+    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
     args = ["improve", "--provider", "openrouter", "--source", "argument", "--text", "x"]
     result = runner.invoke(app, [*args, "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")
@@ -510,7 +512,7 @@ def test_claim_starts_the_final_timer(monkeypatch: pytest.MonkeyPatch) -> None:
         assert watch._final is not None
         assert watch._timer is not None
         assert watch._final.interval - watch._timer.interval == pytest.approx(
-            cli._WATCHDOG_HISTORY, abs=0.1
+            trigger._WATCHDOG_HISTORY, abs=0.1
         )
     finally:
         watch.cancel()
@@ -543,7 +545,7 @@ def test_raising_exit_still_releases(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(code: int) -> None:
         raise RuntimeError("stand-in")
 
-    monkeypatch.setattr(cli, "_hard_exit", boom)
+    monkeypatch.setattr(trigger, "_hard_exit", boom)
     watch, _ = _watchdog()
     watch.flushed()
     with pytest.raises(RuntimeError):
@@ -557,7 +559,7 @@ def test_flush_after_the_final_timer_ends_at_once(
     exits: Exits, capfd: pytest.CaptureFixture[str]
 ) -> None:
     watch, _ = _watchdog()
-    cli._emit("the rewrite", watch)
+    trigger._emit("the rewrite", watch)
     watch._final_exit()  # still printing: left alone
     assert exits.codes == []
     watch.flushed()
@@ -575,7 +577,7 @@ def test_stalled_copy_with_lone_surrogate(
     watch, _ = _watchdog()
     watch.delivering("", "a\ud800b")
     watch._fire()
-    stalled = cli.CLIPBOARD_STALLED.replace("\n", os.linesep).encode()
+    stalled = trigger.CLIPBOARD_STALLED.replace("\n", os.linesep).encode()
     assert capfdbinary.readouterr().out == stalled + b"a?b"
     assert exits.codes == [0]
 
@@ -613,7 +615,7 @@ def test_attempt_begun_before_the_marker_sends_before_it(
         sent.wait(10)
         finish(self)
 
-    write_fd = cli._write_fd
+    write_fd = trigger._write_fd
 
     def marker_out(fd: int, data: bytes) -> None:
         events.append("marker")
@@ -634,11 +636,11 @@ def test_attempt_begun_before_the_marker_sends_before_it(
     monkeypatch.setattr(_Watchdog, "_fire", fire_once_begun)
     monkeypatch.setattr(fake_http, "handler", handled)
     monkeypatch.setattr(recorder.Recorder, "finish", history_write)
-    monkeypatch.setattr(cli, "_write_fd", marker_out)
-    monkeypatch.setattr(cli, "_hard_exit", Exit(then=unblock))
+    monkeypatch.setattr(trigger, "_write_fd", marker_out)
+    monkeypatch.setattr(trigger, "_hard_exit", Exit(then=unblock))
     # A history wait far longer than the test needs: the order comes from the events alone.
-    monkeypatch.setattr(cli, "_WATCHDOG_HISTORY", 10.0)
-    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 10.1)
+    monkeypatch.setattr(trigger, "_WATCHDOG_HISTORY", 10.0)
+    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 10.1)
     args = ["improve", "--provider", "openrouter", "--source", "argument", "--text", "x"]
     result = runner.invoke(app, [*args, "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")
@@ -652,16 +654,16 @@ def test_proceed_exit_is_not_a_failure(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
 ) -> None:
     release = threading.Event()
-    monkeypatch.setattr(cli, "_clipboard", lambda op, *args: release.wait(30) and "a draft")
-    monkeypatch.setattr(cli, "_hard_exit", Exits(then=release))
-    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 0.6)
+    monkeypatch.setattr(pipeline, "_clipboard", lambda op, *args: release.wait(30) and "a draft")
+    monkeypatch.setattr(trigger, "_hard_exit", Exits(then=release))
+    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
     failures: list[Exception] = []
 
     def failed(exc: Exception) -> str:
         failures.append(exc)
         return ""
 
-    monkeypatch.setattr(cli, "marker", failed)
+    monkeypatch.setattr(trigger, "marker", failed)
     result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")
     assert failures == []
@@ -726,7 +728,7 @@ def _run(argv: list[str], env: dict[str, str]) -> tuple[subprocess.CompletedProc
 def _assert_marker(proc: subprocess.CompletedProcess[bytes], seconds: float) -> None:
     assert (proc.returncode, proc.stderr) == (0, b"")
     assert proc.stdout.decode("utf-8") == MARKER
-    assert seconds <= LIMIT + cli.WATCHDOG_MARGIN + SLACK
+    assert seconds <= LIMIT + trigger.WATCHDOG_MARGIN + SLACK
 
 
 _ENTRY = [sys.executable, "-m", "promptmend.entry"]

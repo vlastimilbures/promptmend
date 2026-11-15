@@ -282,9 +282,9 @@ def test_clipboard_read_failure(
 def test_concealed_refused_outcome(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, history_rows: HistoryRows
 ) -> None:
-    import promptmend.cli as cli
+    import promptmend.pipeline as pipeline
 
-    monkeypatch.setattr(cli, "is_concealed", lambda: True)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
     monkeypatch.setattr(pyperclip, "copy", lambda text: None)
     _run(["improve", "--provider", "ollama"])
     assert _outcome(history_rows) == "concealed_refused"

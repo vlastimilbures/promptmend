@@ -27,11 +27,11 @@ runner = CliRunner()
 
 PLACEHOLDER = b"I am working as [role] in [company]."
 
-# What a newline in the output becomes on this platform. _emit() writes text to sys.stdout,
-# which on Windows translates "\n" to "\r\n" (CPython opens the standard streams with
-# newline=None there, and _main()'s reconfigure() keeps that), so a multi-line rewrite and the
-# "sent despite" note reach Espanso with CRLF on Windows and LF elsewhere. CliRunner's stdout
-# wrapper translates the same way. Frozen as it is, so a change either way fails here.
+# What a newline in the output becomes on this platform. trigger._emit() writes text to
+# sys.stdout, which on Windows translates "\n" to "\r\n" (CPython opens the standard streams
+# with newline=None there, and _main()'s reconfigure() keeps that), so a multi-line rewrite and
+# the "sent despite" note reach Espanso with CRLF on Windows and LF elsewhere. CliRunner's
+# stdout wrapper translates the same way. Frozen as it is, so a change either way fails here.
 EOL = os.linesep.encode()
 
 
@@ -172,6 +172,7 @@ import httpx
 import pyperclip
 
 import promptmend.cli as cli
+import promptmend.pipeline as pipeline
 from promptmend.providers import base
 
 real_client = httpx.Client
@@ -194,7 +195,7 @@ def client(*args, **kwargs):
 
 httpx.Client = client
 base._sleep = lambda seconds: None
-cli.is_concealed = lambda: None
+pipeline.is_concealed = lambda: None
 pyperclip.paste = lambda: "rewrite this draft"
 copied = []
 pyperclip.copy = copied.append
@@ -256,8 +257,8 @@ HISTORY_MODULES = ("promptmend.history", "sqlite3", "_sqlite3")
 
 # Modules the trigger scenarios add to a bare interpreter, macOS: 307 on Python 3.12 and 306 on
 # 3.14 with the usage history on, 296 on both with it off (see "Trigger start-up budget" in
-# CONTRIBUTING.md). A coarse ceiling, not a timing: a new dependency tree on the trigger path
-# crosses it; ordinary growth does not.
+# CONTRIBUTING.md), +3 since #281 (sanitize, pipeline, trigger). A coarse ceiling, not a
+# timing: a new dependency tree on the trigger path crosses it; ordinary growth does not.
 MODULE_CEILING = 400
 
 # Variables that would make the child load modules before the script runs (coverage's .pth
@@ -392,11 +393,20 @@ Path(out).write_text(json.dumps({"code": code, "added": seen[0]}), encoding="utf
 # Never loaded by `--version`, nor by `improve` before its provider call. `--version` reads
 # the installed metadata; `improve` does not need it.
 STARTUP_FORBIDDEN = ("httpx", "pyperclip", "sqlite3", "textual", *FORBIDDEN)
-VERSION_FORBIDDEN = (*STARTUP_FORBIDDEN, "typer", "click", "rich", "promptmend.cli")
+VERSION_FORBIDDEN = (
+    *STARTUP_FORBIDDEN,
+    "typer",
+    "click",
+    "rich",
+    "promptmend.cli",
+    "promptmend.trigger",
+    "promptmend.pipeline",
+)
 IMPROVE_FORBIDDEN = (*STARTUP_FORBIDDEN, "importlib.metadata")
 # Modules each run adds to a bare interpreter, macOS, Python 3.12, 2026-10-08: `--version`
 # 108 (importlib.metadata is most of them), `improve` up to the provider call 149; both were
-# 221 before #223. Coarse, like MODULE_CEILING: a new import tree crosses them.
+# 221 before #223; `improve` +3 since #281 (sanitize, pipeline, trigger). Coarse, like
+# MODULE_CEILING: a new import tree crosses them.
 VERSION_CEILING = 150
 IMPROVE_CEILING = 200
 
@@ -448,6 +458,48 @@ def test_improve_startup_budget(tmp_path: Path) -> None:
     assert (stdout, data["code"]) == (b"done", 0)
     assert _loaded(data["added"], IMPROVE_FORBIDDEN) == []
     assert len(data["added"]) <= IMPROVE_CEILING, f"improve added {len(data['added'])}"
+
+
+# The boundary of the #281 split: pipeline.py (the rewrite's steps) imports neither Typer nor
+# the CLI nor the trigger run, so a Typer-free trigger entry (#299) can build on it, and the
+# interface's Try tab reaches the pipeline without importing cli.py. Each in a fresh interpreter.
+_IMPORT_RUN = """
+import sys
+out, module = sys.argv[1], sys.argv[2]
+import importlib
+importlib.import_module(module)
+import json
+from pathlib import Path
+Path(out).write_text(json.dumps({"loaded": sorted(sys.modules)}), encoding="utf-8")
+"""
+
+
+def _imports(module: str, tmp: Path) -> list[str]:
+    out = tmp / "modules.json"
+    proc = subprocess.run(
+        [sys.executable, "-c", _IMPORT_RUN, str(out), module],
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        env=_isolated_env(tmp),
+        cwd=tmp,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    loaded: list[str] = json.loads(out.read_text(encoding="utf-8"))["loaded"]
+    return loaded
+
+
+def test_pipeline_imports_no_typer_or_cli(tmp_path: Path) -> None:
+    loaded = _imports("promptmend.pipeline", tmp_path)
+    assert "promptmend.pipeline" in loaded
+    assert _loaded(loaded, ("typer", "click", "promptmend.cli", "promptmend.trigger")) == []
+
+
+def test_try_pane_does_not_import_cli(tmp_path: Path) -> None:
+    loaded = _imports("promptmend.tui.try_pane", tmp_path)
+    assert "promptmend.pipeline" in loaded
+    assert _loaded(loaded, ("promptmend.cli", "promptmend.trigger")) == []
 
 
 # The headless management commands, --help and the bare command without a terminal never load

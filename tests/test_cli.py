@@ -4,8 +4,6 @@ import os
 import re
 import subprocess
 import sys
-import time
-import unicodedata
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -15,12 +13,13 @@ import pytest
 from typer.testing import CliRunner
 
 import promptmend.cli as cli
+import promptmend.pipeline as pipeline
 from promptmend import config
-from promptmend.cli import _read_input, app
+from promptmend.cli import app
 from promptmend.config import Settings
+from promptmend.pipeline import _read_input
 from promptmend.prompt_builder import system_prompt
 from promptmend.providers.base import TRUNCATED_NOTE, ProviderError
-from promptmend.redaction import DEFAULT_IGNORABLE
 
 if TYPE_CHECKING:
     from conftest import FakeHttp, StubProvider
@@ -491,113 +490,6 @@ def test_draft_strips_unassigned_ignorable_payload(stub_provider: StubProvider) 
     assert stub_provider.calls[0]["prompt"] == "Hi!"
 
 
-# Every default-ignorable code point is removed, except the joiners and emoji selectors that
-# _keep_run() judges in context.
-def test_clean_drops_every_default_ignorable() -> None:
-    ignorable = re.compile(f"[{DEFAULT_IGNORABLE}]")
-    kept = set("\u200c\u200d\ufe0e\ufe0f")
-    hidden = "".join(
-        c for c in map(chr, range(0xE1000)) if c not in kept and ignorable.fullmatch(c)
-    )
-    assert len(hidden) > 4000
-    assert cli.clean(f"a{hidden}b") == "ab"
-
-
-# Every invisible format character, Hangul filler and stray selector is removed; the
-# zero-width space between two selectors cannot rescue the run around it.
-@pytest.mark.parametrize(
-    "hidden",
-    [
-        "\u200b",  # zero-width space
-        "\u2060",  # word joiner
-        "\ufeff",  # byte order mark
-        "\u180e",  # Mongolian vowel separator
-        "\u00ad",  # soft hyphen
-        "\u200e",  # left-to-right mark
-        "\u200f",  # right-to-left mark
-        "\u061c",  # Arabic letter mark
-        "\u2061",  # invisible function application
-        "\u2065",  # unassigned, default-ignorable
-        "\ufff0",  # unassigned, default-ignorable
-        "\U000e0200",  # unassigned, default-ignorable
-        "\u034f",  # combining grapheme joiner
-        "\u180b",  # Mongolian free variation selector
-        "\u17b4",  # Khmer vowel inherent
-        "\U0001d173",  # musical symbol begin beam
-        "\ufe0f",  # an emoji selector after a letter
-        "\u115f",  # Hangul choseong filler
-        "\u1160",  # Hangul jungseong filler
-        "\u3164",  # Hangul filler
-        "\uffa0",  # halfwidth Hangul filler
-        "\ufe00",  # a selector no emoji uses
-        "\ufe0f\ufe0f",  # a run of emoji selectors
-        "\ufe0f\u200b\ufe0f",  # a run split by a zero-width space
-        "\U000e0101",  # ideographic variation selector
-        "\u200d",  # a joiner between ASCII letters
-        "\u200c\u200c",  # a run of joiners
-    ],
-    ids=lambda s: "+".join(f"U+{ord(c):04X}" for c in s),
-)
-def test_clean_drops_invisible_characters(hidden: str) -> None:
-    assert cli.clean(f"pay{hidden}load") == "payload"
-
-
-# A selector or joiner at the start of the text or after a space has nothing to attach to.
-@pytest.mark.parametrize("text", ["\ufe0fx", " \ufe0fx", "\n\u200dx", "\u2800\ufe0fx"])
-def test_clean_drops_selector_without_a_base(text: str) -> None:
-    assert cli.clean(text) == text.replace("\ufe0f", "").replace("\u200d", "")
-
-
-# Every other line break becomes a newline instead of joining words or breaking invisibly.
-@pytest.mark.parametrize("brk", ["\r\n", "\r", "\x0b", "\x0c", "\x85", "\u2028", "\u2029"])
-def test_clean_maps_line_breaks_to_newlines(brk: str) -> None:
-    assert cli.clean(f"a{brk}b") == "a\nb"
-
-
-# The visible prepended concatenation marks (Arabic number signs, Kaithi) are format
-# characters that real text needs.
-@pytest.mark.parametrize("mark", sorted(cli._KEEP_CF - {"\u200c", "\u200d"}))
-def test_clean_keeps_prepended_concatenation_marks(mark: str) -> None:
-    assert cli.clean(f"{mark}\u0661\u0662") == f"{mark}\u0661\u0662"
-
-
-# Emoji, Czech, Vietnamese (composed and decomposed), Persian, Hindi and Arabic survive as-is.
-@pytest.mark.parametrize(
-    "text",
-    [
-        "\U0001f44d\U0001f3fd",  # thumbs up, skin tone
-        "\u2764\ufe0f",  # red heart
-        "\U0001f468\u200d\U0001f469\u200d\U0001f467",  # family
-        "1\ufe0f\u20e3",  # keycap 1
-        "\u2764\ufe0f\u200d\U0001f525",  # heart on fire
-        "\U0001f441\ufe0f\u200d\U0001f5e8\ufe0f",  # eye in speech bubble
-        "\U0001f3f3\ufe0f\u200d\U0001f308",  # rainbow flag
-        "\u263a\ufe0e",  # text-style smiley
-        "Příliš žluťoučký kůň úpěl ďábelské ódy.",
-        "Tiếng Việt có dấu: bảo mật, mật độ.",
-        unicodedata.normalize("NFD", "Tiếng Việt có dấu: bảo mật, mật độ."),
-        "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645",  # Persian with ZWNJ
-        "\u0915\u094d\u200d\u0937",  # Devanagari with ZWJ
-        "\u0600\u0661\u0662",  # Arabic number sign
-        "tab\tand\nnewline",
-    ],
-)
-def test_clean_keeps_real_text(text: str) -> None:
-    assert cli.clean(text) == text
-
-
-# Filtering stays linear on a large clipboard full of selectors and joiners.
-@pytest.mark.parametrize(
-    "text",
-    ["\ufe0f" * 50_000, "a\ufe0f\u200d" * 17_000, "\u200b\ufe0f" * 25_000, "\u2764\ufe0f" * 25_000],
-    ids=["selectors", "emoji-runs", "split-runs", "hearts"],
-)
-def test_clean_is_fast_on_adversarial_input(text: str) -> None:
-    started = time.perf_counter()
-    cli.clean(text)
-    assert time.perf_counter() - started < 2
-
-
 # Output is UTF-8 whatever the locale: on Windows a piped stdout defaults to the ANSI code
 # page, where printing a Czech or Vietnamese rewrite used to crash into a blank expansion.
 def test_output_is_utf8_under_legacy_code_page(tmp_path: Path) -> None:
@@ -694,7 +586,7 @@ def test_concealed_clipboard_is_refused(
 ) -> None:
     pasted: list[int] = []
     copied: list[str] = []
-    monkeypatch.setattr(cli, "is_concealed", lambda: True)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
 
     def paste() -> str:
         pasted.append(1)
@@ -718,7 +610,7 @@ def test_concealed_clipboard_is_refused(
 def test_concealed_clipboard_refused_when_clearing_fails(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
 ) -> None:
-    monkeypatch.setattr(cli, "is_concealed", lambda: True)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
     monkeypatch.setattr(pyperclip, "copy", _no_clipboard)
     result = improve("--provider", "openrouter", "--source", "clipboard")
     assert "password-manager item" in result.stdout
@@ -730,7 +622,7 @@ def test_concealed_clipboard_refused_when_clearing_fails(
 def test_unconcealed_clipboard_is_read(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, verdict: bool | None
 ) -> None:
-    monkeypatch.setattr(cli, "is_concealed", lambda: verdict)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: verdict)
     monkeypatch.setattr(pyperclip, "paste", lambda: "summarise the minutes")
     result = improve("--provider", "openrouter", "--source", "clipboard")
     assert result.stdout == "improved"
@@ -741,7 +633,7 @@ def test_unconcealed_clipboard_is_read(
 def test_other_sources_skip_the_probe(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
 ) -> None:
-    monkeypatch.setattr(cli, "is_concealed", lambda: True)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
     assert improve("--source", "argument", "--text", "draft").stdout == "improved"
 
 
@@ -1321,7 +1213,7 @@ def test_clipboard_output_copy_failure_pastes_the_rewrite(
 def test_clipboard_output_concealed_refusal(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, copied: list[str]
 ) -> None:
-    monkeypatch.setattr(cli, "is_concealed", lambda: True)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
     result = improve("--output", "clipboard", "--provider", "ollama", "--source", "clipboard")
     assert "password-manager item" in result.stdout
     assert copied == [""]

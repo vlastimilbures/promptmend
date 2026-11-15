@@ -101,7 +101,7 @@ uv run pytest -m live
 - **The Espanso contract.** The CLI prints the result with no trailing newline, and every failure
   as `[promptmend: …]` with exit code 0. Espanso cannot show stderr or exit codes, so a
   traceback or a blank line reaches the user as a silent failure. Print only through
-  `cli._emit()`, which strips control and invisible characters from whatever gets pasted.
+  `trigger._emit()`, which strips control and invisible characters from whatever gets pasted.
   `tests/test_trigger_contract.py` compares the whole stdout of `improve` and `persona` byte
   for byte; a change there is a change to what every trigger pastes. On Windows each newline
   in the output is printed as CRLF (Python's standard streams translate it there); the test
@@ -240,9 +240,10 @@ gh release create v0.10.0 --verify-tag --latest=false --title v0.10.0 --notes-fi
 
 ## Trigger start-up budget
 
-Espanso starts a fresh `promptmend` process for every trigger, so everything `cli.py`
-imports is paid on each expansion. Measured on 2026-10-04 on an Apple M5 MacBook (macOS, load
-average about 14, so on the high side), CLI 0.15.0:
+Espanso starts a fresh `promptmend` process for every trigger, so everything `cli.py` (and
+the `trigger.py`, `pipeline.py` and `sanitize.py` it runs) imports is paid on each expansion.
+Measured on 2026-10-04 on an Apple M5 MacBook (macOS, load average about 14, so on the high
+side), CLI 0.15.0:
 
 | Measure | Python 3.12 | Python 3.14 |
 | --- | --- | --- |
@@ -325,11 +326,15 @@ promptmend/
 │   │   ├── prompts-core.yml      -risk-: static snippet
 │   │   └── prompts-template.yml  -p-: the empty golden template, opens with your persona
 ├── src/promptmend/               the promptmend CLI
-│   ├── cli.py                    improve and persona commands, the single output sink;
-│   │                             mounts the management commands lazily
+│   ├── cli.py                    the Typer app: improve and persona commands; mounts the
+│   │                             management commands lazily
+│   ├── trigger.py                improve's run: _emit() (the single output sink), the watchdog
+│   ├── pipeline.py               the rewrite's steps (input, rewrite(), markers, delivery),
+│   │                             Typer-free, shared with the interface's Try tab
 │   ├── entry.py                  console-script entry: empty stderr for a trigger
-│   ├── commands/                 setup, config, secrets, profiles, stats, history, doctor, ui:
-│   │                             thin Typer wrappers over the services (common.py: exit codes)
+│   ├── commands/                 espanso, setup, config, secrets, profiles, stats, history,
+│   │                             doctor, ui: thin Typer wrappers over the services
+│   │                             (common.py: exit codes)
 │   ├── tui/                      the full-screen Textual interface; only `ui` (commands/ui.py,
 │   │                             also a bare promptmend and `setup` on a terminal) loads it
 │   ├── doctor.py                 the doctor report (stable JSON, never a key or persona)
@@ -344,6 +349,7 @@ promptmend/
 │   ├── gate.py                   GatedProvider: scans every draft that can leave the machine
 │   ├── clipboard_guard.py        refuses password-manager (concealed) clipboard items
 │   ├── redaction.py              the gate's sensitive-content patterns
+│   ├── sanitize.py               clean(): strips control and invisible characters
 │   ├── history.py                local usage history (SQLite, metadata only, fail-open)
 │   ├── recorder.py               records each improve/persona run in the usage history
 │   ├── prompt_builder.py         loads built-in and user profiles, fills in the persona rule

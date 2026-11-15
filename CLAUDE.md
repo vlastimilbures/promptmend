@@ -86,7 +86,7 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   stderr empty (`entry.main()`'s `quiet_trigger()` silences warnings and points fd 2 at the
   null device before importing the CLI), catch every failure, print a `[promptmend: ...]`
   marker on stdout and exit 0. Never `ignore_error: true`: a crash must still fail visibly.
-- Everything printed goes through `cli._emit()`. Markers are pasted into the focused app, so an error that quotes a value goes through
+- Everything printed goes through `trigger._emit()`. Markers are pasted into the focused app, so an error that quotes a value goes through
   `redaction.safe_repr()` / `redact_words()`.
 - `tests/test_yaml.py` enforces, for every match (commented-out ones too): `force_mode:
   clipboard` on every CLI match, its own `label:` (`PromptMend: …`), `left_word: true`, and a
@@ -146,9 +146,12 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
 ## Trigger-path import contract
 
 `improve` and `persona` start on every keystroke trigger, so their import set is pinned by
-`tests/test_trigger_contract.py` (`FORBIDDEN`, ceilings). New heavy imports
-go inside the function that needs them; `cli._LAZY_COMMANDS` loads a management command only
-when it runs. `entry.self_command()` is the argv prefix for any child that runs the CLI again.
+`tests/test_trigger_contract.py` (`FORBIDDEN`, ceilings). They run through `cli.py` (the Typer
+wiring), `trigger.py` (`_emit()`, the watchdog, the run), `pipeline.py` (the rewrite's steps,
+Typer-free, shared with the Try tab) and `sanitize.py`; none of them imports `cli`. New heavy
+imports go inside the function that needs them; `cli._LAZY_COMMANDS` loads a management
+command only when it runs. `entry.self_command()` is the argv prefix for any child that runs
+the CLI again.
 
 ## Usage history
 

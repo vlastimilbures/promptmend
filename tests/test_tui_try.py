@@ -19,8 +19,8 @@ from test_tui_snapshots import fixed_state
 from textual.pilot import Pilot
 from textual.widgets import Button, Select, Static, TabbedContent, TextArea
 
-from promptmend import cli, clipboard_guard, prompt_builder, smoke
-from promptmend.cli import MAX_DRAFT_CHARS
+from promptmend import clipboard_guard, pipeline, prompt_builder, smoke
+from promptmend.pipeline import MAX_DRAFT_CHARS
 from promptmend.providers.usage import AttemptUsage
 from promptmend.tui import teach, try_pane
 from promptmend.tui.app import ManageApp
@@ -55,7 +55,7 @@ def no_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pyperclip, "paste", touched)
     monkeypatch.setattr(pyperclip, "copy", touched)
     monkeypatch.setattr(clipboard_guard, "is_concealed", touched)
-    monkeypatch.setattr(cli, "is_concealed", touched)
+    monkeypatch.setattr(pipeline, "is_concealed", touched)
 
 
 @pytest.fixture
@@ -330,7 +330,7 @@ def test_one_run_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
         release.wait(10)
         return "done"
 
-    monkeypatch.setattr(cli, "rewrite", slow)
+    monkeypatch.setattr(pipeline, "rewrite", slow)
     during: list[bool] = []
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:

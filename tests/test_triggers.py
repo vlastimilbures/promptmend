@@ -22,13 +22,14 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from promptmend import cli, smoke
+from promptmend import smoke
 from promptmend.cli import PERSONA_PLACEHOLDER, app
 from promptmend.config import Settings
 from promptmend.deploy import launcher_text
 from promptmend.prompt_builder import PROFILES, system_prompt
 from promptmend.providers.base import timed_out_message
 from promptmend.providers.registry import PROVIDERS
+from promptmend.trigger import WATCHDOG_MARGIN
 
 if TYPE_CHECKING:
     from conftest import HistoryRows, StubProvider
@@ -390,7 +391,7 @@ SLOW_TRIGGERS = sorted(t for t, args in SCRIPT_VARS.items() if args[1] == "impro
 LIMIT = 1.0
 LIMIT_ENV = {"PROMPT_TIMEOUT_SECONDS": str(LIMIT), "PROMPT_PRO_TIMEOUT_SECONDS": str(LIMIT)}
 # Process start-up on a loaded CI runner (windows-latest above all), with every slow run at
-# once, on top of the limit plus cli.WATCHDOG_MARGIN.
+# once, on top of the limit plus trigger.WATCHDOG_MARGIN.
 SLACK = 20.0
 
 
@@ -444,6 +445,6 @@ def test_trigger_processes_against_a_slow_stub() -> None:
             label = PROVIDERS[_provider(trigger)].label
             assert (proc.returncode, proc.stderr) == (0, b""), trigger
             assert proc.stdout.decode("utf-8") == f"[promptmend: {timed_out_message(label, LIMIT)}]"
-            assert seconds <= LIMIT + cli.WATCHDOG_MARGIN + SLACK, trigger
+            assert seconds <= LIMIT + WATCHDOG_MARGIN + SLACK, trigger
             # The watchdog may end a run on a slow runner before its request goes out.
             assert late[trigger].requests <= 1, trigger
