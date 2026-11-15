@@ -31,7 +31,7 @@ from promptmend.tui import (
     settings_model,
     settings_pane,
 )
-from promptmend.tui.app import HIGH_CONTRAST, ManageApp
+from promptmend.tui.app import HIGH_CONTRAST, TABS, ManageApp
 from promptmend.tui.home import pill
 from promptmend.tui.modals import ConfirmModal, EditModal, FormModal, PickModal, TextModal
 from promptmend.tui.state import State, gather
@@ -337,6 +337,7 @@ def test_the_version_row_fills_in_on_every_screen(
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         first = _state(app)  # settle() returned: no worker waits for the check
         assert first.update.state == update_check.CHECKING
+        await open_tab(app, pilot, *(t for t in TABS if t != "try"))
         home = app.main.query_one("#home-pane", home_pane.HomePane)
         assert "· checking" in _rendered(home, "#home-rows")
         await pilot.press("a")
@@ -358,6 +359,10 @@ def test_the_version_row_fills_in_on_every_screen(
         assert "99.0.0 available" in _rendered(diagnostics, "#all-checks")
         version = next(c for c in state.report.checks if c.id == "version")
         assert version.data["latest"] == "99.0.0"
+        # A tab first opened after the update landed shows it too (#316).
+        await open_tab(app, pilot, "try")
+        assert pane(app, "try").ready
+        assert pane(app, "try").state is state
 
     drive(scenario)
     assert "checking pypi.org" in seen[0]
@@ -478,6 +483,13 @@ def test_a_late_answer_that_cannot_be_shown_is_unknown(
 
 def pane(app: ManageApp, tab: str) -> base.Pane:
     return app.main.query_one(f"#{tab}-pane", base.Pane)
+
+
+async def open_tab(app: ManageApp, pilot: Pilot[int], *tabs: str) -> None:
+    """Build each tab's pane, as opening it does: only Home is built at start (#316)."""
+    for tab in tabs:
+        await app.main.build(tab)
+    await settle(pilot)
 
 
 def table_rows(app: ManageApp, tab: str, selector: str) -> dict[str, list[str]]:
@@ -604,6 +616,50 @@ def test_digits_switch_tabs_and_t_toggles_contrast(espanso: FakeRunner) -> None:
 
     drive(scenario)
     assert seen == [True] * 9
+
+
+def test_only_home_is_built_until_a_tab_opens(espanso: FakeRunner) -> None:
+    """#316: the other tabs are built the first time they open, by a digit, by the arrows on
+    the tab bar or by a click, and each shows the current State at once."""
+    built: list[list[str]] = []
+
+    def now(app: ManageApp) -> list[str]:
+        return [tab for tab in TABS if app.main.built(tab) is not None]
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        from textual.widgets import TabbedContent, Tabs
+
+        built.append(now(app))
+        await pilot.press("4")
+        await settle(pilot)
+        built.append(now(app))
+        triggers = pane(app, "triggers")
+        assert triggers.ready
+        assert table_rows(app, "triggers", "#triggers")
+        # The tab bar's arrows open the next tab, and build it.
+        app.main.query_one(Tabs).focus()
+        await pilot.press("right")
+        await settle(pilot)
+        assert app.main.query_one(TabbedContent).active == "history"
+        built.append(now(app))
+        await pilot.click("#--content-tab-diagnostics")
+        await settle(pilot)
+        assert app.main.query_one(TabbedContent).active == "diagnostics"
+        assert "version:" in str(pane(app, "diagnostics").query_one("#all-checks").render())
+        built.append(now(app))
+        # Opening a tab again builds nothing new.
+        await pilot.press("4", "1", "4")
+        await settle(pilot)
+        assert pane(app, "triggers") is triggers
+        assert len(app.main.query("#triggers-pane")) == 1
+
+    drive(scenario)
+    assert built == [
+        ["home"],
+        ["home", "triggers"],
+        ["home", "triggers", "history"],
+        ["home", "triggers", "history", "diagnostics"],
+    ]
 
 
 def test_header_shows_the_name_and_installed_version(
@@ -747,6 +803,7 @@ def test_home_warns_of_a_persona_matching_the_patterns(
     )
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "diagnostics")
         home = _rendered(pane(app, "home"), "#home-rows")
         home_tab = app.main.query_one("#home-pane", home_pane.HomePane)
         checks = {row.label: row for row in home_tab.rows}["Checks"]
@@ -764,6 +821,7 @@ def test_home_warns_of_a_persona_matching_the_patterns(
 
 def test_settings_set_a_key_never_shows_it(saved: Path, espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
         assert settings_rows(app)["OPENROUTER_API_KEY"].value == "not set"
         # Space on a key's row does nothing; Enter opens the hidden Set key dialog.
         await on_row(app, pilot, "OPENROUTER_API_KEY", "space")
@@ -870,6 +928,7 @@ def test_an_unexpected_error_is_shown_not_raised(
 
 def test_settings_space_toggles_history(saved: Path, espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
         row = settings_rows(app)["PROMPT_HISTORY"]
         assert (row.value, row.on, row.source) == ("on", True, "default")
         await on_row(app, pilot, "PROMPT_HISTORY", "space")
@@ -1003,6 +1062,7 @@ def test_settings_a_withheld_value_is_kept_by_an_empty_save(
     toml.write_text(f'OLLAMA_MODEL = "{KEY}"\n', encoding="utf-8")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
         assert KEY not in settings_rows(app)["OLLAMA_MODEL"].value
         await on_row(app, pilot, "OLLAMA_MODEL", "enter")
         screen = app.screen
@@ -1081,6 +1141,7 @@ def test_settings_local_only_shows_in_the_diagnostics_routes(
     monkeypatch.setenv("PROMPT_PROFILE", "general")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "diagnostics")
         await on_row(app, pilot, "PROMPT_LOCAL_ONLY", "space")
         assert _state(app).settings.local_only
         routes = table_rows(app, "diagnostics", "#routes")
@@ -1102,6 +1163,7 @@ def test_settings_never_show_the_persona(
     persona = "I am the head of a secret project"
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
         assert settings_rows(app)["PROMPT_PERSONA"].value == "(empty)"
         await edit_to(app, pilot, "PROMPT_PERSONA", persona)
         row = settings_rows(app)["PROMPT_PERSONA"]
@@ -1124,6 +1186,7 @@ def test_settings_never_show_the_persona(
 
 def test_settings_filter(espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
         settings = settings_tab(app)
         count = settings.query_one("#settings-count", Static)
         assert str(count.render()) == f"{len(settings_model.SETTINGS)} settings"
@@ -1354,6 +1417,7 @@ def test_profiles_editor_unsupported_terminal(
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         from textual.widgets import DataTable
 
+        await open_tab(app, pilot, "profiles")
         table = pane(app, "profiles").query_one("#profiles", DataTable)
         table.move_cursor(row=table.get_row_index("user:mine"))
         await pilot.press("3")
@@ -1714,6 +1778,7 @@ def test_history_unreadable_store(espanso: FakeRunner, monkeypatch: pytest.Monke
     monkeypatch.setattr(HistoryStore, "stats", broken)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "history")
         note = str(pane(app, "history").query_one("#stats-note").render())
         assert note == "error: the database is damaged"
 
@@ -2274,6 +2339,7 @@ def test_every_button_has_its_command_as_tooltip(espanso: FakeRunner) -> None:
     seen: dict[str, object] = {}
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, *TABS)
         for screen in (app.main, app.screen):
             for button in screen.query(Button):
                 seen[button.id or ""] = button.tooltip
