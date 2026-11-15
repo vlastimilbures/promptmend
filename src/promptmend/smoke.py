@@ -46,7 +46,8 @@ OUTPUT_TOKENS = 7
 # The trigger timed by default, and how many warm runs follow the cold one.
 TRIGGER = "-i-"
 WARM_RUNS = 5  # doctor.WARM_RUNS, kept equal by tests/test_frozen.py
-# time_trigger()'s limit per run (CI's frozen job on a cold Windows runner).
+# time_trigger()'s limit per run (the local `scripts/build_windows.py time`, on a cold Windows
+# machine).
 TRIGGER_TIMEOUT = 120
 
 # Runs argv with env; returns (exit code, stdout). Tests may replace it.

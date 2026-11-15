@@ -268,20 +268,25 @@ about 41 ms cumulative (135 ms). `--version` adds 108 modules (221), 49 ms wall 
 holds these as ceilings (`VERSION_CEILING`, `IMPROVE_CEILING`, up to the provider call) and
 forbids httpx, pyperclip and sqlite3 before it.
 
-On Windows (#306), each pull request's CI run times both channels on `windows-latest`
-(Defender on) with `promptmend doctor --timing` and writes the table to the job summary: the
-`install-script` job through uv's `promptmend.exe` shim after a real `uv tool` install, the
-`frozen-windows` job through the unzipped exe, with the file count and size of its `_internal`
-folder. The rows below come from one CI run; the ms are its first run, then the median of 5
-warm runs. CI asserts no time (runner noise would make it flaky); the module ceilings above
-stay the gate.
+On Windows (#306), every CI run (each pull request and each push to `main`) times both
+channels on `windows-latest` with `promptmend doctor --timing` and writes the table to the job
+summary, with whether Defender's real-time protection was on as the runner reports it: the
+`install-script` job through uv's `promptmend.exe` shim after a real `uv tool` install (and
+through the interpreter, so the shim's own cost shows), the `frozen-windows` job through the
+unzipped exe, with the file count and size of its `_internal` folder. Each cell is the first
+(cold) run, then the median of 5 warm runs. CI asserts no time (runner noise would make it
+flaky); the module ceilings above stay the gate.
 
 <!-- TODO(#306): fill in from the PR's CI run: its date, its URL and both job summaries. -->
 
-| Channel (CI run of TODO-DATE, TODO-RUN-URL) | `--version` | `persona` | `improve` (`-i-`) | `_internal` |
+The rows below come from the CI run of TODO-DATE (TODO-RUN-URL); Defender real-time
+protection: TODO.
+
+| Channel | `--version`, cold / warm ms | `persona`, cold / warm ms | `improve` (`-i-`), cold / warm ms | `_internal` |
 | --- | --- | --- | --- | --- |
-| uv tool install, through the shim | TODO | TODO | TODO | n/a |
-| Frozen exe (the Windows zip) | TODO | TODO | TODO | TODO files, TODO MB |
+| uv tool install, through the shim | TODO / TODO | TODO / TODO | TODO / TODO | n/a |
+| uv tool install, through the interpreter | TODO / TODO | TODO / TODO | TODO / TODO | n/a |
+| Frozen exe (the Windows zip) | TODO / TODO | TODO / TODO | TODO / TODO | TODO files, TODO MB |
 
 Re-measure with:
 

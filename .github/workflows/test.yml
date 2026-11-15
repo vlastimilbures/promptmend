@@ -179,8 +179,9 @@ jobs:
           $expected = $wheel.Name.Split('-')[1]
           if ($installed -ne $expected) { throw "installed $installed, expected $expected" }
           Write-Host "promptmend $installed from $bin"
-      # Start-up through uv's promptmend.exe shim, the launcher Espanso runs (#306), with
-      # Defender on, in the job summary next to frozen-windows' numbers. No time is asserted
+      # Start-up through uv's promptmend.exe shim, the launcher Espanso runs (#306), in the job
+      # summary next to frozen-windows' numbers, with whether Defender's real-time protection
+      # was on (as the runner reports it, not assumed). No time is asserted
       # (runner noise); the step fails only when the measurement did not work.
       - name: Time start-up through the uv tool shim
         working-directory: ${{ runner.temp }}
@@ -194,6 +195,8 @@ jobs:
           if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE`n$json" }
           $t = ($json | ConvertFrom-Json).timing
           if (-not $t -or @($t.runs).Count -eq 0) { throw "doctor --timing reported no timing`n$json" }
+          try { $defender = [string](Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled } catch { $defender = '' }
+          if (-not $defender) { $defender = 'unknown' }
           $cell = { param($ms) if ($null -eq $ms) { '-' } else { [string][math]::Round([double]$ms) } }
           $lines = @(
             '### Start-up: uv tool install (`doctor --timing`)',
@@ -202,6 +205,7 @@ jobs:
             '',
             "- launcher: ``$(if ($t.launcher) { $t.launcher } else { $t.launcher_note })``",
             "- interpreter: ``$($t.interpreter -join ' ')``",
+            "- Defender real-time protection: $defender",
             '',
             '| command | via | cold | warm | status |',
             '| --- | --- | ---: | ---: | --- |'
@@ -322,6 +326,8 @@ jobs:
           if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE`n$json" }
           $t = ($json | ConvertFrom-Json).timing
           if (-not $t -or @($t.runs).Count -eq 0) { throw "doctor --timing reported no timing`n$json" }
+          try { $defender = [string](Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled } catch { $defender = '' }
+          if (-not $defender) { $defender = 'unknown' }
           $cell = { param($ms) if ($null -eq $ms) { '-' } else { [string][math]::Round([double]$ms) } }
           $lines = @(
             '### Start-up: frozen exe (`doctor --timing`)',
@@ -330,6 +336,7 @@ jobs:
             '',
             "- launcher: ``$(if ($t.launcher) { $t.launcher } else { $t.launcher_note })``",
             "- interpreter: ``$($t.interpreter -join ' ')``",
+            "- Defender real-time protection: $defender",
             ('- `_internal`: {0} files, {1} MB' -f $files.Count, $mb.ToString('F1', $invariant)),
             '',
             '| command | via | cold | warm | status |',
