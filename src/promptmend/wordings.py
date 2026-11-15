@@ -1,7 +1,8 @@
-"""The default profile's fixed wordings, read from prompts/default.md, their only source (#283).
+"""The default profile's fixed wordings, read from their definitions in prompts/default.md (#283).
 
 A rewrite copies them word for word: the planning step's two variants, the inputs step, the
-review step's two variants, the judgment step, and the OUTPUTS line for a document. Two other
+review step's two variants, the judgment step, and the OUTPUTS line for a document. default.md's
+own few-shot examples repeat them, checked against these by tests/test_wordings.py. Two other
 places use them and take them from here rather than carrying copies:
 
 - the `-p-` template, espanso/match/prompts-template.yml: a checked-in match file (Espanso

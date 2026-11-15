@@ -47,7 +47,11 @@ def _block(indent: str, lead: str, wording: str) -> list[str]:
     if "\t" in wording or "{{" in wording:
         raise ValueError(f"wording {lead!r} has a tab or {{{{, which the template cannot carry")
     first, *rest = wording.split("\n")
-    return [f"{indent}{lead}{first}", *(f"{indent}{line}" if line else "" for line in rest)]
+    # render() finds where a step ends by its deeper indent, so a continuation line that is
+    # empty or not indented would end the step early and a second render would differ.
+    if any(not line.startswith(" ") for line in rest):
+        raise ValueError(f"wording {lead!r} has a continuation line that is empty or unindented")
+    return [f"{indent}{lead}{first}", *(f"{indent}{line}" for line in rest)]
 
 
 def render(template: str, wordings: Wordings) -> str:
@@ -76,6 +80,8 @@ def render(template: str, wordings: Wordings) -> str:
             indent = line[: len(line) - len(line.lstrip(" "))]
             out.extend(_block(indent, "", wordings.outputs))
             i += 1
+            if i >= len(lines) or lines[i].strip() != "</OUTPUTS>":
+                raise ValueError("the line after <OUTPUTS> must be followed by </OUTPUTS>")
     expected = [*steps, "<OUTPUTS>"]
     if sorted(seen) != sorted(expected):
         raise ValueError(f"the template must have each of {expected} once, found {seen}")

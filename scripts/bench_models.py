@@ -783,7 +783,11 @@ TAGS = ["CONTEXT", "GOAL", "INSTRUCTIONS", "CONSTRAINTS", "INPUTS", "OUTPUTS"]
 
 def opening(wording: str, words: int) -> str:
     """The first `words` words of a fixed wording, without a trailing comma or full stop."""
-    return " ".join(wording.split(" ")[:words]).rstrip(".,;:")
+    needle = " ".join(wording.split()[:words]).rstrip(".,;:")
+    # Words joined across a line break would never match a rewrite that copies the wording.
+    if not wording.startswith(needle) or "\n" in needle:
+        raise ValueError(f"the opening {needle!r} spans more than the wording's first line")
+    return needle
 
 
 # The fixed wordings come from prompts/default.md, their only source (promptmend.wordings,

@@ -158,3 +158,70 @@ def test_parse_fails_loudly_on_a_restructured_profile(
 ) -> None:
     with pytest.raises(ValueError, match=error):
         parse(mutate(PROFILES["default"]))
+
+
+@pytest.mark.parametrize("bad", ["Check it:\n\n  - One.", "Check it:\n- One."])
+def test_render_refuses_an_unindented_continuation_line(bad: str) -> None:
+    with pytest.raises(ValueError, match="empty or unindented"):
+        rpt.render(_template(), dataclasses.replace(default_wordings(), self_review=bad))
+
+
+def test_render_needs_outputs_closed_after_its_line() -> None:
+    broken = _template().replace("      </OUTPUTS>", "      more\n      </OUTPUTS>", 1)
+    with pytest.raises(ValueError, match="followed by </OUTPUTS>"):
+        rpt.render(broken, default_wordings())
+
+
+_REWRITE = re.compile(r"<rewrite>\n(.*?)\n</rewrite>", re.DOTALL)
+_INSTRUCTIONS = re.compile(r"<INSTRUCTIONS>\n(.*?)\n</INSTRUCTIONS>", re.DOTALL)
+_QUOTE = re.compile(r'even when the draft names its own activity: "([^"]+)", never')
+
+
+def _example_steps(rewrite: str) -> list[str]:
+    """The numbered steps of a few-shot example, each with its continuation lines."""
+    found = _INSTRUCTIONS.search(rewrite)
+    assert found, "an example rewrite has no INSTRUCTIONS"
+    steps: list[str] = []
+    for line in found.group(1).split("\n"):
+        number = re.match(r"(\d+)/ ", line)
+        if number:
+            assert int(number.group(1)) == len(steps) + 1, line
+            steps.append(line[number.end() :])
+        else:
+            assert steps, line
+            assert line.startswith("  "), line
+            steps[-1] += "\n" + line
+    return steps
+
+
+def _independent(wordings: Wordings) -> re.Pattern[str]:
+    before, after = wordings.independent.split(DOMAIN)
+    return re.compile(re.escape(before) + r"[^\n\[\]]+" + re.escape(after))
+
+
+# default.md's own few-shot examples repeat the fixed wordings in full: each example's
+# planning, inputs, review and judgment steps are the parsed wordings word for word (review
+# variant (a) with a concrete domain for [domain]), so a variant edited without its examples
+# fails here.
+def test_profile_examples_use_the_wordings() -> None:
+    wordings = default_wordings()
+    rewrites = _REWRITE.findall(PROFILES["default"])
+    assert len(rewrites) == 2
+    reviews = []
+    for rewrite in rewrites:
+        steps = _example_steps(rewrite)
+        assert len(steps) >= 5
+        assert steps[0] in (wordings.plan, wordings.execute)
+        assert steps[1] == wordings.inputs
+        assert steps[-2] == wordings.self_review or _independent(wordings).fullmatch(steps[-2])
+        assert steps[-1] == wordings.judgment
+        reviews.append(steps[-2])
+    assert wordings.self_review in reviews
+    assert any(_independent(wordings).fullmatch(r) for r in reviews)
+
+
+# The formatting rule quotes planning variant (a)'s opening as the wording to copy.
+def test_formatting_rule_quotes_the_plan_wording() -> None:
+    quoted = _QUOTE.findall(PROFILES["default"])
+    assert len(quoted) == 1
+    assert re.match(re.escape(quoted[0]) + r"\b", default_wordings().plan)

@@ -559,10 +559,15 @@ literal lands in the repo. Patterns specific to one organisation belong in the u
 
 ### Change the default prompt
 
-`prompts/default.md` is the only source of the fixed wordings: the planning and review variants
-(`<variant id="a">`/`"b"`), the inputs and judgment steps (the line after `Always...:`) and the
-document OUTPUTS line (after `use exactly this line:`). `promptmend.wordings` parses them, and
-nothing else carries a copy (#283):
+The fixed wordings have one source, their definitions in `prompts/default.md`: the planning and
+review variants (`<variant id="a">`/`"b"`), the inputs and judgment steps (the line after
+`Always...:`) and the document OUTPUTS line (after `use exactly this line:`).
+`promptmend.wordings` parses them (#283). `default.md` also repeats them in its own few-shot
+`<rewrite>` examples and quotes the planning variant's opening in a formatting rule; those
+copies stay hand-written (they are prompt text the model reads), and `tests/test_wordings.py`
+checks them against the variants: each example's planning, inputs, review and judgment steps
+must be the variants word for word, the independent review with a concrete domain for
+`[domain]`. Every other place is generated or derived:
 
 - the static `-p-` template (`espanso/match/prompts-template.yml`) stays a checked-in match
   file, but its wording lines (steps `1a/ 1b/ 2/ 4a/ 4b/ 5/` and the line after `<OUTPUTS>`)
@@ -570,9 +575,12 @@ nothing else carries a copy (#283):
   template's `[XXX]` and keeps every other line; `tests/test_wordings.py` fails while the
   file is not what the script writes;
 - `scripts/bench_models.py` scores the opening words of each wording (`opening()`), and
-  `tests/bench_module.py`'s sample rewrite is built from them.
+  `tests/bench_module.py`'s sample rewrite is built from them. `tests/test_bench.py` pins
+  today's needles as a tripwire: a needle change changes benchmark scores, so the owner
+  re-runs the benchmark.
 
-So to change a wording, edit it in `prompts/default.md` only, then run:
+So to change a wording, edit its variant in `prompts/default.md` and the examples that use it
+(the test names any it left behind), then run:
 
 ```bash
 uv run python scripts/render_prompt_template.py     # rewrites the -p- template's wording lines
@@ -582,7 +590,10 @@ uv run python scripts/update_match_history.py       # the match file changed
 Keep `default.md`'s layout (`parse()` fails loudly on a missing step, variant or rule rather
 than guessing). The template's own text (its CONTEXT, GOAL, step 3, CONSTRAINTS, INPUTS and the
 `[pick one …]` lines) is still edited in the YAML. The README's example output is a real
-rewrite of a named release and is not regenerated. A/B a change on both the
+rewrite of a named release and is not regenerated. The bench's needles always come from the
+shipped `prompts/default.md`, not from a `--system-prompt-file` candidate, so a candidate that
+changes a wording is scored against the old one until it replaces `default.md`. A/B a change on
+both the
 standard and pro defaults, on both suites, before proposing it, and include the before/after
 pass rates in the pull request (the report's split by kind, with its Wilson intervals:
 rates whose intervals overlap are not shown to differ), with each run's `meta.json` (commit, prompt hash, persona
