@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .. import __version__, deploy, doctor, update_check
+from .. import deploy, doctor, installed_version, update_check
 from ..commands import common
 from ..config import has_pro_tier
 from ..factory import routes
@@ -78,7 +78,7 @@ def _version_row(state: State) -> HomeRow:
     if update.state == update_check.AVAILABLE:
         return HomeRow(NOTE, "Version", f"{update.latest} available", HOW_TO_UPDATE)
     words = {update_check.LATEST: " · latest", update_check.OFF: " · check off"}
-    return HomeRow(OK, "Version", f"{__version__}{words.get(update.state, '')}")
+    return HomeRow(OK, "Version", f"{installed_version()}{words.get(update.state, '')}")
 
 
 def _trigger_row(state: State, label: str, name: str) -> HomeRow:

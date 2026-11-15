@@ -269,6 +269,12 @@ about 41 ms cumulative (135 ms). `--version` adds 108 modules (221), 49 ms wall 
 holds these as ceilings (`VERSION_CEILING`, `IMPROVE_CEILING`, up to the provider call) and
 forbids httpx, pyperclip and sqlite3 before it.
 
+Since #318 no module imports `__version__` at module scope (that is a first use, so it read
+the metadata on import); each calls `promptmend.installed_version()` where it shows or records
+the version. `import promptmend.history` adds 87 modules (127 before) and no
+`importlib.metadata` (macOS, Python 3.13, 2026-11-15); a trigger run loads it only to record
+the run. A test that fakes the version patches `<module>.installed_version`.
+
 On Windows (#306), every CI run (each pull request and each push to `main`) times both
 channels on `windows-latest` with `promptmend doctor --timing` and writes the table to the job
 summary, with whether Defender's real-time protection was on as the runner reports it: the

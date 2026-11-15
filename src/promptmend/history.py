@@ -31,7 +31,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal
 
-from . import __version__
+from . import installed_version
 from .config import MAX_RETENTION_DAYS, user_config_dir, user_data_dir
 from .redaction import compile_extra, is_bare_token, scan
 
@@ -378,7 +378,8 @@ def _operation_row(
         _ident(op.get("profile_id"), _PROFILE, extra),
         outcome,
         _float(op.get("latency_ms")),
-        _ident(op.get("app_version", __version__), _VERSION, extra) or "unknown",
+        _ident(op["app_version"] if "app_version" in op else installed_version(), _VERSION, extra)
+        or "unknown",
     )
 
 

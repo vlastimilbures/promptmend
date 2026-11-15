@@ -283,7 +283,7 @@ def test_header_shows_the_name_and_installed_version(
 
     from promptmend.tui import app as app_module
 
-    monkeypatch.setattr(app_module, "__version__", "9.8.7")
+    monkeypatch.setattr(app_module, "installed_version", lambda: "9.8.7")
     seen = []
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
@@ -1850,7 +1850,7 @@ def test_about_lists_version_runtime_and_folders(
     from promptmend.tui import brand
     from promptmend.tui.intro import AboutScreen
 
-    monkeypatch.setattr(app_module, "__version__", "9.8.7")
+    monkeypatch.setattr(app_module, "installed_version", lambda: "9.8.7")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await pilot.press("a")

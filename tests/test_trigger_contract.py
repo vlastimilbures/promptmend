@@ -502,6 +502,22 @@ def test_try_pane_does_not_import_cli(tmp_path: Path) -> None:
     assert _loaded(loaded, ("promptmend.cli", "promptmend.trigger")) == []
 
 
+# The version is read where it is used, never at import (#318): importing the usage history
+# does not load importlib.metadata, and a trigger run reads the installed metadata only to
+# record the run (its app_version), after the output is printed, so never with tracking off.
+def test_history_import_does_not_read_the_version(tmp_path: Path) -> None:
+    loaded = _imports("promptmend.history", tmp_path)
+    assert "promptmend.history" in loaded
+    assert _loaded(loaded, ("importlib.metadata",)) == []
+
+
+def test_trigger_run_reads_the_version_only_to_record(
+    trigger_run: tuple[list[bytes], dict[str, Any]],
+) -> None:
+    _, data = trigger_run
+    assert ("importlib.metadata" in data["loaded"]) is data["tracking"]
+
+
 # The headless management commands, --help and the bare command without a terminal never load
 # the interface (#93): Textual is imported only once it opens. Run in one fresh interpreter,
 # with Espanso, uv and brew answering nothing and the clipboard never read.

@@ -26,7 +26,7 @@ NOW = datetime(2026, 10, 7, 12, 0, tzinfo=UTC)
 def pypi(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch) -> FakeHttp:
     """The real fetch, answered by fake_http; the installed version is 0.21.0."""
     monkeypatch.setattr(update_check, "_fetch", REAL_FETCH)
-    monkeypatch.setattr(update_check, "__version__", "0.21.0")
+    monkeypatch.setattr(update_check, "installed_version", lambda: "0.21.0")
     return fake_http
 
 
@@ -85,7 +85,9 @@ def test_one_unyanked_file_keeps_a_release(pypi: FakeHttp) -> None:
 def test_an_install_newer_than_pypi_is_the_latest(
     pypi: FakeHttp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(update_check, "__version__", "0.22.0.dev3+g1234")  # an editable build
+    monkeypatch.setattr(
+        update_check, "installed_version", lambda: "0.22.0.dev3+g1234"
+    )  # an editable build
     pypi.reply(_releases("0.21.0"))
     assert check(_cfg(), NOW).state == LATEST
 
@@ -93,13 +95,13 @@ def test_an_install_newer_than_pypi_is_the_latest(
 def test_an_installed_pre_release_is_older_than_its_release(
     pypi: FakeHttp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(update_check, "__version__", "0.22.0rc1")
+    monkeypatch.setattr(update_check, "installed_version", lambda: "0.22.0rc1")
     pypi.reply(_releases("0.21.0", "0.22.0"))
     assert check(_cfg(), NOW).state == AVAILABLE
 
 
 def test_a_post_release_is_not_older(pypi: FakeHttp, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(update_check, "__version__", "0.22.0.post1")
+    monkeypatch.setattr(update_check, "installed_version", lambda: "0.22.0.post1")
     pypi.reply(_releases("0.22.0"))
     assert check(_cfg(), NOW).state == LATEST
 
@@ -324,7 +326,7 @@ def test_the_cache_is_in_the_data_folder() -> None:
 def test_an_unknown_installed_version_is_unknown(
     pypi: FakeHttp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(update_check, "__version__", "0+unknown")
+    monkeypatch.setattr(update_check, "installed_version", lambda: "0+unknown")
     pypi.reply(_releases("0.22.0"))
     assert check(_cfg(), NOW).state == UNKNOWN
 
