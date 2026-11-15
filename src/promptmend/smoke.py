@@ -11,8 +11,8 @@ The interface's Try tab (#111) runs its stub rewrites against the same stub, in 
 stub_server() starts it and stub_settings() points a Settings at it as stub_env() does.
 
 The timing helpers (#305) run a command through a launcher against the stub, a cold first run
-and then warm ones: `doctor --timing` and `scripts/build_windows.py time` (CI's frozen job) use
-them. They time start-up and the trigger's own work, never a provider's.
+and then warm ones: `doctor --timing` (which CI's Windows jobs run) and `scripts/build_windows.py
+time` use them. They time start-up and the trigger's own work, never a provider's.
 """
 
 from __future__ import annotations
@@ -46,7 +46,8 @@ OUTPUT_TOKENS = 7
 # The trigger timed by default, and how many warm runs follow the cold one.
 TRIGGER = "-i-"
 WARM_RUNS = 5  # doctor.WARM_RUNS, kept equal by tests/test_frozen.py
-# time_trigger()'s limit per run (CI's frozen job on a cold Windows runner).
+# time_trigger()'s limit per run (the local `scripts/build_windows.py time`, on a cold Windows
+# machine).
 TRIGGER_TIMEOUT = 120
 
 # Runs argv with env; returns (exit code, stdout). Tests may replace it.

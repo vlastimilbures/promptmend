@@ -97,7 +97,8 @@ jobs:
   # the installs use the wheel and constraints.txt built here through the local override, so
   # promptmend never comes from PyPI. The first install runs with uv hidden from PATH, so the
   # script installs uv itself (winget, else uv's installer); the second, with uv, must
-  # reinstall in place. It never deploys.
+  # reinstall in place; then `doctor --timing` through uv's shim goes to the job summary. It
+  # never deploys.
   install-script:
     runs-on: windows-latest
     timeout-minutes: 20
@@ -178,13 +179,59 @@ jobs:
           $expected = $wheel.Name.Split('-')[1]
           if ($installed -ne $expected) { throw "installed $installed, expected $expected" }
           Write-Host "promptmend $installed from $bin"
+      # Start-up through uv's promptmend.exe shim, the launcher Espanso runs (#306), in the job
+      # summary next to frozen-windows' numbers, with whether Defender's real-time protection
+      # was on (as the runner reports it, not assumed). No time is asserted
+      # (runner noise); the step fails only when the measurement did not work.
+      - name: Time start-up through the uv tool shim
+        working-directory: ${{ runner.temp }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $bin = (uv tool dir --bin).Trim()
+          $exe = "$bin\promptmend.exe"
+          # One run, as JSON: the rows' status is checked from it, and the table rendered.
+          $json = & $exe doctor --timing --no-clipboard --json --launcher $exe | Out-String
+          # doctor exits 4 here (no key, no Espanso); only its timing matters.
+          if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE`n$json" }
+          $t = ($json | ConvertFrom-Json).timing
+          if (-not $t -or @($t.runs).Count -eq 0) { throw "doctor --timing reported no timing`n$json" }
+          try { $defender = [string](Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled } catch { $defender = '' }
+          if (-not $defender) { $defender = 'unknown' }
+          $cell = { param($ms) if ($null -eq $ms) { '-' } else { [string][math]::Round([double]$ms) } }
+          $lines = @(
+            '### Start-up: uv tool install (`doctor --timing`)',
+            '',
+            "Against the local stub (no provider call), ms: the first run, then the median of $($t.warm_runs) warm.",
+            '',
+            "- launcher: ``$(if ($t.launcher) { $t.launcher } else { $t.launcher_note })``",
+            "- interpreter: ``$($t.interpreter -join ' ')``",
+            "- Defender real-time protection: $defender",
+            '',
+            '| command | via | cold | warm | status |',
+            '| --- | --- | ---: | ---: | --- |'
+          )
+          foreach ($r in $t.runs) {
+            $status = if ($r.message) { "$($r.status): $($r.message)" } else { "$($r.status)" }
+            $status = ($status -replace '\|', '\|') -replace '\s*\r?\n\s*', ' '
+            $lines += "| ``$($r.command)`` | $($r.via) | $(& $cell $r.cold_ms) | $(& $cell $r.warm_median_ms) | $status |"
+          }
+          $text = ($lines -join "`n") + "`n`n"
+          Write-Host $text
+          [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, $text, [Text.UTF8Encoding]::new($false))
+          $failed = @($t.runs | Where-Object { $_.status -eq 'failed' })
+          if ($failed.Count -gt 0) { throw "$($failed.Count) timing row(s) failed" }
+          if (-not $t.launcher -or [IO.Path]::GetFullPath($t.launcher) -ne [IO.Path]::GetFullPath($exe)) {
+            throw "the uv shim was not timed; launcher: $($t.launcher), note: $($t.launcher_note)"
+          }
+          exit 0  # not doctor's 4
 
   # The frozen Windows build (#185): PyInstaller onedir, zipped as the release does it, then
   # unzipped and run as a user would, with no Python or uv involved: --version, doctor (which
   # must see a frozen build), persona, the same exe reached through a symbolic link in a fake
   # WinGet layout (doctor must report the winget channel and the Links alias), every
-  # trigger's real args against the setup check's local stub (exit 0, empty stderr), and the
-  # trigger latency in the job summary. The zip is kept as an artifact for a few days.
+  # trigger's real args against the setup check's local stub (exit 0, empty stderr), and
+  # `doctor --timing` with the size of `_internal` in the job summary. The zip is kept as an
+  # artifact for a few days.
   frozen-windows:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -263,10 +310,50 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           $env:PROMPTMEND_EXE = $env:FROZEN_EXE
           uv run pytest tests/test_triggers.py -k process -p no:cacheprovider
-      - name: Time a trigger
+      # The exe is its own launcher, so each command is timed once, and the interface's import
+      # is skipped by design. No time is asserted (runner noise); the step fails only when the
+      # measurement did not work. #306: the size of _internal goes next to it.
+      - name: Time start-up through the exe
+        working-directory: ${{ runner.temp }}
         run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          uv run python scripts/build_windows.py time $env:FROZEN_EXE
+          $PSNativeCommandUseErrorActionPreference = $false
+          $invariant = [Globalization.CultureInfo]::InvariantCulture
+          $files = @(Get-ChildItem -LiteralPath (Join-Path (Split-Path $env:FROZEN_EXE) '_internal') -Recurse -File -Force)
+          $mb = ($files | Measure-Object -Property Length -Sum).Sum / 1MB
+          # One run, as JSON: the rows' status is checked from it, and the table rendered.
+          $json = & $env:FROZEN_EXE doctor --timing --no-clipboard --json | Out-String
+          # doctor exits 4 here (no key, no Espanso); only its timing matters.
+          if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE`n$json" }
+          $t = ($json | ConvertFrom-Json).timing
+          if (-not $t -or @($t.runs).Count -eq 0) { throw "doctor --timing reported no timing`n$json" }
+          try { $defender = [string](Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled } catch { $defender = '' }
+          if (-not $defender) { $defender = 'unknown' }
+          $cell = { param($ms) if ($null -eq $ms) { '-' } else { [string][math]::Round([double]$ms) } }
+          $lines = @(
+            '### Start-up: frozen exe (`doctor --timing`)',
+            '',
+            "Against the local stub (no provider call), ms: the first run, then the median of $($t.warm_runs) warm.",
+            '',
+            "- launcher: ``$(if ($t.launcher) { $t.launcher } else { $t.launcher_note })``",
+            "- interpreter: ``$($t.interpreter -join ' ')``",
+            "- Defender real-time protection: $defender",
+            ('- `_internal`: {0} files, {1} MB' -f $files.Count, $mb.ToString('F1', $invariant)),
+            '',
+            '| command | via | cold | warm | status |',
+            '| --- | --- | ---: | ---: | --- |'
+          )
+          foreach ($r in $t.runs) {
+            $status = if ($r.message) { "$($r.status): $($r.message)" } else { "$($r.status)" }
+            $status = ($status -replace '\|', '\|') -replace '\s*\r?\n\s*', ' '
+            $lines += "| ``$($r.command)`` | $($r.via) | $(& $cell $r.cold_ms) | $(& $cell $r.warm_median_ms) | $status |"
+          }
+          $text = ($lines -join "`n") + "`n`n"
+          Write-Host $text
+          [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, $text, [Text.UTF8Encoding]::new($false))
+          $failed = @($t.runs | Where-Object { $_.status -eq 'failed' })
+          if ($failed.Count -gt 0) { throw "$($failed.Count) timing row(s) failed" }
+          if ($files.Count -eq 0) { throw "_internal is empty" }
+          exit 0  # not doctor's 4
       # The manifests a release would submit to microsoft/winget-pkgs (by hand, #185),
       # rendered for this zip and checked by the runner's own winget.
       - name: Validate the WinGet manifests

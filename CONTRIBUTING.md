@@ -255,8 +255,8 @@ The largest parts of the import are `importlib.metadata` (about 50 ms cumulative
 `-X importtime`, for `__version__` in `promptmend/__init__.py`), httpx (about 30 ms) and
 Typer (about 19 ms). The `importlib.metadata` figure overstates its real cost: the modules it
 pulls in (email, zipfile, csv) load anyway, so a literal `__version__` saves only about 2 ms of
-wall time per run (median of 30 in a clean wheel venv, 3.12 and 3.14, 2026-10-06, #132). CI runner numbers
-(Linux, Windows) are still to be recorded from a CI run.
+wall time per run (median of 30 in a clean wheel venv, 3.12 and 3.14, 2026-10-06, #132). The
+Windows CI runner numbers are below; Linux runner numbers are still to be recorded.
 
 Since #223 (2026-10-08, same machine, Python 3.12, load average about 10, medians of 25
 interleaved runs): `promptmend --version` is answered in `entry.main()` before the CLI is
@@ -267,6 +267,30 @@ about 41 ms cumulative (135 ms). `--version` adds 108 modules (221), 49 ms wall 
 `smoke`'s stub adds 288 modules (299) and its wall time is unchanged. `tests/test_trigger_contract.py`
 holds these as ceilings (`VERSION_CEILING`, `IMPROVE_CEILING`, up to the provider call) and
 forbids httpx, pyperclip and sqlite3 before it.
+
+On Windows (#306), every CI run (each pull request and each push to `main`) times both
+channels on `windows-latest` with `promptmend doctor --timing` and writes the table to the job
+summary, with whether Defender's real-time protection was on as the runner reports it: the
+`install-script` job through uv's `promptmend.exe` shim after a real `uv tool` install (and
+through the interpreter, so the shim's own cost shows), the `frozen-windows` job through the
+unzipped exe, with the file count and size of its `_internal` folder. Each cell is the first
+(cold) run, then the median of 5 warm runs. CI asserts no time (runner noise would make it
+flaky); the module ceilings above stay the gate.
+
+The rows below come from the CI run of 2026-11-15
+([run 43705361645](https://github.com/vlastimilbures/promptmend/actions/runs/43705361645)).
+Defender real-time protection was **off** on both runners, so they are a Windows baseline with
+no scanning, not the endpoint-scanning case; for that, the owner's laptop numbers (#304) count.
+
+| Channel | `--version`, cold / warm ms | `persona`, cold / warm ms | `improve` (`-i-`), cold / warm ms | `_internal` |
+| --- | --- | --- | --- | --- |
+| uv tool install, through the shim | 64 / 63 | 99 / 100 | 262 / 257 | n/a |
+| uv tool install, through the interpreter | 106 / 106 | 94 / 93 | 260 / 252 | n/a |
+| Frozen exe (the Windows zip) | 121 / 120 | 179 / 178 | 477 / 476 | 108 files, 20.5 MB |
+
+On that runner the frozen exe is slower than the uv install (`improve` 477 against 262 ms), and
+the uv shim adds little over the interpreter. The uv job's `import promptmend.tui.app` took
+476 / 258 ms; the frozen exe skips it by design.
 
 Re-measure with:
 
