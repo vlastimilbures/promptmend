@@ -296,8 +296,12 @@ def test_time_and_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_a_failed_trigger_run_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(RuntimeError, match="the trigger failed"):
-        smoke.time_trigger([sys.executable, "-c", "import sys; sys.exit(3)"], runs=1)
+    code = "import sys; print('partial'); print('boom', file=sys.stderr); sys.exit(3)"
+    with pytest.raises(RuntimeError, match="the trigger failed: exit code 3") as caught:
+        smoke.time_trigger([sys.executable, "-c", code], runs=1)
+    # The tails, for CI's log.
+    assert "stdout ends b'partial" in str(caught.value)
+    assert "stderr ends b'boom" in str(caught.value)
 
 
 def test_main_build(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -316,7 +320,22 @@ def test_expect_output_judges_a_run_as_espanso_would() -> None:
     assert expect(0, b"hello", b"warning") == "wrote to stderr"
     assert expect(0, b"hello\n", b"") == "printed something else (6 characters)"
     assert expect(0, b"[promptmend: no key]\n", b"") == "printed [promptmend: no key]"
-    assert smoke.expect_output("1.2.3", strip=True)(0, b"1.2.3\r\n", b"") is None
+    version = smoke.expect_output("1.2.3", strip=True, show=True)
+    assert version(0, b"1.2.3\r\n", b"") is None
+    assert version(0, b"0.9.0\n", b"") == "printed '0.9.0', expected '1.2.3'"
+
+
+def test_time_runs_gives_the_children_no_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[dict[str, object]] = []
+
+    def fake(argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        seen.append(kwargs)
+        return subprocess.CompletedProcess(list(argv), 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    seconds, problem = smoke.time_runs(["x"], {}, 2, smoke.expect_output(""))
+    assert (len(seconds), problem) == (3, None)
+    assert {kw["stdin"] for kw in seen} == {subprocess.DEVNULL}
 
 
 def test_time_runs_stops_at_a_timeout_or_a_missing_program(

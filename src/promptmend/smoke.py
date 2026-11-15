@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import statistics
 import subprocess
 import threading
 import time
@@ -46,7 +45,9 @@ OUTPUT_TOKENS = 7
 
 # The trigger timed by default, and how many warm runs follow the cold one.
 TRIGGER = "-i-"
-WARM_RUNS = 5
+WARM_RUNS = 5  # doctor.WARM_RUNS, kept equal by tests/test_frozen.py
+# time_trigger()'s limit per run (CI's frozen job on a cold Windows runner).
+TRIGGER_TIMEOUT = 120
 
 # Runs argv with env; returns (exit code, stdout). Tests may replace it.
 Runner = Callable[[Sequence[str], Mapping[str, str]], tuple[int, bytes]]
@@ -201,9 +202,11 @@ def run(provider: str, *, runner: Runner | None = None) -> SmokeResult:
 Expect = Callable[[int, bytes, bytes], str | None]
 
 
-def expect_output(text: str, *, strip: bool = False) -> Expect:
+def expect_output(text: str, *, strip: bool = False, show: bool = False) -> Expect:
     """A run that exits 0, writes nothing to stderr (Espanso fails an expansion on either) and
-    prints exactly ``text`` (``strip``: give or take surrounding whitespace, for a line)."""
+    prints exactly ``text`` (``strip``: give or take surrounding whitespace, for a line).
+    ``show``: a mismatch quotes what was printed, for an output that holds nothing private
+    (the version); otherwise only a marker is quoted."""
 
     def check(code: int, out: bytes, err: bytes) -> str | None:
         if code != 0:
@@ -216,6 +219,8 @@ def expect_output(text: str, *, strip: bool = False) -> Expect:
         if printed.startswith("[promptmend:"):
             # A marker quotes no draft or key (it goes through redaction), so it may be shown.
             return f"printed {printed.strip()[:200]}"
+        if show:
+            return f"printed {printed.strip()[:80]!r}, expected {text!r}"
         return f"printed something else ({len(printed)} characters)"
 
     return check
@@ -236,7 +241,12 @@ def time_runs(
         started = time.perf_counter()
         try:
             proc = subprocess.run(  # noqa: S603 - this CLI or its interpreter, an argv list
-                list(argv), env=dict(env), capture_output=True, timeout=timeout, check=False
+                list(argv),
+                env=dict(env),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
             )
         except subprocess.TimeoutExpired:
             seconds.append(time.perf_counter() - started)
@@ -269,18 +279,35 @@ def trigger_args(trigger: str = TRIGGER) -> list[str]:
 
 def time_trigger(launcher: Sequence[str], runs: int = WARM_RUNS) -> list[float]:
     """Seconds per run of the trigger through ``launcher`` against the stub, the first one
-    cold. Raises if a run fails as Espanso would see it (exit code, stderr, output)."""
+    cold. Raises if a run fails as Espanso would see it (exit code, stderr, output), with the
+    tail of what it printed, for CI's log."""
     args = trigger_args()
+    expect = expect_output(REPLY)
+    last: list[bytes] = [b"", b""]
+
+    def judged(code: int, out: bytes, err: bytes) -> str | None:
+        last[:] = [out, err]
+        return expect(code, out, err)
+
     with stub_server() as stub:
         seconds, problem = time_runs(
-            [*launcher, *args], stub_env(stub.port, os.environ), runs, expect_output(REPLY)
+            [*launcher, *args],
+            stub_env(stub.port, os.environ),
+            runs,
+            judged,
+            timeout=TRIGGER_TIMEOUT,
         )
     if problem:
-        raise RuntimeError(f"the trigger failed: {problem}")
+        out, err = last
+        raise RuntimeError(
+            f"the trigger failed: {problem}; stdout ends {out[-500:]!r}; stderr ends {err[-500:]!r}"
+        )
     return seconds
 
 
 def summary(seconds: Sequence[float], launcher: str, trigger: str = TRIGGER) -> str:
+    import statistics
+
     cold, warm = seconds[0], seconds[1:]
     return (
         f"### Trigger latency ({trigger} against the local stub)\n\n"

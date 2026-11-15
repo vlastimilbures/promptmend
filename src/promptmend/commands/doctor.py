@@ -42,12 +42,12 @@ def doctor(
         help="Also time --version, persona and the -i- trigger through the launcher and the "
         "interpreter, against a local stub (no provider call)",
     ),
-    runs: int = typer.Option(
-        5,
+    runs: int | None = typer.Option(
+        None,
         "--runs",
         min=service.RUNS_RANGE[0],
         max=service.RUNS_RANGE[1],
-        help="With --timing: warm runs after each cold one",
+        help=f"With --timing: warm runs after each cold one (default {service.WARM_RUNS})",
     ),
 ) -> None:
     """Check the install, settings, keys (set or not, never the value), Espanso, the deployed
@@ -55,6 +55,8 @@ def doctor(
     Safe to paste into a bug report: no key, persona or clipboard text is shown."""
     common.no_key(espanso_dir, "--espanso-dir")
     common.no_key(launcher, "--launcher")
+    if runs is not None and not timing:
+        raise typer.BadParameter("--runs needs --timing")
     durations: dict[str, float] | None = {} if timing else None
     report = service.run(
         espanso_dir=Path(espanso_dir).expanduser() if espanso_dir else None,
@@ -62,11 +64,11 @@ def doctor(
         clipboard=clipboard,
         durations=durations,
     )
-    timed = service.timing(report, durations or {}, runs) if timing else None
+    warm = service.WARM_RUNS if runs is None else runs
     if as_json:
         data = report.to_json()
-        if timed is not None:
-            data["timing"] = timed.to_json()
+        if timing:
+            data["timing"] = service.timing(report, durations or {}, warm).to_json()
         common.json_dump(data)
     else:
         for check in report.checks:
@@ -79,8 +81,10 @@ def doctor(
                 for finding in check.data.get("findings", []):
                     source = common.source_label(finding["source"])
                     typer.echo(f"         {source}: {finding['message']}")
-        if timed is not None:
-            _print_timing(timed)
+        if timing:
+            # The checks are on screen first; the children take a few seconds.
+            typer.echo("timing...", err=True)
+            _print_timing(service.timing(report, durations or {}, warm))
     if report.status == service.FAIL:
         raise typer.Exit(common.PROBLEMS)
 
@@ -97,6 +101,8 @@ def _print_timing(timed: service.Timing) -> None:
         f"of {timed.warm_runs} warm"
     )
     typer.echo(f"  launcher:    {timed.launcher or timed.launcher_note}")
+    if timed.drift_note:
+        typer.echo(f"  note:        {timed.drift_note}")
     typer.echo(f"  interpreter: {' '.join(timed.interpreter)}")
     width = max(len(r.command) for r in timed.runs)
     typer.echo(f"  {'command':<{width}}  {'via':<11}  {'cold':>6}  {'warm':>6}")

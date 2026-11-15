@@ -793,8 +793,10 @@ def run(
 
 # --- Timing (#305) -------------------------------------------------------------------------
 
-# `doctor --timing --runs N`: the warm runs after each cold one.
+# `doctor --timing --runs N`: the warm runs after each cold one; WARM_RUNS is the default,
+# equal to smoke.WARM_RUNS (tests/test_frozen.py), which commands/doctor.py does not import.
 RUNS_RANGE = (1, 50)
+WARM_RUNS = 5
 TIMED_OK, TIMED_FAILED, TIMED_SKIPPED = "ok", "failed", "skipped"
 LAUNCHER, INTERPRETER = "launcher", "interpreter"
 INTERFACE_IMPORT = "import promptmend.tui.app"
@@ -837,7 +839,8 @@ class Timed:
 class Timing:
     """`doctor --timing`: each command through the launcher and the interpreter, the
     interface's import, and each check's duration. ``launcher`` is None when it is not timed
-    (``launcher_note`` says why)."""
+    (``launcher_note`` says why); ``drift_note`` says when the deployed matches call another
+    launcher than the one timed."""
 
     warm_runs: int
     launcher: str | None
@@ -845,12 +848,14 @@ class Timing:
     interpreter: tuple[str, ...]
     runs: tuple[Timed, ...]
     checks: Mapping[str, float]
+    drift_note: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "warm_runs": self.warm_runs,
             "launcher": self.launcher,
             "launcher_note": self.launcher_note,
+            "drift_note": self.drift_note,
             "interpreter": list(self.interpreter),
             "runs": [r.to_json() for r in self.runs],
             "checks_ms": {k: _ms(v) for k, v in self.checks.items()},
@@ -862,34 +867,73 @@ def _ms(seconds: float | None) -> float | None:
 
 
 def _timed_launcher(current: str | None, interpreter: list[str]) -> tuple[str | None, str | None]:
-    """The launcher to time (the one the matches call, or --launcher), or None and why not."""
+    """The launcher to time, as an absolute path (this install's, or --launcher), or None and
+    why not."""
     if not current:
         return None, "no launcher found; timed through the interpreter only"
-    path = Path(current)
+    # Absolute (links kept, as Espanso runs the path it was given), so a relative --launcher
+    # names the same file in every child.
+    path = Path(os.path.abspath(Path(current).expanduser()))
     if not path.is_file():
-        return None, f"{current} is not a file; timed through the interpreter only"
+        return None, f"{path} is not a file; timed through the interpreter only"
     if len(interpreter) == 1:
         try:
             same = os.path.samefile(interpreter[0], path)
         except OSError:
             same = False
         if same:
-            return None, f"the launcher is this executable ({current}); timed once"
-    return current, None
+            return None, f"the launcher is this executable ({path}); timed once"
+    return str(path), None
+
+
+def _drift_note(report: Report, launcher: str | None) -> str | None:
+    """When Espanso's deployed matches call another launcher than the one timed."""
+    data = _status_data(report, "launcher")
+    if not data.get("drift"):
+        return None
+    deployed = ", ".join(data.get("deployed") or [])
+    timed = launcher or "the interpreter"
+    return f"Espanso's deployed matches call {deployed}, not {timed}, which was timed"
+
+
+def timing_env(port: int, environ: Mapping[str, str]) -> dict[str, str]:
+    """The children's environment: smoke's stub env, with no persona (persona prints its
+    placeholder, never yours), paste output (the clipboard is never written), and neither
+    PROMPT_LOCAL_ONLY nor PROMPT_EXTRA_PATTERNS, which would refuse or block the -i- trigger's
+    OpenRouter call. Turning them off is safe here only because every provider's base URL is
+    the 127.0.0.1 stub and every key is smoke.PLACEHOLDER_KEY: nothing can leave the machine.
+    Checked, not assumed: RuntimeError if a base URL is not loopback or a key is not the
+    placeholder."""
+    from . import smoke
+    from .providers.base import is_loopback
+
+    env = {
+        **smoke.stub_env(port, environ),
+        "PROMPT_PERSONA": "",
+        "PROMPT_OUTPUT": config.PASTE,
+        "PROMPT_LOCAL_ONLY": "false",
+        "PROMPT_EXTRA_PATTERNS": "",
+    }
+    for spec in PROVIDERS.values():
+        if not is_loopback(env.get(spec.url_setting, "")):
+            raise RuntimeError(f"timing: {spec.url_setting} is not the loopback stub")
+        if spec.key and env.get(spec.key) != smoke.PLACEHOLDER_KEY:
+            raise RuntimeError(f"timing: {spec.key} is not the placeholder key")
+    return env
 
 
 def timing(
     report: Report,
     durations: Mapping[str, float],
-    runs: int = 5,
+    runs: int = WARM_RUNS,
     *,
     timer: Callable[..., tuple[list[float], str | None]] | None = None,
 ) -> Timing:
     """Time `--version`, `persona` and the -i- trigger through the launcher and through
-    entry.self_command(), and the interface's import, as child processes against smoke's stub:
-    no provider is called and only the placeholder key is set. PROMPT_PERSONA is emptied (so
-    persona prints its placeholder, never yours) and PROMPT_OUTPUT is paste (the clipboard is
-    never written). A run that fails is reported, never raised."""
+    entry.self_command(), and the interface's import, as child processes against smoke's stub
+    in timing_env(): no provider is called and only the placeholder key is set. A run that
+    fails is reported, never raised. When the launcher's --version fails or prints another
+    version, it is another CLI (or none), so its persona and improve are not run."""
     from . import smoke
     from .cli import PERSONA_PLACEHOLDER
     from .entry import self_command
@@ -904,30 +948,34 @@ def timing(
         trigger_problem = None
     except (LookupError, OSError, ValueError) as exc:
         trigger, trigger_problem = None, f"the {smoke.TRIGGER} args cannot be read: {exc}"
+    version = smoke.expect_output(__version__, strip=True, show=True)
     commands: list[tuple[str, list[str] | None, smoke.Expect, str | None]] = [
-        ("--version", ["--version"], smoke.expect_output(__version__, strip=True), None),
+        ("--version", ["--version"], version, None),
         ("persona", ["persona"], smoke.expect_output(PERSONA_PLACEHOLDER), None),
         (f"improve ({smoke.TRIGGER})", trigger, smoke.expect_output(smoke.REPLY), trigger_problem),
     ]
     results: list[Timed] = []
     with smoke.stub_server() as stub:
-        env = {
-            **smoke.stub_env(stub.port, os.environ),
-            "PROMPT_PERSONA": "",
-            "PROMPT_OUTPUT": config.PASTE,
-        }
+        env = timing_env(stub.port, os.environ)
 
         def one(command: str, via: str, argv: list[str], expect: smoke.Expect) -> Timed:
             seconds, problem = time_runs(argv, env, runs, expect)
             status = TIMED_FAILED if problem else TIMED_OK
             return Timed(command, via, status, tuple(seconds), problem)
 
+        broken: set[str] = set()
         for command, args, expect, problem in commands:
             for via, prefix in starts:
-                if args is None:
+                if via in broken:
+                    why = "not run: --version through the launcher failed"
+                    results.append(Timed(command, via, TIMED_SKIPPED, message=why))
+                elif args is None:
                     results.append(Timed(command, via, TIMED_FAILED, message=problem))
                 else:
-                    results.append(one(command, via, [*prefix, *args], expect))
+                    timed = one(command, via, [*prefix, *args], expect)
+                    results.append(timed)
+                    if via == LAUNCHER and expect is version and timed.status != TIMED_OK:
+                        broken.add(via)
         if getattr(sys, "frozen", False):
             results.append(
                 Timed(
@@ -941,7 +989,15 @@ def timing(
             importer = [sys.executable, "-P", "-c", INTERFACE_IMPORT]
             results.append(one(INTERFACE_IMPORT, INTERPRETER, importer, _exits_zero))
     checks = {i: durations[i] for i in CHECK_IDS if i in durations}
-    return Timing(runs, launcher, note, tuple(interpreter), tuple(results), checks)
+    return Timing(
+        runs,
+        launcher,
+        note,
+        tuple(interpreter),
+        tuple(results),
+        checks,
+        _drift_note(report, launcher),
+    )
 
 
 def _exits_zero(code: int, out: bytes, err: bytes) -> str | None:

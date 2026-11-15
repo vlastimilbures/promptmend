@@ -595,6 +595,7 @@ def test_doctor_timing_json_is_additive(
         "warm_runs",
         "launcher",
         "launcher_note",
+        "drift_note",
         "interpreter",
         "runs",
         "checks_ms",
@@ -632,6 +633,14 @@ def test_doctor_timing_table(
     assert re.search(r"persona\s+interpreter\s+300\s+-\s+failed: wrote to stderr", out)
     assert "doctor's checks: version " in out
     assert "Traceback" not in result.output
+    # The checks come first, the timing after them.
+    assert out.index("local_servers:") < out.index("Timing against")
+
+
+def test_doctor_runs_needs_timing() -> None:
+    result = _doctor("--runs", "3")
+    assert result.exit_code == common.USAGE
+    assert "--runs needs --timing" in result.output
 
 
 @pytest.mark.parametrize("runs", ["0", "51"])

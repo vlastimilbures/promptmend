@@ -784,8 +784,9 @@ class FakeTimer:
     """Stands in for smoke.time_runs: records each argv and env, answers 0.1 s a run, and
     fails the argv that contains ``fail``."""
 
-    def __init__(self, fail: str | None = None) -> None:
+    def __init__(self, fail: str | None = None, fail_argv: list[str] | None = None) -> None:
         self.fail = fail
+        self.fail_argv = fail_argv
         self.calls: list[list[str]] = []
         self.envs: list[dict[str, str]] = []
 
@@ -794,13 +795,13 @@ class FakeTimer:
     ) -> tuple[list[float], str | None]:
         self.calls.append(list(argv))
         self.envs.append(dict(env))
-        if self.fail and self.fail in argv:
+        if (self.fail and self.fail in argv) or list(argv) == self.fail_argv:
             return [0.2], "exit code 3"
         return [0.2] + [0.1] * runs, None
 
 
-def _report(current: str | None) -> doctor.Report:
-    return doctor.Report((doctor.Check("launcher", doctor.OK, "", {"current": current}),))
+def _report(current: str | None, **data: Any) -> doctor.Report:
+    return doctor.Report((doctor.Check("launcher", doctor.OK, "", {"current": current, **data}),))
 
 
 def test_timing_runs_each_command_through_the_launcher_and_the_interpreter(
@@ -922,3 +923,136 @@ def test_timing_against_the_real_cli() -> None:
         ("import promptmend.tui.app", "ok", None),
     ]
     assert all(r.cold and r.warm for r in timed.runs)
+
+
+def test_doctor_and_smoke_agree_on_the_default_runs() -> None:
+    from promptmend import smoke
+
+    assert doctor.WARM_RUNS == smoke.WARM_RUNS
+
+
+def test_timing_without_a_launcher_check_times_the_interpreter_only() -> None:
+    timed = doctor.timing(doctor.Report(()), {}, 1, timer=FakeTimer())
+    assert timed.launcher is None
+    assert timed.launcher_note == "no launcher found; timed through the interpreter only"
+
+
+def test_a_relative_launcher_is_timed_by_its_absolute_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "promptmend").write_text("#!/bin/sh\n", "utf-8")
+    monkeypatch.chdir(tmp_path)
+    timer = FakeTimer()
+    timed = doctor.timing(_report("promptmend"), {}, 1, timer=timer)
+    assert timed.launcher == str(tmp_path / "promptmend")
+    assert timer.calls[0] == [str(tmp_path / "promptmend"), "--version"]
+
+
+def _frozen_exe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    exe = tmp_path / "Programs" / "promptmend.exe"
+    exe.parent.mkdir()
+    exe.write_bytes(b"MZ")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe))
+    return exe
+
+
+def test_a_frozen_exe_with_another_launcher_times_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exe = _frozen_exe(tmp_path, monkeypatch)
+    alias = tmp_path / "Links" / "promptmend.exe"
+    alias.parent.mkdir()
+    alias.write_bytes(b"MZ")  # another file, as WinGet's alias can be
+    timer = FakeTimer()
+    timed = doctor.timing(_report(str(alias)), {}, 1, timer=timer)
+    assert timed.launcher == str(alias)
+    assert timer.calls[:2] == [[str(alias), "--version"], [str(exe), "--version"]]
+    assert [r.via for r in timed.runs[:6]] == ["launcher", "interpreter"] * 3
+
+
+def test_a_launcher_samefile_cannot_compare_is_timed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exe = _frozen_exe(tmp_path, monkeypatch)
+
+    def unreadable(a: object, b: object) -> bool:
+        raise OSError("cannot stat")
+
+    monkeypatch.setattr(os.path, "samefile", unreadable)
+    timed = doctor.timing(_report(str(exe)), {}, 1, timer=FakeTimer())
+    assert timed.launcher == str(exe)
+    assert timed.launcher_note is None
+
+
+def test_a_launcher_whose_version_fails_runs_nothing_else(tmp_path: Path) -> None:
+    launcher = tmp_path / "promptmend"
+    launcher.write_text("#!/bin/sh\n", "utf-8")
+    timer = FakeTimer(fail_argv=[str(launcher), "--version"])
+    timed = doctor.timing(_report(str(launcher)), {}, 1, timer=timer)
+    rows = {(r.command, r.via): r for r in timed.runs}
+    assert rows[("--version", "launcher")].status == "failed"
+    for command in ("persona", "improve (-i-)"):
+        skipped = rows[(command, "launcher")]
+        assert (skipped.status, skipped.message) == (
+            "skipped",
+            "not run: --version through the launcher failed",
+        )
+        assert rows[(command, "interpreter")].status == "ok"
+    assert [c for c in timer.calls if c[0] == str(launcher)] == [[str(launcher), "--version"]]
+
+
+def test_timing_names_a_drift_from_the_deployed_launcher(tmp_path: Path) -> None:
+    timed = doctor.timing(
+        _report(None, drift=True, deployed=["/old/promptmend"]), {}, 1, timer=FakeTimer()
+    )
+    assert timed.drift_note == (
+        "Espanso's deployed matches call /old/promptmend, not the interpreter, which was timed"
+    )
+    assert timed.to_json()["drift_note"] == timed.drift_note
+    assert doctor.timing(_report(None), {}, 1, timer=FakeTimer()).drift_note is None
+
+
+def test_the_real_environment_never_reaches_a_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = "sk-or-v1-" + "cd34" * 16  # built at runtime: no key-shaped literal (gitleaks)
+    monkeypatch.setenv("OPENROUTER_API_KEY", real)
+    monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("PROMPT_PERSONA", "I am the sentinel persona of Example Corp.")
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
+    monkeypatch.setenv("PROMPT_EXTRA_PATTERNS", "draft")
+    monkeypatch.setenv("PROMPT_OUTPUT", "clipboard")
+    timer = FakeTimer()
+    doctor.timing(_report(None), {}, 1, timer=timer)
+    from promptmend import smoke
+
+    for env in timer.envs:
+        assert real not in env.values()
+        assert env["OPENROUTER_API_KEY"] == smoke.PLACEHOLDER_KEY
+        assert env["OPENROUTER_BASE_URL"].startswith("http://127.0.0.1:")
+        assert env["PROMPT_PERSONA"] == ""
+        assert env["PROMPT_LOCAL_ONLY"] == "false"
+        assert env["PROMPT_EXTRA_PATTERNS"] == ""
+        assert env["PROMPT_OUTPUT"] == "paste"
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "match"),
+    [
+        ("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1", "not the loopback stub"),
+        ("OPENROUTER_API_KEY", "a-real-key", "not the placeholder key"),
+    ],
+)
+def test_timing_env_refuses_anything_but_the_stub(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str, match: str
+) -> None:
+    from promptmend import smoke
+
+    stub_env = smoke.stub_env
+    monkeypatch.setattr(
+        smoke, "stub_env", lambda port, environ: {**stub_env(port, environ), name: value}
+    )
+    with pytest.raises(RuntimeError, match=match):
+        doctor.timing_env(8080, {})
+    # The unpatched stub env passes.
+    monkeypatch.setattr(smoke, "stub_env", stub_env)
+    assert doctor.timing_env(8080, {})["OPENROUTER_BASE_URL"].startswith("http://127.0.0.1:8080")
