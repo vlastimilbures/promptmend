@@ -350,7 +350,7 @@ def _normalize(text: str) -> str:
     thin spaces into spaces and fullwidth digits/letters into ASCII, and invisible characters
     (zero-width space/joiner, soft hyphen, variation selectors, Hangul fillers, any other
     format character) are dropped. ASCII text is returned as is, without unicodedata (a
-    native module on Windows, #312): NFKC maps every ASCII character to itself, and none is
+    native module on Windows): NFKC maps every ASCII character to itself, and none is
     in _INVISIBLE or of category Cf (tests/test_redaction.py checks all 128)."""
     if text.isascii():
         return text

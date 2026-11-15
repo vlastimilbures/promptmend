@@ -1,4 +1,4 @@
-"""The Settings tab (#199): every setting and key in one keyboard list, saved through the
+"""The Settings tab: every setting and key in one keyboard list, saved through the
 same services as `config set|unset` and `secrets set|remove`. Keys are shown only as set or
 not set, never their value, and the persona only as set."""
 
@@ -36,7 +36,7 @@ WITHHELD_CURRENT = (
 
 
 def setting_line(row: settings_model.Row, *, cursor: bool) -> Table:
-    """One row of the Settings list (#199): the cursor, the dot, the name, the value (cut
+    """One row of the Settings list: the cursor, the dot, the name, the value (cut
     with … when narrow) and where it comes from. The dot is a glyph as well as a colour, so
     it reads without colour too: a green ● for a switch on, a key set or a value that is not
     the default; a grey ○ and a dimmed row otherwise."""
@@ -57,7 +57,7 @@ def setting_line(row: settings_model.Row, *, cursor: bool) -> Table:
 class SettingsList(OptionList):
     """The Settings tab's list. Its keys are bound here, so they act only while it has the
     focus: never under a dialog, in the filter or on another tab. Reset is `u` (as `config
-    unset`), so `r` reloads here too (#215)."""
+    unset`), so `r` reloads here too."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("j", "cursor_down", "Down", show=False),
@@ -100,7 +100,7 @@ class FilterInput(Input):
 
 
 class SettingsPane(Pane):
-    """Every setting and key in one keyboard list (#199), grouped, each with a dot saying at
+    """Every setting and key in one keyboard list, grouped, each with a dot saying at
     a glance what is on. Saves go through `config set`'s service (save_setting()), a reset
     through `config unset`'s, keys through the Set key and Remove key dialogs; each change
     shows and logs its command."""

@@ -157,7 +157,7 @@ def _retry_delay(retry_after: str | None) -> float | None:
 
 def _encode_headers(label: str, headers: Mapping[str, str] | None) -> httpx.Headers:
     # httpx is imported only once a request is made: every trigger starts a fresh process,
-    # and httpx is the largest import on its path (#223).
+    # and httpx is the largest import on its path.
     import httpx
 
     try:
@@ -199,7 +199,7 @@ def post_json(
 
     ``timeout`` is checked only as httpx's per-operation timers and each arriving chunk allow:
     name resolution, system proxy discovery or a server that trickles its headers a byte at a
-    time are not bounded here. The hard deadline is improve's watchdog (trigger._Watchdog, #307),
+    time are not bounded here. The hard deadline is improve's watchdog (trigger._Watchdog),
     which ends the process with this module's timed-out marker shortly after the limit.
     """
     encoded = _encode_headers(label, headers)

@@ -2,12 +2,12 @@
 change, a high-contrast theme, and key bindings that every terminal delivers (letters, digits
 and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself.
 
-Only Home is built at start (#316): every other tab's pane, and its module, the first time
+Only Home is built at start: every other tab's pane, and its module, the first time
 that tab opens, and the setup wizard the first time it is opened, so the first paint loads
 none of them (tests/test_ui_startup.py pins what it loads). A pane built later shows the
 current State as it mounts (Pane.on_mount).
 
-Each reload has two stages (#317), one after the other in its worker: the quick State
+Each reload has two stages, one after the other in its worker: the quick State
 (settings, profiles, triggers; local reads of a few milliseconds) is read on the app's loop
 and shown at once, the full one, read in a thread, replaces it. Every screen gets
 the same State object at each stage (#83). The generation guard orders them: a stage of an
@@ -88,7 +88,7 @@ HIGH_CONTRAST = Theme(
 )
 
 # Tab id -> (label, the pane's module and class in this package). The digit in each label is
-# its key. Named, not imported: a pane's module loads when its tab first opens (#316).
+# its key. Named, not imported: a pane's module loads when its tab first opens.
 _PANES: dict[str, tuple[str, str]] = {
     "home": ("home_pane", "HomePane"),
     "settings": ("settings_pane", "SettingsPane"),
@@ -173,7 +173,7 @@ ModalScreen { align: center middle; }
 
 class LateUpdate(Message):
     """The update check of reload ``generation`` landed: ``state`` is that reload's State with
-    it filled in (#315)."""
+    it filled in."""
 
     def __init__(self, state: State, generation: int) -> None:
         super().__init__()
@@ -225,7 +225,7 @@ class MainScreen(Screen[None]):
     @on(TabbedContent.TabActivated)
     async def _tab_shown(self, event: TabbedContent.TabActivated) -> None:
         """A tab opened by a click or the arrows is built here. The Settings list takes the
-        focus as its tab opens (#199), so the arrows move in it at once; leaving the tab drops
+        focus as its tab opens, so the arrows move in it at once; leaving the tab drops
         it, so its keys (`u`, Space) never act unseen."""
         tab = event.pane.id
         if tab in TABS:
@@ -240,7 +240,7 @@ class MainScreen(Screen[None]):
 
     def on_screen_resume(self) -> None:
         """Back on the tabs (a dialog or About closed): a first-run offer held back while it
-        was open comes now (#317); it does nothing when there is none."""
+        was open comes now; it does nothing when there is none."""
         cast("ManageApp", self.app)._maybe_offer()
 
     def _focus_settings_list(self) -> None:
@@ -252,7 +252,7 @@ class MainScreen(Screen[None]):
 
 
 class ManageApp(App[int]):
-    TITLE = brand.NAME  # Plus the installed version, set in __init__ (#112).
+    TITLE = brand.NAME  # Plus the installed version, set in __init__.
     SUB_TITLE = "set up and manage"
     CSS = CSS
     # The palette would offer screenshots written to the working directory and other extras
@@ -273,7 +273,7 @@ class ManageApp(App[int]):
         # The full read: given the group-by and this reload's quick State (or None), whose
         # settings, profiles and triggers it reuses (gather's ``first``).
         self.loader = loader
-        # The first stage (#317); None: one stage, the loader's State only.
+        # The first stage; None: one stage, the loader's State only.
         self.quick_loader = quick_loader
         self.group_by = "trigger"
         self.state: State | None = None
@@ -286,7 +286,7 @@ class ManageApp(App[int]):
         # Espanso and a held `r` cannot start thread after thread (and child after child).
         self.full_reads = asyncio.Semaphore(FULL_READS)
         self.main = MainScreen()
-        # This session's actions as commands (#111), shown on Home.
+        # This session's actions as commands, shown on Home.
         self.session: list[teach.Entry] = []
         # `setup` opens the wizard at once; `first_run` opens it by itself once when nothing
         # is set up yet (a bare `promptmend`; off in the tests).
@@ -297,7 +297,7 @@ class ManageApp(App[int]):
 
     async def _process_messages(self, *args: Any, **kwargs: Any) -> None:
         """The whole of the app's run, run() and run_test() alike (Textual's own entry point
-        for both), with threads_get_their_turn() around it (#348)."""
+        for both), with threads_get_their_turn() around it."""
         with threads_get_their_turn():
             await super()._process_messages(*args, **kwargs)
 
@@ -343,7 +343,7 @@ class ManageApp(App[int]):
         """``read()`` in a daemon thread of its own (state._beside), awaited here, once fewer
         than FULL_READS full reads are running. Not a thread worker: those share asyncio's
         default thread pool, which a slow full read (doctor waiting on Espanso) would hold,
-        and on Windows Textual's own timers sleep in that pool too (#317). Cancelled (a newer
+        and on Windows Textual's own timers sleep in that pool too. Cancelled (a newer
         reload), the thread still ends on its own and its answer is dropped; its slot is given
         back when the thread ends, since a thread cannot be stopped. A newer reload waiting
         for one still shows its quick State."""
@@ -373,7 +373,7 @@ class ManageApp(App[int]):
             try:
                 # On the loop, not in a thread: local reads of a few milliseconds, so the
                 # first paint never waits for a thread to be scheduled (on Windows with
-                # Python 3.12 one took seconds while the app ran, #348). The update answer
+                # Python 3.12 one can take seconds while the app runs). The update answer
                 # on screen stays until the full State has its own.
                 first = quick_loader(group_by).known_update(self.state)
             except Exception:  # noqa: S110 - the full read below reads the same and reports it
@@ -394,7 +394,7 @@ class ManageApp(App[int]):
             return
         self._show(state, generation)
         if state.pending is not None:
-            # The update check lands after the rest (#315). Nothing waits for it, so this
+            # The update check lands after the rest. Nothing waits for it, so this
             # worker ends now and quitting never waits either; when it lands, its thread
             # posts the next State (post_message is thread-safe and never blocks). Only a
             # full State has one pending.
@@ -409,7 +409,7 @@ class ManageApp(App[int]):
     @on(LateUpdate)
     def _late_update(self, message: LateUpdate) -> None:
         """The same moment with the update check filled in: every pane gets the new State
-        object (#83), but only what shows the update repaints (Home, Diagnostics' checks, an
+        object, but only what shows the update repaints (Home, Diagnostics' checks, an
         open About), so no table cursor moves and the setup screen keeps its focus."""
         # The reload on screen: a newer one that failed showed nothing, so this one's Version
         # row still fills in; one that showed its own State (quick or full) drops this.
@@ -427,7 +427,7 @@ class ManageApp(App[int]):
 
     def _show(self, state: State, generation: int) -> None:
         """One stage of reload ``generation`` on every screen: the same State object for
-        each (#83). A stage of an older reload is dropped; within one reload the worker shows
+        each. A stage of an older reload is dropped; within one reload the worker shows
         the quick State before the full one."""
         if generation != self.generation:
             return  # an older load that finished late
@@ -455,7 +455,7 @@ class ManageApp(App[int]):
 
     def _maybe_offer(self) -> None:
         """Open the setup wizard by itself, once, when nothing is set up yet: asked of the
-        full State only, which has the plan (#317). The offer is used up once the wizard is
+        full State only, which has the plan. The offer is used up once the wizard is
         open (opened by hand during the quick stage, say); a dialog or About over the tabs
         keeps it for the next State, so it never opens over them."""
         if self.state is None or not self.state.full or not self.first_run:

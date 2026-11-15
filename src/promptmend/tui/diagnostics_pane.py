@@ -30,8 +30,8 @@ def _checks(report: doctor.Report, ids: Sequence[str] | None = None) -> Text:
 
 
 def show_routes(pane: Pane, state: State) -> None:
-    """The providers at a glance (read-only, #199 moved it from the old Providers tab): the
-    PROMPT_LOCAL_ONLY and PROMPT_PROVIDER policy, and each provider's model, base URL, whether
+    """The providers at a glance (read-only): the PROMPT_LOCAL_ONLY and PROMPT_PROVIDER
+    policy, and each provider's model, base URL, whether
     the draft leaves this machine and whether its key is set."""
     entries = state.layers.entries
     cfg = state.settings
@@ -94,7 +94,7 @@ class DiagnosticsPane(Pane):
             else "No problems found in the settings files."
         )
         if not state.full:
-            # A quick State (#317): the checks and the history store are still being read.
+            # A quick State: the checks and the history store are still being read.
             waiting = (
                 "Checking every part (doctor's checks)…"
                 if state.failed is None

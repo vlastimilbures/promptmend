@@ -1,9 +1,9 @@
 """The improve trigger's run, below its Typer command in cli.py: _emit(), the only way
-anything a trigger prints reaches Espanso; _Watchdog, improve's hard time limit (#307) and the
+anything a trigger prints reaches Espanso; _Watchdog, improve's hard time limit and the
 one decision of what a run prints; and _improve(), the run itself, which reads the draft,
 calls pipeline.rewrite() and prints the rewrite or its marker, then records the run.
 
-Split out of cli.py (#281) together, since _emit(), _flushed() and _improve() each act on the
+_emit(), _flushed() and _improve() share this module because each acts on the
 watchdog. It sits between cli.py (which imports it) and pipeline.py (which it imports, and
 which never imports it back), and keeps the Typer it needs for printing and typer.Exit out of
 pipeline.py. The pipeline names below are imported into this module, so _improve() looks them
@@ -48,7 +48,7 @@ def _emit(text: str, watch: _Watchdog | None = None) -> None:
     typer.echo(clean(text), nl=False)
 
 
-# improve's hard deadline (#307): the process ends within the call's time limit plus this many
+# improve's hard deadline: the process ends within the call's time limit plus this many
 # seconds, counted from entry.main() (from improve() when the CLI is started another way),
 # with the timed-out marker, whatever blocks: name resolution, a proxy lookup, the clipboard,
 # a server trickling its reply. The provider's own timeout (providers/base.py) words the same
@@ -102,7 +102,7 @@ def _write_fd(fd: int, data: bytes) -> None:
 
 
 class _Watchdog:
-    """improve's hard time limit (#307), and the one decision of what is printed: the run's
+    """improve's hard time limit, and the one decision of what is printed: the run's
     own output (_emit()) or the watchdog's marker, exactly one of them.
 
     arm() starts a daemon timer once the call's limit is known. When it fires, by state:
@@ -218,7 +218,7 @@ class _Watchdog:
             if was in (_CLAIMED, _FIRED):
                 return
             # A reply may have just arrived and the main thread be about to claim the output:
-            # the marker still wins, and that rewrite is dropped (#307, accepted).
+            # the marker still wins, and that rewrite is dropped (an accepted race).
             self._state = _FIRED
         # Nothing raised here may stop the exit below.
         try:

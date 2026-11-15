@@ -1,4 +1,4 @@
-"""What each action of the interface is in a terminal (#111, stage 1): every button's tooltip
+"""What each action of the interface is in a terminal: every button's tooltip
 names its headless command, every result shows the command it was (`$ promptmend …`),
 and Home keeps this session's commands, or a few recipes before there are any. No Textual
 here: `tests/test_tui_teach.py` parses every command below against the CLI, so a renamed
@@ -47,7 +47,7 @@ BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
         ),
     ),
 }
-# The Settings tab's list (#199): each action of its keys -> the command it is in a terminal.
+# The Settings tab's list: each action of its keys -> the command it is in a terminal.
 SETTING_ACTIONS: dict[str, tuple[str, ...]] = {
     "set": ("config", "set", "<NAME>", "<VALUE>"),  # Space toggles, Enter picks or edits
     "reset": ("config", "unset", "<NAME>"),  # u on a setting

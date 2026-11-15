@@ -83,7 +83,7 @@ class UsageObserver(Protocol):
 
 class RunEnded(Exception):
     """Raised by an observer's ``begin`` when the run it records is over (improve's watchdog
-    printed its marker, #307): the attempt is not sent, nor any after it."""
+    printed its marker): the attempt is not sent, nor any after it."""
 
 
 # Adds what a provider's response body reports to the transport facts of an attempt.
@@ -105,7 +105,7 @@ class Meter:
     def begin(self, *, loopback: bool, attempt: int) -> None:
         """An attempt is starting. An observer with a ``begin`` method (the CLI's recorder)
         gets the record the attempt will have if it never ends: a ``timeout`` with no status,
-        which improve's watchdog stores when it ends the process first (#307). Only RunEnded
+        which improve's watchdog stores when it ends the process first. Only RunEnded
         reaches the caller, which then sends nothing; an observer without ``begin`` is not
         told."""
         started = getattr(self.observer, "begin", None)

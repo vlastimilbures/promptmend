@@ -1,4 +1,4 @@
-"""The Home tab (Mockup B, #112): the headline, one row per part and the session log. The
+"""The Home tab: the headline, one row per part and the session log. The
 rows come from home.py; nothing here calls a provider."""
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ def _jump(tab: str | None) -> str:
     return f"-> {TAB_LABELS[tab]}" if tab else ""
 
 
-# Home's word and colour for a newer release (#197): its own, apart from doctor's four, so the
+# Home's word and colour for a newer release: its own, apart from doctor's four, so the
 # word says it in either theme and without colour.
 _NOTE_LABEL = ("new", "bold magenta")
-# A row still being checked (#317): muted; its text says `checking`.
+# A row still being checked: muted; its text says `checking`.
 _WAIT_LABEL = ("…", "dim")
 _OWN_LABELS = {NOTE: _NOTE_LABEL, WAIT: _WAIT_LABEL}
 
@@ -68,7 +68,7 @@ SESSION_LINES = 6
 
 
 def session_text(entries: Sequence[teach.Entry]) -> Text:
-    """Home's read-only session log (#111): what each action of this session was in a
+    """Home's read-only session log: what each action of this session was in a
     terminal, newest last, with the first line of its result. Before any, a few recipes."""
     if not entries:
         text = Text(no_wrap=True, overflow="ellipsis")
@@ -89,8 +89,8 @@ def session_text(entries: Sequence[teach.Entry]) -> Text:
 
 
 class HomePane(Pane):
-    """This install at a glance: a headline naming the worst problem, then one row per part
-    (Mockup B, #112). The Diagnostics tab has every check; nothing here calls a provider."""
+    """This install at a glance: a headline naming the worst problem, then one row per part.
+    The Diagnostics tab has every check; nothing here calls a provider."""
 
     rows: tuple[HomeRow, ...] = ()
 

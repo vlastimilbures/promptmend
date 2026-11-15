@@ -2,7 +2,7 @@
 persona trigger commands, and the lazy mounting of the management commands (commands/, the
 interface) so a trigger never loads them. The trigger run itself is in trigger.py (_emit(),
 the watchdog, _improve()); the rewrite's domain steps are in pipeline.py, the sanitiser in
-sanitize.py (#281). persona's placeholder and _persona_alone() stay here with the command:
+sanitize.py. persona's placeholder and _persona_alone() stay here with the command:
 they are persona's whole logic, and doctor and scripts/check_wheel.py read the placeholder.
 
 `python -m promptmend.cli` runs the app (entry.self_command(), the smoke test)."""
@@ -35,10 +35,10 @@ from .trigger import _emit, _improve, _Watchdog
 if TYPE_CHECKING:
     from typer._click import Command, Context
 
-# The management commands (#92; espanso #86, moved here from cli.py in #281) and the interface
-# (#93), each in a module under commands/: command name -> (module, its Typer app). Loaded
-# only when that command runs or --help lists it, so improve and persona never import them.
-# espanso first, so --help lists it right after improve and persona, as before.
+# The management commands and the interface, each in a module under commands/: command
+# name -> (module, its Typer app). Loaded only when that command runs or --help lists it,
+# so improve and persona never import them.
+# espanso first, so --help lists it right after improve and persona.
 _LAZY_COMMANDS = {
     "espanso": ("espanso", "espanso_app"),
     "setup": ("setup", "app"),
@@ -72,7 +72,7 @@ class _LazyGroup(TyperGroup):
 
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         # D-UI-1: a bare `promptmend` on a terminal opens the interface (`ui`). Anywhere
-        # else no_args_is_help prints the help and exits 2, exactly as before.
+        # else no_args_is_help prints the help and exits 2.
         if not args and not ctx.resilient_parsing:
             from .commands.ui import on_a_terminal
 
@@ -235,7 +235,7 @@ def _persona_alone() -> str:
 @app.command()
 def persona(trigger_id: str | None = _TRIGGER_ID) -> None:
     """Print PROMPT_PERSONA for the -p- snippet, or a fill-in placeholder when unset."""
-    # No watchdog (#307): persona makes no network call and reads no clipboard; it only
+    # No watchdog: persona makes no network call and reads no clipboard; it only
     # loads the settings, as improve does before its watchdog is armed.
     rec = recorder.Recorder("persona", trigger_id)
     try:

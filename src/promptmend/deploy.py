@@ -1,10 +1,10 @@
 """Managed Espanso deployment: plan, apply and reverse what promptmend writes into
-Espanso's `match/` folder (#86).
+Espanso's `match/` folder.
 
 Each packaged match file (assets.py) is rendered with the launcher path and a version stamp,
 compared with the manifest of what we deployed before and with what is on disk, and written
 only after the caller confirms. A file the user edited is never overwritten silently, only
-files we own are removed, and nothing is ever written to Espanso's `config/` (#37).
+files we own are removed, and nothing is ever written to Espanso's `config/`.
 
 Imported lazily by the `espanso` commands, never on the trigger path.
 """
@@ -32,7 +32,7 @@ from .match_history import KNOWN_SOURCES
 
 PLACEHOLDER = "__PROMPT_WORKFLOW__"
 STAMP = "# promptmend {version} (managed; edit at your own risk)\n"
-# 0.18.0 and earlier stamped `# prompt-workflow <version> ...` (#169): both are ours.
+# Files deployed by 0.18.0 and earlier carry `# prompt-workflow <version> ...`: both are ours.
 _STAMP_LINE = re.compile(
     r"# (?:promptmend|prompt-workflow) \S+ \(managed; edit at your own risk\)\n"
 )
@@ -51,7 +51,7 @@ MISSING, IN_SYNC, STALE, MODIFIED, FOREIGN = "missing", "in sync", "stale", "mod
 KEEP, OURS, SIDE = "keep", "ours", "side"
 CHOICES = (KEEP, OURS, SIDE)
 
-# The launcher is the first item of a script var's args (#18), a double-quoted YAML string
+# The launcher is the first item of a script var's args, a double-quoted YAML string
 # that Espanso hands to the OS as the program, with no shell. Refuse what YAML would read as
 # an escape or the string's end (a quote, a backslash), any character YAML cannot hold
 # (control characters, lone surrogates, U+FFFE/U+FFFF), `{{`, which Espanso fills from its
@@ -61,9 +61,9 @@ CHOICES = (KEEP, OURS, SIDE)
 _UNSAFE = re.compile(
     r'["\\\x00-\x1f\x7f-\x9f\ud800-\udfff\ufffe\uffff]|\{\{|%(?:HOME|CONFIG|PACKAGES)%'
 )
-# The launcher as the match files hold it: the first script arg, `args: ["<path>", ...`
-# (since #18), or the quoted path in a shell cmd line as every earlier release wrote it,
-# `cmd: "\"<path>\" improve`.
+# The launcher as the match files hold it: the first script arg, `args: ["<path>", ...`,
+# or the quoted path in a shell cmd line, as files deployed by older releases still hold
+# it, `cmd: "\"<path>\" improve`.
 _SCRIPT_LAUNCHER = re.compile(r'args: \["([^"\\]+)"')
 _QUOTED_LAUNCHER = re.compile(r'\\"([^"\\]+)\\"')
 # A path component that names a release (0.15.0, 0.15.0_1): gone after the next upgrade.
@@ -77,7 +77,7 @@ class DeployError(Exception):
 @dataclass(frozen=True)
 class CommandFailure:
     """Why a command gave no output: not found, timed out, or its exit code and the first
-    stderr line that says something (#115)."""
+    stderr line that says something."""
 
     found: bool = False
     path: str | None = None
@@ -129,7 +129,7 @@ def _error_line(stderr: str) -> str | None:
 
 
 # On Windows Espanso's output never reaches a pipe and a daemon it starts would share our
-# console and pipes: espanso_windows answers those calls without reading it (#209-#211).
+# console and pipes: espanso_windows answers those calls without reading it.
 WINDOWS_ESPANSO = sys.platform == "win32"
 
 
@@ -140,7 +140,7 @@ def run_command(argv: Sequence[str]) -> str | CommandFailure:
         answer: str | CommandFailure = espanso_windows.run(argv)
         return answer
     # Resolved through PATH (and PATHEXT) first: on Windows `espanso` is `espanso.cmd`, which
-    # CreateProcess alone never finds, so an installed Espanso looked missing (#115).
+    # CreateProcess alone never finds, so an installed Espanso would look missing.
     exe = shutil.which(argv[0])
     if exe is None:
         return CommandFailure()
@@ -247,7 +247,7 @@ def inside(path: Path, parent: Path) -> bool:
     return resolved(path).is_relative_to(resolved(parent))
 
 
-# WinGet's package id (#185) and where it puts a portable package: the zip unpacked under
+# WinGet's package id and where it puts a portable package: the zip unpacked under
 # `Packages\<id>_<source>\`, the command alias in `Links\`. Neither path holds the version,
 # so the match files survive `winget upgrade`.
 WINGET_ID = "vlastimilbures.PromptMend"
@@ -389,10 +389,10 @@ def _receipt_launcher_path(where: str, exe: str, *, windows: bool) -> Path | Non
 
 
 def _uv_receipt_launcher(prefix: Path, exe: str, *, windows: bool) -> Path | None:
-    """This tool's launcher from the uv receipt in ``prefix``, without running `uv` (#315):
+    """This tool's launcher from the uv receipt in ``prefix``, without running `uv`:
     only when the receipt is a readable file, names promptmend's entry point, and that entry
     point is an absolute path (on Windows a plain drive path) to an existing file. Anything
-    else is None: then `uv tool dir` decides, as before."""
+    else is None: then `uv tool dir` decides."""
     receipt = prefix / UV_RECEIPT
     try:
         if receipt.is_symlink() or not receipt.is_file():
@@ -421,7 +421,7 @@ def resolve_launcher(
     """The stable entry point of the install that is running now: the channel's own bin
     (uv tool's bin dir, from its receipt, else `uv tool dir`; Homebrew's `<prefix>/bin`,
     Scoop's shim, WinGet's alias), never a versioned path such as a Homebrew Cellar, else the
-    running console script when that path is stable. A frozen build (the Windows zip, #185) is
+    running console script when that path is stable. A frozen build (the Windows zip) is
     its own exe: WinGet's, else itself."""
     if getattr(sys, "frozen", False) if frozen is None else frozen:
         exe_path = Path(sys.executable) if executable is None else executable
@@ -439,7 +439,7 @@ def resolve_launcher(
     script = Path(sys.argv[0]) if script is None else script
     exe = "promptmend.exe" if windows else "promptmend"
 
-    # A uv tool names its launcher in its own receipt: no `uv` process (#315).
+    # A uv tool names its launcher in its own receipt: no `uv` process.
     from_receipt = _uv_receipt_launcher(prefix, exe, windows=windows)
     if from_receipt is not None:
         return Launcher(from_receipt, "uv")
@@ -617,7 +617,7 @@ def is_gone(entry: Entry) -> bool:
     return False
 
 
-# Not config_files.write_atomic(): that one writes through a symlink (#236), this must replace it.
+# Not config_files.write_atomic(): that one writes through a symlink, this must replace it.
 def _write(path: Path, text: str) -> None:
     """Write UTF-8 with the text's own newlines, through a new temp file in the same folder
     and an atomic rename. mkstemp creates the temp file exclusively, so a planted link there
@@ -646,7 +646,7 @@ def _read(path: Path) -> str | None:
 
 
 def render(source: str, launcher: str, version: str | None = None) -> str:
-    """A deployed match file: the version stamp (#25), then the shipped file with the
+    """A deployed match file: the version stamp, then the shipped file with the
     launcher in place of the placeholder (literally, so no character in it is special)."""
     return STAMP.format(version=version or installed_version()) + source.replace(
         PLACEHOLDER, launcher
@@ -683,7 +683,7 @@ class Plan:
     # Manifest entries outside this plan whose file is gone: apply forgets them.
     orphans: list[str] = field(default_factory=list)
     # The other match files in the folder (Espanso's base.yml, the user's overlays): listed
-    # by status only (#38); deploy and detach never touch them.
+    # by status only; deploy and detach never touch them.
     yours: list[Path] = field(default_factory=list)
 
     @property
@@ -710,7 +710,7 @@ class Plan:
 
 def launchers_in(text: str) -> set[str]:
     """The launcher paths a match file calls: each script var's first arg, or the quoted
-    path of a shell cmd line (every release before #18 quoted it the same way). Windows
+    path of a shell cmd line (as files deployed by older releases hold it). Windows
     paths have forward slashes."""
     return {*_SCRIPT_LAUNCHER.findall(text), *_QUOTED_LAUNCHER.findall(text)}
 
@@ -879,7 +879,7 @@ def apply(the_plan: Plan, choices: Mapping[str, str] | None = None) -> Outcome:
     match_dir = the_plan.espanso_dir / "match"
 
     for step in the_plan.steps:
-        # Every write lands in Espanso's match/ folder; config/ is never touched (#37).
+        # Every write lands in Espanso's match/ folder; config/ is never touched.
         if step.target.parent != match_dir:
             raise DeployError(f"Refusing to write outside {match_dir}: {step.target}")
         backups = list(step.entry.backups) if step.entry else []

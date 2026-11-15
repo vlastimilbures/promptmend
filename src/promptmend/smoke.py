@@ -5,14 +5,14 @@ a paid call or a key leaving the machine.
 A child process runs `python -m promptmend.cli improve --provider <name> ...` (the same
 code a trigger runs) with every provider base URL pointed at the stub and a placeholder key
 in place of the real one, set as environment variables, which outrank every settings file.
-The usage history is switched off the same way: a health check is not usage (#116).
+The usage history is switched off the same way: a health check is not usage.
 
-The interface's Try tab (#111) runs its stub rewrites against the same stub, in process:
+The interface's Try tab runs its stub rewrites against the same stub, in process:
 stub_server() starts it and stub_settings() points a Settings at it as stub_env() does.
 stub_server(delay=..., trickle=...) makes it slow, or never answer, for the tests of improve's
-hard time limit (#307).
+hard time limit.
 
-The timing helpers (#305) run a command through a launcher against the stub, a cold first run
+The timing helpers run a command through a launcher against the stub, a cold first run
 and then warm ones: `doctor --timing` (which CI's Windows jobs run) and `scripts/build_windows.py
 time` use them. They time start-up and the trigger's own work, never a provider's.
 """
@@ -244,7 +244,7 @@ def run(provider: str, *, runner: Runner | None = None) -> SmokeResult:
     return SmokeResult(False, output, stub.requests, output or f"exit code {code}, no output")
 
 
-# --- Timing (#305) -------------------------------------------------------------------------
+# --- Timing --------------------------------------------------------------------------------
 
 # Judges one run from (exit code, stdout, stderr): None when it is as expected, else why not.
 Expect = Callable[[int, bytes, bytes], str | None]

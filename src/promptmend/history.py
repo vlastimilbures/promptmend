@@ -9,7 +9,7 @@ Writes (HistoryStore.record) are fail-open: a locked, read-only, full or corrupt
 never raises to the caller, and a write gives up within a fixed time budget (a little more for
 the one write that creates the database). A write that misses its budget is kept in a small
 spool file of the same allowlisted columns, which the next record(), stats(), export() or
-replay() stores (#213). A record that is truly dropped (the spool is full or cannot be
+replay() stores. A record that is truly dropped (the spool is full or cannot be
 written) bumps a small sidecar marker, which health() reports, so lost tracking stays visible.
 
 sqlite3, tomllib, csv and decimal are imported inside the functions that use them, so
@@ -65,7 +65,7 @@ PRICES_NAME = "prices.toml"
 # what a person barely notices even under contention; a write that would take longer is
 # dropped and counted as lost. A file-system call the OS itself blocks (a stalled network
 # drive) cannot be interrupted, and neither can the interpreter's own pauses; those, and the
-# first read of the version (record() does it before the clock starts, #318), are the only
+# first read of the version (record() does it before the clock starts), are the only
 # things outside it.
 _BUDGET = 0.25
 # The database's share of _BUDGET (its busy timeout), the rest is for the sidecar marker.
@@ -603,7 +603,7 @@ class HistoryStore:
         if not self.enabled:
             return True
         # Read the version (for app_version) before the clock starts: the first read loads
-        # importlib.metadata, which is not the write's cost (#318). _operation_row() then
+        # importlib.metadata, which is not the write's cost. _operation_row() then
         # finds it cached.
         with contextlib.suppress(Exception):
             installed_version()
@@ -839,7 +839,7 @@ class HistoryStore:
         """The valid spooled records (at most _SPOOL_LIMIT), and whether the spool has
         anything to settle (a record, an invalid entry, or a file that is not a spool). The
         spool is read under the sidecar lock (an unlocked reader would make another
-        process's os.replace fail on Windows, #241); with no spool the lock is not taken. An
+        process's os.replace fail on Windows); with no spool the lock is not taken. An
         unreadable spool, or a lock not had by ``deadline``, is left for later. Never
         raises."""
         if not self.spool_path.exists():
@@ -1009,7 +1009,7 @@ class HistoryStore:
         except Exception:
             info["error"] = "no sqlite3"
         try:
-            # Read under the lock, like a write (#241); with neither file there is nothing to lock.
+            # Read under the lock, like a write; with neither file there is nothing to lock.
             sidecar = self.lost_path.exists() or self.spool_path.exists()
             with (
                 self._sidecar_lock(time.monotonic() + 1.0) if sidecar else contextlib.nullcontext()

@@ -158,7 +158,7 @@ def read_secret(name: str, *, from_stdin: bool) -> str:
 
 
 def load_layers() -> tuple[ConfigLayers, Settings]:
-    """The settings in repair mode (#83): a broken .env or TOML is reported, not raised, and a
+    """The settings in repair mode: a broken .env or TOML is reported, not raised, and a
     rejected value falls back to the next lower layer, so every command still runs."""
     layers = ConfigLayers.resolve(strict=False)
     # Cannot raise: a rejected value fell back to a lower layer, at worst the default.
@@ -196,7 +196,7 @@ def source_label(source: str) -> str:
 
 
 def short_label(source: str) -> str:
-    """``source_label()`` for the interface (#174): a file under the home folder reads
+    """``source_label()`` for the interface: a file under the home folder reads
     ``~/…``, so a narrow column keeps its name. Display only; ``config show`` prints the
     full path."""
     label = source_label(source)

@@ -1,4 +1,4 @@
-"""The Try tab (#111): rewrite a draft typed here, the way a trigger would, and read the
+"""The Try tab: rewrite a draft typed here, the way a trigger would, and read the
 result before any trigger pastes one.
 
 The draft is typed into the tab; the clipboard is never read or written. The rewrite runs in

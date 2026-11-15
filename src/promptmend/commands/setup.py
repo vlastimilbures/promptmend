@@ -1,5 +1,5 @@
 """`setup`: the first-run flow. On a terminal it opens the wizard (tui/setup_wizard.py), its
-options prefilling the steps (#244). With --non-interactive (or --plain) it asks nothing:
+options prefilling the steps. With --non-interactive (or --plain) it asks nothing:
 settings and the default profile from the options, the API key from --api-key-stdin, a deploy
 preview (applied with --deploy), and a smoke test against a stub on 127.0.0.1, never a paid
 call."""

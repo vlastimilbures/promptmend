@@ -1,4 +1,4 @@
-"""Espanso on Windows, without reading its output (#209, #210, #211).
+"""Espanso on Windows, without reading its output.
 
 `espansod.exe` is a GUI-subsystem program that attaches to its parent's console and writes
 there, not to a pipe: `espanso path config` and `espanso status` return nothing to us, while
@@ -7,19 +7,18 @@ worker never sees EOF and blocks the interface's exit) and our console (so Ctrl+
 the terminal kills Espanso). So on Windows nothing here reads Espanso's output:
 
 - the executable is found where Espanso puts it, not only on PATH, which a long-lived
-  Windows Terminal keeps stale (#211): the running daemon, PATH, the per-user install
+  Windows Terminal keeps stale: the running daemon, PATH, the per-user install
   folder, the uninstall registry entry;
 - the config folder is worked out as Espanso does: a portable `.espanso` folder next to the
-  executable, else `%APPDATA%\\espanso` (#210);
+  executable, else `%APPDATA%\\espanso`;
 - "running" means Espanso's named pipe exists (listing the pipes connects to none);
 - start and restart go through `cmd.exe` in a console of its own with no window, every stdio
-  handle the null device: Espanso attaches to that hidden console, never ours (#209).
+  handle the null device: Espanso attaches to that hidden console, never ours.
 
 deploy.run_command() hands every `espanso ...` call here on Windows and keeps the answer's
 shape (stdout, or a CommandFailure), so its callers do not change. Inside one_look() (an
 interface reload, a `doctor` run) `path config` and `status` share one process enumeration
-and one registry walk, and the registry is walked only when no earlier candidate is a file
-(#315).
+and one registry walk, and the registry is walked only when no earlier candidate is a file.
 """
 
 from __future__ import annotations

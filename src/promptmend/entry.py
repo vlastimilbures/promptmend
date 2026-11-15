@@ -1,6 +1,6 @@
 """The console-script entry point (`promptmend`).
 
-Espanso runs the triggers' calls as `type: script` vars (#18), and such a var fails on any
+Espanso runs the triggers' calls as `type: script` vars, and such a var fails on any
 stderr output, even with exit code 0. So before the CLI and its dependencies are imported, a
 trigger call (`improve`, `persona`) silences Python warnings and points file descriptor 2 at
 the null device: a warning, a dependency's stray print or a native library's message would
@@ -19,7 +19,7 @@ import warnings
 # The subcommands the Espanso match files run, always as the first argument.
 TRIGGER_COMMANDS = frozenset({"improve", "persona"})
 
-# When main() started an improve run (time.monotonic()), for its watchdog (#307), which
+# When main() started an improve run (time.monotonic()), for its watchdog, which
 # counts the time limit from here; None until then, and once take_start() has read it.
 _started: float | None = None
 
@@ -65,7 +65,7 @@ def discard_stderr() -> None:
 
 def self_command() -> list[str]:
     """The argv prefix that runs this CLI again in a child process. A frozen build (the
-    Windows zip, #185) is its own program: its executable runs the CLI, and it has no
+    Windows zip) is its own program: its executable runs the CLI, and it has no
     interpreter to take ``-m``. Otherwise this interpreter runs the module with ``-P``, so a
     module planted in the working directory never runs."""
     if getattr(sys, "frozen", False):
@@ -78,7 +78,7 @@ def main() -> None:
     if sys.argv[1:2] == ["improve"]:
         _started = time.monotonic()
     if sys.argv[1:] == ["--version"]:
-        # Answered before the CLI and its dependencies load (#223): the same line Typer's
+        # Answered before the CLI and its dependencies load: the same line Typer's
         # eager --version prints, in a fraction of the start-up on a slow machine.
         from . import installed_version
 

@@ -1,4 +1,4 @@
-"""The PromptMend logo and the interface's About facts (#112). Plain ASCII only, so every
+"""The PromptMend logo and the interface's About facts. Plain ASCII only, so every
 terminal, font, NO_COLOR and screen reader shows it the same; the frame around it is a Textual
 border, not box-drawing text. No Textual here, so a test can check it without the interface."""
 
@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from .. import config, config_store, installed_version, update_check
 
 # The interface's display name: the header, the wordmark and About all read it
-# here, so a rename (#169) changes this one line (and the snapshots).
+# here, so a rename changes this one line (and the snapshots).
 NAME = "PromptMend"
 TAGLINE = "A rough draft in, a precise prompt out: type -i- in any text field."
 REPO_URL = "https://github.com/vlastimilbures/promptmend"
@@ -39,7 +39,7 @@ def runtime() -> dict[str, str]:
     return {"python": platform.python_version(), "textual": textual.__version__}
 
 
-# What About says of the update check (#197), by its state; ``available`` names the release.
+# What About says of the update check, by its state; ``available`` names the release.
 _UPDATE_WORDS = {
     update_check.LATEST: "this is the latest release",
     update_check.OFF: "not checked (PROMPT_UPDATE_CHECK=false)",
@@ -53,7 +53,7 @@ def about_facts(
     version: str | None = None,
     update: update_check.UpdateStatus | None = None,
 ) -> list[str]:
-    """What the About screen lists: version, whether a newer release exists (#197, from the
+    """What the About screen lists: version, whether a newer release exists (from the
     State), install channel (doctor's install check, from the State; unknown before it is
     read), runtime, where settings and history live, licence and repository. Paths only,
     never a setting's value."""

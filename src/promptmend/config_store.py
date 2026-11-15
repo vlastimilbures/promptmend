@@ -1,6 +1,6 @@
 """Saving configuration: validated, atomic writes to config.toml and the secret store.
 
-These are the services behind the management commands (#92). Nothing here runs on a trigger,
+These are the services behind the management commands. Nothing here runs on a trigger,
 and nothing here prints: errors are ConfigStoreError or ValueError, whose messages name
 settings and files but never repeat a secret.
 """

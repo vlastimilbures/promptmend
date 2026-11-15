@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 # as the trigger itself (`i` -> `-i-`), the shape history.py keeps.
 TRIGGER_IDS = ("i", "iok", "ip", "if", "il", "ilm", "ic", "io", "p")
 # Stored for a real call from the interface's Try tab (a direct call, no match), so stats can
-# tell it from a bare `promptmend improve` (#222). Never a --trigger-id value.
+# tell it from a bare `promptmend improve`. Never a --trigger-id value.
 TRY_TAB = "-try-"
 
 # Outcomes of a run, as stored. Each failure prints a marker; the outcome says which kind.
@@ -143,7 +143,7 @@ class Recorder:
         self.latency_ms = round((time.monotonic() - self._started) * 1000, 1)
 
     def timed_out(self) -> None:
-        """improve's watchdog ended the run (#307): outcome error_marker, and the attempt
+        """improve's watchdog ended the run: outcome error_marker, and the attempt
         still in flight, if one is, kept as the timeout it became, lasting until now. An
         attempt that ends after this is not recorded: the run is over."""
         self.outcome = ERROR_MARKER

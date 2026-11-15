@@ -1,5 +1,5 @@
-"""`stats` and `history export / prune / reset`, over the usage history store (history.py,
-#88). Everything shown is metadata; the store never holds a draft, rewrite, persona or key."""
+"""`stats` and `history export / prune / reset`, over the usage history store (history.py).
+Everything shown is metadata; the store never holds a draft, rewrite, persona or key."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from ..redaction import safe_repr
 from . import common
 from .common import guard
 
-# Stated in `stats --help`, the JSON and `stats --verbose` (#92; the plain text names
-# --verbose instead, #222).
+# Stated in `stats --help`, the JSON and `stats --verbose` (the plain text names
+# --verbose instead).
 CAVEATS = (
     "These are local observations on this device, not provider billing.",
     "A call counts once the CLI rendered its output; rendered does not mean pasted.",

@@ -1,4 +1,4 @@
-"""What the Settings tab lists (#199): every setting in a group, with its kind (a switch, a
+"""What the Settings tab lists: every setting in a group, with its kind (a switch, a
 choice, a number or text), its choices and a one-line help, and the rows worked out from a
 State. Pure, with no Textual, so a test can check it without the interface:
 `tests/test_tui_settings_model.py` ties it to `config.env_names()` and parses every choice

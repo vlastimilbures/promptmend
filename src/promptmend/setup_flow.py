@@ -1,4 +1,4 @@
-"""What setup does (#282): the decisions and the writes shared by the two setup flows, the
+"""What setup does: the decisions and the writes shared by the two setup flows, the
 wizard (tui/setup_wizard.py) and `setup --non-interactive`/`--plain` (commands/setup.py). Both
 are presentation over this module: they print or show the outcomes, in their own words, and
 neither decides what to save, where, or when. setup_guide.py holds what they say; this module
@@ -37,7 +37,7 @@ DEFAULTS = {f.metadata["env"]: f.metadata["default"] for f in setting_fields()}
 class Storage:
     """Where setup may save: ``legacy`` is the .env PROMPTMEND_ENV names (then neither
     config.toml nor the secret store is read, so nothing is saved), and ``unread`` setup's
-    note on a .env no release reads any more (#275), looked for only outside legacy mode."""
+    note on a .env no release reads, looked for only outside legacy mode."""
 
     legacy: str | None
     unread: str | None

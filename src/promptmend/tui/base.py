@@ -1,4 +1,4 @@
-"""What the interface's tabs and screens share (#93): the Pane every tab is, its buttons,
+"""What the interface's tabs and screens share: the Pane every tab is, its buttons,
 results and errors, and the deploy preview's digest."""
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def add_row(table: DataTable[Any], *cells: str, key: str | None = None) -> None:
 
 
 def button_row(*buttons: tuple[str, str]) -> Horizontal:
-    """A row of buttons, each with its headless command as the tooltip (#111)."""
+    """A row of buttons, each with its headless command as the tooltip."""
     return Horizontal(
         *(Button(label, id=id_, tooltip=teach.tooltip(id_)) for id_, label in buttons),
         classes="buttons",
@@ -96,7 +96,7 @@ class Reports(_Mixin):
             self.manage.reload()
 
 
-# What a button that waits for the full State says when it is pressed anyway (#317).
+# What a button that waits for the full State says when it is pressed anyway.
 WAITING = "Still checking; this waits until the checks are done."
 NOT_CHECKED = "The checks could not run, so this cannot either; r checks again."
 
@@ -109,7 +109,7 @@ class Pane(Reports, VerticalScroll):
     # A deploy or detach dialog is open or running (TriggersPane).
     busy = False
     # The buttons whose action reads, or acts on, what only the full State holds (the plan,
-    # the doctor report, the stats): disabled until it is shown (#317). Each action checks
+    # the doctor report, the stats): disabled until it is shown. Each action checks
     # waits() too, for a call that does not come from its button.
     FULL_ONLY: ClassVar[tuple[str, ...]] = ()
 
@@ -123,7 +123,7 @@ class Pane(Reports, VerticalScroll):
             self.gate(None)
 
     def paint(self, state: State) -> None:
-        """Show ``state`` (each stage of a reload, #317) and enable what it allows."""
+        """Show ``state`` (each stage of a reload) and enable what it allows."""
         self.show(state)
         self.gate(state)
 
@@ -155,7 +155,7 @@ class Pane(Reports, VerticalScroll):
         """Fill the pane from ``state``; each tab has its own."""
 
     def show_update(self, state: State) -> None:
-        """``state`` is the shown one with only the update check filled in (#315): a pane
+        """``state`` is the shown one with only the update check filled in: a pane
         that shows it repaints that part; the others keep their tables and cursors as they
         are (``self.state`` is already the new State)."""
 
