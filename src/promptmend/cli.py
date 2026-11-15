@@ -191,6 +191,9 @@ def _emit(text: str, watch: _Watchdog | None = None) -> None:
 WATCHDOG_MARGIN = 2.0
 # Of WATCHDOG_MARGIN, the most the watchdog waits for the usage history before its marker.
 _WATCHDOG_HISTORY = 0.5
+# Of _WATCHDOG_HISTORY, what the history wait leaves for writing the marker and for a late
+# timer (Windows' run up to ~15 ms late), so the marker still lands by the deadline.
+_WATCHDOG_HEADROOM = 0.1
 # Names the call in the watchdog's marker when the provider name is not one of ours.
 _UNKNOWN_LABEL = "The call"
 # The watchdog's marker when the copy of a finished rewrite (clipboard output, --copy) has
@@ -258,17 +261,19 @@ class _Watchdog:
     write cannot keep it running past the deadline.
 
     The timer fires _WATCHDOG_HISTORY seconds before the deadline. It first closes the run's
-    usage observer, then gives the history at most _WATCHDOG_HISTORY seconds in a thread of
-    its own, and only then writes its marker and ends the process with exit code 0, so the
-    marker is out by the deadline and nothing follows it. That history wait is less than the
+    usage observer, then gives the history at most _WATCHDOG_HISTORY - _WATCHDOG_HEADROOM
+    seconds in a thread of its own, and only then writes its marker and ends the process with
+    exit code 0, so the marker is out by the deadline. That history wait is less than the
     very first write may take (history._BUDGET plus its _CREATE_EXTRA, for the file it
     creates), so such a run's row can be lost; a later write is not affected.
 
-    A closed observer makes every later attempt, a retry included, raise
-    providers.usage.RunEnded before its request (Meter.begin()); proceed() stops the run
-    earlier still, before the provider is built. An attempt that began before the observer
-    closed and is still blocked before its request (a name lookup, a connect) may send it
-    during the history wait, before the marker, but its result is ignored. A run whose
+    No request is started after the watchdog steps in: a closed observer makes every later
+    attempt, a retry included, raise providers.usage.RunEnded before its request
+    (Meter.begin()); proceed() stops the run earlier still, before the provider is built. An
+    attempt that began before the observer closed and is still blocked before its request (a
+    name lookup, a connect, TLS) may send it during the history wait, or in the few
+    milliseconds between the marker and the exit while this thread waits for the GIL; its
+    result is ignored. A run whose
     settings did not load has no watchdog (no limit is known, and its marker is already on
     its way).
     """
@@ -373,8 +378,9 @@ class _Watchdog:
     def _finish_run(self, *, delivering: bool) -> None:
         """Close the run's observer (no attempt may start from here), give the history its
         bounded write, then print the watchdog's marker; _fire() ends the process right after
-        it, so nothing the main thread does can follow the marker. The history is written
-        first so the main thread's wait for it falls before the marker, not after."""
+        it. The history is written first so its wait falls before the marker: after the marker
+        only an attempt already begun can still act, for the few milliseconds until this
+        thread holds the GIL again and exits (see the class docstring)."""
         rec = self._rec
         with contextlib.suppress(Exception):
             rec.timed_out()
@@ -386,7 +392,7 @@ class _Watchdog:
             # Bounded: a locked or slow history must not keep the process past its limit.
             writer = threading.Thread(target=rec.finish, daemon=True)
             writer.start()
-            writer.join(_WATCHDOG_HISTORY)
+            writer.join(max(_WATCHDOG_HISTORY - _WATCHDOG_HEADROOM, 0.0))
         with contextlib.suppress(Exception):
             if delivering:
                 note, rewrite = self._delivered
@@ -395,7 +401,9 @@ class _Watchdog:
                 text = sent_despite_note(self._ran.built) + self._marker
             data = clean(text).replace("\n", os.linesep).encode("utf-8", errors="replace")
             # From here to _hard_exit the main thread can run only while os.write's system
-            # call releases the GIL: far too briefly to build and send a request.
+            # call releases the GIL, a few milliseconds: no new request can be started (the
+            # observer is closed), but one already in a connect or TLS call may still write
+            # its bytes.
             _write_fd(1, data)
 
 

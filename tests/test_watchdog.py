@@ -581,8 +581,8 @@ def test_stalled_copy_with_lone_surrogate(
 
 
 # An attempt that began before the watchdog fired and is still blocked before its request (a
-# name lookup, say) may send it only while the history is written, before the marker: the
-# marker is written last and the process ends right after it, so no request follows it.
+# name lookup, say) and is released while the history is written sends it before the marker:
+# the marker is written last and the process ends right after it.
 def test_attempt_begun_before_the_marker_sends_before_it(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, capfd: pytest.CaptureFixture[str]
 ) -> None:
@@ -636,7 +636,9 @@ def test_attempt_begun_before_the_marker_sends_before_it(
     monkeypatch.setattr(recorder.Recorder, "finish", history_write)
     monkeypatch.setattr(cli, "_write_fd", marker_out)
     monkeypatch.setattr(cli, "_hard_exit", Exit(then=unblock))
-    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 0.6)
+    # A history wait far longer than the test needs: the order comes from the events alone.
+    monkeypatch.setattr(cli, "_WATCHDOG_HISTORY", 10.0)
+    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 10.1)
     args = ["improve", "--provider", "openrouter", "--source", "argument", "--text", "x"]
     result = runner.invoke(app, [*args, "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")

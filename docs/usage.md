@@ -105,14 +105,14 @@ the watchdog prints it. If the rewrite came back but copying it to the clipboard
 ([clipboard output](#output-paste-or-clipboard) or `--copy`) stalls, the marker says the
 clipboard did not answer and the rewrite is pasted instead.
 
-The watchdog is a thread that steps in at the limit plus 1.5 seconds. It stops the run from
-starting any request, a retry included, writes the usage history for up to half a second, and
-only then prints its marker and ends the process, so nothing is sent after the marker. A
-request the run had already begun (one still waiting for its name lookup or connection) may
-go out during that half second, before the marker; its answer is ignored. A run whose output
-is already out but whose usage-history write is still going ends at once at the limit plus
-1.5 seconds, or at the limit plus 2 seconds if its output was still being printed then, and
-that history row is lost. A run that is still printing its own result is never cut off or
+The watchdog is a thread that steps in at the limit plus 1.5 seconds. From then on no request
+is started, not even a retry; it writes the usage history for up to 0.4 seconds, then prints
+its marker and ends the process. A request the run had already begun (one still waiting for
+its name lookup, connection or TLS handshake) may still go out, during that wait or in the few
+milliseconds between the marker and the exit; its answer is ignored. A run whose output is
+already out but whose usage-history write is still going ends at once at the limit plus 1.5
+seconds, or at the limit plus 2 seconds if its output was still being printed then, or as
+soon as its output is flushed, if that is later, and that history row is lost. A run that is still printing its own result is never cut off or
 printed over, even past the limit plus 2 seconds (Espanso not reading its output, say). Being
 a thread, the watchdog can also be delayed by a long step that holds Python's lock (a regular
 expression running over a huge draft, say) until that step ends.

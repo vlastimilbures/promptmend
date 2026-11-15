@@ -71,9 +71,9 @@ All notable changes to this project are documented here. The format follows
   exit code 0 and empty stderr, even when a name lookup, proxy discovery, the clipboard or a
   server trickling its reply blocks; before, such a run could leave the trigger typed with
   nothing happening for as long as it hung, and other triggers would not expand meanwhile.
-  Exactly one result is ever printed, no request is sent after the watchdog's marker, and the
-  usage history records such a run as `error_marker`, with the attempt in flight as a
-  `timeout`. A run already printing its own result is never cut off. When the rewrite came
+  Exactly one result is ever printed, no request is started once the watchdog steps in (one
+  already connecting may still go out), and the usage history records such a run as
+  `error_marker`, with the attempt in flight as a `timeout`. A run already printing its own result is never cut off. When the rewrite came
   back but its clipboard copy (clipboard output, `--copy`) stalls, the marker says the
   clipboard did not answer, the rewrite is pasted instead, and the run is recorded as
   `clipboard_failed`.
