@@ -18,6 +18,11 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # hatchling is bumped by hand in both `build-system.requires` and `[tool.uv]
+    # build-constraint-dependencies` (see the note in pyproject.toml); Dependabot can raise
+    # only the first, and the pin then fails `uv sync --locked`.
+    ignore:
+      - dependency-name: hatchling
     groups:
       python:
         patterns: ["*"]

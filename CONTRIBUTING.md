@@ -206,6 +206,8 @@ never releases by surprise. Only the `release` job can write to the repository (
 exchanges for a short-lived upload token, and runs only while `PYPI_PUBLISH` is `true`, so a
 release works the same before PyPI is set up. Release builds use the build backend pinned by `build-constraint-dependencies`
 in `pyproject.toml`; bump that pin by hand.
+The build backend (hatchling) is bumped by hand in both `build-system.requires` and that
+constraint, so Dependabot ignores it.
 The Release is created as a draft and published once every file is attached, so with
 [immutable releases](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases)
 enabled in the repository settings, the published Release cannot be changed.
