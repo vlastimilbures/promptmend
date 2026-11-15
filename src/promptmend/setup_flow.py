@@ -2,7 +2,9 @@
 wizard (tui/setup_wizard.py) and `setup --non-interactive`/`--plain` (commands/setup.py). Both
 are presentation over this module: they print or show the outcomes, in their own words, and
 neither decides what to save, where, or when. setup_guide.py holds what they say; this module
-imports neither Typer nor Textual itself (tests/test_setup_flow.py checks it), and writes only
+imports neither Typer nor Textual itself and never loads Textual (tests/test_setup_flow.py
+checks both); Typer still arrives through commands.common and commands.settings, where the
+setting services and no_key() live. It writes only
 through the services the headless commands use (`config set`/`unset`, `secrets set`,
 `espanso deploy`), so each write goes through config_files.write_atomic() and a key only ever
 reaches the secret store.
@@ -206,7 +208,9 @@ def in_sync(plan: deploy.Plan) -> bool:
 
 def forget(plan: deploy.Plan) -> deploy.Outcome:
     """Drop the manifest's gone entries (`setup --non-interactive`, with no question: no match
-    file is written)."""
+    file is written). Only for a plan that does nothing else (only_forgets)."""
+    if not plan.only_forgets:
+        raise ValueError("forget() takes a plan that only drops gone manifest entries")
     return deploy.apply(plan, {})
 
 

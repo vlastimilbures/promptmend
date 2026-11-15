@@ -89,8 +89,9 @@ All notable changes to this project are documented here. The format follows
 
 - Contributors: setup's decisions and writes (where settings go, saving the provider, profile
   and keys, reading and installing the match files) live in one module, `setup_flow.py`
-  (#282), which imports neither Typer nor Textual itself, and both the wizard and `setup
-  --non-interactive`/`--plain` are presentation over it. No prompt, message, exit code, write or wizard screen changes.
+  (#282), and both the wizard and `setup --non-interactive`/`--plain` are presentation over
+  it. It imports neither Typer nor Textual itself and never loads Textual; Typer still comes
+  in through `commands.common`. No prompt, message, exit code, write or wizard screen changes.
 
 ### Removed
 - **Breaking:** the transition paths from earlier releases (#275), ahead of 1.0.0. This breaks

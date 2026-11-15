@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import typer
 
-from promptmend import config, config_files, config_store, deploy, setup_flow
+from promptmend import config, config_files, config_store, deploy, setup_flow, setup_guide
 from promptmend.commands import common
 
 KEY = "sk-or-v1-" + "ab12" * 16
@@ -37,6 +40,22 @@ def test_imports_neither_typer_nor_textual() -> None:
     }
     names |= {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     assert not {n for n in names if n.split(".")[0] in ("typer", "textual", "click")}
+
+
+def test_import_loads_no_textual() -> None:
+    code = (
+        "import sys, promptmend.setup_flow; "
+        "print(sorted(m for m in sys.modules if m.split('.')[0] == 'textual'))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
+    )
+    assert out.stdout.strip() == "[]"
+
+
+def test_history_line() -> None:
+    assert setup_guide.history_line(False) == "Usage history is off; nothing is recorded."
+    assert setup_guide.history_line(True).startswith("Usage history is on: metadata only")
 
 
 def test_storage_in_legacy_mode() -> None:
@@ -143,7 +162,16 @@ def test_read_plan_install_and_in_sync(tmp_path: Path) -> None:
     assert outcome.changed
     plan, _ = setup_flow.read_plan(str(root), "/bin/pm")
     assert setup_flow.in_sync(plan)
-    assert setup_flow.forget(plan).lines == []
+    # Another folder's entries, its folder gone: only those are left to drop.
+    old = tmp_path / "old-espanso"
+    (old / "match").mkdir(parents=True)
+    setup_flow.install(setup_flow.read_plan(str(old), "/bin/pm")[0])
+    shutil.rmtree(old)
+    plan, _ = setup_flow.read_plan(str(root), "/bin/pm")
+    assert plan.only_forgets
+    assert setup_flow.in_sync(plan)
+    assert setup_flow.forget(plan).lines
+    assert setup_flow.read_plan(str(root), "/bin/pm")[0].is_noop
 
 
 def test_read_plan_refuses_a_key_in_an_option(tmp_path: Path) -> None:
@@ -162,3 +190,37 @@ def test_read_plan_finds_espanso(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     plan, fallback = setup_flow.read_plan(None, None)
     assert plan.espanso_dir == tmp_path.resolve()
     assert fallback == "no answer"
+
+
+def test_forget_refuses_a_plan_that_writes(tmp_path: Path) -> None:
+    root = tmp_path / "espanso"
+    (root / "match").mkdir(parents=True)
+    plan, _ = setup_flow.read_plan(str(root), "/bin/pm")
+    with pytest.raises(ValueError, match="only drops gone manifest entries"):
+        setup_flow.forget(plan)
+    assert list((root / "match").iterdir()) == []
+
+
+def test_setup_reports_a_failed_settings_step(saved: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """End to end: the first choice's line on stdout, then the failure on stderr, exit 1."""
+    from typer.testing import CliRunner
+
+    from promptmend.cli import app
+
+    real = config_store.save_settings
+    writes: list[object] = []
+
+    def second_fails(*args: object, **kwargs: object) -> config_store.SavedSettings:
+        writes.append(args)
+        if len(writes) == 2:
+            raise config_store.ConfigStoreError("disk full")
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(config_store, "save_settings", second_fails)
+    args = ["--provider", "ollama", "--profile", "general", "--no-deploy", "--no-smoke-test"]
+    result = CliRunner().invoke(app, ["setup", "--non-interactive", *args])
+    assert result.exit_code == 1, result.output
+    assert "  PROMPT_PROVIDER=ollama saved in " in result.stdout
+    assert "PROMPT_PROFILE" not in result.stdout.split("Provider: ollama")[1].split("API keys")[0]
+    assert "  failed: disk full" in result.stderr
+    assert "settings failed" in result.stderr
