@@ -71,7 +71,7 @@ class ProfilesPane(Pane):
             f"Your profiles: {user_profiles_dir()}"
         )
         table = self.query_one("#profiles", DataTable)
-        # Each stage of a reload refills the table (#317): the cursor stays on its profile.
+        # Each stage of a reload refills the table: the cursor stays on its profile.
         kept = (
             table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
             if table.row_count

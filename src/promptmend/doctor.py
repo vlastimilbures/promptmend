@@ -1,4 +1,4 @@
-"""The `doctor` service: one report of everything a broken trigger can come from (#25, #92).
+"""The `doctor` service: one report of everything a broken trigger can come from.
 
 Read-only: it runs only `espanso path config`, `espanso status` and the launcher lookup
 (uv's receipt, else `uv tool dir`; `brew --prefix`) through deploy.run_command, reads the
@@ -7,8 +7,8 @@ unless PROMPT_UPDATE_CHECK is false), asks a loopback Ollama and LM Studio at th
 whether they answer (local_probe), reads the deployed match files, and reads the clipboard
 only to report its length. The report never holds a key, the persona or clipboard text,
 since people paste it into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and
-keys are only ever added (the one exception: the previous_install check, removed with the
-migration code in #246; its PATH warning lives on as path_shadow).
+keys are only ever added (the one exception: the previous_install check, removed by owner
+decision, #246; its PATH warning lives on as path_shadow).
 """
 
 from __future__ import annotations
@@ -144,7 +144,7 @@ def upgrade_hint(install: Mapping[str, Any]) -> str:
 
 
 def _version_check(update: update_check.UpdateStatus, install: Check | None) -> Check:
-    """The installed version and whether PyPI has a newer one (#197): information only, never
+    """The installed version and whether PyPI has a newer one: information only, never
     a warning, with the update command for doctor's install channel (a checkout's own)."""
     available = update.state == update_check.AVAILABLE
     known = update.state in (update_check.AVAILABLE, update_check.LATEST)
@@ -164,7 +164,7 @@ def _version_check(update: update_check.UpdateStatus, install: Check | None) -> 
 
 def with_update(report: Report, update: update_check.UpdateStatus) -> Report:
     """``report`` with its version check made again for ``update``: the interface's update
-    check, when it lands after the rest (#315)."""
+    check, when it lands after the rest."""
     install = next((c for c in report.checks if c.id == "install"), None)
     return Report(
         tuple(_version_check(update, install) if c.id == "version" else c for c in report.checks)
@@ -175,14 +175,14 @@ def _cli_check() -> Check:
     script = Path(sys.argv[0]) if sys.argv and sys.argv[0] else None
     if sys.platform == "win32" and script and not script.suffix:
         exe = script.with_name(script.name + ".exe")
-        # Windows starts the console script's launcher, but argv[0] drops its `.exe` (#222).
+        # Windows starts the console script's launcher, but argv[0] drops its `.exe`.
         if exe.is_file():
             script = exe
     frozen = bool(getattr(sys, "frozen", False))
     data = {
         "path": str(script) if script else None,
         "executable": sys.executable,
-        # The Windows zip's own exe (#185): no interpreter, no import check.
+        # The Windows zip's own exe: no interpreter, no import check.
         "frozen": frozen,
     }
     note = " (frozen build)" if frozen else ""
@@ -300,7 +300,7 @@ def _keys_check(
     triggers: list[assets.Trigger],
     deployed: bool,
 ) -> Check:
-    """Named by the triggers that need each missing key (#217): the deployed ones, else those a
+    """Named by the triggers that need each missing key: the deployed ones, else those a
     deploy would write. PROMPT_PROVIDER only counts for a bare `improve` and the Try tab."""
     keys = {}
     for name in secret_names():
@@ -341,7 +341,7 @@ def _keys_check(
 def _local_servers_check(
     settings: config.Settings, triggers: list[assets.Trigger], deployed: bool
 ) -> Check:
-    """Whether the Ollama and LM Studio the local triggers need answer (#220). The triggers
+    """Whether the Ollama and LM Studio the local triggers need answer. The triggers
     stay deployed either way; this says what typing one would need. Never fails or warns."""
     used = _rewrites(triggers, settings)
     servers: dict[str, dict[str, Any]] = {}
@@ -372,9 +372,9 @@ def _local_servers_check(
 
 
 def _probe_all(urls: Mapping[str, str]) -> dict[str, bool | None]:
-    """local_probe.answers() for each URL, at the same time (#315): each one that answers
+    """local_probe.answers() for each URL, at the same time: each one that answers
     nothing waits out its own timeout, so asking in turn would add them up. Every probe runs to
-    its end; a probe that raised raises here, in ``urls`` order, as asking in turn did."""
+    its end; a probe that raised raises here, in ``urls`` order, as asking in turn would."""
     if len(urls) < 2:
         return {key: local_probe.answers(url) for key, url in urls.items()}
     from concurrent.futures import ThreadPoolExecutor
@@ -386,7 +386,7 @@ def _probe_all(urls: Mapping[str, str]) -> dict[str, bool | None]:
 
 def persona_findings(settings: config.Settings) -> list[str]:
     """What the gate's scan finds in PROMPT_PERSONA: finding names only, never the text. The
-    gate scans the draft, but every call also sends the persona in the system prompt (#29), so
+    gate scans the draft, but every call also sends the persona in the system prompt, so
     `config validate`, this check and the interface scan it once instead: a match warns and
     never blocks a trigger, which never runs this. No ``bare_token``: that rule is for a
     whole draft that is one secret-like word (a password left on the clipboard); a persona is
@@ -469,7 +469,7 @@ def _espanso_check(runner: deploy.Runner, espanso_dir: Path | None) -> tuple[Che
     answer = runner(deploy.PATH_CONFIG)
     out, why = deploy.output(answer), deploy.failure(answer)
     located = Path(out.strip()) if out and out.strip() else None
-    # Found means on PATH: an installed Espanso that cannot answer is not a PATH problem (#115).
+    # Found means on PATH: an installed Espanso that cannot answer is not a PATH problem.
     found = why is None or why.found
     running = None
     if found:
@@ -506,7 +506,7 @@ def _match_check(
     manifest: deploy.Manifest | None,
     planned: deploy.Plan | None = None,
 ) -> Check:
-    # "legacy" (the pre-0.9 base.yml, no longer looked for since #246) stays for the schema.
+    # "legacy" (the pre-0.9 base.yml, not looked for, #246) stays False for schema_version 1.
     data: dict[str, Any] = {"espanso_dir": str(target), "files": [], "legacy": False}
     if launcher is None or manifest is None:
         why = "the deploy manifest cannot be read" if manifest is None else "no launcher found"
@@ -514,7 +514,7 @@ def _match_check(
     if not (target / "match").is_dir():
         return Check("match_files", WARN, f"no Espanso match folder in {target}", data)
     text = deploy.launcher_text(launcher)
-    # The caller's plan when it is this very comparison (the interface's, #315), else our own.
+    # The caller's plan when it is this very comparison (the interface's), else our own.
     # Only for the very same folder: the interface's is resolved, and for a linked folder its
     # states could differ from the ones this report has without it, which must not happen.
     same = (
@@ -536,7 +536,7 @@ def _match_check(
 
 
 def _same_launcher(deployed: str, current: str | None) -> bool:
-    """The same path however it is spelled: the match files hold Windows paths with `/` (#212),
+    """The same path however it is spelled: the match files hold Windows paths with `/`,
     and Windows paths ignore case. A launcher never holds a backslash elsewhere."""
     if current is None:
         return False
@@ -621,7 +621,7 @@ def _history_checks(settings: config.Settings) -> tuple[Check, Check]:
 
     store = HistoryStore.from_settings(settings)
     if settings.history:
-        # Stores the records a write that missed its time budget left in the spool (#213).
+        # Stores the records a write that missed its time budget left in the spool.
         store.replay()
     health = store.health()
     data = {"enabled": settings.history, **vars(health)}
@@ -711,8 +711,8 @@ def _profiles_check(settings: config.Settings) -> Check:
 
 
 def _folders_check() -> Check:
-    """The user folders. ``legacy`` and ``conflicts`` stay empty: the folders' old names are
-    no longer looked for (#275), and the keys stay for doctor --json schema_version 1."""
+    """The user folders. ``legacy`` and ``conflicts`` stay, always empty, for doctor --json
+    schema_version 1 (#275): the folders' old names are not looked for."""
     data = {
         "config_dir": str(config.user_config_dir()),
         "data_dir": str(config.user_data_dir()),
@@ -727,7 +727,7 @@ def _folders_check() -> Check:
 @dataclass(frozen=True)
 class Lookups:
     """This install's launcher and the deploy manifest, each looked up once, so the interface's
-    plan and doctor share them (#315). ``launcher`` is None with ``launcher_error`` saying why;
+    plan and doctor share them. ``launcher`` is None with ``launcher_error`` saying why;
     ``manifest`` is None when it cannot be read, with ``manifest_error``."""
 
     launcher: deploy.Launcher | None
@@ -783,10 +783,10 @@ def run(
 ) -> Report:
     """Every check in CHECK_IDS. ``launcher`` and ``espanso_dir`` override the lookups;
     ``update`` is an update check already made (the interface's). The interface also passes
-    what its reload already read (#315): ``layers`` (repair mode, as load_layers() makes them),
+    what its reload already read: ``layers`` (repair mode, as load_layers() makes them),
     ``found`` (lookups()) and its deploy ``plan``, used for match_files when it compares the
     same folder, launcher and manifest. Without them doctor reads its own, with the same
-    report. ``durations``, when given, gets each check's seconds (`doctor --timing`, #305),
+    report. ``durations``, when given, gets each check's seconds (`doctor --timing`),
     the lookups a check reports counted in it: the update check in version, the launcher
     lookup in install, both settings reads in config, the Espanso queries in espanso; history
     and sqlite share one read (history)."""
@@ -903,7 +903,7 @@ def _run(
     return Report(tuple(checks))
 
 
-# --- Timing (#305) -------------------------------------------------------------------------
+# --- Timing --------------------------------------------------------------------------------
 
 # `doctor --timing --runs N`: the warm runs after each cold one; WARM_RUNS is the default,
 # equal to smoke.WARM_RUNS (tests/test_frozen.py), which commands/doctor.py does not import.

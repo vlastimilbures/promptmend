@@ -4,10 +4,10 @@ argument, with the concealed-item check), rewrite() through factory.make_provide
 gate, the marker that words a failure, its history outcome, the sent-despite note, and the
 delivery of a finished rewrite to the clipboard.
 
-Split out of cli.py (#281). It imports neither Typer nor the CLI, so the interface uses it
-without the command wiring and a Typer-free trigger entry (#299) can build on it. Printing
-(trigger._emit()) and improve's watchdog stay in trigger.py: both need Typer (typer.echo,
-typer.Exit), and the watchdog is the one decision of what a trigger run prints."""
+It imports neither Typer nor the CLI, so the interface uses it without the command wiring
+and a Typer-free trigger entry (#313) can build on it. Printing (trigger._emit()) and
+improve's watchdog stay in trigger.py: both need Typer (typer.echo, typer.Exit), and the
+watchdog is the one decision of what a trigger run prints."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class ConcealedClipboard(ProviderError):
 
 def _clipboard(op: str, *args: str) -> object:
     """pyperclip's ``op`` ("paste" or "copy"). pyperclip is imported only here, once a run
-    touches the clipboard: a trigger that gets its draft another way never loads it (#223)."""
+    touches the clipboard: a trigger that gets its draft another way never loads it."""
     import pyperclip
 
     try:
@@ -62,7 +62,7 @@ def _clipboard(op: str, *args: str) -> object:
 def _read_input(source: str, text: str | None) -> str:
     if source == "clipboard":
         # Checked before reading, so a vault password is never even loaded, let alone sent or
-        # pasted back, whichever provider the trigger uses. None (cannot tell) reads as before.
+        # pasted back, whichever provider the trigger uses. None (cannot tell) reads it anyway.
         if is_concealed():
             # Cleared, not left in place: Espanso pastes this marker through the clipboard and
             # then restores what it held as plain text, without the concealed marker, so the
@@ -111,7 +111,7 @@ def _copy_failed(text: str, rec: recorder.Recorder) -> str:
 
 
 def _deliver(result: str, note: str, rec: recorder.Recorder) -> str:
-    """Clipboard output (#134): copy the rewrite and return what to print, which is only the
+    """Clipboard output: copy the rewrite and return what to print, which is only the
     markers (the sent-despite ``note``, a stop note), so a plain success prints nothing and
     Espanso just erases the trigger. If the copy fails, the rewrite is printed after the
     error marker instead (_copy_failed()). The stop note (split_stop_note()) is printed, never
@@ -185,9 +185,9 @@ def rewrite(
     )
     ran.built = built
     # Cleaned first, so an invisible character cannot hide a fence from the strip. A reply
-    # wrapped in one code fence would be pasted with the fence (flash-lite wrapped 16 of 36
-    # with the old general profile). A stop note is split off first, since it would leave the
-    # fence short of the reply's end.
+    # wrapped in one code fence would be pasted with the fence (a model can wrap its whole
+    # reply in one; seen in benchmark runs). A stop note is split off first, since it would
+    # leave the fence short of the reply's end.
     body, stop = split_stop_note(clean(built.generate(draft, system)))
     body = strip_outer_fence(body)
     if TEMPLATE_MARKER in system:

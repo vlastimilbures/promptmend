@@ -1,5 +1,5 @@
 """`doctor [--json] [--timing [--runs N]]`: the doctor service's report, as text or stable
-JSON; --timing (#305) adds start-up times measured against the smoke test's stub."""
+JSON; --timing adds start-up times measured against the smoke test's stub."""
 
 from __future__ import annotations
 

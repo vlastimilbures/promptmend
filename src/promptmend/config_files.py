@@ -5,7 +5,7 @@ config services (config_store.py) build on.
 This module is on the trigger path (ConfigLayers.resolve reads both files), so it stays
 light: tomllib is imported only when a file exists, the writer (tomli_w), tempfile and
 subprocess only when something is written, and hashlib (OpenSSL's libcrypto, a native module
-on Windows, #312) only when a digest is computed.
+on Windows) only when a digest is computed.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _position(exc: Exception) -> str:
 
 
 def digest(data: bytes) -> str:
-    import hashlib  # only the management commands compute a digest (#312)
+    import hashlib  # only the management commands compute a digest
 
     return hashlib.sha256(data).hexdigest()
 
@@ -380,14 +380,14 @@ def write_atomic(path: Path, data: bytes, *, private: bool) -> None:
     user-only ACL while still empty, before any secret is written into it.
 
     A symlinked ``path`` (a config.toml kept in a dotfiles repo) is written through to the
-    file it points to, so the link stays a link (#236).
+    file it points to, so the link stays a link.
     """
     make_private_dir(path.parent)
     # Only the folder the caller named is created: a dangling link to a missing folder fails.
     path = Path(os.path.realpath(path))
     if path.is_dir():
         raise IsADirectoryError(errno.EISDIR, "it is a folder, not a file", str(path))
-    import tempfile  # only when something is written (#312)
+    import tempfile  # only when something is written
 
     fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     temp = Path(name)
@@ -469,7 +469,7 @@ def secret_store(directory: Path) -> FileSecretStore:
     and on Windows. It must raise SecretStoreError on any keyring failure; it must never fall
     back to this file. Import keyring lazily (it is forbidden on the trigger path). Bring
     back a SecretStore Protocol then, for the two stores. The store is also read on the
-    interface's loop thread by tui.state.quick() (#317, #348), so a keyring store must stay
+    interface's loop thread by tui.state.quick() (#348), so a keyring store must stay
     off the loop there (quick() needs only whether each key is set).
     """
     return FileSecretStore(directory / SECRETS_FILE)

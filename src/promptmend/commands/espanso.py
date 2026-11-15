@@ -1,8 +1,8 @@
-"""`espanso deploy`, `status` and `detach` (#86): thin Typer wrappers over the deploy
-service. Moved out of cli.py (#281) and mounted through cli._LAZY_COMMANDS like the other
-management commands, so a trigger never loads it; each command still imports deploy only when
-it runs, so `promptmend --help` does not load deploy either. make_plan() and restart() are
-public: setup's deploy step (commands/setup.py) uses them too."""
+"""`espanso deploy`, `status` and `detach`: thin Typer wrappers over the deploy service,
+mounted through cli._LAZY_COMMANDS like the other management commands, so a trigger never
+loads it; each command still imports deploy only when it runs, so `promptmend --help` does
+not load deploy either. make_plan() and restart() are public: setup's deploy step
+(commands/setup.py) uses them too."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def _espanso_root(espanso_dir: str | None) -> Path:
         return Path(espanso_dir).expanduser().resolve()
     found = deploy.locate_espanso_dir()
     if found.fallback:
-        # Never silently: the default folder may not be the one Espanso reads (#115).
+        # Never silently: the default folder may not be the one Espanso reads.
         typer.echo(f"{found.fallback}; using the default Espanso folder {found.path}", err=True)
     return found.path.resolve()
 

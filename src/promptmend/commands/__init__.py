@@ -1,4 +1,4 @@
-"""The management commands (#92): espanso, setup, config, secrets, profiles, stats, history,
+"""The management commands: espanso, setup, config, secrets, profiles, stats, history,
 doctor and ui.
 
 Each module holds thin Typer wrappers over the services (config_store, deploy, history,

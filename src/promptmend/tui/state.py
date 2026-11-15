@@ -1,13 +1,13 @@
 """What the interface shows, read in one go from the services, so every screen shows the same
-moment. It is read again after every change, so no screen keeps a stale value (#83).
+moment. It is read again after every change, so no screen keeps a stale value.
 
-One read (#315) resolves the settings once, looks up the launcher and the manifest once, makes
+One read resolves the settings once, looks up the launcher and the manifest once, makes
 one deploy plan that doctor reuses, and asks each command once. The update check runs beside it
 in a thread of its own: when it has not landed by the time the rest is read, the State says
 ``checking`` and carries it as ``pending``; settled() waits for it and makes the next State,
 which the app gives every screen, as it does a reload.
 
-Two stages (#317): quick() reads only what is local and fast (the settings, the profiles, the
+Two stages: quick() reads only what is local and fast (the settings, the profiles, the
 triggers) and the app paints it at once; gather() reads everything and its State replaces the
 quick one. A quick State's report, plan and stats are placeholders no screen shows (it says
 `checking` there instead), and an action that needs them waits for the full State
@@ -28,7 +28,7 @@ from ..config import ConfigLayers, Settings, secret_names
 from ..prompt_builder import UserProfile, user_profiles
 
 CHECKING = update_check.UpdateStatus(update_check.CHECKING)
-# A State's stage (#317): QUICK holds the settings, profiles and triggers only; FULL all of it.
+# A State's stage: QUICK holds the settings, profiles and triggers only; FULL all of it.
 QUICK, FULL = "quick", "full"
 # How long settled() waits for the update check: its own request gives up after
 # update_check.TIMEOUT; the rest is reading and writing its small cache file.
@@ -48,7 +48,7 @@ class State:
     group_by: str
     stats: list[history.StatsRow]
     stats_error: str | None
-    # Whether a newer release exists (#197): Home's Version row and About.
+    # Whether a newer release exists: Home's Version row and About.
     update: update_check.UpdateStatus = field(default_factory=update_check.UpdateStatus)
     # The update check still running when the rest was read (update is CHECKING then).
     pending: Future[update_check.UpdateStatus] | None = field(
@@ -62,7 +62,7 @@ class State:
     @property
     def full(self) -> bool:
         """Whether the doctor report, the plan and the stats are read: an action that
-        reads them, or acts on what they show, waits for this (#317)."""
+        reads them, or acts on what they show, waits for this."""
         return self.stage == FULL
 
     def not_checked(self, error: str) -> State:
@@ -73,7 +73,7 @@ class State:
 
     def known_update(self, previous: State | None) -> State:
         """This quick State with the update answer ``previous`` (the full State on screen)
-        settled, so a reload's Version row does not go back to `checking` (#317). Not when
+        settled, so a reload's Version row does not go back to `checking`. Not when
         either says off: the settings just read decide that."""
         off = update_check.OFF
         if self.full or self.update.state == off or previous is None or not previous.full:
@@ -153,8 +153,8 @@ def current_plan(runner: deploy.Runner | None = None) -> deploy.Plan:
 
 def _once(runner: deploy.Runner) -> deploy.Runner:
     """``runner``, asking each command (`espanso path config`, the launcher lookup) once: doctor
-    and the plan both ask, and a reload blocks the Settings list
-    (#242). Read-only commands only, so one answer per reload is the same moment."""
+    and the plan both ask, and a reload blocks the Settings list. Read-only commands only, so
+    one answer per reload is the same moment."""
     answers: dict[tuple[str, ...], str | deploy.CommandFailure | None] = {}
 
     def run(argv: Sequence[str]) -> str | deploy.CommandFailure | None:
@@ -167,7 +167,7 @@ def _once(runner: deploy.Runner) -> deploy.Runner:
 
 
 def quick(group_by: str = "trigger") -> State:
-    """The first stage (#317): the settings, the profiles and the triggers, local reads only
+    """The first stage: the settings, the profiles and the triggers, local reads only
     (no command, no doctor, no history, no network), so Home paints at once. Everything else
     is a placeholder and the State is not full. The update check says off at once when the
     settings turn it off, else checking (see known_update())."""
@@ -192,7 +192,7 @@ def gather(group_by: str = "trigger", first: State | None = None) -> State:
     """Everything the screens show. Read-only: doctor without the clipboard, the deploy plan,
     the profiles, the usage stats and the update check (cached for a day, so a reload asks
     PyPI no more often; never waited for, see the module), each failure kept to show instead
-    of raised. ``first`` is this reload's quick State (#317): its settings, profiles and
+    of raised. ``first`` is this reload's quick State: its settings, profiles and
     triggers are reused, so a reload reads them once; without it they are read here."""
     pending = _beside(update_check.check_configured, "promptmend-reload-update-check")
     if first is None or first.full or first.group_by != group_by:
@@ -240,8 +240,7 @@ def gather(group_by: str = "trigger", first: State | None = None) -> State:
 def needs_setup(state: State) -> bool:
     """Nothing is set up yet: no config.toml, no key, and no match file installed. A bare
     `promptmend` then opens the wizard by itself, once; never of a quick State, which has no
-    plan (#317). Here, not in setup_wizard.py, so the app asks without importing the wizard
-    (#316)."""
+    plan. Here, not in setup_wizard.py, so the app asks without importing the wizard."""
     if common.legacy_env() or not state.full or state.plan is None:
         return False
     if config_files.is_file(config.settings_file()):

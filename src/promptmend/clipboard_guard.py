@@ -5,11 +5,11 @@ go to the model if the user forgot to copy the draft. Password managers mark suc
 macOS with the nspasteboard.org types, on Windows with the clipboard formats Microsoft defines
 for clipboard history and monitors. Each probe asks only which formats are present, never for
 the content, through ctypes, so nothing is added to the package; ctypes (a native module on
-Windows) is imported only when a probe runs, so a trigger that reads no clipboard never loads
-it (#312).
+Windows) is imported only when a probe runs, so a trigger that reads no clipboard never
+loads it.
 
 is_concealed() returns None when it cannot tell (another OS, or a probe error), and the caller
-then reads the clipboard as before: the check adds protection, never a new way to fail. Browser
+then reads the clipboard anyway: the check adds protection, never a new way to fail. Browser
 extensions copy through the web clipboard API and set no marker, so they are not covered.
 """
 

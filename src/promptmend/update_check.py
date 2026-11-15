@@ -1,4 +1,4 @@
-"""Whether a newer release exists (#197), for `doctor` and the interface's Home, never for a
+"""Whether a newer release exists, for `doctor` and the interface's Home, never for a
 trigger (tests/test_trigger_contract.py).
 
 One GET of PyPI's JSON for promptmend, at most once a day: the answer is cached in
@@ -29,7 +29,7 @@ MAX_AGE = timedelta(hours=24)
 RETRY_AFTER = timedelta(hours=1)
 CACHE_FILE = "update-check.json"
 LATEST, AVAILABLE, UNKNOWN, OFF = "latest", "available", "unknown", "off"
-# Only the interface's, while the check still runs beside the rest of a reload (#315): doctor
+# Only the interface's, while the check still runs beside the rest of a reload: doctor
 # and check() never answer it.
 CHECKING = "checking"
 # A final release only: X.Y.Z, no pre, dev, rc, post or local suffix.
@@ -46,7 +46,7 @@ _UV = (
 UPGRADE_COMMANDS = {
     "uv": _UV,
     "homebrew": "brew update && brew upgrade promptmend",
-    # The frozen Windows build (#185), installed as a portable WinGet package.
+    # The frozen Windows build, installed as a portable WinGet package.
     "winget": "winget upgrade vlastimilbures.PromptMend",
 }
 # A checkout (CONTRIBUTING.md, "Set up"): its install script syncs the tool with uv.lock.

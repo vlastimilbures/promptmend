@@ -1,4 +1,4 @@
-"""Whether a local model server answers (#220): one short GET to a loopback Ollama or LM
+"""Whether a local model server answers: one short GET to a loopback Ollama or LM
 Studio, for doctor and the interface only, never on the trigger path
 (tests/test_trigger_contract.py). Nothing is sent but the request line; any HTTP answer, an
 error status included, means the server is there."""

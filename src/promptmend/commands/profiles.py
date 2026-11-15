@@ -1,4 +1,4 @@
-"""`profiles list`, over prompt_builder's user profiles (#85)."""
+"""`profiles list`, over prompt_builder's user profiles."""
 
 from __future__ import annotations
 

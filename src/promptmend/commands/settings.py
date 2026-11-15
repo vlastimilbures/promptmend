@@ -1,5 +1,5 @@
-"""`config` and `secrets`: the settings and API keys, over config.py (repair mode, #83) and
-config_store.py (#84). A key is read only from stdin or a hidden prompt, never from an
+"""`config` and `secrets`: the settings and API keys, over config.py (repair mode) and
+config_store.py. A key is read only from stdin or a hidden prompt, never from an
 argument, and no command prints one."""
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ def _warn_after_save(name: str) -> None:
 
 
 def save_setting(name: str, value: str) -> config_store.SavedSettings:
-    """`config set` without the printing, shared with the interface (#93): refuse a secret, a
+    """`config set` without the printing, shared with the interface: refuse a secret, a
     value that looks like a key and legacy mode (CommandError), then save
     ``value`` in config.toml after checking it as the CLI would read it."""
     _not_a_secret(name, "set")
@@ -215,7 +215,7 @@ def config_unset(name: str = _NAME) -> None:
 
 
 def unset_setting(name: str) -> tuple[bool, Path]:
-    """`config unset` without the printing, shared with the interface's reset (#199): refuse
+    """`config unset` without the printing, shared with the interface's reset: refuse
     a secret and legacy mode, then remove ``name`` from config.toml. Whether it was saved
     there, and the file's path."""
     _not_a_secret(name, "remove")

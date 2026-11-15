@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # Single source of truth is pyproject.toml, read from the installed metadata. Read on first
 # use, not at import: importlib.metadata is a large import, and every trigger starts a fresh
-# process that imports this package but never needs the version (#223).
+# process that imports this package but never needs the version.
 _version: str | None = None
 
 

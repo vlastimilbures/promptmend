@@ -36,9 +36,9 @@ def _cut_at_comment(raw: str) -> bool:
 # model slug, profile name, number or key holds a space, and a base URL never needs ` #`.
 _HASH_IN_VALUE = frozenset({"PROMPT_EXTRA_PATTERNS", "PROMPT_PERSONA"})
 _EXTRA = "PROMPT_EXTRA_PATTERNS"
-# Settings a release removed: a saved one is skipped without a finding, since the user saved
-# it when it was a setting (and `config unset` no longer takes the name).
-RETIRED = frozenset({"PROMPT_UI_INTRO"})  # the interface's intro (#245)
+# Names that are no longer settings: a saved one is skipped without a finding, since the user
+# saved it when it was a setting (and `config unset` does not take the name).
+RETIRED = frozenset({"PROMPT_UI_INTRO"})  # the switch for the intro screen, which was removed
 
 
 def _env_text(data: bytes) -> str:
@@ -51,7 +51,7 @@ def _env_text(data: bytes) -> str:
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-# The user folders' name (#169).
+# The user folders' name.
 APP_DIR = "promptmend"
 # The .env that replaces config.toml and the secret store (legacy mode), when set (non-empty).
 ENV_FILE_VAR = "PROMPTMEND_ENV"
@@ -91,7 +91,7 @@ def settings_file(environ: Mapping[str, str] = os.environ) -> Path:
 
 
 def unread_env_files(environ: Mapping[str, str] = os.environ) -> list[Path]:
-    """The .env files earlier releases read and this one does not (#275): the user config
+    """The .env files earlier releases read and this one does not: the user config
     folder's, and an editable install's checkout's. Their settings would be lost without a
     word, so repair mode and setup name them."""
     candidates = [user_config_dir(environ) / ".env"]
@@ -410,7 +410,7 @@ def _data_collection(raw: str) -> str:
 
 
 # Where improve puts a successful rewrite (PROMPT_OUTPUT, --output): printed for Espanso to
-# paste at the caret, or copied to the clipboard with only markers printed (#134).
+# paste at the caret, or copied to the clipboard with only markers printed.
 PASTE = "paste"
 CLIPBOARD = "clipboard"
 OUTPUTS = (PASTE, CLIPBOARD)
@@ -500,7 +500,7 @@ class Settings:
     ollama_base_url: str = _env("OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_model: str = _env("OLLAMA_MODEL", "qwen3:8b")
     ollama_think: bool = _env("OLLAMA_THINK", "false", _bool)
-    # options.num_ctx, the context window in tokens (#168): Ollama truncates a prompt longer
+    # options.num_ctx, the context window in tokens: Ollama truncates a prompt longer
     # than it without an error. Empty (the default) sends nothing, so Ollama's own applies.
     ollama_num_ctx: int | None = _env("OLLAMA_NUM_CTX", "", _optional_positive_int)
     openrouter_base_url: str = _env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
@@ -547,10 +547,10 @@ class Settings:
     anthropic_api_key: str = _env("ANTHROPIC_API_KEY", "", str.strip, secret=True)
     anthropic_max_tokens: int = _env("ANTHROPIC_MAX_TOKENS", "2400", _positive_int)
     # Current Claude models (Opus 4.7, Sonnet 5 and later) return HTTP 400 for a temperature
-    # (most for any value, the rest for any but the default, #273), so empty (the default)
+    # (most for any value, the rest for any but the default), so empty (the default)
     # sends none; a set value is sent as is, for a model that accepts one.
     anthropic_temperature: float | None = _env("ANTHROPIC_TEMPERATURE", "", _temperature)
-    # OpenAI's own API (#274), called at /chat/completions with the cap as
+    # OpenAI's own API, called at /chat/completions with the cap as
     # max_completion_tokens, which its reasoning models require.
     openai_base_url: str = _env("OPENAI_BASE_URL", "https://api.openai.com/v1")
     # The model -ip- runs through OpenRouter (openai/gpt-6-luna), benchmarked at effort low.
@@ -580,11 +580,11 @@ class Settings:
     # Days a history record is kept; HistoryStore.prune() deletes older ones.
     history_retention_days: int = _env("PROMPT_HISTORY_RETENTION_DAYS", "365", _retention_days)
     # Whether doctor and the interface's Home ask PyPI, at most once a day, for a newer
-    # release (update_check.py, #197); false makes no request. The triggers never ask.
+    # release (update_check.py); false makes no request. The triggers never ask.
     update_check: bool = _env("PROMPT_UPDATE_CHECK", "true", _bool)
     # Not a setting (no env var, see setting_fields()): the --max-tokens of one call, for the
     # providers without a cap setting (Ollama num_predict, LM Studio max_tokens). None sends
-    # them no cap, as before.
+    # them no cap.
     call_max_tokens: int | None = field(default=None)
 
     @classmethod
@@ -736,7 +736,7 @@ class ConfigLayers:
 
         The saved settings are the .env named by PROMPTMEND_ENV (legacy mode: that file alone,
         no config.toml or secret store), else config.toml in the user config dir. No other
-        .env is ever read: repair mode reports one left in the user config dir (#275). The
+        .env is ever read: repair mode reports one left in the user config dir. The
         secret store (secrets.toml) is read outside legacy mode.
 
         Only env_names() keys are taken from either source: any other key (HTTP_PROXY,

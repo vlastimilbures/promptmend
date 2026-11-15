@@ -42,7 +42,7 @@ class SetupOptions:
     """`setup`'s options the wizard honours; ``standalone`` when `setup` opened it (Done then
     quits), else it was opened from Home and closes back to it. ``provider`` and ``profile``
     preselect a choice, ``deploy`` True puts the focus on Install (still a press) and False
-    skips that step, as ``smoke_test`` False skips the test (#244)."""
+    skips that step, as ``smoke_test`` False skips the test."""
 
     espanso_dir: str | None = None
     launcher: str | None = None
@@ -204,7 +204,7 @@ class SetupScreen(Screen[None]):
             self.query_one(f"#setup-line-{row.name}", Static).update(setup_guide.key_line(row))
         servers = next((c for c in state.report.checks if c.id == "local_servers"), None)
         line = servers.message if servers else ""
-        if not state.full:  # a quick State (#317)
+        if not state.full:  # a quick State
             line = (
                 "Checking whether a local server answers…"
                 if state.failed is None
@@ -216,7 +216,7 @@ class SetupScreen(Screen[None]):
         if state.full or not self.plan_asked:
             self.plan_asked = True
             self._refresh_plan()
-        # Each stage of a reload comes here (#317): the person's place (a typed key field, a
+        # Each stage of a reload comes here: the person's place (a typed key field, a
         # button) keeps the focus; it moves only when nothing in this step has it.
         self.go(self.at, refocus=not self._focus_in_step())
 
@@ -260,7 +260,7 @@ class SetupScreen(Screen[None]):
         # Hidden on the last step, and disabled too: Textual can focus a button whose row is
         # hidden (focusable ignores an ancestor's display), so a focus already on its way to
         # Next, or Next's hiding moving the focus to its sibling Back, would leave the focus
-        # on a button nobody sees (#317). Disabled, neither can take it.
+        # on a button nobody sees. Disabled, neither can take it.
         self.query_one("#setup-back", Button).disabled = step == self.order[0] or done
         self.query_one("#setup-next-step", Button).disabled = done
         self.query_one("#setup-nav").display = not done
@@ -485,7 +485,7 @@ class SetupScreen(Screen[None]):
 
     def _show_done(self, *, focus: bool = True) -> None:
         """The checklist; ``focus`` puts the focus on Quit (Close), off when a refresh comes
-        while the person is already somewhere in this step (#317)."""
+        while the person is already somewhere in this step."""
         state = self.manage.state
         if state is None:
             return

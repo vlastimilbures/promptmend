@@ -1,4 +1,4 @@
-"""The default profile's fixed wordings, read from their definitions in prompts/default.md (#283).
+"""The default profile's fixed wordings, read from their definitions in prompts/default.md.
 
 A rewrite copies them word for word: the planning step's two variants, the inputs step, the
 review step's two variants, the judgment step, and the OUTPUTS line for a document. default.md's
