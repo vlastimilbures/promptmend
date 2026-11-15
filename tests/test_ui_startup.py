@@ -33,6 +33,11 @@ def loader(group_by, first=None):
     raise RuntimeError("the stub loader reads nothing")
 
 
+def quick_loader(group_by):
+    # Read on the app's loop (#348), so it cannot wait: it reads nothing at once.
+    raise RuntimeError("the stub quick loader reads nothing")
+
+
 class FirstPaint(ManageApp):
     async def on_ready(self):
         seen["added"] = sorted(set(sys.modules) - started)
@@ -43,7 +48,7 @@ class FirstPaint(ManageApp):
         self.exit(0)
 
 
-app = FirstPaint(loader=loader, quick_loader=loader)
+app = FirstPaint(loader=loader, quick_loader=quick_loader)
 app.run(headless=True, size=(110, 36))
 import json
 from pathlib import Path

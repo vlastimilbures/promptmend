@@ -11,6 +11,7 @@ import io
 import json
 import os
 import re
+import sys
 from collections.abc import Awaitable, Callable, Iterator
 from decimal import Decimal
 from pathlib import Path
@@ -469,6 +470,15 @@ def test_a_late_update_of_an_older_reload_is_dropped(
 
 # --- Two stages (#317) ----------------------------------------------------------------------
 
+# The default pool, and one of a single thread (see one_pool_thread()). Not on Windows: there
+# every Textual timer sleeps in that pool, so one thread is no pool a real run ever has.
+ONE_THREAD = pytest.param(
+    "one thread",
+    marks=pytest.mark.skipif(
+        sys.platform == "win32", reason="Textual's timers sleep in the pool on Windows"
+    ),
+)
+
 
 def threads_now(app: App[Any] | None = None) -> str:
     """Every thread's stack (and the app's workers): what a wait that never ended was held by,
@@ -751,6 +761,65 @@ def test_a_held_reload_key_runs_at_most_a_few_full_reads(espanso: FakeRunner) ->
     drive(scenario, settled=False, loader=loader)
 
 
+@pytest.mark.parametrize(
+    ("platform", "version", "shortened"),
+    [
+        ("win32", (3, 12, 10), True),
+        ("win32", (3, 13, 0), False),
+        ("win32", (3, 14, 0), False),
+        ("darwin", (3, 12, 10), False),
+        ("linux", (3, 12, 10), False),
+    ],
+)
+def test_threads_get_their_turn_only_on_windows_before_3_13(
+    monkeypatch: pytest.MonkeyPatch, platform: str, version: tuple[int, ...], shortened: bool
+) -> None:
+    """#348: a shorter GIL switch interval only on Windows with Python 3.12, restored after,
+    even when the run ends with an error."""
+    import sys
+
+    from promptmend.tui import app as app_module
+
+    before = sys.getswitchinterval()
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(sys, "version_info", version)
+    with app_module.threads_get_their_turn():
+        inside = sys.getswitchinterval()
+    assert inside == (app_module.WINDOWS_312_SWITCH_INTERVAL if shortened else before)
+    assert sys.getswitchinterval() == before
+    with pytest.raises(RuntimeError), app_module.threads_get_their_turn():
+        raise RuntimeError("the app failed")
+    assert sys.getswitchinterval() == before
+
+
+def test_the_interface_runs_with_threads_getting_their_turn(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#348: the app's whole run (run_test here, run() for a person: both go through
+    _process_messages) is inside threads_get_their_turn()."""
+    import contextlib
+
+    from promptmend.tui import app as app_module
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def recorded() -> Iterator[None]:
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    monkeypatch.setattr(app_module, "threads_get_their_turn", recorded)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        assert events == ["enter"]
+
+    drive(scenario)
+    assert events == ["enter", "exit"]
+
+
 def test_the_full_stage_keeps_the_persons_place(espanso: FakeRunner) -> None:
     """Review of #317: the full State repaints every pane, but the Profiles cursor stays on
     its profile and the setup wizard keeps its step, its focused key field and what was typed
@@ -871,7 +940,7 @@ def test_the_first_run_offer_waits_while_about_is_open(saved: Path, espanso: Fak
     drive(scenario, settled=False, loader=blocked, first_run=True)
 
 
-@pytest.mark.parametrize("pool", ["default", "one thread"])
+@pytest.mark.parametrize("pool", ["default", ONE_THREAD])
 def test_the_done_step_keeps_its_focus_across_stages(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, pool: str
 ) -> None:
@@ -993,7 +1062,7 @@ def one_pool_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ManageApp, "on_mount", on_mount)
 
 
-@pytest.mark.parametrize("pool", ["default", "one thread"])
+@pytest.mark.parametrize("pool", ["default", ONE_THREAD])
 def test_the_stages_of_an_older_reload_never_replace_a_newer_one(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, pool: str
 ) -> None:
@@ -1645,12 +1714,6 @@ def test_settings_ignore_a_second_change_until_the_first_is_read_back(
             release.wait(10)
         return gather(group_by, first)
 
-    def first(group_by: str) -> State:
-        # The quick stage would read the change back at once (#317): it waits as well.
-        if blocking.is_set():
-            release.wait(10)
-        return quick(group_by)
-
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await on_row(app, pilot, "PROMPT_HISTORY")
         blocking.set()
@@ -1677,7 +1740,9 @@ def test_settings_ignore_a_second_change_until_the_first_is_read_back(
         assert app.session[-1].command == "promptmend config set PROMPT_HISTORY true"
         assert _state(app).settings.history
 
-    drive(scenario, loader=loader, quick_loader=first)
+    # One stage: the quick one reads the change back on the loop at once (#317, #348), so a
+    # slow read-back is the full read's.
+    drive(scenario, loader=loader, quick_loader=None)
 
 
 def test_settings_a_withheld_value_is_kept_by_an_empty_save(

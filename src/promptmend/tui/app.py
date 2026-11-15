@@ -7,8 +7,9 @@ that tab opens, and the setup wizard the first time it is opened, so the first p
 none of them (tests/test_ui_startup.py pins what it loads). A pane built later shows the
 current State as it mounts (Pane.on_mount).
 
-Each reload has two stages (#317), read one after the other in its worker: the quick State
-(settings, profiles, triggers) is shown at once, the full one replaces it. Every screen gets
+Each reload has two stages (#317), one after the other in its worker: the quick State
+(settings, profiles, triggers; local reads of a few milliseconds) is read on the app's loop
+and shown at once, the full one, read in a thread, replaces it. Every screen gets
 the same State object at each stage (#83). The generation guard orders them: a stage of an
 older reload never replaces a newer reload's, so a screen goes quick, full, late update
 within one reload, and a newer reload's quick State supersedes everything older."""
@@ -19,9 +20,9 @@ import asyncio
 import contextlib
 import importlib
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -46,6 +47,31 @@ if TYPE_CHECKING:
 DEFAULT_THEME = "textual-dark"
 # Full reads (doctor, the plan, the stats) running at once, see ManageApp._read_full().
 FULL_READS = 3
+# The GIL switch interval while the interface runs on Windows with Python 3.12, see
+# threads_get_their_turn().
+WINDOWS_312_SWITCH_INTERVAL = 0.0005
+
+
+@contextlib.contextmanager
+def threads_get_their_turn() -> Iterator[None]:
+    """While the interface runs on Windows with Python < 3.13, a shorter GIL switch interval,
+    the previous one restored after. There the app's loop keeps the GIL so much that every
+    other thread (the full read, the update check, the setup plan) waits about one interval
+    each time it gets it back after a system call: a quick() that takes 3 ms on the loop
+    took 11-13 s in a thread while the app ran, against 3 ms on 3.13 and 3.14 (#348).
+    Process-wide, so only for the interface's run: never the triggers or the headless
+    commands, which never import this module."""
+    if sys.platform != "win32" or sys.version_info >= (3, 13):
+        yield
+        return
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(WINDOWS_312_SWITCH_INTERVAL)
+    try:
+        yield
+    finally:
+        sys.setswitchinterval(previous)
+
+
 HIGH_CONTRAST = Theme(
     name="high-contrast",
     primary="#ffff00",
@@ -269,6 +295,12 @@ class ManageApp(App[int]):
         self.register_theme(HIGH_CONTRAST)
         self.theme = DEFAULT_THEME
 
+    async def _process_messages(self, *args: Any, **kwargs: Any) -> None:
+        """The whole of the app's run, run() and run_test() alike (Textual's own entry point
+        for both), with threads_get_their_turn() around it (#348)."""
+        with threads_get_their_turn():
+            await super()._process_messages(*args, **kwargs)
+
     def on_mount(self) -> None:
         self.push_screen(self.main)
         self.reload()
@@ -307,19 +339,14 @@ class ManageApp(App[int]):
     def action_toggle_contrast(self) -> None:
         self.theme = DEFAULT_THEME if self.theme == HIGH_CONTRAST.name else HIGH_CONTRAST.name
 
-    async def _read[T](self, read: Callable[[], T]) -> T:
-        """``read()`` in a daemon thread of its own (state._beside), awaited here. Not a
-        thread worker: those share asyncio's default thread pool, which a slow full read
-        (doctor waiting on Espanso) would hold while it waits, and on Windows Textual's own
-        timers sleep in that pool too, so a newer reload could not even start its quick
-        read until the old one ended (#317, the Windows CI). Cancelled (a newer reload),
-        the thread still ends on its own and its answer is dropped."""
-        return await asyncio.wrap_future(_beside(read, "promptmend-reload"))
-
     async def _read_full[T](self, read: Callable[[], T]) -> T:
-        """_read() once fewer than FULL_READS full reads are running. The slot is given back
-        when the thread ends, not when this reload is cancelled: a thread cannot be stopped.
-        A newer reload waiting for one still shows its quick State."""
+        """``read()`` in a daemon thread of its own (state._beside), awaited here, once fewer
+        than FULL_READS full reads are running. Not a thread worker: those share asyncio's
+        default thread pool, which a slow full read (doctor waiting on Espanso) would hold,
+        and on Windows Textual's own timers sleep in that pool too (#317). Cancelled (a newer
+        reload), the thread still ends on its own and its answer is dropped; its slot is given
+        back when the thread ends, since a thread cannot be stopped. A newer reload waiting
+        for one still shows its quick State."""
         await self.full_reads.acquire()
         loop = asyncio.get_running_loop()
 
@@ -337,15 +364,18 @@ class ManageApp(App[int]):
 
     @work(exclusive=True, group="load", exit_on_error=False)
     async def _load(self, generation: int) -> None:
-        """One reload: the quick State, then the full one (each read in its own thread),
-        shown here on the app's loop. A newer reload cancels this one (exclusive), and the
+        """One reload: the quick State, read here on the app's loop, then the full one, read
+        in a thread; both shown here. A newer reload cancels this one (exclusive), and the
         generation guard in _show() drops whatever an older one would still show."""
         first: State | None = None
         group_by, quick_loader = self.group_by, self.quick_loader
         if quick_loader is not None:
             try:
-                # The update answer on screen stays until the full State has its own.
-                first = (await self._read(lambda: quick_loader(group_by))).known_update(self.state)
+                # On the loop, not in a thread: local reads of a few milliseconds, so the
+                # first paint never waits for a thread to be scheduled (on Windows with
+                # Python 3.12 one took seconds while the app ran, #348). The update answer
+                # on screen stays until the full State has its own.
+                first = quick_loader(group_by).known_update(self.state)
             except Exception:  # noqa: S110 - the full read below reads the same and reports it
                 pass
             else:
