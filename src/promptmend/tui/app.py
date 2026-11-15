@@ -186,6 +186,8 @@ class ManageApp(App[int]):
         # Each reload's number. A thread cannot be stopped, so a slower, older load may finish
         # after a newer one: only the newest is shown.
         self.generation = 0
+        # The reload whose State is on screen (0: none yet).
+        self.shown = 0
         self.main = MainScreen()
         # This session's actions as commands (#111), shown on Home.
         self.session: list[teach.Entry] = []
@@ -252,7 +254,7 @@ class ManageApp(App[int]):
             first = state
 
             def landed(done: Future[UpdateStatus]) -> None:
-                if generation == self.generation:
+                if generation == self.shown:
                     self.post_message(LateUpdate(first.landed(done), generation))
 
             state.pending.add_done_callback(landed)
@@ -262,7 +264,9 @@ class ManageApp(App[int]):
         """The same moment with the update check filled in: every pane gets the new State
         object (#83), but only what shows the update repaints (Home, Diagnostics' checks, an
         open About), so no table cursor moves and the setup screen keeps its focus."""
-        if message.generation != self.generation or self.state is None:
+        # The reload on screen: a newer one that failed showed nothing, so this one's Version
+        # row still fills in; one that showed its own State drops this.
+        if message.generation != self.shown or self.state is None:
             return
         state = message.state
         self.state = state
@@ -278,6 +282,7 @@ class ManageApp(App[int]):
         if generation != self.generation:
             return  # an older load that finished late
         self.state = state
+        self.shown = generation
         self.sub_title = f"{pill(state.report)} · {self.SUB_TITLE}"
         for pane in self.main.query(Pane):
             if pane.ready:

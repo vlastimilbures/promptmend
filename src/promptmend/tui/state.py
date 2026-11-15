@@ -59,7 +59,7 @@ class State:
         unknown = update_check.UpdateStatus(update_check.UNKNOWN)
         try:
             update = done.result(timeout=0)
-        except Exception:
+        except BaseException:  # the check's thread kept anything it raised (_beside)
             update = unknown
         for answer in (update, unknown):
             try:

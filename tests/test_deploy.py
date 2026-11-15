@@ -596,7 +596,6 @@ WIN_BIN = r"C:\Users\me\.local\bin"
     [
         WIN_BIN + r"\promptmend.exe",
         WIN_BIN + r"\PromptMend.EXE",  # odd case: still the canonical spelling
-        "C:/Users/me/.local/bin/promptmend.exe",
     ],
 )
 def test_resolve_uv_windows_exe_from_its_receipt(
@@ -625,6 +624,14 @@ def test_resolve_uv_windows_exe_from_its_receipt(
         r"\Users\me\.local\bin\promptmend.exe",  # no drive
         r"C:promptmend.exe",  # drive-relative
         r"bin\promptmend.exe",
+        "C:/Users/me/.local/bin/promptmend.exe",  # not as uv writes it
+        r"C:\Users\me\..\me\.local\bin\promptmend.exe",
+        r"C:\Users\me\.\.local\bin\promptmend.exe",
+        r"C:\Users\me\\.local\bin\promptmend.exe",
+        r"C:\Users\me.\.local\bin\promptmend.exe",  # trailing dot, dropped by Windows
+        r"C:\Users\me \.local\bin\promptmend.exe",  # trailing space
+        r"C:\Users\me\.local\bin:stream\promptmend.exe",  # a `:` past the drive
+        r"C:\Users\me\.local\bin\promptmend.exe:stream",
     ],
 )
 def test_a_windows_receipt_path_that_is_not_a_plain_drive_path_falls_back(

@@ -456,7 +456,7 @@ def test_a_given_plan_counts_only_for_the_same_comparison(tmp_path: Path) -> Non
     for planned in (deploy.plan(espanso, text, manifest), deploy.plan(tmp_path, text, manifest)):
         planned.steps[0].state = "marked"
         assert ("marked" in files(planned)) == (planned.espanso_dir == espanso)
-    # A linked folder: the interface's plan is of the resolved one, and is shared.
+    # A linked folder: the interface's plan is of the resolved one, so it is not shared.
     link = tmp_path / "linked-espanso"
     try:
         link.symlink_to(espanso, target_is_directory=True)
@@ -464,7 +464,7 @@ def test_a_given_plan_counts_only_for_the_same_comparison(tmp_path: Path) -> Non
         return  # no symlinks here (Windows without the privilege)
     planned = deploy.plan(deploy.resolved(link), text, manifest)
     planned.steps[0].state = "marked"
-    assert "marked" in files(planned, link)
+    assert "marked" not in files(planned, link)
 
 
 def test_local_servers_never_ask_another_host(monkeypatch: pytest.MonkeyPatch) -> None:

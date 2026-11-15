@@ -208,10 +208,21 @@ def test_gather_makes_one_plan_one_manifest_load_and_one_repair_resolve(
     ]
 
 
-def test_gather_shows_the_same_report_as_doctor(espanso: FakeRunner, saved: Path) -> None:
-    """What the reload passes doctor changes nothing in its report (#315)."""
+@pytest.mark.parametrize("linked", [False, True])
+def test_gather_shows_the_same_report_as_doctor(
+    espanso: FakeRunner, saved: Path, tmp_path: Path, linked: bool
+) -> None:
+    """What the reload passes doctor changes nothing in its report (#315), for a linked
+    Espanso folder too (its plan, of the resolved folder, is not shared then)."""
     from promptmend import doctor
 
+    if linked:
+        link = tmp_path / "linked-espanso"
+        try:
+            link.symlink_to(espanso.root, target_is_directory=True)
+        except OSError:
+            pytest.skip("no symlinks here")
+        espanso.answers["espanso path config"] = f"{link}\n"
     state = gather().settled()
     assert state.pending is None
     alone = doctor.run(clipboard=False, update=state.update)
@@ -337,7 +348,10 @@ def test_the_version_row_fills_in_on_every_screen(
         await pilot.pause()
         assert state.update == blocked.answer
         assert state.plan is first.plan
-        assert {p.state is state for p in app.main.query(base.Pane)} == {True}
+        assert app.state is state
+        # Every pane reads app.state (Pane.state), none keeps a State of its own.
+        for each in app.main.query(base.Pane):
+            assert not [v for v in vars(each).values() if isinstance(v, State)]
         assert "99.0.0 available" in _rendered(home, "#home-rows")
         assert "99.0.0 available" in _rendered(app.screen, "#about-facts")
         diagnostics = pane(app, "diagnostics")
@@ -387,6 +401,33 @@ def test_a_late_update_keeps_cursors_and_focus(
         assert table.cursor_row == 1
 
     drive(scenario)
+
+
+def test_a_failed_reload_still_lets_the_shown_state_fill_in(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newer reload whose read fails shows nothing, so the State on screen still gets its
+    update check: the Version row never stays `checking`."""
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+    loads: list[int] = []
+
+    def loader(group_by: str) -> State:
+        loads.append(1)
+        if len(loads) > 1:
+            raise RuntimeError("broken")
+        return gather(group_by)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        assert _state(app).update.state == update_check.CHECKING
+        app.reload()
+        await settle(pilot)
+        assert app.generation == 2
+        blocked.release.set()
+        assert (await landed(app, pilot)).update == blocked.answer
+
+    drive(scenario, loader=loader)
+    assert len(loads) == 2
 
 
 def test_a_late_update_of_an_older_reload_is_dropped(

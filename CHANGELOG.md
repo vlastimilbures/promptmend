@@ -49,8 +49,10 @@ All notable changes to this project are documented here. The format follows
   pypi.org…`), then fills in on every tab at once; a proxy that blocks pypi.org (up to 3 s)
   no longer delays any other row, and quitting never waits for it. Ollama and LM Studio are
   asked at the same time, in the interface and in `doctor` (one probe timeout instead of
-  two). A reload resolves the settings, looks up the launcher, reads the deploy manifest and
-  builds the deploy plan once, shared with doctor's checks. A uv install's launcher is read
+  two). A reload resolves the settings, looks up the launcher and reads the deploy manifest
+  once, shared with doctor's checks, and builds the deploy plan once when Espanso's folder
+  path is already resolved (a linked folder gets a second plan, so the interface reports
+  exactly what `doctor` does). A uv install's launcher is read
   from uv's `uv-receipt.toml`, so neither the interface nor `doctor` runs `uv tool dir`
   (still the fallback when the receipt is missing or does not name an existing launcher).
   On Windows the Espanso queries of one reload or `doctor` run enumerate the processes

@@ -368,12 +368,20 @@ def _receipt_launcher_path(where: str, exe: str, *, windows: bool) -> Path | Non
     (`\\\\server\\share`) path is None, so the match files never get one. On POSIX an
     absolute path, as written."""
     if windows:
+        import ntpath
         from pathlib import PureWindowsPath
 
         if where.startswith(("\\\\", "//", "\\/", "/\\")):
             return None
+        # Already normal (no `.` or `..`, no doubled or forward slash), no `:` past the drive
+        # (an alternate data stream), and no folder ending in a dot or space, which Windows
+        # drops: one spelling only, the one uv writes.
+        if ntpath.normpath(where) != where or ":" in where[2:]:
+            return None
         pure = PureWindowsPath(where)
         if not _DRIVE.fullmatch(pure.drive) or not pure.is_absolute():
+            return None
+        if any(part.endswith((".", " ")) for part in pure.parts[1:]):
             return None
         return Path(str(pure.parent / exe))
     path = Path(where)
