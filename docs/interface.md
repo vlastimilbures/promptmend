@@ -112,10 +112,10 @@ typing in); this happens again after every change and every `r`. If the checks c
 `not checked` and point to `r`, which tries again. At most three checks run at once: with
 Espanso not answering, pressing `r` again and again still shows the settings rows each time,
 and the newest press is checked once an earlier check ends. On Windows with Python 3.12 the
-interface lets its background reads run more often, so the checks do not take many seconds
-there (#348). While a reload reads the rest, the
-Version row keeps the answer it already had; it may then say `checking` again until that
-reload's update check lands.
+interface now gives its background reads their turn (#348); the effect is still to be
+measured on a real machine. While a reload reads the rest, the Version row keeps the
+answer it already had; it may then say `checking` again until that reload's update check
+lands.
 
 Buttons that act on what is still being checked wait for it: Show diff, Deploy and Detach on
 the Triggers tab and Prune and Reset on the History tab are greyed out until then (pressed

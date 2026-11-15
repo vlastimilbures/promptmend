@@ -40,8 +40,8 @@ All notable changes to this project are documented here. The format follows
   rows say `not checked` instead of the screen staying empty. With a slow Espanso the first
   rows appear in about 60 ms instead of after the whole check (1.5 s in a test with a slow
   doctor and plan). Holding `r` while Espanso hangs runs at most three checks at once.
-  On Windows with Python 3.12 the checks no longer take many seconds to fill in: the
-  interface gives its background reads their turn more often there (#348).
+  On Windows with Python 3.12 the interface now gives its background reads their turn
+  (#348); the effect is still to be measured on a real machine.
 - `--effort` is accepted with `--provider openai` too (it sets `OPENAI_REASONING_EFFORT` for
   the call); `--tier pro` stays OpenRouter only. The refusal names which providers take each
   option.

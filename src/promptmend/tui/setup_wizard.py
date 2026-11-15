@@ -192,7 +192,7 @@ class SetupScreen(Screen[None]):
             self.options.profile,
         )
         self.keys = setup_guide.key_rows(state.layers, state.settings, state.triggers)
-        legacy = setup_flow.storage().legacy
+        legacy = where.legacy
         self.query_one("#setup-keys-intro", Static).update(
             setup_guide.legacy_keys_intro(legacy) if legacy else setup_guide.KEYS_INTRO
         )
