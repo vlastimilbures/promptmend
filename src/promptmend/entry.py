@@ -13,10 +13,23 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import warnings
 
 # The subcommands the Espanso match files run, always as the first argument.
 TRIGGER_COMMANDS = frozenset({"improve", "persona"})
+
+# When main() started an improve run (time.monotonic()), for its watchdog (#307), which
+# counts the time limit from here; None until then, and once take_start() has read it.
+_started: float | None = None
+
+
+def take_start() -> float | None:
+    """The time main() started improve, read once (so a later run in the same process, such
+    as a test's, counts from its own start), or None when the CLI was started another way."""
+    global _started
+    started, _started = _started, None
+    return started
 
 
 def quiet_trigger(argv: list[str]) -> bool:
@@ -61,6 +74,9 @@ def self_command() -> list[str]:
 
 
 def main() -> None:
+    global _started
+    if sys.argv[1:2] == ["improve"]:
+        _started = time.monotonic()
     if sys.argv[1:] == ["--version"]:
         # Answered before the CLI and its dependencies load (#223): the same line Typer's
         # eager --version prints, in a fraction of the start-up on a slow machine.

@@ -81,6 +81,11 @@ class UsageObserver(Protocol):
     def __call__(self, usage: AttemptUsage, /) -> None: ...
 
 
+class RunEnded(Exception):
+    """Raised by an observer's ``begin`` when the run it records is over (improve's watchdog
+    printed its marker, #307): the attempt is not sent, nor any after it."""
+
+
 # Adds what a provider's response body reports to the transport facts of an attempt.
 UsageParser = Callable[[Mapping[str, object], AttemptUsage], AttemptUsage]
 
@@ -97,6 +102,33 @@ class Meter:
     parse: UsageParser
     local: bool = False
 
+    def begin(self, *, loopback: bool, attempt: int) -> None:
+        """An attempt is starting. An observer with a ``begin`` method (the CLI's recorder)
+        gets the record the attempt will have if it never ends: a ``timeout`` with no status,
+        which improve's watchdog stores when it ends the process first (#307). Only RunEnded
+        reaches the caller, which then sends nothing; an observer without ``begin`` is not
+        told."""
+        started = getattr(self.observer, "begin", None)
+        if started is None:
+            return
+        try:
+            started(
+                AttemptUsage(
+                    provider=self.provider,
+                    requested_model=self.model,
+                    endpoint="loopback" if loopback else "remote",
+                    attempt=attempt,
+                    status=None,
+                    error_kind="timeout",
+                    latency_ms=0.0,
+                    cost_state="not_applicable" if self.local else "unknown",
+                )
+            )
+        except RunEnded:
+            raise
+        except Exception:  # noqa: S110 - an observer never changes the call
+            pass
+
     def record(
         self,
         *,
@@ -109,7 +141,10 @@ class Meter:
     ) -> None:
         """Build the attempt's record and pass it to the observer; nothing raised here,
         by a parser or by the observer, reaches the caller. A body the parser cannot read
-        still leaves the transport facts on record, with no tokens and an unknown cost."""
+        still leaves the transport facts on record, with no tokens and an unknown cost. An
+        observer whose ``recording`` is false (the CLI's, with the history off) gets only the
+        transport facts: the body is not parsed, which keeps that work (and the decimal
+        import an OpenRouter cost needs) off the trigger path."""
         base = AttemptUsage(
             provider=self.provider,
             requested_model=self.model,
@@ -121,7 +156,7 @@ class Meter:
             cost_state="not_applicable" if self.local else "unknown",
         )
         usage = base
-        if isinstance(body, Mapping):
+        if isinstance(body, Mapping) and getattr(self.observer, "recording", True):
             try:
                 usage = self.parse(body, base)
             except Exception:
