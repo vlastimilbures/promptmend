@@ -6,6 +6,8 @@ call."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import typer
 
 from .. import assets, config, config_files, config_store, deploy, setup_guide, smoke
@@ -58,13 +60,16 @@ def _settings_writable(steps: _Steps) -> bool:
     return True
 
 
-# The setting each choice is, and its Settings field.
-_CHOICES = {"PROMPT_PROVIDER": "provider", "PROMPT_PROFILE": "profile"}
+# The setting each choice is, and how to read its Settings field.
+_CHOICES: dict[str, Callable[[config.Settings], str]] = {
+    "PROMPT_PROVIDER": lambda settings: settings.provider,
+    "PROMPT_PROFILE": lambda settings: settings.profile,
+}
 
 
 def current_choice(name: str) -> str:
     """The effective value of PROMPT_PROVIDER or PROMPT_PROFILE."""
-    return str(getattr(common.load_layers()[1], _CHOICES[name]))
+    return _CHOICES[name](common.load_layers()[1])
 
 
 def choice_command(name: str, value: str) -> list[str]:

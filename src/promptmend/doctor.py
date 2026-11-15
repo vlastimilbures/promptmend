@@ -347,7 +347,7 @@ def _local_servers_check(
     servers: dict[str, dict[str, Any]] = {}
     notes = []
     asked = {
-        provider: getattr(settings, f"{provider}_base_url").rstrip("/") + spec.probe_path
+        provider: spec.url(settings).rstrip("/") + spec.probe_path
         for provider, spec in PROVIDERS.items()
         if spec.probe_path is not None and used.get(provider)
     }

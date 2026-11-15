@@ -209,8 +209,9 @@ def stub_env(port: int, environ: Mapping[str, str]) -> dict[str, str]:
 def stub_settings(cfg: Settings, port: int) -> Settings:
     """``cfg`` pointed at the stub as stub_env() points the environment: every provider's
     base URL, placeholder keys and no history."""
-    changes: dict[str, Any] = {f"{name}_base_url": url for name, url in _stub_urls(port).items()}
-    changes |= {f"{name}_api_key": PLACEHOLDER_KEY for name, spec in PROVIDERS.items() if spec.key}
+    urls = _stub_urls(port)
+    changes: dict[str, Any] = {spec.url_field: urls[name] for name, spec in PROVIDERS.items()}
+    changes |= {spec.key_field: PLACEHOLDER_KEY for spec in PROVIDERS.values() if spec.key_field}
     return replace(cfg, **changes, history=False)
 
 
