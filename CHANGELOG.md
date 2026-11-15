@@ -40,6 +40,14 @@ All notable changes to this project are documented here. The format follows
 - `cli.py` is split into `sanitize.py` (the sanitiser), `pipeline.py` (the rewrite's
   steps, which the interface's Try tab now uses), `trigger.py` (the single output sink and
   improve's watchdog) and `commands/espanso.py` (#281). No command, option or output changes.
+- The triggers start faster and load fewer native modules, each a file an endpoint scanner
+  inspects on Windows (#312): the built-in profiles are read as plain files on first use (no
+  longer through `importlib.resources`, which pulled in zipfile, bz2 and lzma), and hashlib,
+  ctypes, tempfile and unicodedata load only in the functions that need them. `persona` and
+  `improve` up to its provider call now load no extension module of their own (`_hashlib`,
+  `_ctypes` and `unicodedata` are gone; `_bz2`, `_lzma`, `_uuid` and `select` remain, all
+  from Typer itself); the clipboard probe's `_ctypes` loads only when the clipboard is read.
+  `improve` adds 145 modules up to the provider call (167 before). No output changes.
 
 ### Removed
 - **Breaking:** the transition paths from earlier releases (#275), ahead of 1.0.0. This breaks

@@ -4,7 +4,6 @@ import base64
 import binascii
 import bisect
 import re
-import unicodedata
 from collections.abc import Callable
 
 # Patterns that suggest content should not leave the device for a cloud model.
@@ -351,6 +350,8 @@ def _normalize(text: str) -> str:
     thin spaces into spaces and fullwidth digits/letters into ASCII, and invisible characters
     (zero-width space/joiner, soft hyphen, variation selectors, Hangul fillers, any other
     format character) are dropped."""
+    import unicodedata  # a native module on Windows: only once a draft is scanned (#312)
+
     folded = _INVISIBLE.sub("", unicodedata.normalize("NFKC", text))
     return "".join(ch for ch in folded if unicodedata.category(ch) != "Cf")
 

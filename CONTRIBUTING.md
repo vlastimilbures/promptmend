@@ -269,6 +269,20 @@ about 41 ms cumulative (135 ms). `--version` adds 108 modules (221), 49 ms wall 
 holds these as ceilings (`VERSION_CEILING`, `IMPROVE_CEILING`, up to the provider call) and
 forbids httpx, pyperclip and sqlite3 before it.
 
+Since #312 (2026-11-15, same machine, Python 3.13): on Windows every extension module outside
+`pythonXY.dll` is its own `.pyd` that a scanner inspects as it loads, so the trigger path
+loads none of its own before the provider call. The built-in profiles are plain files read on
+first use (`importlib.resources` brought zipfile, bz2 and lzma), and hashlib, ctypes (the
+clipboard probe), tempfile and unicodedata are imported in the functions that need them.
+`improve` up to its provider call and `persona` (history off) add 145 modules each (167
+before); the `-X importtime` self-time total of a `persona` run fell from about 41 to 33 ms
+and its wall time from 49 to 45 ms (median of 9). `_bz2`, `_lzma`, `_uuid` and `select` still
+load, all from `import typer` (shutil, subprocess, uuid), until #313.
+`tests/test_trigger_contract.py` lists the Windows `.pyd` modules (`WINDOWS_EXTENSIONS`),
+allows only Typer's (`TYPER_EXTENSIONS`) before the call and for `persona`, and checks with
+Typer imported first that the trigger path adds none of them; `PERSONA_CEILING` and
+`IMPROVE_CEILING` are 175.
+
 On Windows (#306), every CI run (each pull request and each push to `main`) times both
 channels on `windows-latest` with `promptmend doctor --timing` and writes the table to the job
 summary, with whether Defender's real-time protection was on as the runner reports it: the

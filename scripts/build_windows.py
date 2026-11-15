@@ -43,12 +43,15 @@ def zip_name(version: str) -> str:
     return f"{APP}-{version}-windows-x64.zip"
 
 
-# Package data the frozen CLI reads (assets.match_dir(), the built-in profiles): a spec that
-# lost them would build an exe whose deploy or rewrite fails only on the user's machine.
+# Package data the frozen CLI reads (assets.match_dir(), the built-in profiles, which
+# prompt_builder reads as plain files from the prompts/ folder next to its module, #312): a
+# spec that lost them would build an exe whose deploy or rewrite fails only on the user's
+# machine.
 REQUIRED = (
     "_internal/promptmend/espanso/match/prompts-llm.yml",
     "_internal/promptmend/espanso/match/prompts-template.yml",
     "_internal/promptmend/prompts/default.md",
+    "_internal/promptmend/prompts/general.md",
 )
 
 

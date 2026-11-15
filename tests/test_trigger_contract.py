@@ -405,10 +405,46 @@ VERSION_FORBIDDEN = (
 IMPROVE_FORBIDDEN = (*STARTUP_FORBIDDEN, "importlib.metadata")
 # Modules each run adds to a bare interpreter, macOS, Python 3.12, 2026-10-08: `--version`
 # 108 (importlib.metadata is most of them), `improve` up to the provider call 149; both were
-# 221 before #223; `improve` +3 since #281 (sanitize, pipeline, trigger). Coarse, like
-# MODULE_CEILING: a new import tree crosses them.
+# 221 before #223; `improve` +3 since #281 (sanitize, pipeline, trigger). Python 3.13,
+# 2026-11-15 (#312): `improve` up to the provider call and `persona` (history off) 145 each,
+# from 167 before the built-in profiles stopped going through importlib.resources and
+# hashlib, ctypes, tempfile and unicodedata moved into the functions that use them. Coarse,
+# like MODULE_CEILING: a new import tree crosses them.
 VERSION_CEILING = 150
-IMPROVE_CEILING = 200
+IMPROVE_CEILING = 175
+PERSONA_CEILING = 175
+
+# The extension modules a Windows CPython ships as their own .pyd in DLLs/ (everything else
+# it needs is built into pythonXY.dll). An endpoint scanner inspects each as it loads (#312),
+# so none loads before the provider call (or, for persona, at all) unless the call needs it:
+# the clipboard probe's _ctypes only when the clipboard is read, the HTTP client's _socket
+# and _ssl only for the call, the usage history's _sqlite3 and _decimal only after the output.
+WINDOWS_EXTENSIONS = (
+    "_asyncio",
+    "_bz2",
+    "_ctypes",
+    "_decimal",
+    "_elementtree",
+    "_hashlib",
+    "_lzma",
+    "_multiprocessing",
+    "_overlapped",
+    "_queue",
+    "_socket",
+    "_sqlite3",
+    "_ssl",
+    "_uuid",
+    "_wmi",
+    "_zoneinfo",
+    "pyexpat",
+    "select",
+    "unicodedata",
+    "winsound",
+)
+# Loaded by `import typer` itself (typer.main imports shutil, which tries bz2 and lzma, plus
+# subprocess and uuid), so they stay until a trigger entry runs without Typer (#313).
+# test_trigger_path_adds_no_windows_extension_of_its_own proves Typer is their only source.
+TYPER_EXTENSIONS = ("_bz2", "_lzma", "select", "_uuid")
 
 
 def _isolated_env(tmp: Path) -> dict[str, str]:
@@ -425,13 +461,16 @@ def _isolated_env(tmp: Path) -> dict[str, str]:
     return env
 
 
-def _startup(script: str, tmp: Path) -> tuple[bytes, dict[str, Any]]:
+def _startup(
+    script: str, tmp: Path, settings: dict[str, str] | None = None
+) -> tuple[bytes, dict[str, Any]]:
+    """Run ``script`` in a fresh interpreter in _isolated_env(), plus ``settings``."""
     out = tmp / "modules.json"
     proc = subprocess.run(
         [sys.executable, "-c", script, str(out)],
         capture_output=True,
         stdin=subprocess.DEVNULL,
-        env=_isolated_env(tmp),
+        env={**_isolated_env(tmp), **(settings or {})},
         cwd=tmp,
         timeout=60,
         check=False,
@@ -458,6 +497,50 @@ def test_improve_startup_budget(tmp_path: Path) -> None:
     assert (stdout, data["code"]) == (b"done", 0)
     assert _loaded(data["added"], IMPROVE_FORBIDDEN) == []
     assert len(data["added"]) <= IMPROVE_CEILING, f"improve added {len(data['added'])}"
+    assert set(_loaded(data["added"], WINDOWS_EXTENSIONS)) <= set(TYPER_EXTENSIONS)
+
+
+# The whole persona run (the -p- snippet), with the usage history off: with it on, the
+# history row loads sqlite3 after the output, as for improve (HISTORY_MODULES).
+NO_HISTORY = {"PROMPT_HISTORY": "false"}
+_PERSONA_RUN = """
+import sys
+out = sys.argv[1]
+started = set(sys.modules)
+sys.argv = ["promptmend", "persona"]
+from promptmend.entry import main
+try:
+    main()
+except SystemExit as exc:
+    if exc.code:
+        raise
+added = sorted(set(sys.modules) - started)
+import json
+from pathlib import Path
+Path(out).write_text(json.dumps({"added": added}), encoding="utf-8")
+"""
+
+
+def test_persona_startup_budget(tmp_path: Path) -> None:
+    stdout, data = _startup(_PERSONA_RUN, tmp_path, NO_HISTORY)
+    assert stdout == PLACEHOLDER
+    assert _loaded(data["added"], IMPROVE_FORBIDDEN) == []
+    assert len(data["added"]) <= PERSONA_CEILING, f"persona added {len(data['added'])}"
+    assert set(_loaded(data["added"], WINDOWS_EXTENSIONS)) <= set(TYPER_EXTENSIONS)
+
+
+# With Typer imported before the count starts, the trigger path itself adds no Windows
+# extension module: TYPER_EXTENSIONS above are Typer's, not a module of ours that hides
+# behind it. Its own clipboard probe stays out too: a --text draft reads no clipboard.
+@pytest.mark.parametrize("script", [_IMPROVE_RUN, _PERSONA_RUN], ids=["improve", "persona"])
+def test_trigger_path_adds_no_windows_extension_of_its_own(tmp_path: Path, script: str) -> None:
+    after_typer = script.replace(
+        "started = set(sys.modules)", "import typer\nstarted = set(sys.modules)", 1
+    )
+    assert after_typer != script
+    _, data = _startup(after_typer, tmp_path, NO_HISTORY)
+    assert "typer" not in data["added"]
+    assert _loaded(data["added"], WINDOWS_EXTENSIONS) == []
 
 
 # The boundary of the #281 split: pipeline.py (the rewrite's steps) imports neither Typer nor
@@ -494,6 +577,14 @@ def test_pipeline_imports_no_typer_or_cli(tmp_path: Path) -> None:
     loaded = _imports("promptmend.pipeline", tmp_path)
     assert "promptmend.pipeline" in loaded
     assert _loaded(loaded, ("typer", "click", "promptmend.cli", "promptmend.trigger")) == []
+
+
+# The built-in profiles are read as plain files, on first use: importlib.resources would bring
+# zipfile, and with it bz2 and lzma (#312).
+def test_prompt_builder_imports_no_resources_or_zipfile(tmp_path: Path) -> None:
+    loaded = _imports("promptmend.prompt_builder", tmp_path)
+    assert "promptmend.prompt_builder" in loaded
+    assert _loaded(loaded, ("importlib.resources", "zipfile", "bz2", "lzma")) == []
 
 
 def test_try_pane_does_not_import_cli(tmp_path: Path) -> None:
