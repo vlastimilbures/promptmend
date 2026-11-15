@@ -60,6 +60,22 @@ uv run mypy                                     # strict: src, scripts and tests
 uv run pre-commit run --all-files               # also YAML checks, gitleaks and zizmor
 ```
 
+The `audit` workflow (`.github/workflows/audit.yml`) checks the locked dependencies for known
+vulnerabilities with pip-audit. It **fails** on any finding in the runtime set, the same set
+the release pins into `constraints.txt` (`uv export --frozen --no-dev --no-emit-project`),
+for every platform. Findings in the `dev` and `build` groups are only reported in the job
+summary, next to the runtime result; a crash of the auditor fails the job either way. It runs
+on pull requests that touch `uv.lock`, `pyproject.toml` or the workflow, on every push to
+`main`, weekly on Monday, and by hand (`workflow_dispatch`). Because it is path-filtered on
+pull requests, `audit` must not be made a required status check: a pull request that does not
+touch those files would wait for it forever. To reproduce the runtime check locally:
+
+```bash
+dir=$(mktemp -d)
+uv export --frozen --no-dev --no-emit-project --format pylock.toml -o "$dir/pylock.toml"
+uvx pip-audit==2.10.1 --locked --strict "$dir"
+```
+
 If you change a screen of the interface (`src/promptmend/tui/`), its SVG snapshots fail
 until you regenerate them, review the new SVGs and commit them (Linux or macOS):
 
