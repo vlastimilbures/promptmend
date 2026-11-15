@@ -69,6 +69,9 @@ class _Collector:
         self._pending: tuple[AttemptUsage, float] | None = None
         self._closed = False
         self._lock = threading.Lock()
+        # Whether the run is recorded (Recorder.track()); when not, Meter.record() skips
+        # parsing usage bodies, since nothing would store them.
+        self.recording = False
 
     def __call__(self, usage: AttemptUsage, /) -> None:
         with self._lock:
@@ -116,12 +119,14 @@ class Recorder:
     def track(self, cfg: Settings) -> None:
         """The settings loaded: record this run unless PROMPT_HISTORY is off."""
         self._settings = cfg if cfg.history else None
+        self._collector.recording = self._settings is not None
 
     @property
     def observer(self) -> UsageObserver | None:
         """For make_provider(observer=...): collects each attempt, and stops any attempt from
         starting once improve's watchdog has ended the run (timed_out()). Given even when the
-        run is not recorded (finish() then writes nothing), so that stop always holds."""
+        run is not recorded (finish() then writes nothing, and no usage body is parsed), so
+        that stop always holds."""
         return self._collector
 
     @property

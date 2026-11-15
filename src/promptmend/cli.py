@@ -189,7 +189,7 @@ def _emit(text: str, watch: _Watchdog | None = None) -> None:
 # first only when start-up and reading the draft took under WATCHDOG_MARGIN -
 # _WATCHDOG_HISTORY seconds; otherwise the watchdog does. Documented in docs/usage.md.
 WATCHDOG_MARGIN = 2.0
-# Of WATCHDOG_MARGIN, the most the watchdog waits for the usage history after its marker.
+# Of WATCHDOG_MARGIN, the most the watchdog waits for the usage history before its marker.
 _WATCHDOG_HISTORY = 0.5
 # Names the call in the watchdog's marker when the provider name is not one of ours.
 _UNKNOWN_LABEL = "The call"
@@ -238,10 +238,11 @@ class _Watchdog:
     arm() starts a daemon timer once the call's limit is known. When it fires, by state:
 
     - idle (the run is still reading its input or calling the provider): it writes the
-      timed-out marker, the sent-despite note first, cleaned, UTF-8, with this platform's
-      newlines as sys.stdout writes them, straight to file descriptor 1 (sys.stdout's lock may
-      be held by the stuck main thread, which has printed nothing, so nothing is left to
-      flush). History: outcome error_marker, the attempt in flight kept as a timeout.
+      timed-out marker, the sent-despite note first, cleaned, UTF-8 (a lone surrogate
+      replaced, as sys.stdout does), with this platform's newlines as sys.stdout writes them,
+      straight to file descriptor 1 (sys.stdout's lock may be held by the stuck main thread,
+      which has printed nothing, so nothing is left to flush). History: outcome error_marker,
+      the attempt in flight kept as a timeout.
     - delivering (the rewrite came back, its clipboard copy has not returned): CLIPBOARD_STALLED
       and the rewrite, the way a failed copy prints them; outcome clipboard_failed.
     - claimed (_emit() is printing): nothing; the run finishes on its own.
@@ -251,20 +252,25 @@ class _Watchdog:
       take it over.
 
     A claimed run that has not flushed by the hard deadline (limit + WATCHDOG_MARGIN) is left
-    alone, never printed over; once it flushes, a final timer at that deadline ends it the
-    same silent way, so a slow first history write cannot keep it running past the deadline.
+    alone, never printed over (a run blocked writing its own output is never cut off); a
+    final timer at that deadline ends a flushed run the same silent way, and a run that
+    flushes only after that timer passed ends at once in flushed(), so a slow first history
+    write cannot keep it running past the deadline.
 
-    After its own marker the history gets at most _WATCHDOG_HISTORY seconds in a thread of
-    its own, then the process ends with exit code 0. That is less than the very first write
-    may take (history._BUDGET plus its _CREATE_EXTRA, for the file it creates), so such a
-    run's row can be lost; a later write is not affected.
+    The timer fires _WATCHDOG_HISTORY seconds before the deadline. It first closes the run's
+    usage observer, then gives the history at most _WATCHDOG_HISTORY seconds in a thread of
+    its own, and only then writes its marker and ends the process with exit code 0, so the
+    marker is out by the deadline and nothing follows it. That history wait is less than the
+    very first write may take (history._BUDGET plus its _CREATE_EXTRA, for the file it
+    creates), so such a run's row can be lost; a later write is not affected.
 
-    The main thread may run on for up to _WATCHDOG_HISTORY seconds after the marker, but sends
-    nothing: the run's usage observer is closed before the marker is written, and a closed
-    observer makes every later attempt, a retry included, raise providers.usage.RunEnded
-    before its request (Meter.begin()); proceed() stops it earlier still, before the provider
-    is built. A run whose settings did not load has no watchdog (no limit is known, and its
-    marker is already on its way).
+    A closed observer makes every later attempt, a retry included, raise
+    providers.usage.RunEnded before its request (Meter.begin()); proceed() stops the run
+    earlier still, before the provider is built. An attempt that began before the observer
+    closed and is still blocked before its request (a name lookup, a connect) may send it
+    during the history wait, before the marker, but its result is ignored. A run whose
+    settings did not load has no watchdog (no limit is known, and its marker is already on
+    its way).
     """
 
     def __init__(self, rec: recorder.Recorder, ran: Rewrite) -> None:
@@ -280,6 +286,8 @@ class _Watchdog:
         self._deadline = 0.0
         self._marker = ""
         self._delivered = ("", "")
+        # The final timer fired while the run was still printing (see flushed()).
+        self._final_missed = False
 
     def arm(self, cfg: Settings, provider: str) -> None:
         spec = PROVIDERS.get(provider)
@@ -322,14 +330,23 @@ class _Watchdog:
             self._final = _start_timer(self._deadline, self._final_exit)
 
     def flushed(self) -> None:
-        """The output is out and flushed."""
+        """The output is out and flushed. If the final timer already came and went while the
+        run was printing, the hard deadline has passed: the process ends at once, silently."""
         self._move(_FLUSHED)
+        with self._lock:
+            late = self._final_missed and self._state == _FLUSHED
+            if late:
+                self._state = _FIRED
+        if late:
+            self._exit()
 
     def _fire(self) -> None:
         with self._lock:
             was = self._state
             if was in (_CLAIMED, _FIRED):
                 return
+            # A reply may have just arrived and the main thread be about to claim the output:
+            # the marker still wins, and that rewrite is dropped (#307, accepted).
             self._state = _FIRED
         # Nothing raised here may stop the exit below.
         try:
@@ -341,7 +358,9 @@ class _Watchdog:
     def _final_exit(self) -> None:
         with self._lock:
             if self._state != _FLUSHED:
-                return  # still printing: never cut off or printed over
+                # Still printing: never cut off or printed over; flushed() ends it later.
+                self._final_missed = True
+                return
             self._state = _FIRED
         self._exit()
 
@@ -352,18 +371,13 @@ class _Watchdog:
             self._done.set()  # reached only where _hard_exit returns or raises (the tests)
 
     def _finish_run(self, *, delivering: bool) -> None:
-        """Close the run's observer (no attempt may start after the marker), print the
-        watchdog's marker, then give the history its bounded write."""
+        """Close the run's observer (no attempt may start from here), give the history its
+        bounded write, then print the watchdog's marker; _fire() ends the process right after
+        it, so nothing the main thread does can follow the marker. The history is written
+        first so the main thread's wait for it falls before the marker, not after."""
         rec = self._rec
         with contextlib.suppress(Exception):
             rec.timed_out()
-        with contextlib.suppress(Exception):
-            if delivering:
-                note, rewrite = self._delivered
-                text = note + CLIPBOARD_STALLED + rewrite
-            else:
-                text = sent_despite_note(self._ran.built) + self._marker
-            _write_fd(1, clean(text).replace("\n", os.linesep).encode("utf-8"))
         with contextlib.suppress(Exception):
             rec.profile_id = self._ran.profile_id
             rec.emitted()
@@ -373,6 +387,16 @@ class _Watchdog:
             writer = threading.Thread(target=rec.finish, daemon=True)
             writer.start()
             writer.join(_WATCHDOG_HISTORY)
+        with contextlib.suppress(Exception):
+            if delivering:
+                note, rewrite = self._delivered
+                text = note + CLIPBOARD_STALLED + rewrite
+            else:
+                text = sent_despite_note(self._ran.built) + self._marker
+            data = clean(text).replace("\n", os.linesep).encode("utf-8", errors="replace")
+            # From here to _hard_exit the main thread can run only while os.write's system
+            # call releases the GIL: far too briefly to build and send a request.
+            _write_fd(1, data)
 
 
 def _show_version(value: bool) -> None:
@@ -693,6 +717,9 @@ def _improve(
         result = rewrite(
             raw, provider, cfg, profile, ran, allow_flagged=allow_flagged, observer=rec.observer
         )
+    except typer.Exit:
+        # proceed()'s: the watchdog has ended the run, so no marker of its own follows.
+        raise
     except Exception as exc:
         # Nothing may traceback or exit nonzero: Espanso cannot surface stderr, so emit a
         # visible bracketed marker instead of a blank expansion.

@@ -551,6 +551,145 @@ def test_raising_exit_still_releases(monkeypatch: pytest.MonkeyPatch) -> None:
     assert watch._done.is_set()
 
 
+# The final timer came while the run was still printing; the run flushes after the deadline:
+# it ends at once, silently, so the history write after it is not left unbounded.
+def test_flush_after_the_final_timer_ends_at_once(
+    exits: Exits, capfd: pytest.CaptureFixture[str]
+) -> None:
+    watch, _ = _watchdog()
+    cli._emit("the rewrite", watch)
+    watch._final_exit()  # still printing: left alone
+    assert exits.codes == []
+    watch.flushed()
+    assert exits.codes == [0]
+    assert capfd.readouterr().out == "the rewrite"
+    watch._final_exit()  # ended already: nothing more
+    assert exits.codes == [0]
+
+
+# A rewrite holding a lone surrogate still reaches the paste after the clipboard-stalled
+# marker, the surrogate replaced as sys.stdout replaces it, instead of the whole text vanishing.
+def test_stalled_copy_with_lone_surrogate(
+    exits: Exits, capfdbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    watch, _ = _watchdog()
+    watch.delivering("", "a\ud800b")
+    watch._fire()
+    stalled = cli.CLIPBOARD_STALLED.replace("\n", os.linesep).encode()
+    assert capfdbinary.readouterr().out == stalled + b"a?b"
+    assert exits.codes == [0]
+
+
+# An attempt that began before the watchdog fired and is still blocked before its request (a
+# name lookup, say) may send it only while the history is written, before the marker: the
+# marker is written last and the process ends right after it, so no request follows it.
+def test_attempt_begun_before_the_marker_sends_before_it(
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, capfd: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
+    fake_http.reply({"choices": [{"message": {"content": "rewrite"}}]})
+    events: list[str] = []
+    begun, unblock, sent = threading.Event(), threading.Event(), threading.Event()
+    exchange = base._exchange
+
+    def blocked(*args: Any, **kwargs: Any) -> Any:
+        events.append("begun")  # after Meter.begin(): the observer was still open
+        begun.set()
+        unblock.wait(30)
+        return exchange(*args, **kwargs)
+
+    handler = fake_http.handler
+
+    def handled(request: Any) -> Any:
+        events.append("request")
+        sent.set()
+        return handler(request)
+
+    finish = recorder.Recorder.finish
+
+    def history_write(self: recorder.Recorder) -> None:
+        # The watchdog's history write: the blocked attempt goes on now.
+        unblock.set()
+        sent.wait(10)
+        finish(self)
+
+    write_fd = cli._write_fd
+
+    def marker_out(fd: int, data: bytes) -> None:
+        events.append("marker")
+        write_fd(fd, data)
+
+    fire = _Watchdog._fire
+
+    def fire_once_begun(self: _Watchdog) -> None:
+        begun.wait(10)  # however slow the run is to reach its request
+        fire(self)
+
+    class Exit(Exits):
+        def __call__(self, code: int) -> None:
+            events.append("exit")
+            super().__call__(code)
+
+    monkeypatch.setattr(base, "_exchange", blocked)
+    monkeypatch.setattr(_Watchdog, "_fire", fire_once_begun)
+    monkeypatch.setattr(fake_http, "handler", handled)
+    monkeypatch.setattr(recorder.Recorder, "finish", history_write)
+    monkeypatch.setattr(cli, "_write_fd", marker_out)
+    monkeypatch.setattr(cli, "_hard_exit", Exit(then=unblock))
+    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 0.6)
+    args = ["improve", "--provider", "openrouter", "--source", "argument", "--text", "x"]
+    result = runner.invoke(app, [*args, "--timeout", "0.05"])
+    assert (result.exit_code, result.stdout) == (0, "")
+    assert capfd.readouterr().out == "[promptmend: OpenRouter timed out after 0.05s]"
+    assert events == ["begun", "request", "marker", "exit"]
+
+
+# The watchdog ended the run while the draft was read: proceed()'s Exit ends the run as it is,
+# never taken for a failure of the run with a marker of its own.
+def test_proceed_exit_is_not_a_failure(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
+) -> None:
+    release = threading.Event()
+    monkeypatch.setattr(cli, "_clipboard", lambda op, *args: release.wait(30) and "a draft")
+    monkeypatch.setattr(cli, "_hard_exit", Exits(then=release))
+    monkeypatch.setattr(cli, "WATCHDOG_MARGIN", 0.6)
+    failures: list[Exception] = []
+
+    def failed(exc: Exception) -> str:
+        failures.append(exc)
+        return ""
+
+    monkeypatch.setattr(cli, "marker", failed)
+    result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "0.05"])
+    assert (result.exit_code, result.stdout) == (0, "")
+    assert failures == []
+    assert stub_provider.calls == []
+
+
+# With the history off nothing stores a usage body, so none is parsed (the trigger path's
+# cost); the transport facts still reach the observer, and the run's stop still holds.
+@pytest.mark.parametrize("history", [True, False])
+def test_usage_parsed_only_when_recorded(history: bool) -> None:
+    rec = recorder.Recorder("improve", "i")
+    rec.track(Settings(history=history))
+    parsed: list[object] = []
+
+    def parse(body: Any, usage: AttemptUsage) -> AttemptUsage:
+        parsed.append(body)
+        return usage
+
+    observer = rec.observer
+    assert observer is not None
+    meter = Meter(observer, "openrouter", "m", parse)
+    meter.begin(loopback=False, attempt=1)
+    meter.record(loopback=False, attempt=1, status=200, error_kind=None, body={}, latency=0.1)
+    assert len(parsed) == (1 if history else 0)
+    assert [(a.status, a.error_kind) for a in rec.attempts] == [(200, None)]
+    rec.timed_out()
+    with pytest.raises(RunEnded):
+        meter.begin(loopback=False, attempt=2)
+
+
 # --- As a real process, the way Espanso runs it --------------------------------------------
 
 _ARGS = [

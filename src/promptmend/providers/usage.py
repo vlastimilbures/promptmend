@@ -141,7 +141,10 @@ class Meter:
     ) -> None:
         """Build the attempt's record and pass it to the observer; nothing raised here,
         by a parser or by the observer, reaches the caller. A body the parser cannot read
-        still leaves the transport facts on record, with no tokens and an unknown cost."""
+        still leaves the transport facts on record, with no tokens and an unknown cost. An
+        observer whose ``recording`` is false (the CLI's, with the history off) gets only the
+        transport facts: the body is not parsed, which keeps that work (and the decimal
+        import an OpenRouter cost needs) off the trigger path."""
         base = AttemptUsage(
             provider=self.provider,
             requested_model=self.model,
@@ -153,7 +156,7 @@ class Meter:
             cost_state="not_applicable" if self.local else "unknown",
         )
         usage = base
-        if isinstance(body, Mapping):
+        if isinstance(body, Mapping) and getattr(self.observer, "recording", True):
             try:
                 usage = self.parse(body, base)
             except Exception:

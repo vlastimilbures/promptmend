@@ -93,10 +93,11 @@ A rewrite takes a few seconds on `-i-` and longer on `-ip-` (measured times are 
 [benchmark](benchmark.md#at-a-glance)), at most the call's time limit
 (`PROMPT_TIMEOUT_SECONDS`, `PROMPT_PRO_TIMEOUT_SECONDS` for the pro tier).
 
-That limit is a hard one. Whatever blocks a run (a name lookup or proxy discovery that never
-returns, a clipboard that does not answer, a server that sends its reply a byte at a time), it
-ends no later than the limit plus 2 seconds, counted from the moment the `promptmend` command
-starts its own code; Python's start-up before that is not counted. The result is then the
+That limit is a hard one. Whatever blocks a run before its result is printed (a name lookup or
+proxy discovery that never returns, a clipboard that does not answer, a server that sends its
+reply a byte at a time), it ends no later than the limit plus 2 seconds, counted from the
+moment the `promptmend` command starts its own code; Python's start-up before that is not
+counted. The result is then the
 `[promptmend: … timed out after …s]` marker, exit code 0, and nothing else. The provider's
 own timeout counts from its request, so it prints that marker first only when the run reached
 its request within 1.5 seconds; otherwise, or when something that timeout cannot see blocks,
@@ -104,11 +105,17 @@ the watchdog prints it. If the rewrite came back but copying it to the clipboard
 ([clipboard output](#output-paste-or-clipboard) or `--copy`) stalls, the marker says the
 clipboard did not answer and the rewrite is pasted instead.
 
-The watchdog is a thread, so a long step that holds Python's lock (a regular expression
-running over a huge draft, say) can delay it until that step ends. After its marker the run
-may go on for up to half a second while the history is written, but it sends no request in
-that time, not even a retry. A run whose output is already out but whose usage-history write
-is still going ends at the limit plus 2 seconds too, and that history row is then lost.
+The watchdog is a thread that steps in at the limit plus 1.5 seconds. It stops the run from
+starting any request, a retry included, writes the usage history for up to half a second, and
+only then prints its marker and ends the process, so nothing is sent after the marker. A
+request the run had already begun (one still waiting for its name lookup or connection) may
+go out during that half second, before the marker; its answer is ignored. A run whose output
+is already out but whose usage-history write is still going ends at once at the limit plus
+1.5 seconds, or at the limit plus 2 seconds if its output was still being printed then, and
+that history row is lost. A run that is still printing its own result is never cut off or
+printed over, even past the limit plus 2 seconds (Espanso not reading its output, say). Being
+a thread, the watchdog can also be delayed by a long step that holds Python's lock (a regular
+expression running over a huge draft, say) until that step ends.
 
 Do not type or switch windows while it runs. Espanso pastes the result wherever the focus is
 when the answer arrives, and other triggers do not expand until it finishes. Writing the
