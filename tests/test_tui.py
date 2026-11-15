@@ -30,11 +30,12 @@ from promptmend.tui import (
     profiles_pane,
     settings_model,
     settings_pane,
+    triggers_pane,
 )
 from promptmend.tui.app import HIGH_CONTRAST, TABS, ManageApp
 from promptmend.tui.home import pill
 from promptmend.tui.modals import ConfirmModal, EditModal, FormModal, PickModal, TextModal
-from promptmend.tui.state import State, gather
+from promptmend.tui.state import FULL, QUICK, State, gather, quick
 
 if TYPE_CHECKING:
     from conftest import SeedHistory
@@ -102,12 +103,20 @@ async def settle(pilot: Pilot[int]) -> None:
     await pilot.pause()
 
 
-def drive(scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]], **kwargs: Any) -> ManageApp:
+def drive(
+    scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]],
+    *,
+    settled: bool = True,
+    **kwargs: Any,
+) -> ManageApp:
+    """Run ``scenario`` on a ManageApp(**kwargs), once every load has ended (``settled``)
+    or at once (a scenario whose loader blocks waits itself, see until())."""
     app = ManageApp(**kwargs)
 
     async def main() -> None:
         async with app.run_test(size=SIZE) as pilot:
-            await settle(pilot)
+            if settled:
+                await settle(pilot)
             await scenario(app, pilot)
 
     asyncio.run(main())
@@ -411,8 +420,8 @@ def test_a_late_update_keeps_cursors_and_focus(
 def test_a_failed_reload_still_lets_the_shown_state_fill_in(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A newer reload whose read fails shows nothing, so the State on screen still gets its
-    update check: the Version row never stays `checking`."""
+    """A newer reload that reads nothing (both stages fail, #317) shows nothing, so the State
+    on screen still gets its update check: the Version row never stays `checking`."""
     blocked = BlockedPypi()
     monkeypatch.setattr(update_check, "check_configured", blocked)
     loads: list[int] = []
@@ -423,6 +432,11 @@ def test_a_failed_reload_still_lets_the_shown_state_fill_in(
             raise RuntimeError("broken")
         return gather(group_by)
 
+    def first(group_by: str) -> State:
+        if loads:
+            raise RuntimeError("broken too")
+        return quick(group_by)
+
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         assert _state(app).update.state == update_check.CHECKING
         app.reload()
@@ -431,7 +445,7 @@ def test_a_failed_reload_still_lets_the_shown_state_fill_in(
         blocked.release.set()
         assert (await landed(app, pilot)).update == blocked.answer
 
-    drive(scenario, loader=loader)
+    drive(scenario, loader=loader, quick_loader=first)
     assert len(loads) == 2
 
 
@@ -450,6 +464,224 @@ def test_a_late_update_of_an_older_reload_is_dropped(
         assert app.state is state
 
     drive(scenario)
+
+
+# --- Two stages (#317) ----------------------------------------------------------------------
+
+
+async def until(pilot: Pilot[int], done: Callable[[], bool]) -> None:
+    """Pause (at most ~10 s) until ``done()``: for a scenario whose full load is blocked, which
+    settle() would wait for."""
+    for _ in range(1000):
+        if done():
+            return
+        await pilot.pause(0.01)
+    raise AssertionError("never happened")
+
+
+class BlockedLoad:
+    """gather(), held until released: the full stage of a slow doctor and plan."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self.release = threading.Event()
+        self.calls = 0
+
+    def __call__(self, group_by: str) -> State:
+        self.calls += 1
+        assert self.release.wait(10), "never released"
+        return gather(group_by)
+
+
+def _home_text(app: ManageApp) -> str:
+    home = app.main.query_one("#home-pane", home_pane.HomePane)
+    return _rendered(home, "#home-headline") + _rendered(home, "#home-rows")
+
+
+def _disabled(app: ManageApp, tab: str, *ids: str) -> list[bool]:
+    return [pane(app, tab).query_one(f"#{id_}", Button).disabled for id_ in ids]
+
+
+WAITING_BUTTONS = {"triggers": ("show-diff", "deploy", "detach"), "history": ("prune", "reset")}
+
+
+def test_home_paints_the_quick_state_and_actions_wait_for_the_full_one(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#317: Home shows the settings rows before doctor and the plan are read, the rest say
+    `checking`; every pane has the same quick State; deploy, detach, the diff, prune and reset
+    wait (disabled, and refused when called anyway) until the full State replaces it."""
+    from promptmend.tui.home import CHECKING_HEADLINE
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        first = _state(app)
+        assert (first.stage, first.full, first.plan) == (QUICK, False, None)
+        assert first.report.checks == ()
+        shown = _home_text(app)
+        assert CHECKING_HEADLINE in shown
+        assert "Rewrites" in shown
+        assert "key set" in shown  # a quick row: from the settings alone
+        assert "checking the match files and Espanso" in shown
+        assert "checking every part" in shown
+        assert app.sub_title.startswith("checking · ")
+        for tab in ("triggers", "history", "diagnostics", "settings"):
+            await app.main.build(tab)
+        await pilot.pause()
+        for each in app.main.query(base.Pane):
+            assert each.state is first
+        for tab, ids in WAITING_BUTTONS.items():
+            assert all(_disabled(app, tab, *ids)), tab
+        assert "Checking the match files" in _rendered(pane(app, "triggers"), "#deploy-target")
+        assert "Reading the usage history" in _rendered(pane(app, "history"), "#stats-note")
+        assert "Checking every part" in _rendered(pane(app, "diagnostics"), "#all-checks")
+        rows = table_rows(app, "triggers", "#triggers")
+        assert rows["-i-"][4] == "checking"
+        # An action pressed now: the button does nothing, the call says it waits, no dialog.
+        triggers = pane(app, "triggers")
+        assert isinstance(triggers, triggers_pane.TriggersPane)
+        triggers.query_one("#deploy", Button).press()
+        await pilot.pause()
+        assert app.screen is app.main
+        for call in (triggers._deploy, triggers.ask_detach, triggers._diff):
+            call()
+            await pilot.pause()
+            assert app.screen is app.main
+            assert triggers.last_message == base.WAITING
+            assert not triggers.busy
+        history = pane(app, "history")
+        assert isinstance(history, history_pane.HistoryPane)
+        for call in (history.prune, history.reset):
+            call()
+            await pilot.pause()
+            assert app.screen is app.main
+            assert history.last_message == base.WAITING
+        assert app.session == []
+        assert espanso.calls == []  # the quick stage runs no command
+        # What needs only the settings does not wait: the Settings list is filled.
+        assert settings_rows(app)["PROMPT_HISTORY"].value == "on"
+        blocked.release.set()
+        await settle(pilot)
+        full = _state(app)
+        assert full.stage == FULL
+        assert full is not first
+        for each in app.main.query(base.Pane):
+            assert each.state is full
+        shown = _home_text(app)
+        assert "checking" not in shown.replace("· checking", "")  # the Version row may wait
+        assert "Espanso running" in shown
+        for tab, ids in WAITING_BUTTONS.items():
+            assert not any(_disabled(app, tab, *ids)), tab
+        await press(app, pilot, "#deploy")
+        assert isinstance(app.screen, FormModal)
+
+    drive(scenario, settled=False, loader=blocked)
+    assert blocked.calls == 1
+
+
+def test_the_setup_offer_waits_for_the_full_state(saved: Path, espanso: FakeRunner) -> None:
+    """#317: the quick State has no plan, so a first run asks whether anything is set up only
+    once the full State is in; it opens the wizard then, once."""
+    from promptmend.tui.setup_wizard import SetupScreen
+
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        assert not _state(app).full
+        await pilot.pause()
+        assert app.screen is app.main
+        assert app.first_run
+        blocked.release.set()
+        await settle(pilot)
+        assert isinstance(app.screen, SetupScreen)
+        assert not app.first_run
+
+    drive(scenario, settled=False, loader=blocked, first_run=True)
+
+
+def test_a_failed_full_read_leaves_the_quick_state_not_checked(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#317: the quick State stays when the full read fails; its waiting rows say `not
+    checked` (never `checking` for ever), the header says so, and the actions that need the
+    full State still wait, saying r checks again."""
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+
+    def broken(group_by: str) -> State:
+        raise RuntimeError("boom")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        state = _state(app)
+        assert (state.stage, state.failed) == (QUICK, "RuntimeError: boom")
+        assert state.update.state == update_check.UNKNOWN
+        shown = _home_text(app)
+        assert "not checked" in shown
+        assert "checking" not in shown
+        assert "Almost ready: the checks could not run (RuntimeError: boom); r checks" in shown
+        assert app.sub_title.startswith("not checked · ")
+        await open_tab(app, pilot, "triggers", "history", "diagnostics")
+        assert all(_disabled(app, "triggers", "show-diff", "deploy", "detach"))
+        triggers = pane(app, "triggers")
+        assert isinstance(triggers, triggers_pane.TriggersPane)
+        assert "Not compared with Espanso" in _rendered(triggers, "#deploy-target")
+        assert table_rows(app, "triggers", "#triggers")["-i-"][4] == "not checked"
+        triggers.ask_detach()
+        assert triggers.last_message == base.NOT_CHECKED
+        assert "Not read." in _rendered(pane(app, "history"), "#stats-note")
+        assert "Not checked" in _rendered(pane(app, "diagnostics"), "#all-checks")
+
+    drive(scenario, loader=broken)
+
+
+def test_the_stages_of_an_older_reload_never_replace_a_newer_one(espanso: FakeRunner) -> None:
+    """#317 with #315's generation guard: within a reload the quick State comes before the
+    full one; a reload started while the first is still reading shows its own quick and full
+    States, and the first one's full State (and its late update), landing after, is dropped."""
+    import threading
+
+    release = threading.Event()
+    loads: list[int] = []
+
+    def loader(group_by: str) -> State:
+        loads.append(1)
+        if len(loads) == 1:  # the first reload's full read is the slow one
+            assert release.wait(10)
+        return gather(group_by)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        seen: list[tuple[int, str]] = []
+        late = threading.Event()
+        real = app._show
+
+        def show(state: State, generation: int) -> None:
+            seen.append((generation, state.stage))
+            real(state, generation)
+            if generation == 1 and state.full:
+                late.set()
+
+        app._show = show  # type: ignore[method-assign]
+        await until(pilot, lambda: app.state is not None)
+        app.reload()
+        await until(pilot, lambda: app.shown == 2 and _state(app).full)
+        newer = _state(app)
+        release.set()
+        await until(pilot, late.is_set)
+        await settle(pilot)
+        assert app.state is newer
+        assert app.shown == 2
+        # The first reload's quick State may have been shown before its show() was
+        # wrapped; what was seen is in order, each reload quick first.
+        assert seen[-1] == (1, FULL)
+        assert seen[-3:-1] == [(2, QUICK), (2, FULL)]
+
+    drive(scenario, settled=False, loader=loader)
+    assert len(loads) == 2
 
 
 def test_a_late_answer_that_cannot_be_shown_is_unknown(
@@ -703,7 +935,7 @@ def test_a_failing_load_is_shown_not_raised(espanso: FakeRunner) -> None:
         await press(app, pilot, "#show-diff")
         assert "No plan" in pane(app, "triggers").last_message
 
-    drive(scenario, loader=broken)
+    drive(scenario, loader=broken, quick_loader=broken)
 
 
 @pytest.mark.parametrize(
@@ -1023,6 +1255,12 @@ def test_settings_ignore_a_second_change_until_the_first_is_read_back(
             release.wait(10)
         return gather(group_by)
 
+    def first(group_by: str) -> State:
+        # The quick stage would read the change back at once (#317): it waits as well.
+        if blocking.is_set():
+            release.wait(10)
+        return quick(group_by)
+
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await on_row(app, pilot, "PROMPT_HISTORY")
         blocking.set()
@@ -1049,7 +1287,7 @@ def test_settings_ignore_a_second_change_until_the_first_is_read_back(
         assert app.session[-1].command == "promptmend config set PROMPT_HISTORY true"
         assert _state(app).settings.history
 
-    drive(scenario, loader=loader)
+    drive(scenario, loader=loader, quick_loader=first)
 
 
 def test_settings_a_withheld_value_is_kept_by_an_empty_save(

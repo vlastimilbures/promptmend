@@ -93,6 +93,16 @@ class DiagnosticsPane(Pane):
             if findings
             else "No problems found in the settings files."
         )
+        if not state.full:
+            # A quick State (#317): the checks and the history store are still being read.
+            waiting = (
+                "Checking every part (doctor's checks)…"
+                if state.failed is None
+                else f"Not checked: the checks could not run ({state.failed}); r checks again."
+            )
+            self.query_one("#all-checks", Static).update(waiting)
+            self.query_one("#store", Static).update("")
+            return
         self.query_one("#all-checks", Static).update(_checks(state.report))
         data = {c.id: c.data for c in state.report.checks}
         stored, sqlite = data.get("history", {}), data.get("sqlite", {})

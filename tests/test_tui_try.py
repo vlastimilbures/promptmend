@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pyperclip
 import pytest
-from test_tui_snapshots import fixed_state
+from test_tui_snapshots import fixed_state, quick_fixed_state
 from textual.pilot import Pilot
 from textual.widgets import Button, Select, Static, TabbedContent, TextArea
 
@@ -102,7 +102,7 @@ class Seen:
 
 def drive(scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]]) -> Seen:
     # A fixed State: the tab reads the (per-test) settings itself when it runs.
-    app = ManageApp(loader=fixed_state)
+    app = ManageApp(loader=fixed_state, quick_loader=quick_fixed_state)
     seen: list[Seen] = []
 
     async def main() -> None:

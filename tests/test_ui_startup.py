@@ -14,7 +14,8 @@ from test_trigger_contract import _loaded, _startup
 
 # The app up to Textual's Ready event (sent once the first frame is displayed), then the Try
 # tab opened, to show that what was left out is loaded on first use. The loader blocks until
-# then: no State, no doctor run, no Espanso query, nothing read from the network.
+# then, both stages (#317): no State, no doctor run, no Espanso query, nothing read from the
+# network.
 _UI_RUN = """
 import sys
 started = set(sys.modules)
@@ -42,7 +43,7 @@ class FirstPaint(ManageApp):
         self.exit(0)
 
 
-app = FirstPaint(loader=loader)
+app = FirstPaint(loader=loader, quick_loader=loader)
 app.run(headless=True, size=(110, 36))
 import json
 from pathlib import Path

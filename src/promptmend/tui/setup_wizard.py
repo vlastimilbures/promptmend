@@ -87,6 +87,7 @@ class SetupScreen(Screen[None]):
         self.at = "welcome"
         self.plan: deploy.Plan | None = None
         self.plan_error: str | None = None
+        self.plan_asked = False
         self.tested: bool | None = None
         self.working = False
         self.keys: list[setup_guide.KeyRow] = []
@@ -219,8 +220,15 @@ class SetupScreen(Screen[None]):
         for row in self.keys:
             self.query_one(f"#setup-line-{row.name}", Static).update(setup_guide.key_line(row))
         servers = next((c for c in state.report.checks if c.id == "local_servers"), None)
-        self.query_one("#setup-servers", Static).update(servers.message if servers else "")
-        self._refresh_plan()
+        line = servers.message if servers else ""
+        if not state.full and state.failed is None:  # a quick State (#317)
+            line = "Checking whether a local server answers…"
+        self.query_one("#setup-servers", Static).update(line)
+        # The Espanso step reads its own plan: once per reload (its full State), and at once
+        # the first time, so a quick State never asks Espanso twice.
+        if state.full or not self.plan_asked:
+            self.plan_asked = True
+            self._refresh_plan()
         self.go(self.at)
 
     def _fill(self, selector: str, choices: list[setup_guide.Choice], preset: str | None) -> None:

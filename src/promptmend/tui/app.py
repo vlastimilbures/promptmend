@@ -5,7 +5,13 @@ and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself.
 Only Home is built at start (#316): every other tab's pane, and its module, the first time
 that tab opens, and the setup wizard the first time it is opened, so the first paint loads
 none of them (tests/test_ui_startup.py pins what it loads). A pane built later shows the
-current State as it mounts (Pane.on_mount)."""
+current State as it mounts (Pane.on_mount).
+
+Each reload has two stages (#317), read one after the other in its worker: the quick State
+(settings, profiles, triggers) is shown at once, the full one replaces it. Every screen gets
+the same State object at each stage (#83). The generation guard orders them: a stage of an
+older reload never replaces a newer reload's, so a screen goes quick, full, late update
+within one reload, and a newer reload's quick State supersedes everything older."""
 
 from __future__ import annotations
 
@@ -27,10 +33,10 @@ from .. import installed_version
 from ..update_check import UpdateStatus
 from . import brand, teach
 from .base import Pane
-from .home import TAB_LABELS, pill
+from .home import TAB_LABELS, status_pill
 from .home_pane import HomePane
 from .intro import AboutScreen
-from .state import State, gather, needs_setup
+from .state import State, gather, needs_setup, quick
 
 if TYPE_CHECKING:
     from .setup_wizard import SetupOptions, SetupScreen
@@ -222,6 +228,7 @@ class ManageApp(App[int]):
         self,
         *,
         loader: Callable[[str], State] = gather,
+        quick_loader: Callable[[str], State] | None = quick,
         setup: SetupOptions | None = None,
         first_run: bool = False,
     ) -> None:
@@ -229,6 +236,8 @@ class ManageApp(App[int]):
         # Read here, not at import, so the snapshot tests can pin it and a release changes none.
         self.title = f"{self.TITLE} {installed_version()}"
         self.loader = loader
+        # The first stage (#317); None: one stage, the loader's State only.
+        self.quick_loader = quick_loader
         self.group_by = "trigger"
         self.state: State | None = None
         # Each reload's number. A thread cannot be stopped, so a slower, older load may finish
@@ -258,6 +267,8 @@ class ManageApp(App[int]):
         install = (
             next((c.data for c in report.checks if c.id == "install"), None) if report else None
         )
+        if self.state is not None and not self.state.full and self.state.failed is None:
+            install = {"channel": "checking"}  # doctor's install check is still running
         update = self.state.update if self.state else None
         return brand.about_facts(install, installed_version(), update)
 
@@ -284,26 +295,36 @@ class ManageApp(App[int]):
 
     @work(thread=True, exclusive=True, group="load", exit_on_error=False)
     def _load(self, generation: int) -> None:
+        first: State | None = None
+        if self.quick_loader is not None:
+            try:
+                first = self.quick_loader(self.group_by)
+            except Exception:  # noqa: S110 - the full read below reads the same and reports it
+                pass
+            else:
+                self.call_from_thread(self._show, first, generation)
         try:
             state = self.loader(self.group_by)
         except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
             self.call_from_thread(
-                self.notify,
-                f"Could not read the state: {type(exc).__name__}: {exc}",
-                severity="error",
-                markup=False,
+                self.notify, f"Could not read the state: {error}", severity="error", markup=False
             )
+            if first is not None:
+                # The quick State stays, its waiting rows saying they were not checked.
+                self.call_from_thread(self._show, first.not_checked(error), generation)
             return
         self.call_from_thread(self._show, state, generation)
         if state.pending is not None:
             # The update check lands after the rest (#315). Nothing waits for it, so this
             # worker ends now and quitting never waits either; when it lands, its thread
-            # posts the next State (post_message is thread-safe and never blocks).
-            first = state
+            # posts the next State (post_message is thread-safe and never blocks). Only a
+            # full State has one pending.
+            full = state
 
             def landed(done: Future[UpdateStatus]) -> None:
                 if generation == self.shown:
-                    self.post_message(LateUpdate(first.landed(done), generation))
+                    self.post_message(LateUpdate(full.landed(done), generation))
 
             state.pending.add_done_callback(landed)
 
@@ -313,12 +334,12 @@ class ManageApp(App[int]):
         object (#83), but only what shows the update repaints (Home, Diagnostics' checks, an
         open About), so no table cursor moves and the setup screen keeps its focus."""
         # The reload on screen: a newer one that failed showed nothing, so this one's Version
-        # row still fills in; one that showed its own State drops this.
-        if message.generation != self.shown or self.state is None:
+        # row still fills in; one that showed its own State (quick or full) drops this.
+        if message.generation != self.shown or self.state is None or not self.state.full:
             return
         state = message.state
         self.state = state
-        self.sub_title = f"{pill(state.report)} · {self.SUB_TITLE}"
+        self.sub_title = f"{status_pill(state)} · {self.SUB_TITLE}"
         for pane in self.main.query(Pane):
             if pane.ready:
                 pane.show_update(state)
@@ -327,17 +348,23 @@ class ManageApp(App[int]):
                 screen.show_facts(self._about_facts())
 
     def _show(self, state: State, generation: int) -> None:
+        """One stage of reload ``generation`` on every screen: the same State object for
+        each (#83). A stage of an older reload is dropped; within one reload the worker shows
+        the quick State before the full one."""
         if generation != self.generation:
             return  # an older load that finished late
         self.state = state
         self.shown = generation
-        self.sub_title = f"{pill(state.report)} · {self.SUB_TITLE}"
+        self.sub_title = f"{status_pill(state)} · {self.SUB_TITLE}"
         for pane in self.main.query(Pane):
             if pane.ready:
-                pane.show(state)
+                pane.paint(state)
         wizard = self._open_wizard()
         if wizard is not None and wizard.is_mounted:
             wizard.show(state)
+        for screen in self.screen_stack:
+            if isinstance(screen, AboutScreen) and screen.is_mounted:
+                screen.show_facts(self._about_facts())
         self._maybe_offer()
 
     def _open_wizard(self) -> SetupScreen | None:
@@ -349,8 +376,9 @@ class ManageApp(App[int]):
         return next((s for s in self.screen_stack if isinstance(s, wizard)), None)
 
     def _maybe_offer(self) -> None:
-        """Open the setup wizard by itself, once, when nothing is set up yet."""
-        if self.state is None or not self.first_run:
+        """Open the setup wizard by itself, once, when nothing is set up yet: asked of the
+        full State only, which has the plan (#317)."""
+        if self.state is None or not self.state.full or not self.first_run:
             return
         if self._open_wizard() is not None:
             return

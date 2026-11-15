@@ -5,7 +5,13 @@ One read (#315) resolves the settings once, looks up the launcher and the manife
 one deploy plan that doctor reuses, and asks each command once. The update check runs beside it
 in a thread of its own: when it has not landed by the time the rest is read, the State says
 ``checking`` and carries it as ``pending``; settled() waits for it and makes the next State,
-which the app gives every screen, as it does a reload."""
+which the app gives every screen, as it does a reload.
+
+Two stages (#317): quick() reads only what is local and fast (the settings, the profiles, the
+triggers) and the app paints it at once; gather() reads everything and its State replaces the
+quick one. A quick State's report, plan and stats are placeholders no screen shows (it says
+`checking` there instead), and an action that needs them waits for the full State
+(``State.full``)."""
 
 from __future__ import annotations
 
@@ -22,6 +28,8 @@ from ..config import ConfigLayers, Settings, secret_names
 from ..prompt_builder import UserProfile, user_profiles
 
 CHECKING = update_check.UpdateStatus(update_check.CHECKING)
+# A State's stage (#317): QUICK holds the settings, profiles and triggers only; FULL all of it.
+QUICK, FULL = "quick", "full"
 # How long settled() waits for the update check: its own request gives up after
 # update_check.TIMEOUT; the rest is reading and writing its small cache file.
 SETTLE_TIMEOUT = update_check.TIMEOUT + 2.0
@@ -46,6 +54,22 @@ class State:
     pending: Future[update_check.UpdateStatus] | None = field(
         default=None, compare=False, repr=False
     )
+    # QUICK: only layers, settings, triggers, profiles and group_by are read; FULL: all.
+    stage: str = FULL
+    # A quick State whose full read failed (why, for the rows that wait): see not_checked().
+    failed: str | None = None
+
+    @property
+    def full(self) -> bool:
+        """Whether the doctor report, the plan and the stats are read: an action that
+        reads them, or acts on what they show, waits for this (#317)."""
+        return self.stage == FULL
+
+    def not_checked(self, error: str) -> State:
+        """This quick State once its full read failed with ``error``: the rows that waited
+        say they were not checked, never `checking` for ever; still not full."""
+        unknown = update_check.UpdateStatus(update_check.UNKNOWN)
+        return replace(self, failed=error, update=unknown, pending=None)
 
     def with_update(self, update: update_check.UpdateStatus) -> State:
         """This moment with ``update`` in Home's Version row, About and doctor's version
@@ -127,13 +151,35 @@ def _once(runner: deploy.Runner) -> deploy.Runner:
     return run
 
 
+def quick(group_by: str = "trigger") -> State:
+    """The first stage (#317): the settings, the profiles and the triggers, local reads only
+    (no command, no doctor, no history, no network), so Home paints at once. Everything else
+    is a placeholder and the State is not full."""
+    layers, settings = common.load_layers()
+    return State(
+        layers=layers,
+        settings=settings,
+        report=doctor.Report(()),
+        triggers=assets.triggers(),
+        plan=None,
+        plan_error=None,
+        profiles=user_profiles(settings.profile_overrides),
+        group_by=group_by,
+        stats=[],
+        stats_error=None,
+        update=CHECKING,
+        stage=QUICK,
+    )
+
+
 def gather(group_by: str = "trigger") -> State:
     """Everything the screens show. Read-only: doctor without the clipboard, the deploy plan,
     the profiles, the usage stats and the update check (cached for a day, so a reload asks
     PyPI no more often; never waited for, see the module), each failure kept to show instead
     of raised."""
     pending = _beside(update_check.check_configured, "promptmend-reload-update-check")
-    layers, settings = common.load_layers()
+    first = quick(group_by)
+    layers, settings = first.layers, first.settings
     # Only read-only commands may go through it: a cached `espanso restart` would be skipped.
     run = _once(deploy.run_command)
     plan: deploy.Plan | None = None
@@ -158,19 +204,15 @@ def gather(group_by: str = "trigger") -> State:
         stats = store(settings).stats(group_by)
     except (history.HistoryError, OSError, ValueError) as exc:
         stats_error = str(exc) or type(exc).__name__
-    state = State(
-        layers=layers,
-        settings=settings,
+    state = replace(
+        first,
         report=report,
-        triggers=assets.triggers(),
         plan=plan,
         plan_error=plan_error,
-        profiles=user_profiles(settings.profile_overrides),
-        group_by=group_by,
         stats=stats,
         stats_error=stats_error,
-        update=CHECKING,
         pending=pending,
+        stage=FULL,
     )
     # Landed already (a cached answer, the check turned off): one State, no "checking".
     return state.settled() if pending.done() else state
@@ -178,9 +220,10 @@ def gather(group_by: str = "trigger") -> State:
 
 def needs_setup(state: State) -> bool:
     """Nothing is set up yet: no config.toml, no key, and no match file installed. A bare
-    `promptmend` then opens the wizard by itself, once. Here, not in setup_wizard.py, so
-    the app asks without importing the wizard (#316)."""
-    if common.legacy_env() or state.plan is None:
+    `promptmend` then opens the wizard by itself, once; never of a quick State, which has no
+    plan (#317). Here, not in setup_wizard.py, so the app asks without importing the wizard
+    (#316)."""
+    if common.legacy_env() or not state.full or state.plan is None:
         return False
     if config_files.is_file(config.settings_file()):
         return False
