@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import shutil
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -94,6 +95,14 @@ def espanso(tmp_path: Path) -> Path:
 
 def _run(*args: str, input: str | None = None) -> Result:
     return runner.invoke(app, list(args), input=input)
+
+
+def _plain(text: str) -> str:
+    """``text`` without ANSI colours, Rich's panel borders or line wrapping: Typer's help and
+    error panels are coloured and boxed under GitHub Actions (FORCE_COLOR, COLUMNS)."""
+    # Colours go without a trace (Rich may colour the two halves of `--runs` apart); borders
+    # become spaces.
+    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", re.sub(r"\x1b\[[0-9;]*m", "", text)).split())
 
 
 def _tree(root: Path) -> list[Path]:
@@ -628,7 +637,9 @@ def test_doctor_timing_table(
     out = result.stdout
     assert "Timing against a local stub (no provider call)" in out
     assert "median of 2 warm" in out
-    assert f"launcher:    {LAUNCHER} is not a file; timed through the interpreter only" in out
+    # Normalised as doctor.timing() does it: on Windows the POSIX literal gains a drive letter.
+    shown = Path(os.path.abspath(Path(LAUNCHER).expanduser()))
+    assert f"launcher:    {shown} is not a file; timed through the interpreter only" in out
     assert re.search(r"--version\s+interpreter\s+300\s+100\n", out)
     assert re.search(r"persona\s+interpreter\s+300\s+-\s+failed: wrote to stderr", out)
     assert "doctor's checks: version " in out
@@ -640,7 +651,7 @@ def test_doctor_timing_table(
 def test_doctor_runs_needs_timing() -> None:
     result = _doctor("--runs", "3")
     assert result.exit_code == common.USAGE
-    assert "--runs needs --timing" in result.output
+    assert "--runs needs --timing" in _plain(result.output)
 
 
 @pytest.mark.parametrize("runs", ["0", "51"])
@@ -915,7 +926,7 @@ def test_stats_text_states_the_caveats_and_the_history(
 def test_stats_help_states_the_caveats(monkeypatch: pytest.MonkeyPatch) -> None:
     # Help panels wrap at the terminal width, which differs on CI runners (Windows too).
     monkeypatch.setenv("COLUMNS", "400")
-    out = " ".join(re.sub(r"\x1b\[[0-9;]*m|[│╭╮╰╯─]", " ", _run("stats", "--help").stdout).split())
+    out = _plain(_run("stats", "--help").stdout)
     assert "not provider billing" in out
     assert "rendered does not mean pasted" in out
     assert "ignore PROMPT_PROVIDER" in out
