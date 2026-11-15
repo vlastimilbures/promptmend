@@ -65,12 +65,15 @@ def test_storage_in_legacy_mode() -> None:
     assert not where.writable
 
 
-def test_storage_names_an_unread_dotenv(saved: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(config, "unread_env_files", lambda: [Path("/old/.env")])
+def test_storage_names_an_unread_dotenv(
+    saved: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = tmp_path / "old" / ".env"
+    monkeypatch.setattr(config, "unread_env_files", lambda: [old])
     where = setup_flow.storage()
     assert where.writable
     assert where.unread is not None
-    assert where.unread.startswith("/old/.env is no longer read")
+    assert where.unread.startswith(f"{old} is no longer read")
 
 
 def test_save_choice_saves_and_unsets_a_default(saved: Path) -> None:
