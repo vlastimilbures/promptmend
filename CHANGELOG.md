@@ -37,7 +37,7 @@ All notable changes to this project are documented here. The format follows
 - The interface screenshots in the README and docs show version 0.25.0 and today's screens
   (no intro, no command line, no Previous install), and docs/interface.md no longer calls
   `setup` a question-and-answer alternative.
-- Internal: cli.py is split into `sanitize.py` (the sanitiser), `pipeline.py` (the rewrite's
+- `cli.py` is split into `sanitize.py` (the sanitiser), `pipeline.py` (the rewrite's
   steps, which the interface's Try tab now uses), `trigger.py` (the single output sink and
   improve's watchdog) and `commands/espanso.py` (#281). No command, option or output changes.
 

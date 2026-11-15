@@ -149,8 +149,9 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
 `tests/test_trigger_contract.py` (`FORBIDDEN`, ceilings). They run through `cli.py` (the Typer
 wiring), `trigger.py` (`_emit()`, the watchdog, the run), `pipeline.py` (the rewrite's steps,
 Typer-free, shared with the Try tab) and `sanitize.py`; none of them imports `cli`. New heavy
-imports go inside the function that needs them; `cli._LAZY_COMMANDS` loads a management command only
-when it runs. `entry.self_command()` is the argv prefix for any child that runs the CLI again.
+imports go inside the function that needs them; `cli._LAZY_COMMANDS` loads a management
+command only when it runs. `entry.self_command()` is the argv prefix for any child that runs
+the CLI again.
 
 ## Usage history
 

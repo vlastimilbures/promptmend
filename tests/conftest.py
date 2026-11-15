@@ -209,7 +209,7 @@ def fake_http(monkeypatch: pytest.MonkeyPatch) -> FakeHttp:
 
 
 class StubProvider:
-    """Stands in for cli.make_provider and the provider it builds: records each build
+    """Stands in for pipeline.make_provider and the provider it builds: records each build
     and generate() call, and returns ``result`` or raises ``exc``."""
 
     def __init__(self) -> None:
