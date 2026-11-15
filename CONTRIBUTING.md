@@ -277,16 +277,20 @@ unzipped exe, with the file count and size of its `_internal` folder. Each cell 
 (cold) run, then the median of 5 warm runs. CI asserts no time (runner noise would make it
 flaky); the module ceilings above stay the gate.
 
-<!-- TODO(#306): fill in from the PR's CI run: its date, its URL and both job summaries. -->
-
-The rows below come from the CI run of TODO-DATE (TODO-RUN-URL); Defender real-time
-protection: TODO.
+The rows below come from the CI run of 2026-11-15
+([run 43705361645](https://github.com/vlastimilbures/promptmend/actions/runs/43705361645)).
+Defender real-time protection was **off** on both runners, so they are a Windows baseline with
+no scanning, not the endpoint-scanning case; for that, the owner's laptop numbers (#304) count.
 
 | Channel | `--version`, cold / warm ms | `persona`, cold / warm ms | `improve` (`-i-`), cold / warm ms | `_internal` |
 | --- | --- | --- | --- | --- |
-| uv tool install, through the shim | TODO / TODO | TODO / TODO | TODO / TODO | n/a |
-| uv tool install, through the interpreter | TODO / TODO | TODO / TODO | TODO / TODO | n/a |
-| Frozen exe (the Windows zip) | TODO / TODO | TODO / TODO | TODO / TODO | TODO files, TODO MB |
+| uv tool install, through the shim | 64 / 63 | 99 / 100 | 262 / 257 | n/a |
+| uv tool install, through the interpreter | 106 / 106 | 94 / 93 | 260 / 252 | n/a |
+| Frozen exe (the Windows zip) | 121 / 120 | 179 / 178 | 477 / 476 | 108 files, 20.5 MB |
+
+On that runner the frozen exe is slower than the uv install (`improve` 477 against 262 ms), and
+the uv shim adds little over the interpreter. The uv job's `import promptmend.tui.app` took
+476 / 258 ms; the frozen exe skips it by design.
 
 Re-measure with:
 
