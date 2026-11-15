@@ -11,6 +11,9 @@ import io
 import json
 import os
 import re
+import sys
+import threading
+import time
 from collections.abc import Awaitable, Callable, Iterator
 from decimal import Decimal
 from pathlib import Path
@@ -3055,3 +3058,66 @@ def test_session_log_keeps_the_latest(espanso: FakeRunner) -> None:
     assert text.count("$ promptmend doctor") == home_pane.SESSION_LINES
     failed = home_pane.session_text([teach.Entry("c", "boom", error=True)]).plain
     assert "    error: boom" in failed
+
+
+# --- TEMPORARY diagnostic for #317 (Windows 3.12 CI), removed before merge --------------------
+
+
+def _timed_in_thread(untraced: bool) -> float:
+    took: list[float] = []
+
+    def run() -> None:
+        if untraced:
+            sys.settrace(None)
+        start = time.perf_counter()
+        quick()
+        took.append(time.perf_counter() - start)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(30)
+    return took[0] if took else float("inf")
+
+
+def _timed_here() -> float:
+    start = time.perf_counter()
+    quick()
+    return time.perf_counter() - start
+
+
+def test_diag_quick_timings(espanso: FakeRunner) -> None:
+    out: dict[str, object] = {
+        "version": sys.version,
+        "switch": sys.getswitchinterval(),
+        "trace": type(sys.gettrace()).__name__,
+    }
+    out["main, no app"] = _timed_here()
+    out["thread traced, no app"] = _timed_in_thread(False)
+    out["thread untraced, no app"] = _timed_in_thread(True)
+    release = threading.Event()
+
+    def loader(group_by: str, first: State | None = None) -> State:
+        release.wait(30)
+        raise RuntimeError("diag")
+
+    app = ManageApp(loader=loader, quick_loader=None)
+
+    async def main() -> None:
+        async with app.run_test(size=(100, 40)) as pilot:
+            await pilot.pause()
+            loop = asyncio.get_running_loop()
+            out["main, app"] = _timed_here()
+            for untraced in (False, True):
+                key = f"thread {'untraced' if untraced else 'traced'}, app"
+                start = time.perf_counter()
+                fut = loop.run_in_executor(None, _timed_in_thread, untraced)
+                while not fut.done():
+                    await pilot.pause(0.01)
+                out[key] = (fut.result(), time.perf_counter() - start)
+            release.set()
+
+    asyncio.run(main())
+    message = "\n".join(f"{k}: {v}" for k, v in out.items())
+    print(message)
+    if sys.platform == "win32":
+        pytest.fail(f"diagnostic (#317):\n{message}")
