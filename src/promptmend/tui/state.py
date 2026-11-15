@@ -116,10 +116,14 @@ class State:
 
 
 def _beside[T](work: Callable[[], T], name: str) -> Future[T]:
-    """``work`` in a daemon thread, so quitting never waits for it."""
+    """``work`` in a daemon thread of its own, so quitting never waits for it and it never
+    holds a thread of a shared pool. Running once started: cancelling the future then (as an
+    awaiting task's cancellation does) leaves it to finish, its answer unused."""
     future: Future[T] = Future()
 
     def run() -> None:
+        if not future.set_running_or_notify_cancel():
+            return  # cancelled before it started
         try:
             future.set_result(work())
         except BaseException as exc:

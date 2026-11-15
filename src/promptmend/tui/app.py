@@ -15,6 +15,7 @@ within one reload, and a newer reload's quick State supersedes everything older.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 from collections.abc import Callable
@@ -36,7 +37,7 @@ from .base import Pane
 from .home import TAB_LABELS, status_pill
 from .home_pane import HomePane
 from .intro import AboutScreen
-from .state import State, gather, needs_setup, quick
+from .state import State, _beside, gather, needs_setup, quick
 
 if TYPE_CHECKING:
     from .setup_wizard import SetupOptions, SetupScreen
@@ -300,29 +301,40 @@ class ManageApp(App[int]):
     def action_toggle_contrast(self) -> None:
         self.theme = DEFAULT_THEME if self.theme == HIGH_CONTRAST.name else HIGH_CONTRAST.name
 
-    @work(thread=True, exclusive=True, group="load", exit_on_error=False)
-    def _load(self, generation: int) -> None:
+    async def _read[T](self, read: Callable[[], T]) -> T:
+        """``read()`` in a daemon thread of its own (state._beside), awaited here. Not a
+        thread worker: those share asyncio's default thread pool, which a slow full read
+        (doctor waiting on Espanso) would hold while it waits, and on Windows Textual's own
+        timers sleep in that pool too, so a newer reload could not even start its quick
+        read until the old one ended (#317, the Windows CI). Cancelled (a newer reload),
+        the thread still ends on its own and its answer is dropped."""
+        return await asyncio.wrap_future(_beside(read, "promptmend-reload"))
+
+    @work(exclusive=True, group="load", exit_on_error=False)
+    async def _load(self, generation: int) -> None:
+        """One reload: the quick State, then the full one (each read in its own thread),
+        shown here on the app's loop. A newer reload cancels this one (exclusive), and the
+        generation guard in _show() drops whatever an older one would still show."""
         first: State | None = None
-        if self.quick_loader is not None:
+        group_by, quick_loader = self.group_by, self.quick_loader
+        if quick_loader is not None:
             try:
                 # The update answer on screen stays until the full State has its own.
-                first = self.quick_loader(self.group_by).known_update(self.state)
+                first = (await self._read(lambda: quick_loader(group_by))).known_update(self.state)
             except Exception:  # noqa: S110 - the full read below reads the same and reports it
                 pass
             else:
-                self.call_from_thread(self._show, first, generation)
+                self._show(first, generation)
         try:
-            state = self.loader(self.group_by, first)
+            state = await self._read(lambda: self.loader(group_by, first))
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
-            self.call_from_thread(
-                self.notify, f"Could not read the state: {error}", severity="error", markup=False
-            )
+            self.notify(f"Could not read the state: {error}", severity="error", markup=False)
             if first is not None:
                 # The quick State stays, its waiting rows saying they were not checked.
-                self.call_from_thread(self._show, first.not_checked(error), generation)
+                self._show(first.not_checked(error), generation)
             return
-        self.call_from_thread(self._show, state, generation)
+        self._show(state, generation)
         if state.pending is not None:
             # The update check lands after the rest (#315). Nothing waits for it, so this
             # worker ends now and quitting never waits either; when it lands, its thread

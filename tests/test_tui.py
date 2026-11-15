@@ -774,24 +774,46 @@ def test_the_first_run_offer_waits_while_about_is_open(saved: Path, espanso: Fak
     drive(scenario, settled=False, loader=blocked, first_run=True)
 
 
-def test_the_done_step_keeps_its_focus_across_stages(espanso: FakeRunner) -> None:
+@pytest.mark.parametrize("pool", ["default", "one thread"])
+def test_the_done_step_keeps_its_focus_across_stages(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, pool: str
+) -> None:
     """Review of #317: on the last step, the full State (and the plan read with it) leaves the
-    focus where the person put it, instead of moving it back to Quit."""
+    focus where the person put it, instead of moving it back to Quit. With one pool thread the
+    wizard's own plan read still runs while the full read waits (it used to queue behind it)."""
     from promptmend.tui.setup_wizard import SetupOptions, SetupScreen
+
+    if pool == "one thread":
+        one_pool_thread(monkeypatch)
 
     blocked = BlockedLoad()
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         # The wizard mounted, shown the quick State and read its plan: nothing of its start
         # is still on its way (a focus moves after a refresh, so each step below waits for it).
-        await until(pilot, lambda: app.state is not None)
-        await until(pilot, lambda: isinstance(app.screen, SetupScreen) and app.screen.is_mounted)
+        def why() -> object:
+            screen = app.screen
+            return {
+                "state": app.state.stage if app.state else None,
+                "shown": app.shown,
+                "screen": type(screen).__name__,
+                "mounted": screen.is_mounted,
+                "at": getattr(screen, "at", None),
+                "plan": getattr(screen, "plan", None) is not None,
+                "plan_error": getattr(screen, "plan_error", None),
+                "focused": app.focused,
+            }
+
+        await until(pilot, lambda: app.state is not None, why)
+        await until(
+            pilot, lambda: isinstance(app.screen, SetupScreen) and app.screen.is_mounted, why
+        )
         wizard = app.screen
         assert isinstance(wizard, SetupScreen)
-        await until(pilot, lambda: wizard.plan is not None or wizard.plan_error is not None)
+        await until(pilot, lambda: wizard.plan is not None or wizard.plan_error is not None, why)
         quit_ = wizard.query_one("#setup-quit", Button)
         wizard.go("done")
-        await until(pilot, lambda: app.focused is quit_, lambda: app.focused)
+        await until(pilot, lambda: app.focused is quit_, why)
         # The hidden Back and Next never take the focus here, not even one already on its
         # way (Textual lets a button in a hidden row be focused; the Windows CI did, #317).
         for hidden in ("#setup-next-step", "#setup-back"):
@@ -800,7 +822,7 @@ def test_the_done_step_keeps_its_focus_across_stages(espanso: FakeRunner) -> Non
             assert app.focused is quit_, hidden
         opened = wizard.query_one("#setup-open", Button)
         opened.focus()
-        await until(pilot, lambda: app.focused is opened, lambda: app.focused)
+        await until(pilot, lambda: app.focused is opened, why)
         blocked.release.set()
         await settle(pilot)
         assert _state(app).full
@@ -860,33 +882,58 @@ def test_the_checking_headline_names_only_what_is_checked(
     assert headline(rows) == (CHECKING_HEADLINE_NO_HISTORY, None)
 
 
+def one_pool_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """asyncio's default thread pool down to one thread, as busy as the Windows CI's was: Textual
+    runs thread workers there, and on Windows each of its timers sleeps in it (#317)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    real = ManageApp.on_mount
+
+    def on_mount(self: ManageApp) -> None:
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(1))
+        real(self)
+
+    monkeypatch.setattr(ManageApp, "on_mount", on_mount)
+
+
+@pytest.mark.parametrize("pool", ["default", "one thread"])
 def test_the_stages_of_an_older_reload_never_replace_a_newer_one(
-    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, pool: str
 ) -> None:
     """#317 with #315's generation guard: within a reload the quick State comes before the
     full one; a reload started while the first is still reading shows its own quick and full
-    States, and the first one's full State, landing after, is dropped. The update check is
-    held, so its late update (which legitimately replaces the State object) lands only at the
-    end, and it is the newer reload's."""
+    States at once (the first one's slow read holds no thread a newer reload needs), and the
+    first one's full State, read after, is never shown. The update check is held, so its late
+    update (which legitimately replaces the State object) lands only at the end, and it is
+    the newer reload's."""
     import threading
 
+    if pool == "one thread":
+        # A reload's reads never wait for that pool, nor hold it (the Windows CI's failure:
+        # reload 2 never showed even its quick State while reload 1's full read waited).
+        one_pool_thread(monkeypatch)
     blocked = BlockedPypi()
     monkeypatch.setattr(update_check, "check_configured", blocked)
     release = threading.Event()
     started = threading.Event()
+    finished = threading.Event()
     loads: list[int] = []
 
     def loader(group_by: str, first: State | None = None) -> State:
         loads.append(1)
-        if len(loads) == 1:  # the first reload's full read is the slow one
-            started.set()
-            assert release.wait(10)
-        return gather(group_by, first)
+        if len(loads) > 1:
+            return gather(group_by, first)
+        # The first reload's full read is the slow one.
+        started.set()
+        assert release.wait(10)
+        try:
+            return gather(group_by, first)
+        finally:
+            finished.set()
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         seen: list[tuple[int, str]] = []
         newer_full = threading.Event()
-        late = threading.Event()
         real = app._show
 
         def show(state: State, generation: int) -> None:
@@ -894,8 +941,6 @@ def test_the_stages_of_an_older_reload_never_replace_a_newer_one(
             real(state, generation)
             if generation == 2 and state.full:
                 newer_full.set()
-            if generation == 1 and state.full:
-                late.set()
 
         def why() -> object:
             return {"seen": seen, "generation": app.generation, "shown": app.shown}
@@ -908,13 +953,13 @@ def test_the_stages_of_an_older_reload_never_replace_a_newer_one(
         newer = _state(app)
         assert (app.shown, newer.full, newer.update.state) == (2, True, update_check.CHECKING)
         release.set()
-        await until(pilot, late.is_set, why)
+        await until(pilot, finished.is_set, why)  # the first reload's full read ended
         await settle(pilot)
-        assert app.state is newer  # the first reload's full State was dropped
+        assert app.state is newer  # the first reload's full State was never shown
         # The first reload's quick State may have been shown before its show() was
         # wrapped; what was seen is in order, each reload quick first.
-        assert seen[-1] == (1, FULL)
-        assert seen[-3:-1] == [(2, QUICK), (2, FULL)]
+        assert (1, FULL) not in seen
+        assert seen[-2:] == [(2, QUICK), (2, FULL)]
         # The held update check lands now: the newer reload's State with it filled in.
         blocked.release.set()
         landed_state = await landed(app, pilot)
