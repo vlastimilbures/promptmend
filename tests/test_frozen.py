@@ -278,11 +278,11 @@ def test_build_runs_pyinstaller_then_zips(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_trigger_args_are_the_i_trigger_with_the_draft_as_argument() -> None:
-    args = bw.trigger_args()
+    args = smoke.trigger_args()
     assert args[:3] == ["improve", "--trigger-id", "i"]
     assert args[-4:] == ["--source", "argument", "--text", "draft"]
     with pytest.raises(LookupError):
-        bw.trigger_args("-nope-")
+        smoke.trigger_args("-nope-")
 
 
 def test_time_and_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -297,10 +297,43 @@ def test_time_and_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_a_failed_trigger_run_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(RuntimeError, match="the trigger failed"):
-        bw.time_trigger([sys.executable, "-c", "import sys; sys.exit(3)"], runs=1)
+        smoke.time_trigger([sys.executable, "-c", "import sys; sys.exit(3)"], runs=1)
 
 
 def test_main_build(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(bw, "build", lambda: Path("dist/x.zip"))
     bw.main(["build"])
     assert capsys.readouterr().out.strip() == str(Path("dist/x.zip"))
+
+
+# --- smoke's timing helpers (#305), shared with doctor --timing ----------------------------
+
+
+def test_expect_output_judges_a_run_as_espanso_would() -> None:
+    expect = smoke.expect_output("hello")
+    assert expect(0, b"hello", b"") is None
+    assert expect(1, b"hello", b"") == "exit code 1"
+    assert expect(0, b"hello", b"warning") == "wrote to stderr"
+    assert expect(0, b"hello\n", b"") == "printed something else (6 characters)"
+    assert expect(0, b"[promptmend: no key]\n", b"") == "printed [promptmend: no key]"
+    assert smoke.expect_output("1.2.3", strip=True)(0, b"1.2.3\r\n", b"") is None
+
+
+def test_time_runs_stops_at_a_timeout_or_a_missing_program(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def timeout(argv: Sequence[str], **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(list(argv), 1)
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    seconds, problem = smoke.time_runs(["x"], {}, 3, smoke.expect_output(""), timeout=1)
+    assert (len(seconds), problem) == (1, "timed out after 1 s")
+
+    def missing(argv: Sequence[str], **kwargs: object) -> None:
+        raise FileNotFoundError(2, "No such file")
+
+    monkeypatch.setattr(subprocess, "run", missing)
+    seconds, problem = smoke.time_runs(["x"], {}, 3, smoke.expect_output(""))
+    assert seconds == []
+    assert problem
+    assert problem.startswith("could not run: FileNotFoundError")

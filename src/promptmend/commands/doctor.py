@@ -1,4 +1,5 @@
-"""`doctor [--json]`: the doctor service's report, as text or stable JSON."""
+"""`doctor [--json] [--timing [--runs N]]`: the doctor service's report, as text or stable
+JSON; --timing (#305) adds start-up times measured against the smoke test's stub."""
 
 from __future__ import annotations
 
@@ -35,19 +36,38 @@ def doctor(
     clipboard: bool = typer.Option(
         True, "--clipboard/--no-clipboard", help="Test reading the clipboard (length only)"
     ),
+    timing: bool = typer.Option(
+        False,
+        "--timing",
+        help="Also time --version, persona and the -i- trigger through the launcher and the "
+        "interpreter, against a local stub (no provider call)",
+    ),
+    runs: int = typer.Option(
+        5,
+        "--runs",
+        min=service.RUNS_RANGE[0],
+        max=service.RUNS_RANGE[1],
+        help="With --timing: warm runs after each cold one",
+    ),
 ) -> None:
     """Check the install, settings, keys (set or not, never the value), Espanso, the deployed
     match files, the launcher, the usage history and the clipboard. Exit 4 when a check fails.
     Safe to paste into a bug report: no key, persona or clipboard text is shown."""
     common.no_key(espanso_dir, "--espanso-dir")
     common.no_key(launcher, "--launcher")
+    durations: dict[str, float] | None = {} if timing else None
     report = service.run(
         espanso_dir=Path(espanso_dir).expanduser() if espanso_dir else None,
         launcher=launcher,
         clipboard=clipboard,
+        durations=durations,
     )
+    timed = service.timing(report, durations or {}, runs) if timing else None
     if as_json:
-        common.json_dump(report.to_json())
+        data = report.to_json()
+        if timed is not None:
+            data["timing"] = timed.to_json()
+        common.json_dump(data)
     else:
         for check in report.checks:
             label, color = LABEL[check.status]
@@ -59,5 +79,36 @@ def doctor(
                 for finding in check.data.get("findings", []):
                     source = common.source_label(finding["source"])
                     typer.echo(f"         {source}: {finding['message']}")
+        if timed is not None:
+            _print_timing(timed)
     if report.status == service.FAIL:
         raise typer.Exit(common.PROBLEMS)
+
+
+def _cell(ms: float | None) -> str:
+    return "-" if ms is None else f"{ms:.0f}"
+
+
+def _print_timing(timed: service.Timing) -> None:
+    """The timing table: ms per run, the first one cold, then the median of the warm ones."""
+    typer.echo("")
+    typer.echo(
+        f"Timing against a local stub (no provider call), ms: the first run, then the median "
+        f"of {timed.warm_runs} warm"
+    )
+    typer.echo(f"  launcher:    {timed.launcher or timed.launcher_note}")
+    typer.echo(f"  interpreter: {' '.join(timed.interpreter)}")
+    width = max(len(r.command) for r in timed.runs)
+    typer.echo(f"  {'command':<{width}}  {'via':<11}  {'cold':>6}  {'warm':>6}")
+    for run in timed.runs:
+        row = f"  {run.command:<{width}}  {run.via:<11}  {_cell(_ms(run.cold)):>6}  "
+        row += f"{_cell(_ms(run.warm)):>6}"
+        if run.status != service.TIMED_OK:
+            row += f"  {run.status}: {run.message}"
+        typer.echo(row)
+    checks = ", ".join(f"{k} {_cell(_ms(v))}" for k, v in timed.checks.items())
+    typer.echo(f"  doctor's checks: {checks}")
+
+
+def _ms(seconds: float | None) -> float | None:
+    return None if seconds is None else seconds * 1000

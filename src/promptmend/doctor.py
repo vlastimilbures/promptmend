@@ -17,6 +17,7 @@ import os
 import platform
 import shutil
 import sys
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -687,31 +688,56 @@ def run(
     clipboard: bool = True,
     runner: deploy.Runner | None = None,
     update: update_check.UpdateStatus | None = None,
+    durations: dict[str, float] | None = None,
 ) -> Report:
     """Every check in CHECK_IDS. ``launcher`` and ``espanso_dir`` override the lookups;
-    ``update`` is an update check already made (the interface's)."""
+    ``update`` is an update check already made (the interface's). ``durations``, when given,
+    gets each check's seconds (`doctor --timing`, #305), the lookups a check reports counted
+    in it: the update check in version, the launcher lookup in install, both settings reads
+    in config, the Espanso queries in espanso; history and sqlite share one read (history)."""
+    spent = durations if durations is not None else {}
+
+    def clock(check_id: str, started: float) -> None:
+        spent[check_id] = spent.get(check_id, 0.0) + time.perf_counter() - started
+
+    def timed(check_id: str, build: Callable[[], Check]) -> Check:
+        started = time.perf_counter()
+        check = _safely(check_id, build)
+        clock(check_id, started)
+        return check
+
     run_command = runner or deploy.run_command
+    started = time.perf_counter()
     layers = ConfigLayers.resolve(strict=False)
     settings = layers.settings()
+    clock("config", started)
     if update is None:
+        started = time.perf_counter()
         update = update_check.check_configured()
+        clock("version", started)
+    started = time.perf_counter()
     try:
         ConfigLayers.resolve().settings()
         strict_error = None
     except ValueError as exc:
         strict_error = str(exc)
+    clock("config", started)
 
     found: deploy.Launcher | None = None
     launcher_error = None
+    started = time.perf_counter()
     try:
         found = deploy.resolve_launcher(runner=run_command)
     except deploy.DeployError as exc:
         launcher_error = str(exc)
+    clock("install", started)
     current = launcher or (str(found.path) if found else None)
+    started = time.perf_counter()
     try:
         manifest: deploy.Manifest | None = deploy.Manifest.load()
     except deploy.DeployError:
         manifest = None
+    clock("launcher", started)
     compare = current
     if compare is None and manifest and manifest.entries:
         # Compare with what was deployed, so a missing launcher still shows each file's state;
@@ -721,39 +747,210 @@ def run(
 
     # The version check names the install channel's update command, so it is built after the
     # install check; the report keeps CHECK_IDS order.
-    install = _safely("install", lambda: _install_check(found, launcher_error))
+    install = timed("install", lambda: _install_check(found, launcher_error))
     checks: list[Check] = [
-        _safely("version", lambda: _version_check(update, install)),
-        _safely("cli", _cli_check),
+        timed("version", lambda: _version_check(update, install)),
+        timed("cli", _cli_check),
         install,
-        _safely("path_shadow", lambda: _path_shadow_check(found)),
-        _safely("config", lambda: _config_check(layers, strict_error)),
+        timed("path_shadow", lambda: _path_shadow_check(found)),
+        timed("config", lambda: _config_check(layers, strict_error)),
     ]
+    started = time.perf_counter()
     try:
         espanso, target = _espanso_check(run_command, espanso_dir)
     except Exception as exc:
         espanso = Check("espanso", FAIL, f"check failed: {type(exc).__name__}")
         target = espanso_dir or deploy.default_espanso_dir()
+    clock("espanso", started)
+    started = time.perf_counter()
     try:
         triggers, deployed = deployed_triggers(target)
     except Exception:
         triggers, deployed = [], False
+    clock("keys", started)
     checks += [
-        _safely("keys", lambda: _keys_check(layers, settings, triggers, deployed)),
-        _safely("persona", lambda: _persona_check(settings, _persona_readable())),
+        timed("keys", lambda: _keys_check(layers, settings, triggers, deployed)),
+        timed("persona", lambda: _persona_check(settings, _persona_readable())),
         espanso,
     ]
-    checks.append(_safely("match_files", lambda: _match_check(target, compare, manifest)))
-    checks.append(_safely("launcher", lambda: _launcher_check(current, manifest)))
+    checks.append(timed("match_files", lambda: _match_check(target, compare, manifest)))
+    checks.append(timed("launcher", lambda: _launcher_check(current, manifest)))
+    started = time.perf_counter()
     try:
         checks.extend(_history_checks(settings))
     except Exception as exc:
         checks.append(Check("history", FAIL, f"check failed: {type(exc).__name__}"))
         checks.append(Check("sqlite", WARN, "unknown"))
-    checks.append(_safely("clipboard", lambda: _clipboard_check(clipboard)))
-    checks.append(_safely("profiles", lambda: _profiles_check(settings)))
-    checks.append(_safely("folders", _folders_check))
+    clock("history", started)
+    checks.append(timed("clipboard", lambda: _clipboard_check(clipboard)))
+    checks.append(timed("profiles", lambda: _profiles_check(settings)))
+    checks.append(timed("folders", _folders_check))
     checks.append(
-        _safely("local_servers", lambda: _local_servers_check(settings, triggers, deployed))
+        timed("local_servers", lambda: _local_servers_check(settings, triggers, deployed))
     )
     return Report(tuple(checks))
+
+
+# --- Timing (#305) -------------------------------------------------------------------------
+
+# `doctor --timing --runs N`: the warm runs after each cold one.
+RUNS_RANGE = (1, 50)
+TIMED_OK, TIMED_FAILED, TIMED_SKIPPED = "ok", "failed", "skipped"
+LAUNCHER, INTERPRETER = "launcher", "interpreter"
+INTERFACE_IMPORT = "import promptmend.tui.app"
+
+
+@dataclass(frozen=True)
+class Timed:
+    """One command timed through one way of starting it: the cold run first, then the warm."""
+
+    command: str
+    via: str
+    status: str
+    seconds: tuple[float, ...] = ()
+    message: str | None = None
+
+    @property
+    def cold(self) -> float | None:
+        return self.seconds[0] if self.seconds else None
+
+    @property
+    def warm(self) -> float | None:
+        """The median of the warm runs; None without one (a failed or a single run)."""
+        import statistics
+
+        return statistics.median(self.seconds[1:]) if len(self.seconds) > 1 else None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "command": self.command,
+            "via": self.via,
+            "status": self.status,
+            "cold_ms": _ms(self.cold),
+            "warm_median_ms": _ms(self.warm),
+            "warm_runs": max(len(self.seconds) - 1, 0),
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class Timing:
+    """`doctor --timing`: each command through the launcher and the interpreter, the
+    interface's import, and each check's duration. ``launcher`` is None when it is not timed
+    (``launcher_note`` says why)."""
+
+    warm_runs: int
+    launcher: str | None
+    launcher_note: str | None
+    interpreter: tuple[str, ...]
+    runs: tuple[Timed, ...]
+    checks: Mapping[str, float]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "warm_runs": self.warm_runs,
+            "launcher": self.launcher,
+            "launcher_note": self.launcher_note,
+            "interpreter": list(self.interpreter),
+            "runs": [r.to_json() for r in self.runs],
+            "checks_ms": {k: _ms(v) for k, v in self.checks.items()},
+        }
+
+
+def _ms(seconds: float | None) -> float | None:
+    return None if seconds is None else round(seconds * 1000, 1)
+
+
+def _timed_launcher(current: str | None, interpreter: list[str]) -> tuple[str | None, str | None]:
+    """The launcher to time (the one the matches call, or --launcher), or None and why not."""
+    if not current:
+        return None, "no launcher found; timed through the interpreter only"
+    path = Path(current)
+    if not path.is_file():
+        return None, f"{current} is not a file; timed through the interpreter only"
+    if len(interpreter) == 1:
+        try:
+            same = os.path.samefile(interpreter[0], path)
+        except OSError:
+            same = False
+        if same:
+            return None, f"the launcher is this executable ({current}); timed once"
+    return current, None
+
+
+def timing(
+    report: Report,
+    durations: Mapping[str, float],
+    runs: int = 5,
+    *,
+    timer: Callable[..., tuple[list[float], str | None]] | None = None,
+) -> Timing:
+    """Time `--version`, `persona` and the -i- trigger through the launcher and through
+    entry.self_command(), and the interface's import, as child processes against smoke's stub:
+    no provider is called and only the placeholder key is set. PROMPT_PERSONA is emptied (so
+    persona prints its placeholder, never yours) and PROMPT_OUTPUT is paste (the clipboard is
+    never written). A run that fails is reported, never raised."""
+    from . import smoke
+    from .cli import PERSONA_PLACEHOLDER
+    from .entry import self_command
+
+    time_runs = timer or smoke.time_runs
+    interpreter = self_command()
+    current = _status_data(report, "launcher").get("current")
+    launcher, note = _timed_launcher(current, interpreter)
+    starts = ([(LAUNCHER, [launcher])] if launcher else []) + [(INTERPRETER, interpreter)]
+    try:
+        trigger: list[str] | None = smoke.trigger_args()
+        trigger_problem = None
+    except (LookupError, OSError, ValueError) as exc:
+        trigger, trigger_problem = None, f"the {smoke.TRIGGER} args cannot be read: {exc}"
+    commands: list[tuple[str, list[str] | None, smoke.Expect, str | None]] = [
+        ("--version", ["--version"], smoke.expect_output(__version__, strip=True), None),
+        ("persona", ["persona"], smoke.expect_output(PERSONA_PLACEHOLDER), None),
+        (f"improve ({smoke.TRIGGER})", trigger, smoke.expect_output(smoke.REPLY), trigger_problem),
+    ]
+    results: list[Timed] = []
+    with smoke.stub_server() as stub:
+        env = {
+            **smoke.stub_env(stub.port, os.environ),
+            "PROMPT_PERSONA": "",
+            "PROMPT_OUTPUT": config.PASTE,
+        }
+
+        def one(command: str, via: str, argv: list[str], expect: smoke.Expect) -> Timed:
+            seconds, problem = time_runs(argv, env, runs, expect)
+            status = TIMED_FAILED if problem else TIMED_OK
+            return Timed(command, via, status, tuple(seconds), problem)
+
+        for command, args, expect, problem in commands:
+            for via, prefix in starts:
+                if args is None:
+                    results.append(Timed(command, via, TIMED_FAILED, message=problem))
+                else:
+                    results.append(one(command, via, [*prefix, *args], expect))
+        if getattr(sys, "frozen", False):
+            results.append(
+                Timed(
+                    INTERFACE_IMPORT,
+                    INTERPRETER,
+                    TIMED_SKIPPED,
+                    message="a frozen build has no interpreter to import it with",
+                )
+            )
+        else:
+            importer = [sys.executable, "-P", "-c", INTERFACE_IMPORT]
+            results.append(one(INTERFACE_IMPORT, INTERPRETER, importer, _exits_zero))
+    checks = {i: durations[i] for i in CHECK_IDS if i in durations}
+    return Timing(runs, launcher, note, tuple(interpreter), tuple(results), checks)
+
+
+def _exits_zero(code: int, out: bytes, err: bytes) -> str | None:
+    """The interface's import: only the exit code counts (no trigger, so stderr may warn)."""
+    return None if code == 0 else f"exit code {code}"
+
+
+def _status_data(report: Report, check_id: str) -> Mapping[str, Any]:
+    for check in report.checks:
+        if check.id == check_id:
+            return check.data
+    return {}

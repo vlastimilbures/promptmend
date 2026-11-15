@@ -12,6 +12,7 @@ does before you run it. Run any command with `--help` for its full option list.
 - [persona](#persona)
 - [Management commands](#management-commands)
 - [Reading stats](#reading-stats)
+- [Timing start-up](#timing-start-up)
 - [How management commands behave](#how-management-commands-behave)
 - [Exit codes](#exit-codes)
 
@@ -84,7 +85,7 @@ read gives the `[role]` placeholder. See [Persona](profiles.md#persona).
 | `promptmend espanso deploy [--dry-run]` / `status` / `detach` | Writes, checks or removes the match files. See [Managing the match files](usage.md#managing-the-match-files) |
 | `promptmend stats [--by trigger\|provider\|model\|day] [--json] [--verbose]` | Calls, latency, tokens and costs from the [usage history](privacy.md#usage-history); `--verbose` also says what the history records and how to read the numbers (below) |
 | `promptmend history export [--format json\|csv] [-o FILE]` / `prune [--older-than DAYS]` / `reset` | Exports the history (metadata only), deletes old records (asking first when the age is shorter than `PROMPT_HISTORY_RETENTION_DAYS`), or deletes them all |
-| `promptmend doctor [--json]` | Version and whether a newer release exists (information only, with the update command for your install channel; `--json` adds `latest`, `update_available` and `checked_at`; one pypi.org request a day (an hour after a failure), `PROMPT_UPDATE_CHECK=false` turns it off), CLI path and install channel, whether the `promptmend` first on PATH is this install's (an older CLI there runs with other settings), config validity, keys set or not (a missing key names the deployed triggers that need it), whether the Ollama or LM Studio a deployed trigger uses answers, Espanso found and running, each deployed match file (`in sync`, `stale`, `modified`, `missing`), launcher drift, history health, SQLite version and the history's journal mode, the folders, and a clipboard read test that reports only the length (`--no-clipboard` skips it). Safe to paste into an issue: it never shows a key, your persona or clipboard text |
+| `promptmend doctor [--json] [--timing [--runs N]]` | Version and whether a newer release exists (information only, with the update command for your install channel; `--json` adds `latest`, `update_available` and `checked_at`; one pypi.org request a day (an hour after a failure), `PROMPT_UPDATE_CHECK=false` turns it off), CLI path and install channel, whether the `promptmend` first on PATH is this install's (an older CLI there runs with other settings), config validity, keys set or not (a missing key names the deployed triggers that need it), whether the Ollama or LM Studio a deployed trigger uses answers, Espanso found and running, each deployed match file (`in sync`, `stale`, `modified`, `missing`), launcher drift, history health, SQLite version and the history's journal mode, the folders, and a clipboard read test that reports only the length (`--no-clipboard` skips it). Safe to paste into an issue: it never shows a key, your persona or clipboard text. `--timing` also measures how fast this install starts (below); without it `doctor` starts no child process |
 
 ## Reading stats
 
@@ -101,6 +102,37 @@ provider's dashboard for what you were charged.
   `PROMPT_PROVIDER`, so changing it does not move their calls to another provider.
 - By trigger, a real run from the interface's Try tab is listed as `-try-`, and a bare
   `promptmend improve` as `no trigger (direct call)`.
+
+## Timing start-up
+
+`promptmend doctor --timing` measures how long this install takes to start the way Espanso
+runs it, for example when endpoint scanning slows every start on Windows. After the checks it
+runs, as child processes, `promptmend --version`, `promptmend persona` and the `-i-` trigger's
+`improve` (with the draft as an argument), each one first through this install's launcher (the
+one a deploy writes into the match files, or `--launcher`) and then through the interpreter directly
+(`python -P -m promptmend.cli`; a frozen build's exe is both, so it runs once). The difference
+between the two rows is the cost of the launcher. It also times importing the interface
+(`import promptmend.tui.app` in a child), and reports how long each of `doctor`'s own checks
+took.
+
+- Every child runs against a stub on `127.0.0.1`, as setup's smoke test does: no provider is
+  called, only a placeholder key is set, the usage history is off, `PROMPT_PERSONA` is empty
+  and the output is paste (your clipboard is never written). Your other settings apply.
+- The numbers are wall-clock milliseconds: `cold` is the first run in this `doctor` call,
+  `warm` the median of the `--runs` (default 5, 1 to 50) runs that follow. They cover start-up
+  and PromptMend's own work, never the provider's time, so a real trigger takes longer by
+  however long the model takes to answer. A start after a reboot or a fresh install can be
+  slower than `cold`, since earlier runs have already warmed the disk cache.
+- Through the interpreter, `--version` loads the whole CLI, while the launcher answers it
+  before loading anything else: compare `persona` or `improve` for the launcher's own cost.
+- A run that fails (a nonzero exit, anything on stderr, an unexpected output, or no answer in
+  60 seconds) is shown as `failed` with the reason; that command's remaining runs are skipped, the
+  others still run. The
+  exit code still comes from the checks alone.
+- `--json` adds a `timing` key (the report's `schema_version` stays 1): `warm_runs`,
+  `launcher` (null when it is not timed, with `launcher_note` saying why), `interpreter`,
+  `runs` (each with `command`, `via`, `status`, `cold_ms`, `warm_median_ms`, `warm_runs` and
+  `message`) and `checks_ms`.
 
 ## How management commands behave
 
