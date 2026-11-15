@@ -97,6 +97,26 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+UPDATE_CHECK_THREADS = ("promptmend-reload-update-check", "promptmend-update-check")
+
+
+@pytest.fixture(autouse=True)
+def update_checks_end_with_the_test(isolated_env: None) -> Iterator[None]:
+    """The interface's update check runs in a daemon thread beside a reload (#315): each one a
+    test started must end inside the test, while its fakes (no pypi.org, the temp HOME) still
+    hold. Torn down before isolated_env's patches are undone; a thread still running after
+    the wait fails the test rather than reach the real network or folders later."""
+    import threading
+
+    before = {t for t in threading.enumerate() if t.name in UPDATE_CHECK_THREADS}
+    yield
+    for thread in threading.enumerate():
+        if thread.name in UPDATE_CHECK_THREADS and thread not in before:
+            thread.join(10)
+            if thread.is_alive():
+                pytest.fail(f"{thread.name} outlived the test")
+
+
 @pytest.fixture(autouse=True)
 def no_hard_exit(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """improve's watchdog (#307) ends the process with os._exit: in a test that would end

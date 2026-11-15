@@ -5,16 +5,19 @@ and Ctrl; no Alt or Cmd). Textual honours NO_COLOR itself."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import Future
 from typing import ClassVar
 
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
+from textual.message import Message
 from textual.screen import Screen
 from textual.theme import Theme
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 from .. import installed_version
+from ..update_check import UpdateStatus
 from . import brand, teach
 from .base import Pane
 from .diagnostics_pane import DiagnosticsPane
@@ -114,6 +117,16 @@ ModalScreen { align: center middle; }
 """
 
 
+class LateUpdate(Message):
+    """The update check of reload ``generation`` landed: ``state`` is that reload's State with
+    it filled in (#315)."""
+
+    def __init__(self, state: State, generation: int) -> None:
+        super().__init__()
+        self.state = state
+        self.generation = generation
+
+
 class MainScreen(Screen[None]):
     # On this screen, not the app, so no letter reaches the app while a dialog is open.
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -173,6 +186,8 @@ class ManageApp(App[int]):
         # Each reload's number. A thread cannot be stopped, so a slower, older load may finish
         # after a newer one: only the newest is shown.
         self.generation = 0
+        # The reload whose State is on screen (0: none yet).
+        self.shown = 0
         self.main = MainScreen()
         # This session's actions as commands (#111), shown on Home.
         self.session: list[teach.Entry] = []
@@ -190,13 +205,16 @@ class ManageApp(App[int]):
             self.first_run = False
             self.push_screen(SetupScreen(self.setup_options))
 
-    def action_about(self) -> None:
+    def _about_facts(self) -> list[str]:
         report = self.state.report if self.state else None
         install = (
             next((c.data for c in report.checks if c.id == "install"), None) if report else None
         )
         update = self.state.update if self.state else None
-        self.push_screen(AboutScreen(brand.about_facts(install, installed_version(), update)))
+        return brand.about_facts(install, installed_version(), update)
+
+    def action_about(self) -> None:
+        self.push_screen(AboutScreen(self._about_facts()))
 
     def log_action(self, entry: teach.Entry) -> None:
         """Keep an action in the session log and show it on Home."""
@@ -229,11 +247,42 @@ class ManageApp(App[int]):
             )
             return
         self.call_from_thread(self._show, state, generation)
+        if state.pending is not None:
+            # The update check lands after the rest (#315). Nothing waits for it, so this
+            # worker ends now and quitting never waits either; when it lands, its thread
+            # posts the next State (post_message is thread-safe and never blocks).
+            first = state
+
+            def landed(done: Future[UpdateStatus]) -> None:
+                if generation == self.shown:
+                    self.post_message(LateUpdate(first.landed(done), generation))
+
+            state.pending.add_done_callback(landed)
+
+    @on(LateUpdate)
+    def _late_update(self, message: LateUpdate) -> None:
+        """The same moment with the update check filled in: every pane gets the new State
+        object (#83), but only what shows the update repaints (Home, Diagnostics' checks, an
+        open About), so no table cursor moves and the setup screen keeps its focus."""
+        # The reload on screen: a newer one that failed showed nothing, so this one's Version
+        # row still fills in; one that showed its own State drops this.
+        if message.generation != self.shown or self.state is None:
+            return
+        state = message.state
+        self.state = state
+        self.sub_title = f"{pill(state.report)} · {self.SUB_TITLE}"
+        for pane in self.main.query(Pane):
+            if pane.ready:
+                pane.show_update(state)
+        for screen in self.screen_stack:
+            if isinstance(screen, AboutScreen) and screen.is_mounted:
+                screen.show_facts(self._about_facts())
 
     def _show(self, state: State, generation: int) -> None:
         if generation != self.generation:
             return  # an older load that finished late
         self.state = state
+        self.shown = generation
         self.sub_title = f"{pill(state.report)} · {self.SUB_TITLE}"
         for pane in self.main.query(Pane):
             if pane.ready:

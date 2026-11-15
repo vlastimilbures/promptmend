@@ -312,6 +312,102 @@ def _winget_launcher(executable: Path, environ: Mapping[str, str]) -> Launcher |
     return None
 
 
+# uv's record of a tool install, in the tool's environment (`<uv tool dir>/<name>/`, which is
+# sys.prefix for the running tool). The part read here, as uv 0.13 writes it (older receipts
+# may have no `from`):
+#
+#     [tool]
+#     requirements = [{ name = "promptmend" }]
+#     entrypoints = [
+#         { name = "promptmend", install-path = "/u/.local/bin/promptmend", from = "promptmend" },
+#     ]
+#
+# On Windows `name` stays `promptmend` and `install-path` is the `.exe`, a TOML string with
+# escaped backslashes: `"C:\\Users\\me\\.local\\bin\\promptmend.exe"` (not seen on a
+# real Windows install yet: anything else falls back to `uv tool dir`).
+UV_RECEIPT = "uv-receipt.toml"
+
+
+def _receipt_entry_point(text: str, exe: str, *, windows: bool) -> str | None:
+    """promptmend's `install-path` in a uv receipt's text, or None when the text does not parse
+    or lists no entry point named promptmend (from the promptmend package) whose file is
+    ``exe``. Not checked against the disk."""
+    import tomllib
+    from pathlib import PurePosixPath, PureWindowsPath
+
+    try:
+        tool = tomllib.loads(text).get("tool")
+    except (tomllib.TOMLDecodeError, ValueError):
+        return None
+    points = tool.get("entrypoints") if isinstance(tool, dict) else None
+    if not isinstance(points, list):
+        return None
+    pure = PureWindowsPath if windows else PurePosixPath
+    for point in points:
+        if not isinstance(point, dict):
+            continue
+        name, where, source = point.get("name"), point.get("install-path"), point.get("from")
+        if name != "promptmend" or source not in (None, "promptmend"):
+            continue
+        if not isinstance(where, str) or not where:
+            continue
+        found = pure(where).name
+        if (found.lower() if windows else found) == exe:
+            return where
+    return None
+
+
+# A Windows path uv writes for a tool's bin dir: a drive letter, then the rest (`C:\\...`).
+_DRIVE = re.compile(r"[A-Za-z]:")
+
+
+def _receipt_launcher_path(where: str, exe: str, *, windows: bool) -> Path | None:
+    """The launcher an entry point's ``install-path`` names, spelled as the `uv tool dir
+    --bin` lookup spells it: its folder joined with ``exe``. On Windows only a plain drive
+    path (`C:\\Users\\...`): a verbatim (`\\\\?\\`), device (`\\\\.\\`) or UNC
+    (`\\\\server\\share`) path is None, so the match files never get one. On POSIX an
+    absolute path, as written."""
+    if windows:
+        import ntpath
+        from pathlib import PureWindowsPath
+
+        if where.startswith(("\\\\", "//", "\\/", "/\\")):
+            return None
+        # Already normal (no `.` or `..`, no doubled or forward slash), no `:` past the drive
+        # (an alternate data stream), and no folder ending in a dot or space, which Windows
+        # drops: one spelling only, the one uv writes.
+        if ntpath.normpath(where) != where or ":" in where[2:]:
+            return None
+        pure = PureWindowsPath(where)
+        if not _DRIVE.fullmatch(pure.drive) or not pure.is_absolute():
+            return None
+        if any(part.endswith((".", " ")) for part in pure.parts[1:]):
+            return None
+        return Path(str(pure.parent / exe))
+    path = Path(where)
+    return path if path.is_absolute() else None
+
+
+def _uv_receipt_launcher(prefix: Path, exe: str, *, windows: bool) -> Path | None:
+    """This tool's launcher from the uv receipt in ``prefix``, without running `uv` (#315):
+    only when the receipt is a readable file, names promptmend's entry point, and that entry
+    point is an absolute path (on Windows a plain drive path) to an existing file. Anything
+    else is None: then `uv tool dir` decides, as before."""
+    receipt = prefix / UV_RECEIPT
+    try:
+        if receipt.is_symlink() or not receipt.is_file():
+            return None
+        text = receipt.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    where = _receipt_entry_point(text, exe, windows=windows)
+    path = None if where is None else _receipt_launcher_path(where, exe, windows=windows)
+    try:
+        return path if path is not None and path.is_file() else None
+    except OSError:
+        return None
+
+
 def resolve_launcher(
     *,
     runner: Runner | None = None,
@@ -323,9 +419,10 @@ def resolve_launcher(
     environ: Mapping[str, str] | None = None,
 ) -> Launcher:
     """The stable entry point of the install that is running now: the channel's own bin
-    (uv tool's bin dir, Homebrew's `<prefix>/bin`, Scoop's shim, WinGet's alias), never a
-    versioned path such as a Homebrew Cellar, else the running console script when that path
-    is stable. A frozen build (the Windows zip, #185) is its own exe: WinGet's, else itself."""
+    (uv tool's bin dir, from its receipt, else `uv tool dir`; Homebrew's `<prefix>/bin`,
+    Scoop's shim, WinGet's alias), never a versioned path such as a Homebrew Cellar, else the
+    running console script when that path is stable. A frozen build (the Windows zip, #185) is
+    its own exe: WinGet's, else itself."""
     if getattr(sys, "frozen", False) if frozen is None else frozen:
         exe_path = Path(sys.executable) if executable is None else executable
         if windows:
@@ -342,6 +439,10 @@ def resolve_launcher(
     script = Path(sys.argv[0]) if script is None else script
     exe = "promptmend.exe" if windows else "promptmend"
 
+    # A uv tool names its launcher in its own receipt: no `uv` process (#315).
+    from_receipt = _uv_receipt_launcher(prefix, exe, windows=windows)
+    if from_receipt is not None:
+        return Launcher(from_receipt, "uv")
     tool_dir = output(runner(["uv", "tool", "dir"]))
     if tool_dir and inside(prefix, Path(tool_dir.strip())):
         bin_dir = output(runner(["uv", "tool", "dir", "--bin"]))

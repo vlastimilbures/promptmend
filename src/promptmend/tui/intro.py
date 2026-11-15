@@ -39,6 +39,11 @@ class AboutScreen(ModalScreen[None]):
     def on_mount(self) -> None:
         self.query_one("#about-close", Button).focus()
 
+    def show_facts(self, facts: list[str]) -> None:
+        """New facts while open: the update check landed (#315)."""
+        self.facts = facts
+        self.query_one("#about-facts", Static).update("\n".join(facts))
+
     def action_close(self) -> None:
         self.dismiss(None)
 

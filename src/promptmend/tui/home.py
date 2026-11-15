@@ -77,7 +77,12 @@ def _version_row(state: State) -> HomeRow:
     update = state.update
     if update.state == update_check.AVAILABLE:
         return HomeRow(NOTE, "Version", f"{update.latest} available", HOW_TO_UPDATE)
-    words = {update_check.LATEST: " · latest", update_check.OFF: " · check off"}
+    words = {
+        update_check.LATEST: " · latest",
+        update_check.OFF: " · check off",
+        # Filled in when pypi.org answers; the other rows never wait for it (#315).
+        update_check.CHECKING: " · checking",
+    }
     return HomeRow(OK, "Version", f"{installed_version()}{words.get(update.state, '')}")
 
 

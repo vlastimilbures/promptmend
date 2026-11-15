@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import pytest
@@ -553,6 +553,197 @@ def test_resolve_uv_windows_exe(tmp_path: Path) -> None:
         runner=fake, prefix=tools / "promptmend", script=tmp_path / "x", windows=True
     )
     assert found.path == launcher
+
+
+# #315: uv's receipt names the launcher, so a uv install spawns no `uv tool dir`. The receipts
+# below are as uv 0.13 writes them (POSIX checked on a real install; the Windows one by its
+# documented shape: backslashes escaped in a TOML basic string, or a literal string).
+def _receipt(prefix: Path, install_path: str, *, name: str = "promptmend", extra: str = "") -> None:
+    prefix.mkdir(parents=True, exist_ok=True)
+    escaped = install_path.replace("\\", "\\\\")
+    (prefix / deploy.UV_RECEIPT).write_text(
+        "[tool]\n"
+        'requirements = [{ name = "promptmend", specifier = "==0.25.0" }]\n'
+        "entrypoints = [\n"
+        '    { name = "prompt-workflow", install-path = "/elsewhere/prompt-workflow", '
+        'from = "promptmend" },\n'
+        f'    {{ name = "{name}", install-path = "{escaped}", from = "promptmend" }},\n'
+        f"]\n{extra}\n"
+        "[tool.options]\ncompile-bytecode = true\n",
+        "utf-8",
+    )
+
+
+def _no_runner(argv: Sequence[str]) -> str:
+    raise AssertionError(f"ran {argv}")
+
+
+def test_resolve_uv_from_its_receipt_runs_nothing(tmp_path: Path) -> None:
+    """On this host's own rule, as resolve_launcher() runs in production (``windows`` is
+    os.name == "nt"): on a Windows runner a real `D:\\...` receipt under tmp_path goes
+    through the Windows rule, on macOS and Linux a POSIX one through the POSIX rule."""
+    windows = os.name == "nt"
+    prefix = tmp_path / "uv" / "tools" / "promptmend"
+    launcher = _exe(tmp_path / "bin" / ("promptmend.exe" if windows else "promptmend"))
+    _receipt(prefix, str(launcher))
+    found = deploy.resolve_launcher(
+        runner=_no_runner, prefix=prefix, script=tmp_path / "x", windows=windows
+    )
+    assert found == deploy.Launcher(launcher, "uv")
+    if windows:  # the canonical spelling: the bin folder joined with promptmend.exe
+        assert str(found.path) == str(launcher.parent / "promptmend.exe")
+
+
+WIN_BIN = r"C:\Users\me\.local\bin"
+
+
+@pytest.mark.parametrize(
+    "install_path",
+    [
+        WIN_BIN + r"\promptmend.exe",
+        WIN_BIN + r"\PromptMend.EXE",  # odd case: still the canonical spelling
+    ],
+)
+def test_resolve_uv_windows_exe_from_its_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, install_path: str
+) -> None:
+    """The launcher is the bin folder joined with `promptmend.exe`, as `uv tool dir --bin`
+    gave it, whatever case the receipt spells it in."""
+    canonical = str(PureWindowsPath(WIN_BIN) / "promptmend.exe")
+    real_is_file = Path.is_file
+    monkeypatch.setattr(Path, "is_file", lambda self: str(self) == canonical or real_is_file(self))
+    prefix = tmp_path / "tools" / "promptmend"
+    _receipt(prefix, install_path)
+    found = deploy.resolve_launcher(
+        runner=_no_runner, prefix=prefix, script=tmp_path / "x", windows=True
+    )
+    assert (str(found.path), found.channel) == (canonical, "uv")
+
+
+@pytest.mark.parametrize(
+    "install_path",
+    [
+        r"\\?\C:\Users\me\.local\bin\promptmend.exe",  # verbatim
+        r"\\.\C:\Users\me\.local\bin\promptmend.exe",  # device
+        r"\\server\share\bin\promptmend.exe",  # UNC
+        "//server/share/bin/promptmend.exe",  # UNC, forward slashes
+        r"\Users\me\.local\bin\promptmend.exe",  # no drive
+        r"C:promptmend.exe",  # drive-relative
+        r"bin\promptmend.exe",
+        "C:/Users/me/.local/bin/promptmend.exe",  # not as uv writes it
+        r"C:\Users\me\..\me\.local\bin\promptmend.exe",
+        r"C:\Users\me\.\.local\bin\promptmend.exe",
+        r"C:\Users\me\\.local\bin\promptmend.exe",
+        r"C:\Users\me.\.local\bin\promptmend.exe",  # trailing dot, dropped by Windows
+        r"C:\Users\me \.local\bin\promptmend.exe",  # trailing space
+        r"C:\Users\me\.local\bin:stream\promptmend.exe",  # a `:` past the drive
+        r"C:\Users\me\.local\bin\promptmend.exe:stream",
+    ],
+)
+def test_a_windows_receipt_path_that_is_not_a_plain_drive_path_falls_back(
+    install_path: str,
+) -> None:
+    assert deploy._receipt_launcher_path(install_path, "promptmend.exe", windows=True) is None
+
+
+def test_a_windows_receipt_without_a_drive_path_runs_uv(tmp_path: Path) -> None:
+    """A POSIX path read as a Windows one has no drive: `uv tool dir` decides."""
+    tools, bin_dir = tmp_path / "tools", tmp_path / "bin"
+    launcher = _exe(bin_dir / "promptmend.exe")
+    _receipt(tools / "promptmend", str(launcher))
+    fake = FakeRunner({"uv tool dir": str(tools), "uv tool dir --bin": str(bin_dir)})
+    found = deploy.resolve_launcher(
+        runner=fake, prefix=tools / "promptmend", script=tmp_path / "x", windows=True
+    )
+    if os.name == "nt":  # a real drive path there: taken from the receipt
+        assert fake.calls == []
+    else:
+        assert len(fake.calls) == 2
+    assert found == deploy.Launcher(launcher, "uv")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A TOML basic string, its backslashes escaped.
+        '[tool]\nentrypoints = [{ name = "promptmend", '
+        'install-path = "C:\\\\Users\\\\me\\\\.local\\\\bin\\\\promptmend.exe", '
+        'from = "promptmend" }]\n',
+        # A literal string, as another TOML writer may put it.
+        '[tool]\nentrypoints = [{ name = "promptmend", '
+        "install-path = 'C:\\Users\\me\\.local\\bin\\promptmend.exe' }]\n",
+        # The file name in another case: Windows paths ignore it.
+        '[tool]\nentrypoints = [{ name = "promptmend", '
+        'install-path = "C:\\\\Users\\\\me\\\\.local\\\\bin\\\\PromptMend.EXE" }]\n',
+    ],
+)
+def test_a_windows_receipt_names_the_exe(text: str) -> None:
+    found = deploy._receipt_entry_point(text, "promptmend.exe", windows=True)
+    assert found is not None
+    assert found.lower() == r"c:\users\me\.local\bin\promptmend.exe"
+    # Read as POSIX, the whole Windows path is one file name: never promptmend.
+    assert deploy._receipt_entry_point(text, "promptmend", windows=False) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "not toml [",
+        "[tool]\nentrypoints = 'promptmend'\n",
+        "tool = 1\n",
+        "[tool]\nentrypoints = ['promptmend']\n",
+        '[tool]\nentrypoints = [{ name = "promptmend" }]\n',
+        '[tool]\nentrypoints = [{ name = "promptmend", install-path = "" }]\n',
+        '[tool]\nentrypoints = [{ name = "other", install-path = "/b/promptmend" }]\n',
+        '[tool]\nentrypoints = [{ name = "promptmend", install-path = "/b/promptmend", '
+        'from = "another-package" }]\n',
+        '[tool]\nentrypoints = [{ name = "promptmend", install-path = "/b/other" }]\n',
+    ],
+)
+def test_a_receipt_without_our_entry_point_is_not_trusted(text: str) -> None:
+    assert deploy._receipt_entry_point(text, "promptmend", windows=False) is None
+
+
+def test_an_unusable_receipt_falls_back_to_uv_tool_dir(tmp_path: Path) -> None:
+    """A receipt naming a file that is gone, a relative path, one that cannot be read or is
+    a link: `uv tool dir` decides, as before. On this host's own rule (as in production), and
+    only after the same receipt with the real launcher is taken, so each case falls back for
+    its own reason."""
+    windows = os.name == "nt"
+    exe = "promptmend.exe" if windows else "promptmend"
+    tools, bin_dir = tmp_path / "uv" / "tools", tmp_path / "bin"
+    launcher = _exe(bin_dir / exe)
+    prefix = tools / "promptmend"
+    answers = {"uv tool dir": f"{tools}\n", "uv tool dir --bin": f"{bin_dir}\n"}
+
+    def resolve() -> tuple[deploy.Launcher, list[list[str]]]:
+        fake = FakeRunner(answers)
+        found = deploy.resolve_launcher(
+            runner=fake, prefix=prefix, script=tmp_path / "x", windows=windows
+        )
+        return found, fake.calls
+
+    _receipt(prefix, str(launcher))
+    assert resolve() == (deploy.Launcher(launcher, "uv"), [])
+    spawned = [["uv", "tool", "dir"], ["uv", "tool", "dir", "--bin"]]
+    relative = f"bin\\{exe}" if windows else f"bin/{exe}"
+    for install_path in (str(tmp_path / "gone" / exe), relative):
+        _receipt(prefix, install_path)
+        assert resolve() == (deploy.Launcher(launcher, "uv"), spawned)
+    receipt = prefix / deploy.UV_RECEIPT
+    receipt.write_bytes(b"\xff\xfe not utf-8")
+    assert resolve() == (deploy.Launcher(launcher, "uv"), spawned)
+    receipt.unlink()
+    real = tmp_path / "real-receipt.toml"
+    _receipt(tmp_path / "elsewhere", str(launcher))
+    (tmp_path / "elsewhere" / deploy.UV_RECEIPT).rename(real)
+    try:
+        receipt.symlink_to(real)
+    except OSError:
+        if windows:
+            return  # symlinks need a privilege there; the other cases ran
+        raise
+    assert resolve() == (deploy.Launcher(launcher, "uv"), spawned)
 
 
 def _cellar(tmp_path: Path, version: str) -> Path:

@@ -86,7 +86,9 @@ fixes it. Below, each row has a status word (ok, warn, FAIL) and the tab that fi
   one shows as `new` (`0.26.0 available  a: how to update`), and the About screen (`a`)
   gives the update command for your install channel. It is no problem: it never changes the
   headline or the header's status. It asks pypi.org once a day
-  ([privacy](privacy.md#update-check)); `PROMPT_UPDATE_CHECK=false` turns it off;
+  ([privacy](privacy.md#update-check)); `PROMPT_UPDATE_CHECK=false` turns it off. The other
+  rows never wait for that answer: until it comes, the row says `0.25.0 · checking`, then
+  fills in on every tab at once;
 - what `-i-` and `-ip-` run (every trigger is listed in [Usage](usage.md#triggers));
 - the match files and Espanso;
 - the usage history;

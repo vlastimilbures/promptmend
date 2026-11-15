@@ -44,6 +44,7 @@ _UPDATE_WORDS = {
     update_check.LATEST: "this is the latest release",
     update_check.OFF: "not checked (PROMPT_UPDATE_CHECK=false)",
     update_check.UNKNOWN: "unknown (pypi.org could not be asked)",
+    update_check.CHECKING: "checking pypi.org…",
 }
 
 

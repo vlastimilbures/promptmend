@@ -121,6 +121,11 @@ class Pane(Reports, VerticalScroll):
     def show(self, state: State) -> None:
         """Fill the pane from ``state``; each tab has its own."""
 
+    def show_update(self, state: State) -> None:
+        """``state`` is the shown one with only the update check filled in (#315): a pane
+        that shows it repaints that part; the others keep their tables and cursors as they
+        are (``self.state`` is already the new State)."""
+
     def result(self) -> Static:
         return Static("", classes="result", markup=False)
 

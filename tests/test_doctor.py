@@ -49,6 +49,29 @@ def test_install_reports_the_channel(tmp_path: Path) -> None:
     assert (check.status, check.data["channel"], check.data["launcher"]) == ("ok", "uv", str(exe))
 
 
+def test_a_uv_install_is_recognised_without_uv_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: the tool's own uv receipt names the launcher, so the install check says uv even
+    when `uv` is not on PATH (every command answers not found here). Before, it fell back
+    to the running console script."""
+    prefix = tmp_path / "uv" / "tools" / "promptmend"
+    prefix.mkdir(parents=True)
+    exe = tmp_path / "bin" / f"promptmend{EXE}"
+    exe.parent.mkdir()
+    exe.write_text("", "utf-8")
+    (prefix / deploy.UV_RECEIPT).write_text(
+        f"[tool]\nentrypoints = [{{ name = 'promptmend', install-path = '{exe}' }}]\n", "utf-8"
+    )
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    monkeypatch.setattr(sys, "argv", [str(exe)])
+    espanso = tmp_path / "espanso"
+    (espanso / "match").mkdir(parents=True)
+    report = doctor.run(espanso_dir=espanso, clipboard=False, runner=lambda argv: None)
+    install = _status("install", report)
+    assert (install.data["channel"], install.data["launcher"]) == ("uv", str(exe))
+
+
 def test_install_without_a_launcher_guesses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -341,7 +364,8 @@ def _servers(monkeypatch: pytest.MonkeyPatch, answering: set[str]) -> doctor.Che
     monkeypatch.setattr(local_probe, "_get", get)
     settings = ConfigLayers.resolve(strict=False).settings()
     check = doctor._local_servers_check(settings, assets.triggers(), True)
-    assert asked == ["http://localhost:11434/api/tags", "http://localhost:1234/v1/models"]
+    # Asked at the same time (#315), so in either order.
+    assert sorted(asked) == ["http://localhost:11434/api/tags", "http://localhost:1234/v1/models"]
     return check
 
 
@@ -355,6 +379,92 @@ def test_local_servers_say_what_a_local_trigger_needs(monkeypatch: pytest.Monkey
     assert check.data["servers"]["ollama"] == {"answers": False, "triggers": ["-il-"]}
     check = _servers(monkeypatch, {"11434", "1234"})
     assert check.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
+
+
+def test_local_servers_are_asked_at_the_same_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#315: neither probe waits for the other. Each waits at a barrier both must reach, so
+    asking in turn would break it (the timeout only guards against a hang)."""
+    import threading
+
+    from promptmend import local_probe
+
+    barrier = threading.Barrier(2, timeout=10)
+
+    def get(url: str) -> None:
+        barrier.wait()
+
+    monkeypatch.setattr(local_probe, "_get", get)
+    settings = ConfigLayers.resolve(strict=False).settings()
+    check = doctor._local_servers_check(settings, assets.triggers(), True)
+    assert check.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
+
+
+def test_a_probe_that_raises_never_stops_the_other(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both run to their end; the check then fails as one raising probe always made it."""
+    from promptmend import local_probe
+
+    asked: list[str] = []
+
+    def answers(url: str) -> bool:
+        asked.append(url)
+        if "11434" in url:
+            raise RuntimeError("probe bug")
+        return True
+
+    monkeypatch.setattr(local_probe, "answers", answers)
+    settings = ConfigLayers.resolve(strict=False).settings()
+    check = doctor._safely(
+        "local_servers", lambda: doctor._local_servers_check(settings, assets.triggers(), True)
+    )
+    assert (check.status, check.message) == ("fail", "check failed: RuntimeError: probe bug")
+    assert len(asked) == 2
+
+
+def test_with_update_remakes_only_the_version_check(tmp_path: Path) -> None:
+    """The interface's late update check (#315): the version check as doctor makes it for
+    that answer, every other check the same."""
+    espanso = tmp_path / "espanso"
+    (espanso / "match").mkdir(parents=True)
+    newer = update_check.UpdateStatus(update_check.AVAILABLE, "99.0.0", "2026-11-15T09:00:00+00:00")
+    checking = update_check.UpdateStatus(update_check.CHECKING)
+    kwargs: dict[str, Any] = {"espanso_dir": espanso, "launcher": LAUNCHER, "clipboard": False}
+    early = doctor.run(runner=_runner(), update=checking, **kwargs)
+    assert _status("version", early).data["update_available"] is None
+    late = doctor.with_update(early, newer)
+    direct = doctor.run(runner=_runner(), update=newer, **kwargs)
+    assert late.to_json() == direct.to_json()
+    assert [c for c in late.checks if c.id != "version"] == [
+        c for c in early.checks if c.id != "version"
+    ]
+
+
+def test_a_given_plan_counts_only_for_the_same_comparison(tmp_path: Path) -> None:
+    """#315: doctor takes the interface's plan only when it compares the same folder,
+    launcher and manifest; otherwise it makes its own."""
+    espanso = tmp_path / "espanso"
+    (espanso / "match").mkdir(parents=True)
+    manifest = deploy.Manifest(tmp_path / "manifest.json")
+    found = doctor.Lookups(deploy.Launcher(Path(LAUNCHER), "uv"), None, manifest, None)
+    text = deploy.launcher_text(LAUNCHER)
+
+    def files(plan: deploy.Plan, where: Path = espanso) -> list[str]:
+        report = doctor.run(
+            espanso_dir=where, clipboard=False, runner=_runner(), found=found, plan=plan
+        )
+        return [f["state"] for f in _status("match_files", report).data["files"]]
+
+    for planned in (deploy.plan(espanso, text, manifest), deploy.plan(tmp_path, text, manifest)):
+        planned.steps[0].state = "marked"
+        assert ("marked" in files(planned)) == (planned.espanso_dir == espanso)
+    # A linked folder: the interface's plan is of the resolved one, so it is not shared.
+    link = tmp_path / "linked-espanso"
+    try:
+        link.symlink_to(espanso, target_is_directory=True)
+    except OSError:
+        return  # no symlinks here (Windows without the privilege)
+    planned = deploy.plan(deploy.resolved(link), text, manifest)
+    planned.steps[0].state = "marked"
+    assert "marked" not in files(planned, link)
 
 
 def test_local_servers_never_ask_another_host(monkeypatch: pytest.MonkeyPatch) -> None:
