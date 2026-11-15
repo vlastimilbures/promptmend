@@ -109,8 +109,9 @@ so until they are read their rows show `…` and say `checking`, the headline sa
 and the header says `checking`. Every tab shows the same step, and the whole screen fills in
 together when the checks are done, keeping your place (a table's cursor, a field you are
 typing in); this happens again after every change and every `r`. If the checks cannot run, those rows say
-`not checked` and point to `r`, which tries again. The Version row keeps the answer it
-already had while a reload checks again.
+`not checked` and point to `r`, which tries again. While a reload reads the rest, the
+Version row keeps the answer it already had; it may then say `checking` again until that
+reload's update check lands.
 
 Buttons that act on what is still being checked wait for it: Show diff, Deploy and Detach on
 the Triggers tab and Prune and Reset on the History tab are greyed out until then (pressed

@@ -208,6 +208,11 @@ class MainScreen(Screen[None]):
         elif self.focused is not None and settings in self.focused.ancestors_with_self:
             self.set_focus(None)
 
+    def on_screen_resume(self) -> None:
+        """Back on the tabs (a dialog or About closed): a first-run offer held back while it
+        was open comes now (#317); it does nothing when there is none."""
+        cast("ManageApp", self.app)._maybe_offer()
+
     def _focus_settings_list(self) -> None:
         """After the refresh, once the Settings pane is mounted and filled (looked up then, so
         a tab activated while it is still mounting never queries a list not there yet)."""

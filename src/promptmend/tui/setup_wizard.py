@@ -276,7 +276,9 @@ class SetupScreen(Screen[None]):
         self.query_one("#setup-back", Button).disabled = step == self.order[0]
         self.query_one("#setup-nav").display = step != "done"
         if step == "done":
-            self._show_done()
+            # Its own focus (Quit): the hidden Next must not take it after.
+            self._show_done(focus=refocus)
+            return
         focus = {"provider": "#setup-providers", "profile": "#setup-profiles"}.get(step)
         if (
             step == "espanso"
@@ -432,7 +434,7 @@ class SetupScreen(Screen[None]):
         self.query_one("#setup-files", Static).update("\n".join(lines))
         button.disabled = plan.is_noop or plan.only_forgets
         if self.at == "done":
-            self._show_done()
+            self._show_done(focus=not self._focus_in_step())
 
     @on(Button.Pressed, "#setup-deploy")
     def _deploy(self) -> None:
@@ -500,7 +502,9 @@ class SetupScreen(Screen[None]):
 
     # The last step.
 
-    def _show_done(self) -> None:
+    def _show_done(self, *, focus: bool = True) -> None:
+        """The checklist; ``focus`` puts the focus on Quit (Close), off when a refresh comes
+        while the person is already somewhere in this step (#317)."""
         state = self.manage.state
         if state is None:
             return
@@ -512,7 +516,8 @@ class SetupScreen(Screen[None]):
             summary.append(f"{row.label}: ", style="bold")
             summary.append(f"{row.text}\n")
         self.query_one("#setup-summary", Static).update(summary)
-        self.call_after_refresh(self.query_one("#setup-quit").focus)
+        if focus:
+            self.call_after_refresh(self.query_one("#setup-quit").focus)
 
     @on(Button.Pressed, "#setup-open")
     def _open(self) -> None:

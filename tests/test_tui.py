@@ -742,8 +742,8 @@ def test_a_wizard_already_open_uses_up_the_offer(saved: Path, espanso: FakeRunne
 
 def test_the_first_run_offer_waits_while_about_is_open(saved: Path, espanso: FakeRunner) -> None:
     """Review of #317: About over the tabs when the full State lands keeps the offer (the
-    wizard never opens over it); the next full State, About closed, makes it. About also
-    says the install channel is being checked on the quick State, and fills it in."""
+    wizard never opens over it); closing About makes it, with no reload. About also says the
+    install channel is being checked on the quick State, and fills it in."""
     from promptmend.tui.intro import AboutScreen
     from promptmend.tui.setup_wizard import SetupScreen
 
@@ -762,13 +762,42 @@ def test_the_first_run_offer_waits_while_about_is_open(saved: Path, espanso: Fak
         # Repainted by the full State: the channel doctor found.
         assert "Installed: uv" in _rendered(about, "#about-facts")
         assert app.first_run
+        generation = app.generation
         await pilot.press("escape")
-        app.reload()
         await settle(pilot)
         assert isinstance(app.screen, SetupScreen)
         assert not app.first_run
+        assert app.generation == generation  # no reload made it
 
     drive(scenario, settled=False, loader=blocked, first_run=True)
+
+
+def test_the_done_step_keeps_its_focus_across_stages(espanso: FakeRunner) -> None:
+    """Review of #317: on the last step, the full State (and the plan read with it) leaves the
+    focus where the person put it, instead of moving it back to Quit."""
+    from promptmend.tui.setup_wizard import SetupOptions, SetupScreen
+
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        await until(pilot, lambda: isinstance(app.screen, SetupScreen))
+        wizard = app.screen
+        assert isinstance(wizard, SetupScreen)
+        await pilot.pause()
+        wizard.go("done")
+        await pilot.pause()
+        assert app.focused is wizard.query_one("#setup-quit")
+        opened = wizard.query_one("#setup-open", Button)
+        opened.focus()
+        await pilot.pause()
+        blocked.release.set()
+        await settle(pilot)
+        assert _state(app).full
+        assert wizard.at == "done"
+        assert app.focused is opened
+
+    drive(scenario, settled=False, loader=blocked, setup=SetupOptions(standalone=True))
 
 
 def test_a_quick_state_keeps_the_update_answer_on_screen(
