@@ -389,6 +389,7 @@ promptmend/
 │   ├── local_probe.py            asks a loopback Ollama or LM Studio whether it answers
 │   ├── smoke.py                  setup's smoke test: improve against a stub on 127.0.0.1
 │   ├── setup_guide.py            what setup says at each step (wizard and text flow), no Textual
+│   ├── setup_flow.py             what setup decides and writes, shared by the wizard and text flow
 │   ├── config.py                 Settings from the environment, config.toml or a named .env
 │   ├── config_files.py           reads config.toml/secrets.toml; atomic, private writes
 │   ├── config_store.py           saves settings and secrets
