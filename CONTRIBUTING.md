@@ -275,8 +275,10 @@ loads none of its own before the provider call. The built-in profiles are plain 
 first use (`importlib.resources` brought zipfile, bz2 and lzma), and hashlib, ctypes (the
 clipboard probe), tempfile and unicodedata are imported in the functions that need them.
 `improve` up to its provider call and `persona` (history off) add 145 modules each (167
-before); the `-X importtime` self-time total of a `persona` run fell from about 41 to 33 ms
-and its wall time from 49 to 45 ms (median of 9). `_bz2`, `_lzma`, `_uuid` and `select` still
+before). On macOS these modules are linked into the interpreter, so the time saved here is
+small and noisy: a stubbed `improve` run with the history off went from about 38 to 32 ms of
+`-X importtime` self time and from 50 to 44 ms of wall time (median of 9, two interleaved
+rounds); the Windows gain, a scanned file per module, is #304's to measure. `_bz2`, `_lzma`, `_uuid` and `select` still
 load, all from `import typer` (shutil, subprocess, uuid), until #313.
 `tests/test_trigger_contract.py` lists the Windows `.pyd` modules (`WINDOWS_EXTENSIONS`),
 allows only Typer's (`TYPER_EXTENSIONS`) before the call and for `persona`, and checks with
