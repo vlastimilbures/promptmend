@@ -18,9 +18,6 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
-    # A library on PyPI: update uv.lock, and raise a floor in pyproject.toml only when the new
-    # version falls outside it (#298 raised `typer>=0.12` to `>=0.27.3`).
-    versioning-strategy: increase-if-necessary
     # hatchling's `[tool.uv] build-constraint-dependencies` pin is bumped by hand (CONTRIBUTING
     # "Releasing"); Dependabot can raise only `build-system.requires`, and the pin then fails
     # `uv sync --locked`. So no Dependabot security PRs for hatchling either: it is build-only,
