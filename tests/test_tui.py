@@ -469,14 +469,16 @@ def test_a_late_update_of_an_older_reload_is_dropped(
 # --- Two stages (#317) ----------------------------------------------------------------------
 
 
-async def until(pilot: Pilot[int], done: Callable[[], bool]) -> None:
-    """Pause (at most ~10 s) until ``done()``: for a scenario whose full load is blocked, which
-    settle() would wait for."""
+async def until(
+    pilot: Pilot[int], done: Callable[[], bool], why: Callable[[], object] = lambda: ""
+) -> None:
+    """Pause (at most ~10 s of pauses) until ``done()``: for a scenario whose full load is
+    blocked, which settle() would wait for. ``why()`` says what was seen when it never is."""
     for _ in range(1000):
         if done():
             return
         await pilot.pause(0.01)
-    raise AssertionError("never happened")
+    raise AssertionError(f"never happened: {why()}")
 
 
 class BlockedLoad:
@@ -780,17 +782,25 @@ def test_the_done_step_keeps_its_focus_across_stages(espanso: FakeRunner) -> Non
     blocked = BlockedLoad()
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        # The wizard mounted, shown the quick State and read its plan: nothing of its start
+        # is still on its way (a focus moves after a refresh, so each step below waits for it).
         await until(pilot, lambda: app.state is not None)
-        await until(pilot, lambda: isinstance(app.screen, SetupScreen))
+        await until(pilot, lambda: isinstance(app.screen, SetupScreen) and app.screen.is_mounted)
         wizard = app.screen
         assert isinstance(wizard, SetupScreen)
-        await pilot.pause()
+        await until(pilot, lambda: wizard.plan is not None or wizard.plan_error is not None)
+        quit_ = wizard.query_one("#setup-quit", Button)
         wizard.go("done")
-        await pilot.pause()
-        assert app.focused is wizard.query_one("#setup-quit")
+        await until(pilot, lambda: app.focused is quit_, lambda: app.focused)
+        # The hidden Back and Next never take the focus here, not even one already on its
+        # way (Textual lets a button in a hidden row be focused; the Windows CI did, #317).
+        for hidden in ("#setup-next-step", "#setup-back"):
+            wizard.query_one(hidden, Button).focus()
+            await pilot.pause()
+            assert app.focused is quit_, hidden
         opened = wizard.query_one("#setup-open", Button)
         opened.focus()
-        await pilot.pause()
+        await until(pilot, lambda: app.focused is opened, lambda: app.focused)
         blocked.release.set()
         await settle(pilot)
         assert _state(app).full
@@ -850,12 +860,18 @@ def test_the_checking_headline_names_only_what_is_checked(
     assert headline(rows) == (CHECKING_HEADLINE_NO_HISTORY, None)
 
 
-def test_the_stages_of_an_older_reload_never_replace_a_newer_one(espanso: FakeRunner) -> None:
+def test_the_stages_of_an_older_reload_never_replace_a_newer_one(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """#317 with #315's generation guard: within a reload the quick State comes before the
     full one; a reload started while the first is still reading shows its own quick and full
-    States, and the first one's full State (and its late update), landing after, is dropped."""
+    States, and the first one's full State, landing after, is dropped. The update check is
+    held, so its late update (which legitimately replaces the State object) lands only at the
+    end, and it is the newer reload's."""
     import threading
 
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
     release = threading.Event()
     started = threading.Event()
     loads: list[int] = []
@@ -869,30 +885,42 @@ def test_the_stages_of_an_older_reload_never_replace_a_newer_one(espanso: FakeRu
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         seen: list[tuple[int, str]] = []
+        newer_full = threading.Event()
         late = threading.Event()
         real = app._show
 
         def show(state: State, generation: int) -> None:
             seen.append((generation, state.stage))
             real(state, generation)
+            if generation == 2 and state.full:
+                newer_full.set()
             if generation == 1 and state.full:
                 late.set()
 
+        def why() -> object:
+            return {"seen": seen, "generation": app.generation, "shown": app.shown}
+
         app._show = show  # type: ignore[method-assign]
-        await until(pilot, started.is_set)  # reload 1 is in its full read: it shows nothing more
-        await until(pilot, lambda: app.state is not None)
+        await until(pilot, started.is_set, why)  # reload 1 is in its full read
+        assert app.state is not None  # its quick State was shown before (call_from_thread)
         app.reload()
-        await until(pilot, lambda: app.shown == 2 and _state(app).full)
+        await until(pilot, newer_full.is_set, why)
         newer = _state(app)
+        assert (app.shown, newer.full, newer.update.state) == (2, True, update_check.CHECKING)
         release.set()
-        await until(pilot, late.is_set)
+        await until(pilot, late.is_set, why)
         await settle(pilot)
-        assert app.state is newer
-        assert app.shown == 2
+        assert app.state is newer  # the first reload's full State was dropped
         # The first reload's quick State may have been shown before its show() was
         # wrapped; what was seen is in order, each reload quick first.
         assert seen[-1] == (1, FULL)
         assert seen[-3:-1] == [(2, QUICK), (2, FULL)]
+        # The held update check lands now: the newer reload's State with it filled in.
+        blocked.release.set()
+        landed_state = await landed(app, pilot)
+        assert app.shown == 2
+        assert landed_state.update == blocked.answer
+        assert landed_state.layers is newer.layers
 
     drive(scenario, settled=False, loader=loader)
     assert len(loads) == 2

@@ -273,8 +273,14 @@ class SetupScreen(Screen[None]):
             mark = "▶ " if id_ == step else "✓ " if i < n - 1 else "  "
             rail.append(f"{mark}{setup_guide.STEPS[id_]}\n", style="bold" if id_ == step else "")
         self.query_one("#setup-rail", Static).update(rail)
-        self.query_one("#setup-back", Button).disabled = step == self.order[0]
-        self.query_one("#setup-nav").display = step != "done"
+        done = step == "done"
+        # Hidden on the last step, and disabled too: Textual can focus a button whose row is
+        # hidden (focusable ignores an ancestor's display), so a focus already on its way to
+        # Next, or Next's hiding moving the focus to its sibling Back, would leave the focus
+        # on a button nobody sees (#317). Disabled, neither can take it.
+        self.query_one("#setup-back", Button).disabled = step == self.order[0] or done
+        self.query_one("#setup-next-step", Button).disabled = done
+        self.query_one("#setup-nav").display = not done
         if step == "done":
             # Its own focus (Quit): the hidden Next must not take it after.
             self._show_done(focus=refocus)
