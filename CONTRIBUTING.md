@@ -53,6 +53,23 @@ Run these before opening a pull request. CI runs the same, except that it runs t
 It runs lint and type checks once, and the tests on macOS, Windows and Linux with Python 3.12
 to 3.14. Gitleaks scans every push for secrets.
 
+The `audit` workflow (`.github/workflows/audit.yml`) checks the locked dependencies for known
+vulnerabilities with pip-audit. It **fails** on any finding in the runtime set, exported
+exactly as the release pins it into `constraints.txt` (`uv export --frozen --no-dev
+--no-emit-project`), for every platform. Findings in the `dev` and `build` groups are only
+reported in the job summary, next to the runtime result; a crash of the auditor fails the job
+either way. It runs on pull requests that touch `uv.lock`, `pyproject.toml` or the workflow,
+on every push to `main`, weekly on Monday, and by hand (`workflow_dispatch`). To reproduce
+the runtime check locally:
+
+```bash
+uv export --frozen --no-dev --no-emit-project --output-file runtime.txt
+uvx pip-audit==2.10.1 --requirement runtime.txt --disable-pip --require-hashes --strict
+```
+
+Locally, pip-audit skips packages whose environment marker does not match your platform; the
+workflow cuts the markers first.
+
 ```bash
 uv run pytest                                   # unit tests, no network
 uv run ruff check . && uv run ruff format --check .

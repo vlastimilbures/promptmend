@@ -1,0 +1,126 @@
+# Known vulnerabilities in the locked dependencies (#302), audited with pip-audit against
+# PyPI's advisory data.
+#
+# - The runtime set, exported exactly as release.yml pins it into constraints.txt, FAILS the
+#   job on any finding: that is what every install gets.
+# - The dev and build groups (pytest, pre-commit, PyInstaller, ...) are only REPORTED in the
+#   job summary: they never reach a user. A crash of the auditor still fails the job.
+#
+# A workflow of its own rather than a job in test.yml, so that the `paths:` filter below
+# filters the audit only and never the tests. Pushes to main are not path-filtered: new
+# advisories appear without any change to uv.lock, so every main commit gets a fresh verdict
+# (the run takes well under a minute); the weekly schedule covers weeks without a push.
+name: audit
+on:
+  pull_request:
+    paths:
+      - uv.lock
+      - pyproject.toml
+      - .github/workflows/audit.yml
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 5 * * 1"  # Mondays 05:23 UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: audit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PIP_AUDIT: pip-audit==2.10.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      # The runtime export is release.yml's constraints.txt command, with hashes. pip-audit
+      # evaluates environment markers against this Linux runner and would silently skip
+      # Windows- or macOS-only packages (colorama), so the markers are cut: every platform's
+      # packages are audited (--quiet: no echo of the export). The summary script is shared by both audit steps.
+      - name: Export the locked sets
+        run: |
+          AUDIT_DIR="$RUNNER_TEMP/audit"
+          echo "AUDIT_DIR=$AUDIT_DIR" >> "$GITHUB_ENV"
+          mkdir -p "$AUDIT_DIR"
+          uv export --frozen --no-dev --no-emit-project --quiet --output-file "$AUDIT_DIR/runtime-export.txt"
+          uv export --frozen --only-group dev --only-group build --no-emit-project --quiet --output-file "$AUDIT_DIR/tooling-export.txt"
+          for set in runtime tooling; do
+            sed -E 's/^([^ #][^ ]*) ; .* \\$/\1 \\/' "$AUDIT_DIR/$set-export.txt" > "$AUDIT_DIR/$set.txt"
+          done
+          cat > "$AUDIT_DIR/summarize.py" <<'EOF'
+          """Turn a pip-audit JSON report into a job-summary table and an exit code.
+
+          argv: title, pip-audit's exit status, the JSON report, "fail" or "report".
+          Exit 0: clean (or findings in "report" mode); 1: findings in "fail" mode;
+          2: pip-audit itself failed (nonzero exit without a complete report).
+          """
+
+          import json
+          import os
+          import sys
+
+          title, status, report, mode = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+          try:
+              with open(report, encoding="utf-8") as f:
+                  deps = json.load(f)["dependencies"]
+          except (OSError, ValueError, KeyError, TypeError) as e:
+              print(f"pip-audit failed (exit {status}, no usable report: {e})", file=sys.stderr)
+              sys.exit(2)
+          # The PyPI service can list one advisory twice for a package: one row each.
+          rows = list({(d["name"], d["version"], v["id"]): (d["name"], d["version"], v)
+                       for d in deps for v in d.get("vulns", [])}.values())
+          if status != 0 and not rows:
+              print(f"pip-audit exited {status} without a finding", file=sys.stderr)
+              sys.exit(2)
+
+          def cell(text):
+              return " ".join(str(text).split()).replace("|", "\\|")
+
+          lines = [f"### {title}", ""]
+          if rows:
+              lines += [
+                  f"Known vulnerabilities: {len(rows)}, in {len({r[0] for r in rows})} of {len(deps)} packages"
+                  + (" (reported only, the job does not fail on these)." if mode == "report" else "."),
+                  "",
+                  "| Package | Version | Advisory | Aliases | Fixed in |",
+                  "| --- | --- | --- | --- | --- |",
+              ]
+              for name, version, v in rows:
+                  aliases = ", ".join(v.get("aliases", []))
+                  fixed = ", ".join(v.get("fix_versions", [])) or "none yet"
+                  lines.append(
+                      f"| {cell(name)} | {cell(version)} | {cell(v['id'])} | {cell(aliases)} | {cell(fixed)} |"
+                  )
+          else:
+              lines.append(f"No known vulnerabilities in {len(deps)} packages.")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("\n".join(lines) + "\n\n")
+          print("\n".join(lines))
+          sys.exit(1 if rows and mode == "fail" else 0)
+          EOF
+      # pip-audit exits 1 both on a finding and on its own errors, so the verdict comes from
+      # its JSON report, which it writes only after a complete audit. --disable-pip with
+      # --require-hashes audits the pins as they are, without resolving or installing.
+      - name: Audit the runtime set (fails on a finding)
+        run: |
+          status=0
+          uvx "$PIP_AUDIT" --requirement "$AUDIT_DIR/runtime.txt" --disable-pip --require-hashes \
+            --strict --progress-spinner off --format json --output "$AUDIT_DIR/runtime.json" || status=$?
+          python3 -I "$AUDIT_DIR/summarize.py" "Runtime (constraints.txt)" "$status" "$AUDIT_DIR/runtime.json" fail
+      - name: Audit the dev and build groups (reported only)
+        if: ${{ !cancelled() }}
+        run: |
+          status=0
+          uvx "$PIP_AUDIT" --requirement "$AUDIT_DIR/tooling.txt" --disable-pip --require-hashes \
+            --strict --progress-spinner off --format json --output "$AUDIT_DIR/tooling.json" || status=$?
+          python3 -I "$AUDIT_DIR/summarize.py" "Dev and build groups" "$status" "$AUDIT_DIR/tooling.json" report
