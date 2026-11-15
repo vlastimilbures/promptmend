@@ -97,6 +97,28 @@ class Meter:
     parse: UsageParser
     local: bool = False
 
+    def begin(self, *, loopback: bool, attempt: int) -> None:
+        """An attempt is starting. An observer with a ``begin`` method (the CLI's recorder)
+        gets the record the attempt will have if it never ends: a ``timeout`` with no status,
+        which improve's watchdog stores when it ends the process first (#307). Nothing raised
+        here reaches the caller; an observer without ``begin`` is not told."""
+        started = getattr(self.observer, "begin", None)
+        if started is None:
+            return
+        with contextlib.suppress(Exception):
+            started(
+                AttemptUsage(
+                    provider=self.provider,
+                    requested_model=self.model,
+                    endpoint="loopback" if loopback else "remote",
+                    attempt=attempt,
+                    status=None,
+                    error_kind="timeout",
+                    latency_ms=0.0,
+                    cost_state="not_applicable" if self.local else "unknown",
+                )
+            )
+
     def record(
         self,
         *,

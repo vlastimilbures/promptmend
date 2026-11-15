@@ -58,6 +58,22 @@ def attribution(trigger_id: str | None) -> tuple[str, str | None]:
     return "espanso_managed", None
 
 
+class _Collector:
+    """The usage observer of a recorded run: keeps each attempt as it ends, and the one that
+    has started and not ended yet (Meter.begin()), which Recorder.timed_out() keeps."""
+
+    def __init__(self, attempts: list[AttemptUsage]) -> None:
+        self.attempts = attempts
+        self.pending: tuple[AttemptUsage, float] | None = None
+
+    def __call__(self, usage: AttemptUsage, /) -> None:
+        self.pending = None
+        self.attempts.append(usage)
+
+    def begin(self, usage: AttemptUsage, /) -> None:
+        self.pending = (usage, time.monotonic())
+
+
 class Recorder:
     """One CLI run's record. Never raises out of any method."""
 
@@ -70,6 +86,7 @@ class Recorder:
         self.outcome = OK
         self.latency_ms: float | None = None
         self.attempts: list[AttemptUsage] = []
+        self._collector = _Collector(self.attempts)
         self._settings: Settings | None = None
         self._done = False
 
@@ -80,7 +97,7 @@ class Recorder:
     @property
     def observer(self) -> UsageObserver | None:
         """For make_provider(observer=...): collects each attempt; None when not recording."""
-        return self.attempts.append if self._settings is not None else None
+        return self._collector if self._settings is not None else None
 
     @property
     def answered(self) -> bool:
@@ -94,6 +111,17 @@ class Recorder:
     def emitted(self) -> None:
         """The output was printed: latency runs from the start of the run to here."""
         self.latency_ms = round((time.monotonic() - self._started) * 1000, 1)
+
+    def timed_out(self) -> None:
+        """improve's watchdog ended the run (#307): outcome error_marker, and the attempt
+        still in flight, if one is, kept as the timeout it became, lasting until now."""
+        self.outcome = ERROR_MARKER
+        with contextlib.suppress(Exception):
+            pending, self._collector.pending = self._collector.pending, None
+            if pending is not None:
+                usage, started = pending
+                latency = round((time.monotonic() - started) * 1000, 1)
+                self.attempts.append(dataclasses.replace(usage, latency_ms=latency))
 
     def finish(self) -> None:
         """Flush stdout, then write the operation and its attempts (once; history's own time

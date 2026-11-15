@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import re
 import sys
+import threading
+import time
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -34,7 +37,8 @@ from .prompt_builder import (
     strip_outer_fence,
     system_prompt,
 )
-from .providers.base import ProviderError, split_stop_note
+from .providers.base import ProviderError, split_stop_note, timed_out_message
+from .providers.registry import PROVIDERS
 from .redaction import DEFAULT_IGNORABLE, redact_message, redact_words
 
 if TYPE_CHECKING:
@@ -168,10 +172,105 @@ def clean(text: str) -> str:
     return _SELECTOR_RUN.sub(_keep_run, text)
 
 
-def _emit(text: str) -> None:
+def _emit(text: str, watch: _Watchdog | None = None) -> None:
     """The only way anything reaches Espanso: unsafe characters stripped, and no trailing
-    newline, since Espanso inserts stdout verbatim."""
+    newline, since Espanso inserts stdout verbatim. With improve's ``watch``, it first claims
+    the output; if the watchdog already has, nothing is printed and the run ends there."""
+    if watch is not None and not watch.claim():
+        watch.wait()  # returns only where _hard_exit does not end the process (the tests)
+        raise typer.Exit(0)
     typer.echo(clean(text), nl=False)
+
+
+# improve's hard deadline (#307): the process ends within the call's time limit plus this many
+# seconds of improve starting, with the timed-out marker, whatever blocks: name resolution, a
+# proxy lookup, the clipboard, a server trickling its reply. Past the limit, so that the
+# provider's own timeout (providers/base.py), which words the same marker and records the
+# attempt itself, ends an ordinarily slow call first. Documented in docs/usage.md.
+WATCHDOG_MARGIN = 2.0
+# Of WATCHDOG_MARGIN, the most the watchdog waits for the usage history after its marker.
+_WATCHDOG_HISTORY = 0.5
+# Names the call in the watchdog's marker when the provider name is not one of ours.
+_UNKNOWN_LABEL = "The call"
+# How the watchdog ends the process: os._exit, since the main thread may be stuck where no
+# exception reaches it, and nothing is left to flush. Patched by the tests.
+_hard_exit: Callable[[int], object] = os._exit
+
+
+def _write_fd(fd: int, data: bytes) -> None:
+    while data:
+        data = data[os.write(fd, data) :]
+
+
+class _Watchdog:
+    """improve's hard time limit (#307), and the one decision of what is printed: the run's
+    own output (_emit()) or the watchdog's marker, exactly one of them.
+
+    arm() starts a daemon timer once the call's limit is known. If it fires before _emit() has
+    claimed the output, it writes the timed-out marker (cleaned, UTF-8, with this platform's
+    newlines as sys.stdout writes them) straight to file descriptor 1: sys.stdout's lock may
+    be held by the stuck main thread, which has printed nothing, so there is nothing to flush.
+    It then gives the usage history (outcome error_marker, the attempt in flight kept as a
+    timeout) at most _WATCHDOG_HISTORY seconds in a thread of its own, and ends the process
+    with exit code 0. A run that claimed the output first is never touched; nor is one whose
+    settings did not load (there is no limit yet, and the marker is already on its way).
+    """
+
+    def __init__(self, rec: recorder.Recorder, ran: Rewrite) -> None:
+        self._rec, self._ran = rec, ran
+        self._started = time.monotonic()
+        self._lock = threading.Lock()
+        self._claimed = False
+        self._done = threading.Event()
+        self._timer: threading.Timer | None = None
+        self._marker = ""
+
+    def arm(self, cfg: Settings, provider: str) -> None:
+        spec = PROVIDERS.get(provider)
+        label = spec.label if spec is not None else _UNKNOWN_LABEL
+        self._marker = f"[promptmend: {timed_out_message(label, cfg.timeout)}]"
+        elapsed = time.monotonic() - self._started
+        delay = cfg.timeout + WATCHDOG_MARGIN - _WATCHDOG_HISTORY - elapsed
+        # Clamped: a timer past TIMEOUT_MAX would fail in its thread instead of waiting.
+        self._timer = threading.Timer(min(max(delay, 0.0), threading.TIMEOUT_MAX), self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def cancel(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+
+    def claim(self) -> bool:
+        """Take the output; False when it is already taken."""
+        with self._lock:
+            if self._claimed:
+                return False
+            self._claimed = True
+            return True
+
+    def wait(self) -> None:
+        """Wait for the watchdog to finish, which ends the process."""
+        self._done.wait()
+
+    def _fire(self) -> None:
+        if not self.claim():
+            return
+        # Nothing raised here may stop the exit below.
+        try:
+            with contextlib.suppress(Exception):
+                text = clean(sent_despite_note(self._ran.built) + self._marker)
+                _write_fd(1, text.replace("\n", os.linesep).encode("utf-8"))
+            with contextlib.suppress(Exception):
+                self._rec.profile_id = self._ran.profile_id
+                self._rec.emitted()
+                self._rec.timed_out()
+                # Bounded: a locked or slow history must not keep the process past its limit.
+                writer = threading.Thread(target=self._rec.finish, daemon=True)
+                writer.start()
+                writer.join(_WATCHDOG_HISTORY)
+        finally:
+            _hard_exit(0)
+            self._done.set()  # reached only where _hard_exit returns (the tests)
 
 
 def _show_version(value: bool) -> None:
@@ -426,6 +525,47 @@ def improve(
     """Improve a draft prompt. Errors are printed inline so Espanso shows them."""
     rec = recorder.Recorder("improve", trigger_id)
     ran = Rewrite()
+    watch = _Watchdog(rec, ran)
+    try:
+        _improve(
+            watch,
+            rec,
+            ran,
+            provider=provider,
+            profile=profile,
+            model=model,
+            tier=tier,
+            effort=effort,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            source=source,
+            text=text,
+            output=output,
+            copy=copy,
+            allow_flagged=allow_flagged,
+        )
+    finally:
+        watch.cancel()
+
+
+def _improve(
+    watch: _Watchdog,
+    rec: recorder.Recorder,
+    ran: Rewrite,
+    *,
+    provider: str | None,
+    profile: str | None,
+    model: str | None,
+    tier: str,
+    effort: str | None,
+    max_tokens: str | None,
+    timeout: str | None,
+    source: str,
+    text: str | None,
+    output: str | None,
+    copy: bool,
+    allow_flagged: bool,
+) -> None:
     try:
         loaded = Settings.load()
         rec.track(loaded)
@@ -439,6 +579,8 @@ def improve(
             timeout=timeout,
             output=output,
         )
+        # From here the run has a hard deadline: reading the clipboard can block too.
+        watch.arm(cfg, provider)
         # An unknown name is left to make_provider(), which reports it as such.
         if provider in PROVIDER_NAMES:
             check_provider_options(provider, tier, effort)
@@ -451,7 +593,7 @@ def improve(
     except Exception as exc:
         # Nothing may traceback or exit nonzero: Espanso cannot surface stderr, so emit a
         # visible bracketed marker instead of a blank expansion.
-        _emit(sent_despite_note(ran.built) + marker(exc))
+        _emit(sent_despite_note(ran.built) + marker(exc), watch)
         rec.emitted()
         rec.profile_id = ran.profile_id
         rec.outcome = failure_outcome(exc, rec)
@@ -462,10 +604,11 @@ def improve(
     rec.profile_id = ran.profile_id
     note = sent_despite_note(ran.built)
     if cfg.output == CLIPBOARD:
-        _emit(_deliver(result, note, rec))
+        _emit(_deliver(result, note, rec), watch)
     else:
         # Like clipboard output, the stop note is printed but not copied.
-        _emit(note + (_copy_failed(split_stop_note(result)[0], rec) if copy else "") + result)
+        printed = note + (_copy_failed(split_stop_note(result)[0], rec) if copy else "") + result
+        _emit(printed, watch)
     rec.emitted()
     rec.finish()
 
@@ -486,6 +629,8 @@ def _persona_alone() -> str:
 @app.command()
 def persona(trigger_id: str | None = _TRIGGER_ID) -> None:
     """Print PROMPT_PERSONA for the -p- snippet, or a fill-in placeholder when unset."""
+    # No watchdog (#307): persona makes no network call and reads no clipboard; it only
+    # loads the settings, as improve does before its watchdog is armed.
     rec = recorder.Recorder("persona", trigger_id)
     try:
         cfg = Settings.load()

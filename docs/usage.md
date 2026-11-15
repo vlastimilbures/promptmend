@@ -93,6 +93,13 @@ A rewrite takes a few seconds on `-i-` and longer on `-ip-` (measured times are 
 [benchmark](benchmark.md#at-a-glance)), at most the call's time limit
 (`PROMPT_TIMEOUT_SECONDS`, `PROMPT_PRO_TIMEOUT_SECONDS` for the pro tier).
 
+That limit is a hard one. Whatever blocks a run (a name lookup or proxy discovery that never
+returns, a clipboard that does not answer, a server that sends its reply a byte at a time), it
+ends no later than the limit plus 2 seconds after it started: the result is then the
+`[promptmend: … timed out after …s]` marker, exit code 0, and nothing else. Usually the
+provider's own timeout prints that marker at the limit; the 2-second watchdog only catches
+what that timeout cannot see.
+
 Do not type or switch windows while it runs. Espanso pastes the result wherever the focus is
 when the answer arrives, and other triggers do not expand until it finishes. Writing the
 [usage history](privacy.md#usage-history) adds up to 0.25 s after the output (1 s once, for

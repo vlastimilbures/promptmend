@@ -9,6 +9,8 @@ The usage history is switched off the same way: a health check is not usage (#11
 
 The interface's Try tab (#111) runs its stub rewrites against the same stub, in process:
 stub_server() starts it and stub_settings() points a Settings at it as stub_env() does.
+stub_server(delay=..., trickle=...) makes it slow, or never answer, for the tests of improve's
+hard time limit (#307).
 
 The timing helpers (#305) run a command through a launcher against the stub, a cold first run
 and then warm ones: `doctor --timing` (which CI's Windows jobs run) and `scripts/build_windows.py
@@ -18,6 +20,7 @@ time` use them. They time start-up and the trigger's own work, never a provider'
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import threading
@@ -90,11 +93,36 @@ class _Handler(BaseHTTPRequestHandler):
         self.rfile.read(length)  # never kept: only the path is recorded
         self.server.paths.append(self.path)
         body = json.dumps(_reply(self.path)).encode("utf-8")
+        server = self.server
+        # The wait ends early when the stub stops, so a held reply never outlives it.
+        if server.delay and server.stopping.wait(
+            None if math.isinf(server.delay) else server.delay
+        ):
+            return
+        if server.trickle:
+            self._trickle(body)
+            return
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _trickle(self, body: bytes) -> None:
+        """The whole reply, status line and headers included, one byte at a time."""
+        self.close_connection = True
+        head = (
+            f"{self.protocol_version} 200 OK\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+        )
+        try:
+            for byte in head.encode("ascii") + body:
+                if self.server.stopping.wait(self.server.trickle):
+                    return
+                self.wfile.write(bytes([byte]))
+                self.wfile.flush()
+        except OSError:  # the client gave up (the CLI ended)
+            return
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -102,6 +130,9 @@ class _Handler(BaseHTTPRequestHandler):
 
 class _StubServer(ThreadingHTTPServer):
     paths: list[str]
+    delay: float
+    trickle: float
+    stopping: threading.Event
 
 
 @dataclass(frozen=True)
@@ -117,15 +148,27 @@ class Stub:
 
 
 @contextmanager
-def stub_server() -> Iterator[Stub]:
-    """Run the stub on 127.0.0.1 (a free port) while the block runs, then stop it."""
+def stub_server(delay: float = 0.0, *, trickle: float = 0.0) -> Iterator[Stub]:
+    """Run the stub on 127.0.0.1 (a free port) while the block runs, then stop it.
+
+    By default each request is answered at once. ``delay`` waits that many seconds before
+    answering; ``math.inf`` accepts the request and never answers, holding the connection
+    open until the stub stops. ``trickle`` sends the reply, status line and headers included,
+    one byte every ``trickle`` seconds, so each read gets a byte well within any read timeout
+    while the whole reply takes far longer. A request is recorded in ``paths`` when it
+    arrives, before any wait."""
+    if delay < 0 or trickle < 0 or math.isnan(delay) or not math.isfinite(trickle):
+        raise ValueError("delay and trickle must be non-negative seconds (delay may be inf)")
     server = _StubServer(("127.0.0.1", 0), _Handler)
     server.paths = []
+    server.delay, server.trickle = delay, trickle
+    server.stopping = threading.Event()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
         yield Stub(int(server.server_address[1]), server.paths)
     finally:
+        server.stopping.set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)

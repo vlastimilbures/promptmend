@@ -196,6 +196,11 @@ def post_json(
     observer before this returns or raises, so usage the API charged for is kept even when
     the caller then fails to finalise the content. The observer's own time is not charged
     to ``timeout``, so a slow observer cannot cost the call its retry.
+
+    ``timeout`` is checked only as httpx's per-operation timers and each arriving chunk allow:
+    name resolution, system proxy discovery or a server that trickles its headers a byte at a
+    time are not bounded here. The hard deadline is improve's watchdog (cli._Watchdog, #307),
+    which ends the process with this module's timed-out marker shortly after the limit.
     """
     encoded = _encode_headers(label, headers)
     deadline = time.monotonic() + timeout
@@ -237,6 +242,8 @@ def _attempt(
 ) -> dict[str, object]:
     """One request, reported to ``meter`` (if any) however it ends."""
     outcome = outcome or _Outcome()
+    if meter is not None:
+        meter.begin(loopback=is_loopback(url), attempt=outcome.number)
     started = time.monotonic()
     try:
         return _exchange(label, url, timeout, budget, json, headers, outcome)
@@ -255,6 +262,11 @@ def _attempt(
                 latency=ended - started,
             )
             outcome.observer_seconds = time.monotonic() - ended
+
+
+def timed_out_message(label: str, timeout: float) -> str:
+    """How a call that ran out of time is worded, by _exchange() and by improve's watchdog."""
+    return f"{label} timed out after {timeout}s"
 
 
 def _tls_failure(exc: BaseException) -> bool:
@@ -290,7 +302,7 @@ def _exchange(
     transport = httpx.HTTPTransport() if is_loopback(url) else None
     limits = httpx.Timeout(budget, connect=min(budget, CONNECT_TIMEOUT_MAX))
     stop_at = time.monotonic() + budget
-    timed_out = ProviderError(f"{label} timed out after {timeout}s", transient=True)
+    timed_out = ProviderError(timed_out_message(label, timeout), transient=True)
     content = bytearray()
     try:
         with (

@@ -65,6 +65,13 @@ All notable changes to this project are documented here. The format follows
   (`git show v0.25.0:docs/prompt-candidates/PLAN.md`).
 
 ### Fixed
+- An `improve` trigger can no longer outlive its time limit (#307). A watchdog armed once the
+  limit is known ends the run at the limit plus 2 seconds with the usual `[promptmend: …
+  timed out after …s]` marker, exit code 0 and empty stderr, even when a name lookup, proxy
+  discovery, the clipboard or a server trickling its reply blocks; before, such a run could
+  leave the trigger typed with nothing happening for as long as it hung, and other triggers
+  would not expand meanwhile. Exactly one result is ever printed, and the usage history records
+  such a run as `error_marker`, with the attempt in flight as a `timeout`.
 - Anthropic calls no longer send `PROMPT_TEMPERATURE` (default 0.2). Current Claude models
   (Opus 4.7, Sonnet 5 and later) reject a temperature with HTTP 400, so the default Anthropic
   setup and `-ic-` failed (#273). Anthropic has its own `ANTHROPIC_TEMPERATURE`, empty by
