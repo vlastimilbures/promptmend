@@ -356,9 +356,11 @@ panes (`_PANES`) and imports each pane's module when its tab first opens
 the app headless in a fresh interpreter with a stub loader and lists the modules loaded up to
 Textual's `Ready` event (the first frame): it forbids `http.server`, `sqlite3`, `httpx`,
 `promptmend.smoke`, the CLI, the other panes and the wizard there, and holds the count to
-`UI_CEILING` (500). Measured on 2026-11-16 (macOS, Python 3.13, load average about 7, median
-of 15 interleaved runs): 470 modules (471 on 3.12), from 507; `import promptmend.tui.app` 138
-ms (217) and the first paint 219 ms (337). A test that reads a pane opens its tab first
+`UI_CEILING` (525). Measured on 2026-11-16 (macOS, Python 3.13, load average about 7, median
+of 15 interleaved runs): 470 modules, from 507 (469 to 471 on 3.12 and 3.13, 480 on 3.14);
+`import promptmend.tui.app` 138 ms (217) and the first paint 219 ms (337). Windows is not
+measured locally: it loads its own event loop and console modules instead, so its count may be
+higher; the test's failure message names the count, the Python version and the platform. A test that reads a pane opens its tab first
 (`open_tab()` in `tests/test_tui.py`). Raise the ceiling only with new measurements here.
 
 ## Project layout

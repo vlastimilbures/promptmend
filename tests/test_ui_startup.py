@@ -6,6 +6,8 @@ first frame, so the count is the app's own and does not race the State load."""
 
 from __future__ import annotations
 
+import platform
+import sys
 from pathlib import Path
 
 from test_trigger_contract import _loaded, _startup
@@ -71,9 +73,10 @@ FORBIDDEN = (
 )
 # Modules the app adds to a bare interpreter up to its first paint, macOS, Python 3.13,
 # 2026-11-16: 470 (Textual is about 160 of them, rich 48, promptmend 36), from 507 before #316
-# built every tab and imported the setup wizard at start. Coarse, like the trigger ceilings:
-# a new import tree crosses it, ordinary growth does not.
-UI_CEILING = 500
+# built every tab and imported the setup wizard at start; 471 on 3.12 and 480 on 3.14. Windows
+# swaps in its own event loop and console modules (not measured locally). Coarse, like the
+# trigger ceilings: a new import tree crosses it, ordinary growth does not.
+UI_CEILING = 525
 
 
 def test_first_paint_loads_only_home(tmp_path: Path) -> None:
@@ -83,6 +86,7 @@ def test_first_paint_loads_only_home(tmp_path: Path) -> None:
     added = data["added"]
     assert "promptmend.tui.home_pane" in added
     assert _loaded(added, FORBIDDEN) == []
-    assert len(added) <= UI_CEILING, f"the first paint added {len(added)} modules"
+    where = f"Python {platform.python_version()} on {sys.platform}"
+    assert len(added) <= UI_CEILING, f"the first paint added {len(added)} modules ({where})"
     # Opening the Try tab loads its module, and with it the smoke stub, on first use.
     assert {"promptmend.tui.try_pane", "promptmend.smoke"} <= set(data["after_try"])

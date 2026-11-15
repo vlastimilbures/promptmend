@@ -198,9 +198,16 @@ class MainScreen(Screen[None]):
         if settings is None:
             return
         if tab == "settings":
-            self.call_after_refresh(settings.query_one("#settings-list").focus)
+            self.call_after_refresh(self._focus_settings_list)
         elif self.focused is not None and settings in self.focused.ancestors_with_self:
             self.set_focus(None)
+
+    def _focus_settings_list(self) -> None:
+        """After the refresh, once the Settings pane is mounted and filled (looked up then, so
+        a tab activated while it is still mounting never queries a list not there yet)."""
+        settings = self.built("settings")
+        if settings is not None and settings.ready:
+            settings.query_one("#settings-list").focus()
 
 
 class ManageApp(App[int]):
