@@ -5,7 +5,9 @@ profile. Then runs each trigger's args as a real process, as Espanso does (#18).
 
 from __future__ import annotations
 
+import contextlib
 import itertools
+import math
 import os
 import re
 import subprocess
@@ -14,6 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -413,31 +416,34 @@ def test_slow_triggers_keep_the_env_limit() -> None:
             assert argv[argv.index("--timeout") + 1] == "default", trigger
 
 
-# What Espanso sees from every trigger's real argv, all run at once to keep the suite fast:
-# a reply after about 3 s within the default limits is pasted as is; a stub slower than the
-# 1 s limit gives the timed-out marker. Either way exit 0 and empty stderr.
-def test_triggers_against_a_slow_stub() -> None:
-    with (
-        smoke.stub_server(3.0) as slow,
-        smoke.stub_server(10.0) as late,
-        ThreadPoolExecutor(max_workers=2 * len(SLOW_TRIGGERS)) as pool,
-    ):
-        replies = {
-            t: pool.submit(_timed_run, _process_argv(t), _process_env(slow.port))
-            for t in SLOW_TRIGGERS
-        }
+# What Espanso sees from every trigger's real argv, all run at once to keep the suite fast,
+# each against its own stub: a reply after about 3 s within the default limits is pasted as
+# is and is that trigger's one request, to its provider's path; a stub that never answers,
+# under the 1 s limit, gives the timed-out marker. Either way exit 0 and empty stderr. The
+# name matches the frozen Windows job's `-k process`, so it also runs through the exe.
+def test_trigger_processes_against_a_slow_stub() -> None:
+    with contextlib.ExitStack() as stack:
+        slow = {t: stack.enter_context(smoke.stub_server(3.0)) for t in SLOW_TRIGGERS}
+        late = {t: stack.enter_context(smoke.stub_server(math.inf)) for t in SLOW_TRIGGERS}
+        pool = stack.enter_context(ThreadPoolExecutor(max_workers=2 * len(SLOW_TRIGGERS)))
+        envs = {t: _process_env(slow[t].port) for t in SLOW_TRIGGERS}
+        replies = {t: pool.submit(_timed_run, _process_argv(t), envs[t]) for t in SLOW_TRIGGERS}
         markers = {
-            t: pool.submit(_timed_run, _process_argv(t), _process_env(late.port, **LIMIT_ENV))
+            t: pool.submit(_timed_run, _process_argv(t), _process_env(late[t].port, **LIMIT_ENV))
             for t in SLOW_TRIGGERS
         }
         for trigger, future in replies.items():
             proc, _ = future.result()
             assert (proc.returncode, proc.stderr) == (0, b""), trigger
             assert proc.stdout.decode("utf-8") == smoke.REPLY, trigger
+            base = urlsplit(envs[trigger][PROVIDERS[_provider(trigger)].url_setting]).path
+            (path,) = slow[trigger].paths
+            assert path.startswith(f"{base}/"), trigger
         for trigger, future in markers.items():
             proc, seconds = future.result()
             label = PROVIDERS[_provider(trigger)].label
             assert (proc.returncode, proc.stderr) == (0, b""), trigger
             assert proc.stdout.decode("utf-8") == f"[promptmend: {timed_out_message(label, LIMIT)}]"
             assert seconds <= LIMIT + cli.WATCHDOG_MARGIN + SLACK, trigger
-        assert slow.requests == len(SLOW_TRIGGERS)
+            # The watchdog may end a run on a slow runner before its request goes out.
+            assert late[trigger].requests <= 1, trigger
