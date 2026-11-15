@@ -49,6 +49,12 @@ All notable changes to this project are documented here. The format follows
 - `cli.py` is split into `sanitize.py` (the sanitiser), `pipeline.py` (the rewrite's
   steps, which the interface's Try tab now uses), `trigger.py` (the single output sink and
   improve's watchdog) and `commands/espanso.py` (#281). No command, option or output changes.
+- Contributors: the prompt's fixed wordings now have one source, their variants in
+  `prompts/default.md` (#283). `scripts/render_prompt_template.py` writes them into the `-p-`
+  template, a test fails when the template is stale or when one of `default.md`'s own examples
+  disagrees with the variants, and the benchmark reads them from the profile instead of
+  keeping copies (see CONTRIBUTING "Change the default prompt"). No wording, snippet or score
+  changes.
 - The version is read from the installed metadata only where it is shown or recorded (#318),
   so importing the usage history, doctor, deploy, the update check or the interface no longer
   loads `importlib.metadata`; a trigger that records its run reads it only when it writes the
