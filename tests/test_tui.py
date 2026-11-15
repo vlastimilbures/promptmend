@@ -456,6 +456,11 @@ def test_a_late_update_of_an_older_reload_is_dropped(
 ) -> None:
     from promptmend.tui.app import LateUpdate
 
+    # This reload's own update check is held, so only the stale one posted here can arrive:
+    # its own landing legitimately replaces the State object (seen on ubuntu 3.14, #317).
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         state = _state(app)
         newer = dataclasses.replace(
@@ -464,6 +469,7 @@ def test_a_late_update_of_an_older_reload_is_dropped(
         app.post_message(LateUpdate(newer, app.generation - 1))
         await pilot.pause()
         assert app.state is state
+        blocked.release.set()
 
     drive(scenario)
 
