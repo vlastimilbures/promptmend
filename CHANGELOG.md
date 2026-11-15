@@ -73,6 +73,14 @@ All notable changes to this project are documented here. The format follows
   on Windows Typer has therefore loaded `_ctypes` before the probe needs it. On macOS, Python
   3.13, `improve` adds 145 modules up to the provider call (167 before). No output changes.
 
+- The interface opens faster (#316): only Home is built at start; every other tab, and the
+  code behind it, is built the first time you open it (by its digit, the tab bar's arrows or
+  a click), and the setup wizard the first time it opens, so the Try tab's stub server and the
+  wizard no longer load before the first screen. A tab opened later shows the same moment as
+  the others at once. On macOS, Python 3.13, the first paint loads 470 modules instead of 507
+  (median of 15: `import promptmend.tui.app` 138 instead of 217 ms, first paint 219 instead
+  of 337 ms). No screen, key or command changes.
+
 ### Removed
 - **Breaking:** the transition paths from earlier releases (#275), ahead of 1.0.0. This breaks
   the earlier promise that `prompt-workflow` stays until 1.0.0.

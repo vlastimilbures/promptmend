@@ -348,6 +348,19 @@ them with the usage history on and off: on, the run is recorded after its output
 dependency belongs behind a lazy import in the command that needs it, never on the trigger
 path. Raise the ceiling only with new measurements here.
 
+## Interface start-up budget
+
+`promptmend ui` builds only Home before its first paint (#316): `tui/app.py` names the other
+panes (`_PANES`) and imports each pane's module when its tab first opens
+(`MainScreen.build()`), and the setup wizard when it opens. `tests/test_ui_startup.py` runs
+the app headless in a fresh interpreter with a stub loader and lists the modules loaded up to
+Textual's `Ready` event (the first frame): it forbids `http.server`, `sqlite3`, `httpx`,
+`promptmend.smoke`, the CLI, the other panes and the wizard there, and holds the count to
+`UI_CEILING` (500). Measured on 2026-11-16 (macOS, Python 3.13, load average about 7, median
+of 15 interleaved runs): 470 modules (471 on 3.12), from 507; `import promptmend.tui.app` 138
+ms (217) and the first paint 219 ms (337). A test that reads a pane opens its tab first
+(`open_tab()` in `tests/test_tui.py`). Raise the ceiling only with new measurements here.
+
 ## Project layout
 
 ```text
