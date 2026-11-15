@@ -1,8 +1,8 @@
 # Known vulnerabilities in the locked dependencies (#302), audited with pip-audit against
 # PyPI's advisory data.
 #
-# - The runtime set, exported exactly as release.yml pins it into constraints.txt, FAILS the
-#   job on any finding: that is what every install gets.
+# - The runtime set, the same set release.yml pins into constraints.txt, FAILS the job on
+#   any finding: that is what every install gets.
 # - The dev and build groups (pytest, pre-commit, PyInstaller, ...) are only REPORTED in the
 #   job summary: they never reach a user. A crash of the auditor still fails the job.
 #
@@ -42,22 +42,23 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         with:
           python-version: "3.12"
-          enable-cache: true
-      # The runtime export is release.yml's constraints.txt command, with hashes. pip-audit
-      # evaluates environment markers against this Linux runner and would silently skip
-      # Windows- or macOS-only packages (colorama), so the markers are cut: every platform's
-      # packages are audited (--quiet: no echo of the export). The summary script is shared
-      # by both audit steps.
+          # No cache, as in release.yml: a scheduled security check must not trust a cache
+          # an earlier run wrote.
+          enable-cache: false
+      # The runtime export is release.yml's constraints.txt command, as pylock.toml: pip-audit
+      # --locked audits every package in it whatever its environment marker (colorama is
+      # Windows only), and a package pinned twice under resolution markers is no error. One
+      # directory per set. The summary script is shared by both audit steps.
       - name: Export the locked sets
+        id: export
         run: |
           AUDIT_DIR="$RUNNER_TEMP/audit"
           echo "AUDIT_DIR=$AUDIT_DIR" >> "$GITHUB_ENV"
-          mkdir -p "$AUDIT_DIR"
-          uv export --frozen --no-dev --no-emit-project --quiet --output-file "$AUDIT_DIR/runtime-export.txt"
-          uv export --frozen --only-group dev --only-group build --no-emit-project --quiet --output-file "$AUDIT_DIR/tooling-export.txt"
-          for set in runtime tooling; do
-            sed -E 's/^([^ #][^ ]*) ; .* \\$/\1 \\/' "$AUDIT_DIR/$set-export.txt" > "$AUDIT_DIR/$set.txt"
-          done
+          mkdir -p "$AUDIT_DIR/runtime" "$AUDIT_DIR/tooling"
+          uv export --frozen --no-dev --no-emit-project --format pylock.toml --quiet \
+            --output-file "$AUDIT_DIR/runtime/pylock.toml"
+          uv export --frozen --only-group dev --only-group build --no-emit-project \
+            --format pylock.toml --quiet --output-file "$AUDIT_DIR/tooling/pylock.toml"
           cat > "$AUDIT_DIR/summarize.py" <<'EOF'
           """Turn a pip-audit JSON report into a job-summary table and an exit code.
 
@@ -110,18 +111,21 @@ jobs:
           sys.exit(1 if rows and mode == "fail" else 0)
           EOF
       # pip-audit exits 1 both on a finding and on its own errors, so the verdict comes from
-      # its JSON report, which it writes only after a complete audit. --disable-pip with
-      # --require-hashes audits the pins as they are, without resolving or installing.
+      # its JSON report, which it writes only after a complete audit. --locked audits the pins
+      # as they are, without resolving or installing. --exclude-newer keeps pip-audit's own
+      # dependencies to releases at least a week old (dependabot.yml's 7-day cooldown).
       - name: Audit the runtime set (fails on a finding)
         run: |
           status=0
-          uvx "$PIP_AUDIT" --requirement "$AUDIT_DIR/runtime.txt" --disable-pip --require-hashes \
-            --strict --progress-spinner off --format json --output "$AUDIT_DIR/runtime.json" || status=$?
-          python3 -I "$AUDIT_DIR/summarize.py" "Runtime (constraints.txt)" "$status" "$AUDIT_DIR/runtime.json" fail
+          uvx --exclude-newer "7 days" "$PIP_AUDIT" --locked --strict --progress-spinner off \
+            --format json --output "$AUDIT_DIR/runtime.json" "$AUDIT_DIR/runtime" || status=$?
+          python3 -I "$AUDIT_DIR/summarize.py" "Runtime (constraints.txt)" "$status" \
+            "$AUDIT_DIR/runtime.json" fail
       - name: Audit the dev and build groups (reported only)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.export.outcome == 'success' }}
         run: |
           status=0
-          uvx "$PIP_AUDIT" --requirement "$AUDIT_DIR/tooling.txt" --disable-pip --require-hashes \
-            --strict --progress-spinner off --format json --output "$AUDIT_DIR/tooling.json" || status=$?
-          python3 -I "$AUDIT_DIR/summarize.py" "Dev and build groups" "$status" "$AUDIT_DIR/tooling.json" report
+          uvx --exclude-newer "7 days" "$PIP_AUDIT" --locked --strict --progress-spinner off \
+            --format json --output "$AUDIT_DIR/tooling.json" "$AUDIT_DIR/tooling" || status=$?
+          python3 -I "$AUDIT_DIR/summarize.py" "Dev and build groups" "$status" \
+            "$AUDIT_DIR/tooling.json" report

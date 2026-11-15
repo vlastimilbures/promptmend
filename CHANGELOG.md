@@ -8,8 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 - certifi is now 2026.10.19 (#291), replacing a CA bundle with roots whose intermediate keys
-  were compromised (PYSEC-2026-4320, GHSA-6q48-6c7w-9gw2). Installs get it with the next
-  release, which pins it through the release's `constraints.txt`.
+  were compromised (PYSEC-2026-4320, GHSA-6q48-6c7w-9gw2). Constrained installs (the install
+  scripts, which use the release's `constraints.txt`, Homebrew, and the WinGet/portable zip)
+  get it with the next release; a plain `pip install promptmend` or `uv tool install
+  promptmend` already resolves the new certifi.
 
 ### Added
 - OpenAI as a direct provider (`--provider openai`, #274), called at `/chat/completions` the
