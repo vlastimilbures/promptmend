@@ -9,6 +9,10 @@ The usage history is switched off the same way: a health check is not usage (#11
 
 The interface's Try tab (#111) runs its stub rewrites against the same stub, in process:
 stub_server() starts it and stub_settings() points a Settings at it as stub_env() does.
+
+The timing helpers (#305) run a command through a launcher against the stub, a cold first run
+and then warm ones: `doctor --timing` and `scripts/build_windows.py time` (CI's frozen job) use
+them. They time start-up and the trigger's own work, never a provider's.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -37,6 +42,12 @@ TIMEOUT = 60
 # The token counts every stub reply reports, so a stub run shows a usage line.
 INPUT_TOKENS = 42
 OUTPUT_TOKENS = 7
+
+# The trigger timed by default, and how many warm runs follow the cold one.
+TRIGGER = "-i-"
+WARM_RUNS = 5  # doctor.WARM_RUNS, kept equal by tests/test_frozen.py
+# time_trigger()'s limit per run (CI's frozen job on a cold Windows runner).
+TRIGGER_TIMEOUT = 120
 
 # Runs argv with env; returns (exit code, stdout). Tests may replace it.
 Runner = Callable[[Sequence[str], Mapping[str, str]], tuple[int, bytes]]
@@ -183,3 +194,125 @@ def run(provider: str, *, runner: Runner | None = None) -> SmokeResult:
             True, output, stub.requests, "improve reached the stub and printed its reply"
         )
     return SmokeResult(False, output, stub.requests, output or f"exit code {code}, no output")
+
+
+# --- Timing (#305) -------------------------------------------------------------------------
+
+# Judges one run from (exit code, stdout, stderr): None when it is as expected, else why not.
+Expect = Callable[[int, bytes, bytes], str | None]
+
+
+def expect_output(text: str, *, strip: bool = False, show: bool = False) -> Expect:
+    """A run that exits 0, writes nothing to stderr (Espanso fails an expansion on either) and
+    prints exactly ``text`` (``strip``: give or take surrounding whitespace, for a line).
+    ``show``: a mismatch quotes what was printed, for an output that holds nothing private
+    (the version); otherwise only a marker is quoted."""
+
+    def check(code: int, out: bytes, err: bytes) -> str | None:
+        if code != 0:
+            return f"exit code {code}"
+        if err:
+            return "wrote to stderr"
+        printed = out.decode("utf-8", "replace")
+        if (printed.strip() if strip else printed) == text:
+            return None
+        if printed.startswith("[promptmend:"):
+            # A marker quotes no draft or key (it goes through redaction), so it may be shown.
+            return f"printed {printed.strip()[:200]}"
+        if show:
+            return f"printed {printed.strip()[:80]!r}, expected {text!r}"
+        return f"printed something else ({len(printed)} characters)"
+
+    return check
+
+
+def time_runs(
+    argv: Sequence[str],
+    env: Mapping[str, str],
+    runs: int,
+    expect: Expect,
+    *,
+    timeout: float = TIMEOUT,
+) -> tuple[list[float], str | None]:
+    """Seconds per run of ``argv``, the first one cold, then ``runs`` warm ones; and None, or
+    why a run went wrong (it is the last one timed: the rest are not run)."""
+    seconds: list[float] = []
+    for _ in range(runs + 1):
+        started = time.perf_counter()
+        try:
+            proc = subprocess.run(  # noqa: S603 - this CLI or its interpreter, an argv list
+                list(argv),
+                env=dict(env),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            seconds.append(time.perf_counter() - started)
+            return seconds, f"timed out after {timeout:g} s"
+        except OSError as exc:
+            return seconds, f"could not run: {type(exc).__name__}: {exc}"
+        seconds.append(time.perf_counter() - started)
+        if problem := expect(proc.returncode, proc.stdout, proc.stderr):
+            return seconds, problem
+    return seconds, None
+
+
+def trigger_args(trigger: str = TRIGGER) -> list[str]:
+    """The trigger's args after the launcher, as a match file lists them, with the draft
+    passed as an argument instead of the clipboard."""
+    from . import assets
+
+    for name in assets.match_names():
+        current = None
+        for line in assets.read_match(name).splitlines():
+            if head := assets.TRIGGER_LINE.match(line):
+                current = head.group(2)
+            elif current == trigger and line.strip().startswith("args: ["):
+                args = [str(a) for a in json.loads(line.split("args:", 1)[1])]
+                source = args.index("--source")
+                args[source : source + 2] = ["--source", "argument", "--text", "draft"]
+                return args[1:]
+    raise LookupError(f"no script var runs the CLI for {trigger}")
+
+
+def time_trigger(launcher: Sequence[str], runs: int = WARM_RUNS) -> list[float]:
+    """Seconds per run of the trigger through ``launcher`` against the stub, the first one
+    cold. Raises if a run fails as Espanso would see it (exit code, stderr, output), with the
+    tail of what it printed, for CI's log."""
+    args = trigger_args()
+    expect = expect_output(REPLY)
+    last: list[bytes] = [b"", b""]
+
+    def judged(code: int, out: bytes, err: bytes) -> str | None:
+        last[:] = [out, err]
+        return expect(code, out, err)
+
+    with stub_server() as stub:
+        seconds, problem = time_runs(
+            [*launcher, *args],
+            stub_env(stub.port, os.environ),
+            runs,
+            judged,
+            timeout=TRIGGER_TIMEOUT,
+        )
+    if problem:
+        out, err = last
+        raise RuntimeError(
+            f"the trigger failed: {problem}; stdout ends {out[-500:]!r}; stderr ends {err[-500:]!r}"
+        )
+    return seconds
+
+
+def summary(seconds: Sequence[float], launcher: str, trigger: str = TRIGGER) -> str:
+    import statistics
+
+    cold, warm = seconds[0], seconds[1:]
+    return (
+        f"### Trigger latency ({trigger} against the local stub)\n\n"
+        f"Launcher: `{launcher}`\n\n"
+        "| Run | ms |\n|-----|----|\n"
+        f"| first (cold) | {cold * 1000:.0f} |\n"
+        f"| warm, median of {len(warm)} | {statistics.median(warm) * 1000:.0f} |\n"
+    )

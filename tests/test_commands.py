@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import shutil
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -94,6 +95,14 @@ def espanso(tmp_path: Path) -> Path:
 
 def _run(*args: str, input: str | None = None) -> Result:
     return runner.invoke(app, list(args), input=input)
+
+
+def _plain(text: str) -> str:
+    """``text`` without ANSI colours, Rich's panel borders or line wrapping: Typer's help and
+    error panels are coloured and boxed under GitHub Actions (FORCE_COLOR, COLUMNS)."""
+    # Colours go without a trace (Rich may colour the two halves of `--runs` apart); borders
+    # become spaces.
+    return " ".join(re.sub(r"[│╭╮╰╯─]", " ", re.sub(r"\x1b\[[0-9;]*m", "", text)).split())
 
 
 def _tree(root: Path) -> list[Path]:
@@ -497,7 +506,11 @@ def _commands(espanso: Path) -> dict[tuple[str, ...], list[list[str]]]:
         ("history", "export"): [["history", "export"]],
         ("history", "prune"): [["history", "prune"]],
         ("history", "reset"): [["history", "reset", "--yes"]],
-        ("doctor",): [["doctor"], ["doctor", "--json", *where]],
+        ("doctor",): [
+            ["doctor"],
+            ["doctor", "--json", *where],
+            ["doctor", "--timing", "--runs", "1", "--no-clipboard"],
+        ],
         ("espanso", "status"): [["espanso", "status", *where]],
         ("espanso", "deploy"): [["espanso", "deploy", "--dry-run", *where]],
         ("espanso", "detach"): [["espanso", "detach", "--yes"]],
@@ -532,6 +545,7 @@ def test_every_command_runs_on_a_broken_config(
 ) -> None:
     _break(kind, tmp_path, monkeypatch)
     monkeypatch.setattr(deploy, "run_command", FakeRunner())
+    monkeypatch.setattr(smoke, "time_runs", _fake_time_runs)
     for argv_list in _commands(espanso).values():
         for argv in argv_list:
             result = _run(*argv, input="")
@@ -548,6 +562,102 @@ def test_every_command_runs_on_a_broken_config(
 
 def _doctor(*args: str) -> Result:
     return _run("doctor", "--launcher", LAUNCHER, *args)
+
+
+def _fake_time_runs(
+    argv: Sequence[str], env: Mapping[str, str], runs: int, expect: object
+) -> tuple[list[float], str | None]:
+    """smoke.time_runs without a child: 0.3 s cold, then 0.1 s a run; persona fails."""
+    if "persona" in argv:
+        return [0.3], "wrote to stderr"
+    return [0.3] + [0.1] * runs, None
+
+
+def test_plain_doctor_starts_no_child(
+    espanso: Path, monkeypatch: pytest.MonkeyPatch, fake_run: FakeRunner
+) -> None:
+    import subprocess
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError(f"plain doctor started a child: {args}")
+
+    monkeypatch.setattr(subprocess, "run", refuse)
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    for args in ([], ["--json"]):
+        result = _doctor("--no-clipboard", "--espanso-dir", str(espanso), *args)
+        assert result.exit_code in (0, common.PROBLEMS), result.output
+        assert "Timing" not in result.output
+    assert "timing" not in json.loads(result.stdout)
+
+
+def test_doctor_timing_json_is_additive(
+    espanso: Path, monkeypatch: pytest.MonkeyPatch, fake_run: FakeRunner
+) -> None:
+    monkeypatch.setattr(smoke, "time_runs", _fake_time_runs)
+    result = _doctor("--no-clipboard", "--espanso-dir", str(espanso), "--json", "--timing")
+    data = json.loads(result.stdout)
+    assert set(data) == {"schema_version", "version", "status", "checks", "timing"}
+    assert data["schema_version"] == 1
+    assert tuple(data["checks"]) == doctor.CHECK_IDS
+    timing = data["timing"]
+    assert set(timing) == {
+        "warm_runs",
+        "launcher",
+        "launcher_note",
+        "drift_note",
+        "interpreter",
+        "runs",
+        "checks_ms",
+    }
+    assert timing["warm_runs"] == 5
+    assert timing["launcher"] is None  # LAUNCHER is not a file here
+    for run in timing["runs"]:
+        assert set(run) == {
+            "command",
+            "via",
+            "status",
+            "cold_ms",
+            "warm_median_ms",
+            "warm_runs",
+            "message",
+        }
+    persona = next(r for r in timing["runs"] if r["command"] == "persona")
+    assert (persona["status"], persona["message"]) == ("failed", "wrote to stderr")
+    assert set(timing["checks_ms"]) <= set(doctor.CHECK_IDS)
+    # The exit code still comes from the checks alone (here the missing key).
+    assert result.exit_code == common.PROBLEMS
+    assert data["status"] == "fail"
+
+
+def test_doctor_timing_table(
+    espanso: Path, monkeypatch: pytest.MonkeyPatch, fake_run: FakeRunner
+) -> None:
+    monkeypatch.setattr(smoke, "time_runs", _fake_time_runs)
+    result = _doctor("--no-clipboard", "--espanso-dir", str(espanso), "--timing", "--runs", "2")
+    out = result.stdout
+    assert "Timing against a local stub (no provider call)" in out
+    assert "median of 2 warm" in out
+    # Normalised as doctor.timing() does it: on Windows the POSIX literal gains a drive letter.
+    shown = Path(os.path.abspath(Path(LAUNCHER).expanduser()))
+    assert f"launcher:    {shown} is not a file; timed through the interpreter only" in out
+    assert re.search(r"--version\s+interpreter\s+300\s+100\n", out)
+    assert re.search(r"persona\s+interpreter\s+300\s+-\s+failed: wrote to stderr", out)
+    assert "doctor's checks: version " in out
+    assert "Traceback" not in result.output
+    # The checks come first, the timing after them.
+    assert out.index("local_servers:") < out.index("Timing against")
+
+
+def test_doctor_runs_needs_timing() -> None:
+    result = _doctor("--runs", "3")
+    assert result.exit_code == common.USAGE
+    assert "--runs needs --timing" in _plain(result.output)
+
+
+@pytest.mark.parametrize("runs", ["0", "51"])
+def test_doctor_runs_is_bounded(runs: str) -> None:
+    result = _doctor("--timing", "--runs", runs)
+    assert result.exit_code == common.USAGE
 
 
 def test_doctor_json_schema_is_stable(
@@ -816,7 +926,7 @@ def test_stats_text_states_the_caveats_and_the_history(
 def test_stats_help_states_the_caveats(monkeypatch: pytest.MonkeyPatch) -> None:
     # Help panels wrap at the terminal width, which differs on CI runners (Windows too).
     monkeypatch.setenv("COLUMNS", "400")
-    out = " ".join(re.sub(r"\x1b\[[0-9;]*m|[│╭╮╰╯─]", " ", _run("stats", "--help").stdout).split())
+    out = _plain(_run("stats", "--help").stdout)
     assert "not provider billing" in out
     assert "rendered does not mean pasted" in out
     assert "ignore PROMPT_PROVIDER" in out

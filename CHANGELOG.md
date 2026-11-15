@@ -23,6 +23,12 @@ All notable changes to this project are documented here. The format follows
   data-protection gate always runs and `PROMPT_LOCAL_ONLY=true` refuses it. Its usage records
   hold its token counts; OpenAI reports no cost, so the cost is unknown.
 - A `-io-` trigger for OpenAI, shipped commented out like `-ic-`; it uses `PROMPT_PROFILE`.
+- `promptmend doctor --timing [--runs N]` (#305) measures how fast this install starts the way
+  Espanso runs it: `--version`, `persona` and a stub `-i-` trigger, each through the launcher
+  and through the interpreter, the first run and the median of N warm ones (default 5), plus
+  the interface's import time and each check's duration. The children run against the smoke
+  test's local stub with a placeholder key, so no provider is called and its time is left out.
+  `--json` adds a `timing` key (`schema_version` stays 1); plain `doctor` is unchanged.
 
 ### Changed
 - `--effort` is accepted with `--provider openai` too (it sets `OPENAI_REASONING_EFFORT` for
