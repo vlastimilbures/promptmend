@@ -51,8 +51,9 @@ PROFILE_INTRO = (
 )
 
 KEYS_INTRO = (
-    "Keys are saved in the secret store (secrets.toml, readable only by you), never in "
-    "config.toml, and are never shown again. Leave a field empty to keep what is there."
+    "Keys are saved in the secrets file (secrets.toml, a plaintext file readable only by "
+    "your account), never in config.toml, and are never shown again. Leave a field empty "
+    "to keep what is there."
 )
 
 
@@ -93,7 +94,7 @@ def unread_env_note(env_files: Sequence[Path]) -> str | None:
     files = ", ".join(map(str, env_files))
     return (
         f"{files} is no longer read: choose its settings again here (they are saved in "
-        "config.toml and the secret store), then remove it."
+        "config.toml and the secrets file), then remove it."
     )
 
 

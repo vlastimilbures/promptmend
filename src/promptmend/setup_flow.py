@@ -7,7 +7,7 @@ checks both); Typer still arrives through commands.common and commands.settings,
 setting services and no_key() live. It writes only
 through the services the headless commands use (`config set`/`unset`, `secrets set`,
 `espanso deploy`), so each write goes through config_files.write_atomic() and a key only ever
-reaches the secret store.
+reaches the secrets file.
 
 The two flows still differ where they always have (an interactive step-by-step wizard against a
 one-shot printout); this module keeps each one's behaviour rather than unify it, and its
@@ -36,7 +36,7 @@ DEFAULTS = {f.metadata["env"]: f.metadata["default"] for f in setting_fields()}
 @dataclass(frozen=True)
 class Storage:
     """Where setup may save: ``legacy`` is the .env PROMPTMEND_ENV names (then neither
-    config.toml nor the secret store is read, so nothing is saved), and ``unread`` setup's
+    config.toml nor the secrets file is read, so nothing is saved), and ``unread`` setup's
     note on a .env this release does not read (config.unread_env_files()), looked for only
     outside legacy mode."""
 
@@ -163,7 +163,7 @@ def needed_keys(layers: config.ConfigLayers, settings: config.Settings) -> list[
 
 
 def save_key(name: str, value: str) -> None:
-    """Save one key in the secret store (`secrets set`'s service; never config.toml), raising
+    """Save one key in the secrets file (`secrets set`'s service; never config.toml), raising
     one of KEY_ERRORS. ``value`` comes from stdin, getpass or the wizard's masked field."""
     settings_cmd.store_key(name, value)
 
