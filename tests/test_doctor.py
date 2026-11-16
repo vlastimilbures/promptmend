@@ -1412,15 +1412,47 @@ def test_tls_reports_the_os_trust_store() -> None:
 
 # The bundle's path is not shown: only the variable that names it.
 @pytest.mark.parametrize("name", ["SSL_CERT_FILE", "SSL_CERT_DIR"])
-def test_tls_reports_a_ca_bundle(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
-    monkeypatch.setenv(name, "/secret/place/ca.pem")
+def test_tls_reports_a_ca_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
+) -> None:
+    bundle = tmp_path / "secret-place" / "ca.pem"
+    if name == "SSL_CERT_FILE":
+        bundle.parent.mkdir()
+        bundle.write_text("", "utf-8")
+    else:
+        bundle.mkdir(parents=True)
+    monkeypatch.setenv(name, str(bundle))
     check = doctor._tls_check()
     assert (check.status, dict(check.data)) == (
         "ok",
         {"verified_against": "ca_bundle", "ca_variable": name},
     )
     assert name in check.message
-    assert "/secret" not in check.message
+    assert "secret-place" not in check.message
+
+
+# A bundle that is not there fails every https call (a missing file at once, a missing folder
+# at the handshake): a warning, still without the path. A folder where a file is wanted counts
+# as missing, and the other way round.
+@pytest.mark.parametrize("name", ["SSL_CERT_FILE", "SSL_CERT_DIR"])
+@pytest.mark.parametrize("kind", ["missing", "wrong-kind"])
+def test_tls_warns_about_a_missing_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, kind: str
+) -> None:
+    path = tmp_path / "secret-place"
+    if kind == "wrong-kind" and name == "SSL_CERT_FILE":
+        path.mkdir()
+    elif kind == "wrong-kind":
+        path.write_text("", "utf-8")
+    monkeypatch.setenv(name, str(path))
+    check = doctor._tls_check()
+    assert (check.status, dict(check.data)) == (
+        "warn",
+        {"verified_against": "ca_bundle", "ca_variable": name},
+    )
+    assert name in check.message
+    assert "does not exist" in check.message
+    assert "secret-place" not in check.message
 
 
 def test_tls_reports_the_certifi_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

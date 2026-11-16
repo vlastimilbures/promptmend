@@ -757,3 +757,30 @@ def test_management_commands_do_not_import_the_interface(tmp_path: Path) -> None
     assert "promptmend.commands.ui" in loaded  # --help listed it, so the guard is real
     for module in ("textual", "promptmend.tui"):
         assert not [m for m in loaded if m == module or m.startswith(module + ".")], module
+
+
+# The https call's TLS context (#314, tls.verify()) adds no Windows extension module of its
+# own: truststore's ctypes needs _ctypes, which Typer has loaded there already. Measured after
+# typer and httpx (the call loads both first). macOS loads pyexpat for it (plistlib), which is
+# linked into the interpreter there, so the check runs on Windows only.
+_TLS_RUN = """
+import sys
+out = sys.argv[1]
+import typer
+import httpx
+started = set(sys.modules)
+from promptmend import tls
+context = tls.verify("https://x")
+import json
+from pathlib import Path
+added = sorted(set(sys.modules) - started)
+Path(out).write_text(json.dumps({"added": added, "os_store": context is not True}), "utf-8")
+"""
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows extension modules")
+def test_tls_context_adds_no_windows_extension(tmp_path: Path) -> None:
+    _, data = _startup(_TLS_RUN, tmp_path)
+    assert data["os_store"] is True
+    assert "truststore" in data["added"]
+    assert _loaded(data["added"], WINDOWS_EXTENSIONS) == []

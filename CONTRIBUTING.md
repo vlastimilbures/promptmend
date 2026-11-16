@@ -313,7 +313,10 @@ history on, 304 to 323 off; `MODULE_CEILING` stays 400): truststore's four and, 
 ctypes, ctypes.util and plistlib (with pyexpat) for the Security framework, about 4.5 ms
 cumulative under `-X importtime`. On Windows it loads ctypes and ctypes.wintypes, whose
 `_ctypes` Typer has already loaded. httpx still imports certifi for every client it builds
-(`create_ssl_context()` imports it first), so certifi stays loaded, unused for an https call.
+(`create_ssl_context()` imports it first), so certifi stays loaded: it verifies the call's
+server only in the fallback, but still an `https://` proxy's own certificate (httpcore's
+`default_ssl_context()`, since httpx passes no `proxy_ssl_context`), so a certifi advisory
+can still matter at run time.
 
 On Windows (#306), every CI run (each pull request and each push to `main`) times both
 channels on `windows-latest` with `promptmend doctor --timing` and writes the table to the job

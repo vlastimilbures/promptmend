@@ -842,6 +842,11 @@ def _tls_check() -> Check:
     warning; it does mean a root installed only in the OS store is not trusted."""
     source, variable = tls.describe()
     data = {"verified_against": source, "ca_variable": variable}
+    if variable is not None and tls.missing_bundle(variable):
+        # The path is never shown: it can name a user's folders.
+        what = "file" if variable == "SSL_CERT_FILE" else "folder"
+        message = f"{variable} names a {what} that does not exist: https calls will fail"
+        return Check("tls", WARN, message, data)
     if source == tls.CA_BUNDLE:
         message = f"https certificates checked against the CA bundle {variable} names"
     elif source == tls.OS_STORE:

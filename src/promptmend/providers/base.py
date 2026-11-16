@@ -13,6 +13,8 @@ from ..redaction import safe_repr, scan
 from .usage import Meter
 
 if TYPE_CHECKING:
+    import ssl
+
     import httpx
 
 
@@ -82,14 +84,20 @@ def error_detail(body: object) -> str:
     message = error.get("message") if isinstance(error, dict) else error
     if not isinstance(message, str):
         return ""
+    return _one_line(message, SERVER_MESSAGE_MAX)
+
+
+def _one_line(message: str, limit: int) -> str:
+    """``message`` as one short printable line of at most ``limit`` characters, or "" when it
+    matches a sensitive pattern."""
     # Bounded before the scan, which then sees everything that could be shown.
-    words = " ".join(message[: SERVER_MESSAGE_MAX * 4].split())
+    words = " ".join(message[: limit * 4].split())
     # Drops control, bidi, zero-width and tag characters (Unicode "Other"/"Separator").
     text = "".join(char for char in words if char.isprintable())
     if scan(text):
         return ""
-    if len(text) > SERVER_MESSAGE_MAX:
-        return text[: SERVER_MESSAGE_MAX - 1] + "…"
+    if len(text) > limit:
+        return text[: limit - 1] + "…"
     return text
 
 
@@ -275,20 +283,40 @@ def timed_out_message(label: str, timeout: float) -> str:
     return f"{label} timed out after {timeout}s"
 
 
-def _tls_failure(exc: BaseException) -> bool:
-    """Whether a certificate failure (``ssl.SSLCertVerificationError``: an untrusted or
-    self-signed certificate, a hostname mismatch) caused ``exc``. Other TLS errors, such as
-    a handshake the network dropped (``SSLEOFError``), may pass on a second try."""
+# The longest certificate-failure reason a marker repeats: the OS words it, partly from what
+# the server's certificate says, so it is kept short and stripped like a server message.
+TLS_REASON_MAX = 80
+
+
+def _tls_failure(exc: BaseException) -> ssl.SSLCertVerificationError | None:
+    """The certificate failure (``ssl.SSLCertVerificationError``: an untrusted or
+    self-signed certificate, a hostname mismatch) that caused ``exc``, if one did. Other TLS
+    errors, such as a handshake the network dropped (``SSLEOFError``), may pass on a second
+    try."""
     import ssl  # httpx has loaded it already
 
     seen: set[int] = set()
     cause: BaseException | None = exc
     while cause is not None and id(cause) not in seen:
         if isinstance(cause, ssl.SSLCertVerificationError):
-            return True
+            return cause
         seen.add(id(cause))
         cause = cause.__cause__ or cause.__context__
-    return False
+    return None
+
+
+def tls_message(label: str, error: ssl.SSLCertVerificationError) -> str:
+    """A certificate failure in our own words, with at most the reason (OpenSSL's
+    ``verify_message``, else truststore's single argument) as one short, printable, scanned
+    line without brackets, so a hostile certificate name cannot shape the marker."""
+    reason = getattr(error, "verify_message", None)
+    if not isinstance(reason, str) or not reason:
+        reason = next((arg for arg in error.args if isinstance(arg, str)), "")
+    reason = _one_line(reason.replace("[", " ").replace("]", " "), TLS_REASON_MAX)
+    return (
+        f"{label}: the server's certificate is not trusted by this computer "
+        f"(TLS verification failed{': ' + reason if reason else ''}); see `promptmend doctor`"
+    )
 
 
 def _exchange(
@@ -340,11 +368,12 @@ def _exchange(
     except httpx.ConnectError as exc:
         outcome.error_kind = "refused"
         tls = _tls_failure(exc)
-        refused = ProviderError(f"{label} request failed: {exc}", transient=not tls)
+        message = f"{label} request failed: {exc}" if tls is None else tls_message(label, tls)
+        refused = ProviderError(message, transient=tls is None)
         refused.__cause__ = exc  # kept when post_json re-raises it after the retry
         # A local server that refuses the connection is not running, and a certificate
         # failure fails the same way again: a second try a second later only delays the marker.
-        if is_loopback(url) or tls:
+        if is_loopback(url) or tls is not None:
             raise refused from exc
         raise _Retry(refused) from exc
     except httpx.HTTPError as exc:

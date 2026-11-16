@@ -10,8 +10,9 @@ proxy, a company CA) is trusted without pointing SSL_CERT_FILE at a bundle.
   for ``verify=True``; config.ConfigLayers never takes them from a settings file);
 - otherwise a ``truststore.SSLContext``: the macOS Security framework, the Windows CryptoAPI,
   or OpenSSL's system paths on Linux;
-- if truststore cannot load on this platform (ImportError, OSError from its ctypes
-  bindings): True again, httpx's certifi bundle, today's behaviour.
+- if truststore cannot load or build a context here (any exception: an ImportError, an
+  OSError from its ctypes bindings, anything else): True again, httpx's certifi bundle, the
+  behaviour before #314. The owner's choice: the call still works, and is still verified.
 
 Every branch verifies: the result is never False, nor a context with verification off. The
 caller never learns which branch it got, so nothing is printed on the trigger path; doctor's
@@ -41,14 +42,15 @@ def _https(url: str) -> bool:
 
 
 def os_trust_store() -> ssl.SSLContext | None:
-    """A client context verified by the OS trust store, or None when truststore cannot load."""
+    """A client context verified by the OS trust store, or None when truststore cannot load
+    or build one (whatever it raises: the caller then verifies against certifi)."""
     try:
         import ssl
 
         import truststore
 
         return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    except (ImportError, OSError):
+    except Exception:
         return None
 
 
@@ -68,6 +70,14 @@ def verify(url: str) -> ssl.SSLContext | Literal[True]:
 
 # What describe() reports an https call is verified against.
 OS_STORE, CA_BUNDLE, CERTIFI = "os_trust_store", "ca_bundle", "certifi"
+
+
+def missing_bundle(variable: str, environ: Mapping[str, str] | None = None) -> bool:
+    """Whether ``variable`` (one of CA_VARIABLES) names a path that is not there: a file for
+    SSL_CERT_FILE, a folder for SSL_CERT_DIR."""
+    environ = os.environ if environ is None else environ
+    path = environ.get(variable, "")
+    return not (os.path.isfile(path) if variable == "SSL_CERT_FILE" else os.path.isdir(path))
 
 
 def describe() -> tuple[str, str | None]:

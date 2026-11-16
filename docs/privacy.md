@@ -80,11 +80,13 @@ another machine sends the draft and the rewrite in clear text across your networ
 `https://` (or an SSH tunnel) for a server you do not reach over `localhost`.
 
 An `https://` server's certificate is checked against your operating system's trust store
-(the macOS keychain, the Windows certificate store, the system CA bundle on Linux), the same
-roots your browser trusts, including a company root that IT installed there. When
-`SSL_CERT_FILE` or `SSL_CERT_DIR` is set in the environment Espanso passes on, that bundle is
-used instead (see [Certificates](configuration.md#certificates)). Verification is never
-switched off.
+(the macOS keychain, the Windows certificate store, or on Linux the CA files at OpenSSL's
+default paths), including a company root that IT installed there. When `SSL_CERT_FILE` or
+`SSL_CERT_DIR` is set in the environment Espanso passes on, that bundle is used instead (see
+[Certificates](configuration.md#certificates)). Verification is never switched off. On macOS
+and Windows the operating system may itself fetch a missing intermediate certificate, a
+revocation (OCSP) answer or a root update while it checks, over its own connection and proxy
+settings, not PromptMend's; that request carries no draft or key.
 
 What never leaves this machine: the usage history, your settings files and keys (a key only as
 the authentication header of its own provider), and anything else on the clipboard before or

@@ -15,7 +15,11 @@ All notable changes to this project are documented here. The format follows
   `SSL_CERT_DIR` still work as before and, when set, replace the trust store; where
   truststore cannot load, calls fall back to certifi's bundle, never to no verification.
   `promptmend doctor` reports which one applies in a new `tls` check (`doctor --json`:
-  `verified_against`, `ca_variable`). See
+  `verified_against`, `ca_variable`), and warns when either variable names a file or folder
+  that is not there (without showing the path). An untrusted certificate now gives our own
+  marker, `…: the server's certificate is not trusted by this computer (TLS verification
+  failed: <reason>); see promptmend doctor`, with the operating system's reason shortened to
+  one printable line, since part of it comes from the server's certificate. See
   [Certificates](https://github.com/vlastimilbures/promptmend/blob/main/docs/configuration.md#certificates).
 - The pro tier's time limit, `PROMPT_PRO_TIMEOUT_SECONDS`, now defaults to 45 seconds, not 60
   (#311, the owner's choice). Pro calls finish well within that in the
