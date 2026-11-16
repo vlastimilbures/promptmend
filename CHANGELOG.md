@@ -197,6 +197,11 @@ All notable changes to this project are documented here. The format follows
   terminal, `promptmend doctor --timing` and `PROMPT_OUTPUT=clipboard` on a slow machine.
   README's "Never a blank paste" adds that Espanso shows nothing while the CLI runs, and
   docs/usage.md "While it runs" links the new entry.
+- Troubleshooting: uv's `Failed to persist temporary file … Access is denied` on Windows, when
+  a scanner holds a file in uv's cache (#357): set `$env:UV_NO_CACHE = "1"` before the
+  one-command install with `PROMPTMEND_CHANNEL=uv` (or `install_windows.ps1`), or pass
+  `--no-cache` to a manual `uv tool install`; the default exe channel does not use uv.
+  docs/install.md "One command with uv" links the entry.
 
 ## 0.25.0 - 2026-10-14
 
