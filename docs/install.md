@@ -191,7 +191,9 @@ with its `constraints.txt` and `--force` (PyPI is not used), and runs `uv tool u
 and `promptmend doctor --no-clipboard`. It says so when it replaces an editable install from a
 checkout. While a `promptmend` from uv's tool folder runs (the interface, or a trigger), or
 uv's `promptmend.exe` launcher, it stops before uv runs and changes nothing (see
-[Update](#update)). A `PROMPTMEND_CHANNEL` other than `exe` or `uv` is refused.
+[Update](#update)). A `PROMPTMEND_CHANNEL` other than `exe` or `uv` is refused. If uv fails with
+`Failed to persist temporary file … Access is denied`, see
+[Troubleshooting, "Triggers and Espanso"](troubleshooting.md#triggers-and-espanso) (`$env:UV_NO_CACHE = "1"`).
 
 ### uv
 
@@ -202,7 +204,9 @@ uv tool update-shell
 ```
 
 Then close every Windows Terminal window and open a new one, so it finds `promptmend` (see
-[Espanso on Windows](#espanso-on-windows)).
+[Espanso on Windows](#espanso-on-windows)). If uv fails with
+`Failed to persist temporary file … Access is denied`, add `--no-cache` (see
+[Troubleshooting, "Triggers and Espanso"](troubleshooting.md#triggers-and-espanso)).
 
 ### The exe
 
