@@ -392,6 +392,9 @@ def _regexes(raw: str) -> str:
 TIERS = ("standard", "pro")
 # OpenRouter `reasoning.effort` and OpenAI `reasoning_effort` values accepted by --effort.
 EFFORTS = ("none", "minimal", "low", "medium", "high")
+# Anthropic Messages API `output_config.effort` values (ANTHROPIC_EFFORT). Not --effort's set:
+# Anthropic has no none or minimal, so --effort stays refused for Anthropic.
+ANTHROPIC_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
 def is_valid_url(url: str) -> bool:
@@ -420,6 +423,12 @@ def _effort(raw: str) -> str:
     # A typo would otherwise reach the API and come back as an opaque HTTP 400.
     if raw.lower() not in ("", *EFFORTS):
         raise ValueError(f"empty or one of {', '.join(EFFORTS)}")
+    return raw.lower()
+
+
+def _anthropic_effort(raw: str) -> str:
+    if raw.lower() not in ("", *ANTHROPIC_EFFORTS):
+        raise ValueError(f"empty or one of {', '.join(ANTHROPIC_EFFORTS)}")
     return raw.lower()
 
 
@@ -585,9 +594,16 @@ class Settings:
     lmstudio_base_url: str = _env("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1", _base_url)
     lmstudio_model: str = _env("LMSTUDIO_MODEL", "local-model")
     anthropic_base_url: str = _env("ANTHROPIC_BASE_URL", "https://api.anthropic.com", _base_url)
-    anthropic_model: str = _env("ANTHROPIC_MODEL", "claude-sonnet-5")
+    # The current Sonnet (#277); Claude Sonnet 5 is still served as claude-sonnet-5.
+    anthropic_model: str = _env("ANTHROPIC_MODEL", "claude-sonnet-5-5")
     anthropic_api_key: str = _env("ANTHROPIC_API_KEY", "", str.strip, secret=True)
-    anthropic_max_tokens: int = _env("ANTHROPIC_MAX_TOKENS", "2400", _positive_int)
+    # Current Claude models think by default, and the thinking counts against this cap even
+    # though its text is never returned, so it leaves room for both (#277).
+    anthropic_max_tokens: int = _env("ANTHROPIC_MAX_TOKENS", "8000", _positive_int)
+    # `output_config.effort`. Claude Sonnet 5.5 rejects thinking `disabled` (HTTP 400), so low
+    # keeps a rewrite's thinking short, or skips it, for the trigger's latency (#277). Empty
+    # omits the field, for a model without an effort control (Sonnet 4.5, Haiku 4.5).
+    anthropic_effort: str = _env("ANTHROPIC_EFFORT", "low", _anthropic_effort)
     # Current Claude models (Opus 4.7, Sonnet 5 and later) return HTTP 400 for a temperature
     # (most for any value, the rest for any but the default), so empty (the default)
     # sends none; a set value is sent as is, for a model that accepts one.

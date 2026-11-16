@@ -26,7 +26,7 @@ match files it writes into Espanso. Read it after [installing](install.md) and r
 | `-iok-` | `-i-`, sent once despite a flagged label, ID, email or IBAN ([overriding a block](privacy.md#overriding-a-block)) | OpenRouter | `OPENROUTER_API_KEY` | Yes, gated, flagged soft findings let through | `PROMPT_PROFILE` |
 | `-il-` | General prompt improvement, fully local | Ollama | — | No (see below) | `general` |
 | `-ilm-` | General prompt improvement, fully local | LM Studio | — | No (see below) | `general` |
-| `-ic-` | General improvement through Claude (commented out by default) | Anthropic | `ANTHROPIC_API_KEY` | Yes, [gated](privacy.md#the-data-protection-gate) | `general` |
+| `-ic-` | General improvement through Claude (`ANTHROPIC_MODEL`, Claude Sonnet 5.5 at `ANTHROPIC_EFFORT` `low` by default; commented out by default) | Anthropic | `ANTHROPIC_API_KEY` | Yes, [gated](privacy.md#the-data-protection-gate) | `general` |
 | `-io-` | The golden-template rewrite through OpenAI directly (commented out by default) | OpenAI | `OPENAI_API_KEY` | Yes, [gated](privacy.md#the-data-protection-gate) | `PROMPT_PROFILE` (`default`) |
 | `-p-` | An empty golden template to fill in, opening with your persona | — | — | No | — |
 | `-risk-` | A static risk-analysis prompt scaffold to fill in | — | — | No | — |

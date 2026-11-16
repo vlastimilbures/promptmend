@@ -14,6 +14,7 @@ from typing import Any
 from .. import config
 from ..commands import common
 from ..config import (
+    ANTHROPIC_EFFORTS,
     DATA_COLLECTION,
     DEFAULT_SOURCE,
     EFFORTS,
@@ -136,6 +137,13 @@ SETTINGS: tuple[Meta, ...] = (
     _m(_MOD, "ANTHROPIC_BASE_URL", TEXT, "Anthropic's API address (https)."),
     _m(_MOD, "ANTHROPIC_MODEL", TEXT, "Anthropic's model."),
     _m(_MOD, "ANTHROPIC_MAX_TOKENS", INT, "Output cap of an Anthropic call, in tokens."),
+    _m(
+        _MOD,
+        "ANTHROPIC_EFFORT",
+        CHOICE,
+        "Anthropic's effort (how much Claude thinks); empty: none sent.",
+        ("", *ANTHROPIC_EFFORTS),
+    ),
     _m(_MOD, "ANTHROPIC_TEMPERATURE", TEXT, "Anthropic's sampling temperature; empty: none."),
     _m(_MOD, "OPENAI_BASE_URL", TEXT, "OpenAI's API address (https)."),
     _m(_MOD, "OPENAI_MODEL", TEXT, "OpenAI's model."),

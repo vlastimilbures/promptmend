@@ -135,6 +135,8 @@ def test_live_anthropic_runs_offline(monkeypatch: pytest.MonkeyPatch, fake_http:
     ((call),) = fake_http.calls
     assert call["url"] == "https://api.anthropic.com/v1/messages"
     assert "temperature" not in call["json"]
+    assert "thinking" not in call["json"]
+    assert call["json"]["output_config"] == {"effort": "low"}
 
 
 # The default OpenAI setup is accepted by the real API (#274): the cap as

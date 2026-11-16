@@ -948,8 +948,9 @@ def test_anthropic_sends_no_temperature_by_default(
     }
     fake_http.requests.clear()
     assert _cloud_body(monkeypatch, fake_http, "anthropic") == {
-        "model": "claude-sonnet-5",
-        "max_tokens": 2400,
+        "model": "claude-sonnet-5-5",
+        "max_tokens": 8000,
+        "output_config": {"effort": "low"},
     }
 
 
@@ -1065,7 +1066,7 @@ def test_pro_max_tokens_leaves_other_providers(
     fake_http.reply({"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"})
     result = improve("--provider", "anthropic", "--source", "argument", "--text", "d")
     assert (result.exit_code, result.stdout) == (0, "ok")
-    assert fake_http.calls[-1]["json"]["max_tokens"] == 2400
+    assert fake_http.calls[-1]["json"]["max_tokens"] == 8000
     fake_http.requests.clear()
     assert "num_predict" not in _local_body(fake_http, "ollama")["options"]
     fake_http.requests.clear()

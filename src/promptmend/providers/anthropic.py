@@ -23,6 +23,8 @@ class AnthropicProvider:
     timeout: float = 30
     max_tokens: int = 1200
     temperature: float | None = None
+    # `output_config.effort` (config.ANTHROPIC_EFFORTS); empty sends no output_config.
+    effort: str = ""
     # Receives one AttemptUsage per HTTP attempt; see providers/usage.py.
     observer: UsageObserver | None = field(default=None, repr=False, compare=False)
     # The provider in each usage record and how messages name it; make_provider() passes
@@ -47,6 +49,10 @@ class AnthropicProvider:
         }
         if self.temperature is not None:
             payload["temperature"] = self.temperature
+        # No `thinking` field: the default (adaptive) is the one setting every current Claude
+        # model accepts (Sonnet 5.5 and Opus 5.5 reject `disabled`); effort bounds it.
+        if self.effort:
+            payload["output_config"] = {"effort": self.effort}
         meter = (
             Meter(self.observer, self.name, self.model, anthropic_usage)
             if self.observer is not None

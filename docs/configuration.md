@@ -187,8 +187,9 @@ Used by `-ip-`, `-if-` and `--tier pro`.
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `ANTHROPIC_API_KEY` | — | Required for Anthropic |
-| `ANTHROPIC_MODEL` | `claude-sonnet-5` | Model |
-| `ANTHROPIC_MAX_TOKENS` | `2400` | Output cap |
+| `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Model (Claude Sonnet 5.5); `claude-sonnet-5` keeps Claude Sonnet 5 |
+| `ANTHROPIC_MAX_TOKENS` | `8000` | Output cap. Current Claude models think before they answer, and that thinking counts against the cap although its text is never shown, so the cap leaves room for both |
+| `ANTHROPIC_EFFORT` | `low` | `low`, `medium`, `high`, `xhigh` or `max`, sent as `output_config.effort`: how much Claude thinks before it writes the rewrite. `low` keeps the thinking short, or skips it on a simple draft, for a trigger's latency; Claude Sonnet 5.5 cannot switch thinking off. Empty omits it, for a model without an effort control (Claude Sonnet 4.5, Haiku 4.5). `--effort` does not set it |
 | `ANTHROPIC_TEMPERATURE` | *(empty)* | Sampling temperature for Anthropic; empty sends none, since current Claude models (Opus 4.7, Sonnet 5 and later) return HTTP 400 for a temperature (most for any value, the rest for any but the default). A set value is sent as is, so set it only for a model that accepts one |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | API endpoint; must be `https://` |
 

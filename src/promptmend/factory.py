@@ -266,6 +266,7 @@ def _build(
             timeout=cfg.timeout,
             max_tokens=max_tokens,
             temperature=temperature,
+            effort=cfg.anthropic_effort,
             observer=observer,
             name=spec.name,
             label=spec.label,

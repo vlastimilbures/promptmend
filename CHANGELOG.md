@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 ### Changed
+- Anthropic (`--provider anthropic`, the commented-out `-ic-`): the default
+  `ANTHROPIC_MODEL` is now `claude-sonnet-5-5` (Claude Sonnet 5.5, the current Sonnet), not
+  `claude-sonnet-5` (#277); set `ANTHROPIC_MODEL=claude-sonnet-5` to keep the old one. Current
+  Claude models think before they answer and that thinking counts against the output cap,
+  so a rewrite could end with "used its whole output limit before writing any text". Each
+  call now sends `output_config.effort` from the new `ANTHROPIC_EFFORT` setting (default
+  `low`: short or no thinking on a rewrite; empty omits the field, for a model without an
+  effort control), and `ANTHROPIC_MAX_TOKENS` now defaults to 8000, not 2400. No `thinking`
+  field is sent: Claude Sonnet 5.5 rejects `disabled`. A live call on these defaults is still
+  to be confirmed by the owner.
 - The pro tier's time limit, `PROMPT_PRO_TIMEOUT_SECONDS`, now defaults to 45 seconds, not 60
   (#311, the owner's choice). Pro calls finish well within that in the
   [benchmark](https://github.com/vlastimilbures/promptmend/blob/main/docs/benchmark.md#at-a-glance) and on a scanned Windows laptop (p95 about 21 s,

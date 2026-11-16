@@ -134,7 +134,7 @@ def test_pro_max_tokens_reach_triggers(
     for trigger, (_, _, tier) in EXPECTED.items():
         _, cfg, _ = _replay(stub_provider, trigger)
         assert cfg.openrouter_max_tokens == (4000 if tier == "pro" else 2400), trigger
-        assert (cfg.anthropic_max_tokens, cfg.call_max_tokens) == (2400, None), trigger
+        assert (cfg.anthropic_max_tokens, cfg.call_max_tokens) == (8000, None), trigger
     for pick, cap in (("default", 4000), ("2400", 2400), ("16000", 16000)):
         _, cfg, _ = _replay(stub_provider, "-if-", maxtokens=pick)
         assert cfg.openrouter_max_tokens == cap
