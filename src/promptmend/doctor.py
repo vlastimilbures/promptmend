@@ -514,16 +514,18 @@ def _match_check(
     if not (target / "match").is_dir():
         return Check("match_files", WARN, f"no Espanso match folder in {target}", data)
     text = deploy.launcher_text(launcher)
+    # Planned in the resolved folder, as a deploy keys its manifest entries (a linked
+    # ~/.config/espanso, or on Windows a case or mapped-drive spelling, would else miss them
+    # and report deployed files as foreign); the report keeps the folder as printed.
+    folder = deploy.resolved(target)
     # The caller's plan when it is this very comparison (the interface's), else our own.
-    # Only for the very same folder: the interface's is resolved, and for a linked folder its
-    # states could differ from the ones this report has without it, which must not happen.
     same = (
         planned is not None
-        and planned.espanso_dir == target
+        and planned.espanso_dir == folder
         and planned.launcher == text
         and planned.manifest is manifest
     )
-    the_plan = planned if same and planned is not None else deploy.plan(target, text, manifest)
+    the_plan = planned if same and planned is not None else deploy.plan(folder, text, manifest)
     data["files"] = [{"name": s.name, "state": s.state} for s in the_plan.steps]
     broken = [s for s in the_plan.steps if s.state in (deploy.STALE, deploy.MISSING)]
     edited = [s for s in the_plan.steps if s.state in (deploy.MODIFIED, deploy.FOREIGN)]

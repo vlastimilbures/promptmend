@@ -440,7 +440,8 @@ def test_with_update_remakes_only_the_version_check(tmp_path: Path) -> None:
 
 def test_a_given_plan_counts_only_for_the_same_comparison(tmp_path: Path) -> None:
     """#315: doctor takes the interface's plan only when it compares the same folder,
-    launcher and manifest; otherwise it makes its own."""
+    launcher and manifest; otherwise it makes its own. The same folder once resolved
+    (#339): a linked one shares the interface's plan of the folder it points to."""
     espanso = tmp_path / "espanso"
     (espanso / "match").mkdir(parents=True)
     manifest = deploy.Manifest(tmp_path / "manifest.json")
@@ -456,7 +457,7 @@ def test_a_given_plan_counts_only_for_the_same_comparison(tmp_path: Path) -> Non
     for planned in (deploy.plan(espanso, text, manifest), deploy.plan(tmp_path, text, manifest)):
         planned.steps[0].state = "marked"
         assert ("marked" in files(planned)) == (planned.espanso_dir == espanso)
-    # A linked folder: the interface's plan is of the resolved one, so it is not shared.
+    # A linked folder: the interface's plan is of the resolved one, so it is shared.
     link = tmp_path / "linked-espanso"
     try:
         link.symlink_to(espanso, target_is_directory=True)
@@ -464,7 +465,11 @@ def test_a_given_plan_counts_only_for_the_same_comparison(tmp_path: Path) -> Non
         return  # no symlinks here (Windows without the privilege)
     planned = deploy.plan(deploy.resolved(link), text, manifest)
     planned.steps[0].state = "marked"
-    assert "marked" not in files(planned, link)
+    assert "marked" in files(planned, link)
+    # ...but not a plan of another folder the link does not point to.
+    other = deploy.plan(tmp_path, text, manifest)
+    other.steps[0].state = "marked"
+    assert "marked" not in files(other, link)
 
 
 def test_local_servers_never_ask_another_host(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -524,6 +529,31 @@ def test_match_files_in_sync_edited_and_unknown(espanso: Path) -> None:
     assert {"name": "prompts-core.yml", "state": "modified"} in check.data["files"]
     assert "no launcher" in doctor._match_check(espanso, None, deploy.Manifest.load()).message
     assert "manifest" in doctor._match_check(espanso, LAUNCHER, None).message
+
+
+def test_match_files_through_a_linked_espanso_folder(
+    tmp_path: Path, espanso: Path, no_clipboard: None
+) -> None:
+    """#339: a deploy keys its manifest by the resolved folder, so doctor given the linked
+    folder (as `espanso path config` prints it) still finds its files deployed, and keeps
+    the folder as printed."""
+    link = tmp_path / "linked-espanso"
+    try:
+        link.symlink_to(espanso, target_is_directory=True)
+    except OSError:
+        pytest.skip("no symlinks here (Windows without the privilege)")
+    deploy.apply(deploy.plan(deploy.resolved(link), LAUNCHER, deploy.Manifest.load()))
+    report = doctor.run(espanso_dir=link, launcher=LAUNCHER, runner=_runner())
+    check = _status("match_files", report)
+    assert check.status == "ok"
+    assert check.data["espanso_dir"] == str(link)
+    assert {f["state"] for f in check.data["files"]} == {deploy.IN_SYNC}
+    target = link / "match" / "prompts-core.yml"
+    target.write_text(target.read_text("utf-8") + "# mine\n", "utf-8")
+    report = doctor.run(espanso_dir=link, launcher=LAUNCHER, runner=_runner())
+    states = {f["name"]: f["state"] for f in _status("match_files", report).data["files"]}
+    assert states.pop("prompts-core.yml") == deploy.MODIFIED
+    assert set(states.values()) == {deploy.IN_SYNC}
 
 
 def test_launcher_checks(tmp_path: Path, espanso: Path) -> None:

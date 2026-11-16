@@ -224,7 +224,8 @@ def test_gather_shows_the_same_report_as_doctor(
     espanso: FakeRunner, saved: Path, tmp_path: Path, linked: bool
 ) -> None:
     """What the reload passes doctor changes nothing in its report (#315), for a linked
-    Espanso folder too (its plan, of the resolved folder, is not shared then)."""
+    Espanso folder too (#339: both plan the resolved folder, so doctor shares the plan and
+    sees the deployed files as deployed, an edited one as modified, none as foreign)."""
     from promptmend import doctor
 
     if linked:
@@ -234,10 +235,17 @@ def test_gather_shows_the_same_report_as_doctor(
         except OSError:
             pytest.skip("no symlinks here")
         espanso.answers["espanso path config"] = f"{link}\n"
+    deploy.apply(_plan())
+    target = espanso.root / "match" / "prompts-core.yml"
+    target.write_text(target.read_text("utf-8") + "# mine\n", "utf-8")
     state = gather().settled()
     assert state.pending is None
     alone = doctor.run(clipboard=False, update=state.update)
     assert state.report.to_json() == alone.to_json()
+    match_files = next(c for c in alone.checks if c.id == "match_files")
+    states = {f["name"]: f["state"] for f in match_files.data["files"]}
+    assert states.pop("prompts-core.yml") == deploy.MODIFIED
+    assert set(states.values()) == {deploy.IN_SYNC}
 
 
 class BlockedPypi:
