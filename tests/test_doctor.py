@@ -1342,3 +1342,57 @@ def test_timing_env_refuses_anything_but_the_stub(
     # The unpatched stub env passes.
     monkeypatch.setattr(smoke, "stub_env", stub_env)
     assert doctor.timing_env(8080, {})["OPENROUTER_BASE_URL"].startswith("http://127.0.0.1:8080")
+
+
+# #368: Settings refuses a malformed base URL, but one that got past it (dataclasses.replace)
+# is named and not asked, never a traceback, and never quoted.
+@pytest.mark.parametrize("plat", ["darwin", "win32"])
+def test_local_servers_on_a_malformed_url(monkeypatch: pytest.MonkeyPatch, plat: str) -> None:
+    from dataclasses import replace
+
+    from promptmend import local_probe
+
+    asked: list[str] = []
+    monkeypatch.setattr(local_probe, "_get", asked.append)
+    layers = ConfigLayers.resolve(strict=False)
+    settings = replace(
+        layers.settings(),
+        ollama_base_url="http://user:hunter2@[::1",
+        lmstudio_base_url="http://localhost:99999/v1",
+    )
+    check = doctor._local_servers_check(layers, settings, assets.triggers(), True, plat)
+    assert check.status == doctor.INFO
+    assert check.message == (
+        "-il- needs Ollama, but OLLAMA_BASE_URL is not a valid URL, so it is not used and "
+        "not probed; -ilm- needs LM Studio, but LMSTUDIO_BASE_URL is not a valid URL, so it is "
+        "not used and not probed"
+    )
+    assert check.data["servers"]["ollama"] == {"answers": None, "triggers": ["-il-"]}
+    assert check.data["slow_localhost"] == []
+    assert asked == []
+
+
+# Repair mode puts the default in place of a refused URL; doctor does not probe that
+# default, which the triggers never reach (strict mode stops them).
+def test_local_servers_on_a_refused_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend import local_probe
+
+    asked: list[str] = []
+    monkeypatch.setattr(local_probe, "_get", asked.append)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://user:hunter2@[::1")
+    layers = ConfigLayers.resolve(strict=False)
+    settings = layers.settings()
+    assert settings.ollama_base_url == "http://127.0.0.1:11434"
+    only = [t for t in assets.triggers() if t.trigger == "-il-"]
+    check = doctor._local_servers_check(layers, settings, only, True, "win32")
+    assert check.message == (
+        "-il- needs Ollama, but OLLAMA_BASE_URL is not a valid URL, so it is not used and "
+        "not probed"
+    )
+    assert "hunter2" not in check.message
+    assert check.data["servers"]["ollama"]["answers"] is None
+    assert asked == []
+
+
+def test_on_localhost_on_a_malformed_url() -> None:
+    assert doctor._on_localhost("http://[::1") is False

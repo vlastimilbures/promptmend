@@ -132,9 +132,15 @@ setting commented out with its default, so later default changes still reach you
 - A `.env` must be UTF-8 (a byte order mark is fine); any other encoding is an error.
 - Booleans are `true` or `false`. Timeouts and token caps are numbers above 0. Temperature may
   be 0, or empty to send none.
+- Every `*_BASE_URL` must be an `http://` or `https://` URL with a host and, if it has one,
+  a port from 0 to 65535. A malformed one, such as `http://[::1` (no closing bracket) or
+  `http://127.0.0.1:99999`, is an error when the settings load: every rewrite trigger, even
+  one for another provider, stops with a marker until it is fixed (`-p-` still pastes the
+  persona), and `promptmend config validate` names the setting.
 - Anything else is reported inline rather than silently ignored. An error repeats the bad
   value only when it is short, does not look like a key and matches none of your
-  `PROMPT_EXTRA_PATTERNS`.
+  `PROMPT_EXTRA_PATTERNS`; it never repeats a `*_BASE_URL` (it may hold a password) or a
+  `PROMPT_EXTRA_PATTERNS` value.
 
 ## Proxies
 
