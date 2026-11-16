@@ -19,6 +19,7 @@ from ..config import (
     EFFORTS,
     ENV_SOURCE,
     OUTPUTS,
+    PRO_PROVIDERS,
     Entry,
     setting_fields,
 )
@@ -94,7 +95,7 @@ SETTINGS: tuple[Meta, ...] = (
         _MOD,
         "PROMPT_PROVIDER",
         CHOICE,
-        "Provider of a bare `promptmend improve` and the Try tab; triggers name their own.",
+        "Provider of a bare `promptmend improve` and the Try tab; -ip- uses PROMPT_PRO_PROVIDER.",
         PROVIDER_NAMES,
     ),
     _m(_MOD, "OPENROUTER_MODEL", TEXT, "OpenRouter's model for -i-."),
@@ -120,6 +121,13 @@ SETTINGS: tuple[Meta, ...] = (
     ),
     _m(_MOD, "OPENROUTER_PRO_MAX_TOKENS", TEXT, "The pro tier's output cap; empty: the same."),
     _m(_MOD, "PROMPT_PRO_TIMEOUT_SECONDS", TEXT, "Seconds before a pro call gives up."),
+    _m(
+        _MOD,
+        "PROMPT_PRO_PROVIDER",
+        CHOICE,
+        "Which API -ip- calls, once deployed: OpenRouter, Anthropic or OpenAI.",
+        PRO_PROVIDERS,
+    ),
     _m(
         _MOD,
         "PROMPT_PRO_PROFILE",

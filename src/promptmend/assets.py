@@ -44,6 +44,13 @@ TRIGGER_LINE = re.compile(r'^\s*(#\s*)?- trigger: "([^"]+)"')
 # The first item is the placeholder as shipped, or the launcher a deploy put there.
 _CMD = re.compile(r'^\s*(?:#\s*)?args: \["[^"]+", "(\w+)"(.*)\]')
 _OPTION = re.compile(r'"--(provider|profile|tier)", "([^"]+)"')
+# The shell form a deploy wrote from v0.7.0 to v0.20.0 (a `type: shell` var): one string, the
+# quoted launcher, the command word, then its options separated by spaces. A deployed file
+# that old still runs, so its triggers are read too.
+# The launcher never holds a quote (deploy.launcher_text() refuses one), so an escape inside
+# it is never `\"`: that keeps the match linear on a long unterminated line.
+_SHELL_CMD = re.compile(r'^\s*(?:#\s*)?cmd: "\\"(?:[^"\\]|\\[^"])*\\" (\w+)(.*)"\s*$')
+_SHELL_OPTION = re.compile(r"--(provider|profile|tier) ([^\s\"]+)")
 
 
 @dataclass(frozen=True)
@@ -74,11 +81,12 @@ def triggers_in(text: str, name: str) -> list[Trigger]:
             if current is not None:
                 found.append(current)
             current = Trigger(head.group(2), name, active=not head.group(1))
-        elif current is not None and (cmd := _CMD.match(line)):
-            options = dict(_OPTION.findall(cmd.group(2)))
+        elif current is not None and (found_cmd := _CMD.match(line) or _SHELL_CMD.match(line)):
+            pattern = _OPTION if found_cmd.re is _CMD else _SHELL_OPTION
+            options = dict(pattern.findall(found_cmd.group(2)))
             current = replace(
                 current,
-                command=cmd.group(1),
+                command=found_cmd.group(1),
                 provider=options.get("provider"),
                 profile=options.get("profile"),
                 tier=options.get("tier"),

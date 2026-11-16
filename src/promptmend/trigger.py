@@ -374,7 +374,7 @@ def run_improve(
         watch.arm_loading(timeout)
         loaded = Settings.load()
         rec.track(loaded)
-        provider = provider or loaded.provider
+        provider = provider or loaded.provider_for(tier)
         cfg = loaded.for_call(
             tier,
             provider=provider,

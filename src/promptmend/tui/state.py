@@ -20,6 +20,7 @@ import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from .. import assets, config, config_files, deploy, doctor, espanso_windows, history, update_check
 from ..commands import common
@@ -58,6 +59,9 @@ class State:
     stage: str = FULL
     # A quick State whose full read failed (why, for the rows that wait): see not_checked().
     failed: str | None = None
+    # The triggers in the match files Espanso has (doctor.deployed_triggers()): what really
+    # runs when the file is older or edited. None before the full read, or with none deployed.
+    deployed: list[assets.Trigger] | None = None
 
     @property
     def full(self) -> bool:
@@ -216,6 +220,14 @@ def gather(group_by: str = "trigger", first: State | None = None) -> State:
             found=found,
             plan=plan,
         )
+    # The folder doctor read its deployed triggers from, so Home and doctor never disagree,
+    # with or without a plan (a launcher not found, say).
+    espanso = next((c for c in report.checks if c.id == "espanso"), None)
+    folder = espanso.data.get("config_dir") if espanso else None
+    deployed = None
+    if isinstance(folder, str) and folder:
+        found_triggers, any_deployed = doctor.deployed_triggers(Path(folder))
+        deployed = found_triggers if any_deployed else None
     stats: list[history.StatsRow] = []
     stats_error = None
     try:
@@ -232,6 +244,7 @@ def gather(group_by: str = "trigger", first: State | None = None) -> State:
         update=CHECKING,
         pending=pending,
         stage=FULL,
+        deployed=deployed,
     )
     # Landed already (a cached answer, the check turned off): one State, no "checking".
     return state.settled() if pending.done() else state

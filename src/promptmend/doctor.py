@@ -52,6 +52,7 @@ CHECK_IDS = (
     "path_shadow",
     "config",
     "keys",
+    "pro_provider",
     "persona",
     "gate_packs",
     "espanso",
@@ -74,6 +75,7 @@ DATA_KEYS = {
     "path_shadow": ("command", "found", "launcher"),
     "config": ("mode", "files", "valid", "findings"),
     "keys": ("keys", "provider", "triggers"),
+    "pro_provider": ("pro_provider", "deployed", "stale"),
     "persona": ("set", "local_only", "findings"),
     "gate_packs": ("packs", "off"),
     "espanso": (
@@ -302,12 +304,65 @@ def deployed_triggers(espanso_dir: Path) -> tuple[list[assets.Trigger], bool]:
 
 def _rewrites(triggers: list[assets.Trigger], settings: config.Settings) -> dict[str, list[str]]:
     """Each provider the active rewrite triggers run on, with those triggers, in file order;
-    a trigger naming no provider runs on PROMPT_PROVIDER."""
+    a trigger naming no provider runs on PROMPT_PROVIDER (PROMPT_PRO_PROVIDER on the pro tier)."""
     found: dict[str, list[str]] = {}
     for t in triggers:
         if t.active and t.command == "improve":
-            found.setdefault(t.provider or settings.provider, []).append(t.trigger)
+            provider = t.provider or settings.provider_for(t.tier or "standard")
+            found.setdefault(provider, []).append(t.trigger)
     return found
+
+
+def stale_pro_pins(deployed: list[assets.Trigger], settings: config.Settings) -> dict[str, str]:
+    """Each active deployed pro trigger that still names a provider the shipped one leaves to
+    PROMPT_PRO_PROVIDER (-ip-'s `--provider openrouter` before #278), with that provider, when
+    PROMPT_PRO_PROVIDER is set away from its default to another one: the setting does not
+    reach that trigger until a deploy writes the new file. -if- names OpenRouter as shipped,
+    so it never counts."""
+    if settings.pro_provider == config.DEFAULT_PRO_PROVIDER:
+        return {}
+    shipped = {t.trigger: t for t in assets.triggers()}
+    stale = {}
+    for t in deployed:
+        ours = shipped.get(t.trigger)
+        if (
+            t.active
+            and t.command == "improve"
+            and t.tier == "pro"
+            and t.provider in PROVIDERS  # a known name only: file text is never echoed
+            and t.provider != settings.pro_provider
+            and ours is not None
+            and ours.provider is None
+        ):
+            stale[t.trigger] = str(t.provider)
+    return stale
+
+
+def stale_pro_message(stale: dict[str, str], pro_provider: str) -> str:
+    """What doctor and Home say about stale_pro_pins(). OpenRouter is what -ip- named before
+    #278, so that pin is an older file; any other was written in by hand."""
+    named = ", ".join(
+        f"the deployed {name} is from an older release and still names {provider}"
+        if provider == "openrouter"
+        else f"the deployed {name} names {provider} itself"
+        for name, provider in stale.items()
+    )
+    return (
+        f"{named}, so PROMPT_PRO_PROVIDER={pro_provider} does not apply to it; redeploy to "
+        "apply it (`promptmend espanso deploy`, which asks first for a file you edited, or "
+        "`promptmend espanso deploy --on-conflict ours` to replace it with a backup)"
+    )
+
+
+def _pro_provider_check(
+    settings: config.Settings, triggers: list[assets.Trigger], deployed: bool
+) -> Check:
+    """Whether PROMPT_PRO_PROVIDER reaches the deployed pro trigger (stale_pro_pins())."""
+    stale = stale_pro_pins(triggers, settings) if deployed else {}
+    data = {"pro_provider": settings.pro_provider, "deployed": deployed, "stale": stale}
+    if stale:
+        return Check("pro_provider", WARN, stale_pro_message(stale, settings.pro_provider), data)
+    return Check("pro_provider", OK, f"the pro tier runs on {settings.pro_provider}", data)
 
 
 def _keys_check(
@@ -333,7 +388,8 @@ def _keys_check(
         missing[route.key] = names
         label = factory.PROVIDER_LABELS[provider]
         if deployed:
-            problems.append(f"{', '.join(names)} use {label}, but {route.key} is not set")
+            use = "uses" if len(names) == 1 else "use"
+            problems.append(f"{', '.join(names)} {use} {label}, but {route.key} is not set")
         else:
             problems.append(
                 f"{', '.join(names)} will use {label} once deployed, but {route.key} is not set"
@@ -1041,8 +1097,10 @@ def _run(
     try:
         espanso, target = _espanso_check(run_command, espanso_dir)
     except Exception as exc:
-        espanso = Check("espanso", FAIL, f"check failed: {type(exc).__name__}")
         target = espanso_dir or deploy.default_espanso_dir()
+        # The folder the deployed triggers are read from, which the interface reads too.
+        data = {"config_dir": str(target)}
+        espanso = Check("espanso", FAIL, f"check failed: {type(exc).__name__}", data)
     clock("espanso", started)
     started = time.perf_counter()
     try:
@@ -1052,6 +1110,7 @@ def _run(
     clock("keys", started)
     checks += [
         timed("keys", lambda: _keys_check(layers, settings, triggers, deployed)),
+        timed("pro_provider", lambda: _pro_provider_check(settings, triggers, deployed)),
         timed("persona", lambda: _persona_check(settings, _persona_readable())),
         timed("gate_packs", lambda: _gate_packs_check(settings)),
         espanso,
