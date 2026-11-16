@@ -131,7 +131,7 @@ def test_watchdog_first_wins_alone(exits: Exits, capfd: pytest.CaptureFixture[st
 def test_race_prints_exactly_one(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
     for _ in range(20):
         watch, _ = _watchdog()
-        started = threading.Barrier(2)
+        started = threading.Barrier(2, timeout=10)
 
         def fire(watch: Watchdog = watch, started: threading.Barrier = started) -> None:
             started.wait()
@@ -143,7 +143,8 @@ def test_race_prints_exactly_one(exits: Exits, capfd: pytest.CaptureFixture[str]
         # The loser of the race is emit() when its Exit says so.
         with contextlib.suppress(typer.Exit):
             trigger.emit("the rewrite", watch)
-        thread.join()
+        thread.join(10)
+        assert not thread.is_alive()
         assert capfd.readouterr().out in ("the rewrite", MARKER)
 
 

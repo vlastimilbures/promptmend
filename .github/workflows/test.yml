@@ -52,9 +52,14 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --locked
-      # Coverage settings, including the fail_under floor, live in pyproject.toml.
+      # Coverage settings, including the fail_under floor, live in pyproject.toml, and so
+      # does the per-test time limit (#375): a hang fails its test after 120 s, printing every
+      # thread's stack, long before this job's timeout-minutes. --durations lists the slowest
+      # tests, so one creeping towards the limit shows in a green run's log. The step's own
+      # limit, under the job's, fails the step (its log kept) rather than cancelling the job.
       - name: Test
-        run: uv run pytest --cov
+        timeout-minutes: 12
+        run: uv run pytest --cov --durations=20
 
   # What the built wheel really contains: pyproject.toml declaring package data proves nothing.
   # The wheel (built from the sdist) goes into a clean venv outside the checkout, so neither
