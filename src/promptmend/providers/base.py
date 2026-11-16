@@ -44,7 +44,10 @@ def chat_messages(system_prompt: str, prompt: str) -> list[dict[str, str]]:
 
 def is_loopback(url: str) -> bool:
     """Whether the URL's host is this machine: localhost, 127.0.0.0/8 or ::1."""
-    host = urlsplit(url).hostname or ""
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:  # a malformed URL such as http://[::1 (#368) is not this machine
+        return False
     if host == "localhost":
         return True
     try:

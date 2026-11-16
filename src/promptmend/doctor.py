@@ -357,20 +357,31 @@ def _local_servers_check(
 ) -> Check:
     """Whether the Ollama and LM Studio the local triggers need answer. The triggers
     stay deployed either way; this says what typing one would need. Never fails or warns:
-    a ``localhost`` URL on Windows still works, so its note (#365) is only advice."""
+    a ``localhost`` URL on Windows still works, so its note (#365) is only advice. A URL
+    Settings would refuse (#368) is not asked: it is named, never quoted."""
     used = _rewrites(triggers, settings)
     servers: dict[str, dict[str, Any]] = {}
     notes = []
     slow: list[str] = []
-    asked = {
-        provider: spec.url(settings).rstrip("/") + spec.probe_path
+    wanted = {
+        provider: spec
         for provider, spec in PROVIDERS.items()
         if spec.probe_path is not None and used.get(provider)
     }
+    asked = {
+        provider: spec.url(settings).rstrip("/") + (spec.probe_path or "")
+        for provider, spec in wanted.items()
+        if config.is_valid_url(spec.url(settings))
+    }
     replies = _probe_all(asked)
-    for provider, spec in PROVIDERS.items():
-        names = used.get(provider)
-        if provider not in asked or not names:
+    for provider, spec in wanted.items():
+        names = used[provider]
+        if provider not in asked:
+            servers[provider] = {"answers": None, "triggers": names}
+            notes.append(
+                f"{', '.join(names)} needs {spec.label}, but {spec.url_setting} is not a "
+                "valid URL; not asked"
+            )
             continue
         answers = replies[provider]
         servers[provider] = {"answers": answers, "triggers": names}
@@ -394,7 +405,10 @@ def _local_servers_check(
 def _on_localhost(url: str) -> bool:
     from urllib.parse import urlsplit
 
-    return urlsplit(url).hostname == "localhost"
+    try:
+        return urlsplit(url).hostname == "localhost"
+    except ValueError:  # a malformed URL (#368), which Settings refuses
+        return False
 
 
 def _localhost_note(setting: str, url: str, names: list[str], source: str) -> str:

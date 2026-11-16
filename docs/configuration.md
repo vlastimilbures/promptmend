@@ -138,6 +138,12 @@ included (see [Privacy](privacy.md#what-is-sent-and-to-whom)).
 
 ## Settings reference
 
+Every `*_BASE_URL` must be an `http://` or `https://` URL with a host and, if it has one, a
+port from 0 to 65535. A malformed one, such as `http://[::1` (no closing bracket) or
+`http://127.0.0.1:99999`, is an error when the settings load (the trigger pastes a marker,
+`promptmend config validate` reports it); the message names the setting but never quotes the
+URL, which may hold a password.
+
 ### General
 
 | Setting | Default | Purpose |

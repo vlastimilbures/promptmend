@@ -1342,3 +1342,34 @@ def test_timing_env_refuses_anything_but_the_stub(
     # The unpatched stub env passes.
     monkeypatch.setattr(smoke, "stub_env", stub_env)
     assert doctor.timing_env(8080, {})["OPENROUTER_BASE_URL"].startswith("http://127.0.0.1:8080")
+
+
+# #368: Settings refuses a malformed base URL, but one that got past it (dataclasses.replace)
+# is named and not asked, never a traceback, and never quoted.
+@pytest.mark.parametrize("plat", ["darwin", "win32"])
+def test_local_servers_on_a_malformed_url(monkeypatch: pytest.MonkeyPatch, plat: str) -> None:
+    from dataclasses import replace
+
+    from promptmend import local_probe
+
+    asked: list[str] = []
+    monkeypatch.setattr(local_probe, "_get", asked.append)
+    layers = ConfigLayers.resolve(strict=False)
+    settings = replace(
+        layers.settings(),
+        ollama_base_url="http://user:hunter2@[::1",
+        lmstudio_base_url="http://localhost:99999/v1",
+    )
+    check = doctor._local_servers_check(layers, settings, assets.triggers(), True, plat)
+    assert check.status == doctor.INFO
+    assert check.message == (
+        "-il- needs Ollama, but OLLAMA_BASE_URL is not a valid URL; not asked; "
+        "-ilm- needs LM Studio, but LMSTUDIO_BASE_URL is not a valid URL; not asked"
+    )
+    assert check.data["servers"]["ollama"] == {"answers": None, "triggers": ["-il-"]}
+    assert check.data["slow_localhost"] == []
+    assert asked == []
+
+
+def test_on_localhost_on_a_malformed_url() -> None:
+    assert doctor._on_localhost("http://[::1") is False
