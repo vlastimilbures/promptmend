@@ -327,11 +327,11 @@ recorded run, `promptmend stats`, `promptmend history export` and `promptmend do
 records into the database. It holds at most 100 records; a record that does not fit (or a
 spool that cannot be written, or one still busy with another write when the time is up) is
 dropped, and a small `history.lost` file counts the dropped writes. A write dropped while that
-file is busy too is counted in an empty `history.lost.<random>.<n>.drop` file of its own;
-doctor adds them up. A data folder that takes no new file at all (a full disk, missing
-permissions) loses the count; doctor reports such a folder when it can see that it is not
-writable. `promptmend history reset` deletes the spool and these files too. Only a disk the
-operating system itself stalls (a hung network drive) can hold a write up longer.
+file is busy or cannot be written is counted in an empty `history.lost.<random>.<n>.drop`
+file of its own; doctor adds them up. A data folder that takes no new file at all (a full
+disk, missing permissions) loses the count; doctor reports such a folder when it can see that
+it is not writable. `promptmend history reset` deletes the spool and these files too. Only a
+disk the operating system itself stalls (a hung network drive) can hold a write up longer.
 
 Costs are kept only as the provider reported them; an unknown cost is shown as unknown, never
 as 0. For an estimate where a provider reports no cost (Anthropic, OpenAI), create `prices.toml` in the

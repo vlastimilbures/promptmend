@@ -865,6 +865,109 @@ def test_a_spool_that_is_not_valid_is_replaced_and_counted_once(
     assert store._drop_files() == []
 
 
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs POSIX directory modes, which root ignores",
+)
+def test_a_folder_that_cannot_be_listed_never_hides_the_drop_files(store: HistoryStore) -> None:
+    store.path.parent.mkdir(parents=True)
+    for _ in range(3):
+        assert store._count_dropped(1)
+    # Write and search but no read (Windows: an ACL denying List Folder): Path.glob would
+    # return [] here and hide all three.
+    store.path.parent.chmod(0o300)
+    try:
+        health = store.health()
+        with pytest.raises(HistoryError, match="cannot clear"):
+            store.reset()
+    finally:
+        store.path.parent.chmod(stat.S_IRWXU)
+    assert health.tracking_incomplete
+    assert store.health().lost_writes == 3
+    store.reset()
+    assert store.health().lost_writes == 0
+
+
+def test_a_sidecar_lock_pending_deletion_on_windows_is_waited_for(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    real_open = os.open
+    refused: list[str] = []
+
+    def pending_once(path: Any, flags: int, *args: Any) -> int:
+        if str(path).endswith(".lock") and not refused:
+            refused.append(str(path))
+            raise PermissionError("delete pending")
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(os, "open", pending_once)
+    monkeypatch.setattr(history, "_WINDOWS", True)
+    with store._sidecar_lock(time.monotonic() + 1):
+        assert store.lost_path.with_name(f"{history.LOST_NAME}.lock").exists()
+    assert len(refused) == 1
+    # Elsewhere a PermissionError is a real denial: it is not retried.
+    refused.clear()
+    monkeypatch.setattr(history, "_WINDOWS", False)
+    with pytest.raises(PermissionError), store._sidecar_lock(time.monotonic() + 1):
+        pass
+
+
+def test_a_lock_whose_nonce_cannot_be_written_is_removed(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    real_fdopen = os.fdopen
+    opened: list[int] = []
+
+    def no_fdopen(fd: int, *args: Any, **kwargs: Any) -> Any:
+        opened.append(fd)
+        raise OSError("no handle")
+
+    monkeypatch.setattr(os, "fdopen", no_fdopen)
+    with pytest.raises(OSError, match="no handle"), store._sidecar_lock(time.monotonic() + 1):
+        pass
+    assert not lock.exists()
+    with pytest.raises(OSError, match=r"Errno 9"):  # EBADF: closed, not leaked
+        os.fstat(opened[0])
+
+    class FullDisk:
+        def __init__(self, fd: int) -> None:
+            self.handle = real_fdopen(fd, "w", encoding="ascii")
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self.handle.close()
+
+        def write(self, text: str) -> int:
+            raise OSError("disk full")
+
+    monkeypatch.setattr(os, "fdopen", lambda fd, *a, **k: FullDisk(fd))
+    with pytest.raises(OSError, match="disk full"), store._sidecar_lock(time.monotonic() + 1):
+        pass
+    assert not lock.exists()
+
+
+def test_a_drop_file_with_an_odd_time_is_still_counted(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    assert store._count_dropped(2)
+    assert store._count_dropped(3)
+
+    class OddTime(datetime):
+        @classmethod
+        def fromtimestamp(cls, t: float, tz: Any = None) -> Any:
+            raise OverflowError("timestamp out of range")
+
+    monkeypatch.setattr(history, "datetime", OddTime)
+    health = store.health()
+    assert (health.lost_writes, health.last_lost_utc) == (5, None)
+
+
 def test_a_drop_file_that_cannot_be_created_is_reported(tmp_path: Path) -> None:
     blocker = tmp_path / "file"
     blocker.write_text("x")

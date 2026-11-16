@@ -51,6 +51,7 @@ LOST_NAME = "history.lost"
 # An empty `history.lost.<random>.<n>.drop` file counts n writes dropped while the marker could
 # not be updated (its lock not free in time): created with O_EXCL, so it needs no lock.
 _DROP_SUFFIX = ".drop"
+_WINDOWS = os.name == "nt"
 # Records whose write missed its budget, next to the database, until a later write stores them
 # (JSON: {"version": 1, "records": [{"operation": {column: value}, "attempts": [...]}]}).
 SPOOL_NAME = "history.spool"
@@ -793,9 +794,16 @@ class HistoryStore:
         return True
 
     def _drop_files(self) -> list[Path]:
-        """The files of the writes _count_dropped() counted; OSError when the folder cannot
-        be listed."""
-        return list(self.lost_path.parent.glob(f"{LOST_NAME}.*{_DROP_SUFFIX}"))
+        """The files of the writes _count_dropped() counted, [] with no folder; OSError when
+        the folder cannot be listed (os.listdir, not Path.glob, which hides that error and
+        would hide every drop file with it)."""
+        folder = self.lost_path.parent
+        try:
+            names = os.listdir(folder)
+        except FileNotFoundError:
+            return []
+        prefix = f"{LOST_NAME}."
+        return [folder / n for n in names if n.startswith(prefix) and n.endswith(_DROP_SUFFIX)]
 
     def _count_lost(self, dropped: int) -> None:
         """Add ``dropped`` to the marker; the caller holds the sidecar lock."""
@@ -970,15 +978,30 @@ class HistoryStore:
         while True:
             try:
                 fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
+            except (FileExistsError, PermissionError) as exc:
+                # Windows refuses to create a file whose deletion is still pending (another
+                # holder just released the lock) with PermissionError: busy, not denied.
+                if isinstance(exc, PermissionError) and not _WINDOWS:
+                    raise
                 if _break_stale(lock):
                     continue
                 if time.monotonic() >= deadline:
                     raise TimeoutError("history sidecar is locked") from None
                 time.sleep(min(0.002, max(0.0, deadline - time.monotonic())))
                 continue
-            with os.fdopen(fd, "w", encoding="ascii") as handle:
-                handle.write(nonce)
+            try:
+                with os.fdopen(fd, "w", encoding="ascii") as handle:
+                    fd = -1  # the handle owns it now and closes it
+                    handle.write(nonce)
+            except BaseException:
+                # Never leave an empty lock behind (it would block every writer until it is
+                # stale) or an open descriptor.
+                if fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+                with contextlib.suppress(OSError):
+                    lock.unlink(missing_ok=True)
+                raise
             break
         try:
             yield
@@ -1075,7 +1098,10 @@ class HistoryStore:
                 if count is None:
                     count, sidecar_ok = 1, False
                 info["lost_writes"] += count
-                when = datetime.fromtimestamp(mtime, UTC).strftime(_TIME_FORMAT)
+                try:
+                    when = datetime.fromtimestamp(mtime, UTC).strftime(_TIME_FORMAT)
+                except (OverflowError, OSError, ValueError):
+                    continue  # an odd mtime: counted, without a time
                 info["last_lost_utc"] = max(info["last_lost_utc"] or when, when)
         except Exception:
             sidecar_ok = False
