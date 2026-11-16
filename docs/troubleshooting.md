@@ -148,7 +148,7 @@ curl http://localhost:1234/v1/models      # LM Studio
 
 | Symptom | Fix |
 |---------|-----|
-| doctor: `history: tracking incomplete: N write(s) lost` | The history write took longer than its time budget, often the first one (it creates the database) or on a machine whose antivirus or endpoint protection scans the data folder. Such a write now waits in `history.spool` and is stored by the next call; the count stays until `promptmend history reset`. See [Usage history](privacy.md#usage-history) |
+| doctor: `history: tracking incomplete: N write(s) lost` | The history write took longer than its time budget, often the first one (it creates the database) or on a machine whose antivirus or endpoint protection scans the data folder. Such a write now waits in `history.spool` and is stored by the next call; the count stays until `promptmend history reset`. Under heavy contention (many triggers at once) some lost writes are counted in `history.lost.*.drop` files in the data folder, which can pile up; `promptmend history reset` clears them too. See [Usage history](privacy.md#usage-history) |
 | doctor: `N record(s) waiting in history.spool` | The database was locked or unusable when doctor tried to store them. Run `promptmend stats`, which stores them; if doctor says the database is corrupt, `promptmend history reset` starts a new one (and deletes the spooled records) |
 | A call is missing from `promptmend stats` | Run `promptmend doctor` and check its `history` line. A call whose write took too long is stored by the next call or by `stats` itself |
 

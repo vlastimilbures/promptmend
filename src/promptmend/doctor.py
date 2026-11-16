@@ -604,7 +604,10 @@ def _history_problem(health: Health) -> str:
     elif not health.writable:
         problem = "tracking incomplete: not writable; check the data folder's permissions"
     elif health.tracking_incomplete:
-        problem = "tracking incomplete: history.lost or history.spool cannot be read"
+        problem = (
+            "tracking incomplete: history.lost, history.spool or the history.lost.*.drop "
+            "files in the data folder cannot be read"
+        )
     else:
         problem = ""
     if health.error:

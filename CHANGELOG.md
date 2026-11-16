@@ -154,6 +154,14 @@ All notable changes to this project are documented here. The format follows
   setup and `-ic-` failed (#273). Anthropic has its own `ANTHROPIC_TEMPERATURE`, empty by
   default (no temperature is sent); `PROMPT_TEMPERATURE` still applies to OpenRouter, Ollama
   and LM Studio.
+- A usage-history write that could be neither stored nor kept in `history.spool` is now always
+  counted as lost (#335). When several triggers wrote at once, the lock of `history.spool` and
+  `history.lost` could stay busy past the write's time budget, and such a write vanished
+  without being counted, so `promptmend doctor` did not report it. It is now counted in an
+  empty `history.lost.<random>.<n>.drop` file of its own, which needs no lock; doctor adds
+  these to the count, and `promptmend history reset` deletes them. A data folder that takes
+  no new file at all (a full disk, missing permissions) still loses the count; doctor reports
+  such a folder when it can see that it is not writable.
 
 ### Documentation
 - Troubleshooting: "The trigger stays and nothing happens" (#308), telling the cases apart
