@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 import pytest
+import truststore
 from conftest import FakeHttp
 
 from promptmend import config, config_files, update_check
@@ -54,7 +55,9 @@ def test_the_installed_release_is_the_latest(pypi: FakeHttp) -> None:
     assert found == UpdateStatus(LATEST, "0.21.0", "2026-10-07T12:00:00+00:00")
     assert [str(r.url) for r in pypi.requests] == [update_check.URL]
     assert pypi.requests[0].headers["User-Agent"].startswith("promptmend/")
-    assert pypi.client_kwargs == [{"timeout": httpx.Timeout(update_check.TIMEOUT)}]
+    (kwargs,) = pypi.client_kwargs
+    assert type(kwargs.pop("verify")) is truststore.SSLContext  # the OS trust store (#314)
+    assert kwargs == {"timeout": httpx.Timeout(update_check.TIMEOUT)}
     cached = json.loads(update_check.cache_path().read_text("utf-8"))
     assert cached == {"checked_at": "2026-10-07T12:00:00+00:00", "latest": "0.21.0"}
 

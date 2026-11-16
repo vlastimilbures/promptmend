@@ -142,6 +142,27 @@ A base URL on this machine (`localhost`, `127.0.0.0/8`, `::1`) is always reached
 never through a proxy. A proxy that inspects TLS sees the whole request, the key header
 included (see [Privacy](privacy.md#what-is-sent-and-to-whom)).
 
+## Certificates
+
+An `https://` call (a cloud provider, the daily update check) checks the server's certificate
+against the operating system's trust store: the macOS keychain, the Windows certificate store,
+or on Linux the CA files at OpenSSL's default paths. A company that inspects HTTPS installs its
+root there, so such a network usually needs no setting.
+
+To trust a specific CA bundle instead, set `SSL_CERT_FILE` (a PEM file) or `SSL_CERT_DIR` (a
+folder of certificates) as an environment variable where Espanso sees it, as for
+[Proxies](#proxies); a settings file cannot set them. Either one replaces the trust store for
+every https call. If the trust store cannot be used on a system, calls are checked against the
+CA bundle that ships with httpx (certifi), as earlier releases always did. `promptmend doctor`
+shows which one applies (`tls`), and warns when either variable names a file or folder that
+is not there.
+
+An `https://` proxy URL is the exception: the proxy's own certificate is checked by httpcore
+(httpx's connection layer) with `ssl.create_default_context()` plus certifi's bundle, so
+against certifi's roots and Python's default CA locations, not the operating system's trust
+store. A proxy given as `http://` (the usual case)
+has no certificate of its own; the server's certificate behind it is checked as above.
+
 ## Settings reference
 
 ### General
