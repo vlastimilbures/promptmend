@@ -73,7 +73,9 @@ def test_ollama_request_shape(fake_http: FakeHttp) -> None:
     OllamaProvider("http://x/", "m", timeout=7, think=True, temperature=0.2).generate(
         "draft", "sys"
     )
-    assert fake_http.client_kwargs == [{"timeout": httpx.Timeout(7), "transport": None}]
+    assert fake_http.client_kwargs == [
+        {"timeout": httpx.Timeout(7), "transport": None, "verify": True}
+    ]
     assert fake_http.calls == [
         {
             "url": "http://x/api/chat",

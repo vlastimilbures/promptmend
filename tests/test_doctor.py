@@ -1396,3 +1396,37 @@ def test_local_servers_on_a_refused_url(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_on_localhost_on_a_malformed_url() -> None:
     assert doctor._on_localhost("http://[::1") is False
+
+
+# --- tls (#314) ---------------------------------------------------------------------------
+
+
+def test_tls_reports_the_os_trust_store() -> None:
+    check = doctor._tls_check()
+    assert (check.status, dict(check.data)) == (
+        "ok",
+        {"verified_against": "os_trust_store", "ca_variable": None},
+    )
+    assert "operating system's trust store" in check.message
+
+
+# The bundle's path is not shown: only the variable that names it.
+@pytest.mark.parametrize("name", ["SSL_CERT_FILE", "SSL_CERT_DIR"])
+def test_tls_reports_a_ca_bundle(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    monkeypatch.setenv(name, "/secret/place/ca.pem")
+    check = doctor._tls_check()
+    assert (check.status, dict(check.data)) == (
+        "ok",
+        {"verified_against": "ca_bundle", "ca_variable": name},
+    )
+    assert name in check.message
+    assert "/secret" not in check.message
+
+
+def test_tls_reports_the_certifi_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "truststore", None)
+    check = doctor._tls_check()
+    assert (check.status, check.data["verified_against"]) == ("info", "certifi")
+    assert "certifi" in check.message
+    data = doctor.Report((check,)).to_json()["checks"]["tls"]["data"]
+    assert data == {"verified_against": "certifi", "ca_variable": None}

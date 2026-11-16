@@ -142,6 +142,20 @@ A base URL on this machine (`localhost`, `127.0.0.0/8`, `::1`) is always reached
 never through a proxy. A proxy that inspects TLS sees the whole request, the key header
 included (see [Privacy](privacy.md#what-is-sent-and-to-whom)).
 
+## Certificates
+
+An `https://` call (a cloud provider, the daily update check) checks the server's certificate
+against the operating system's trust store: the macOS keychain, the Windows certificate store,
+or the system CA bundle on Linux. A company that inspects HTTPS installs its root there, so
+such a network usually needs no setting.
+
+To trust a specific CA bundle instead, set `SSL_CERT_FILE` (a PEM file) or `SSL_CERT_DIR` (a
+folder of certificates) as an environment variable where Espanso sees it, as for
+[Proxies](#proxies); a settings file cannot set them. Either one replaces the trust store for
+every https call. If the trust store cannot be used on a system, calls are checked against the
+CA bundle that ships with httpx (certifi), as earlier releases always did. `promptmend doctor`
+shows which one applies (`tls`).
+
 ## Settings reference
 
 ### General

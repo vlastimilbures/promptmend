@@ -195,6 +195,9 @@ def post_json(
     the rest of the environment (SSL_CERT_FILE for a local https server) in effect. Other
     URLs keep using the proxy, which corporate networks need.
 
+    An https certificate is checked against the operating system's trust store unless
+    SSL_CERT_FILE or SSL_CERT_DIR names a bundle (tls.verify(), #314); never unverified.
+
     With a ``meter``, every attempt, failed ones included, reports one AttemptUsage to its
     observer before this returns or raises, so usage the API charged for is kept even when
     the caller then fails to finalise the content. The observer's own time is not charged
@@ -302,14 +305,17 @@ def _exchange(
     trickles bytes is cut off here once the budget is spent."""
     import httpx
 
-    transport = httpx.HTTPTransport() if is_loopback(url) else None
+    from ..tls import verify
+
+    trust = verify(url)
+    transport = httpx.HTTPTransport(verify=trust) if is_loopback(url) else None
     limits = httpx.Timeout(budget, connect=min(budget, CONNECT_TIMEOUT_MAX))
     stop_at = time.monotonic() + budget
     timed_out = ProviderError(timed_out_message(label, timeout), transient=True)
     content = bytearray()
     try:
         with (
-            httpx.Client(timeout=limits, transport=transport) as client,
+            httpx.Client(timeout=limits, transport=transport, verify=trust) as client,
             client.stream("POST", url, json=json, headers=headers) as response,
         ):
             outcome.status = response.status_code

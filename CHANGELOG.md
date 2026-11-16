@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 ### Changed
+- https calls (the cloud providers and the daily update check) now check the server's
+  certificate against the operating system's trust store (the macOS keychain, the Windows
+  certificate store, the system CA bundle on Linux) through the new `truststore` dependency,
+  not against certifi's bundle (#314). A company network that inspects HTTPS with a root IT
+  installed in the system store now works without `SSL_CERT_FILE`. `SSL_CERT_FILE` and
+  `SSL_CERT_DIR` still work as before and, when set, replace the trust store; where
+  truststore cannot load, calls fall back to certifi's bundle, never to no verification.
+  `promptmend doctor` reports which one applies in a new `tls` check (`doctor --json`:
+  `verified_against`, `ca_variable`). See
+  [Certificates](https://github.com/vlastimilbures/promptmend/blob/main/docs/configuration.md#certificates).
 - The pro tier's time limit, `PROMPT_PRO_TIMEOUT_SECONDS`, now defaults to 45 seconds, not 60
   (#311, the owner's choice). Pro calls finish well within that in the
   [benchmark](https://github.com/vlastimilbures/promptmend/blob/main/docs/benchmark.md#at-a-glance) and on a scanned Windows laptop (p95 about 21 s,

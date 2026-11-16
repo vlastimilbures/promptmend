@@ -273,7 +273,9 @@ HISTORY_MODULES = ("promptmend.history", "sqlite3", "_sqlite3")
 
 # Modules the trigger scenarios add to a bare interpreter, macOS: 307 on Python 3.12 and 306 on
 # 3.14 with the usage history on, 296 on both with it off (see "Trigger start-up budget" in
-# CONTRIBUTING.md), +3 since #281 (sanitize, pipeline, trigger). A coarse ceiling, not a
+# CONTRIBUTING.md), +3 since #281 (sanitize, pipeline, trigger), +19 since #314 (truststore
+# and the ctypes, plistlib and subprocess it loads on macOS for an https call: 323 -> 342 on
+# 3.13 with the history on, 304 -> 323 off; about 4.5 ms). A coarse ceiling, not a
 # timing: a new dependency tree on the trigger path crosses it; ordinary growth does not.
 MODULE_CEILING = 400
 
