@@ -41,7 +41,8 @@ $ToolPython = Join-Path $Tool "Scripts\python.exe"
 
 # `uv tool install --force` removes the old tool before it deletes its folder, so a promptmend
 # still running from it (the interface holds Scripts\python.exe) would leave no promptmend at
-# all (#356): refused before uv touches anything. A process whose path is unreadable is skipped.
+# all (#356): refused before uv touches anything, best effort and once. A path .Path cannot read
+# (an elevated process, a 32-bit shell) is asked of CIM; unreadable both ways, it is skipped.
 function Get-PathKey([string]$Path) {
     return $Path.Trim().TrimEnd('\').ToLowerInvariant()
 }
@@ -49,12 +50,17 @@ $Prefix = (Get-PathKey $Tool) + '\'
 $Running = @(Get-Process -Name python, pythonw, promptmend -ErrorAction SilentlyContinue | Where-Object {
     $path = $null
     try { $path = $_.Path } catch { $path = $null }
+    if (-not $path) {
+        try {
+            $path = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).ExecutablePath
+        } catch { $path = $null }
+    }
     $path -and ((Get-PathKey $path).StartsWith($Prefix) -or (Get-PathKey $path) -eq (Get-PathKey $Cli))
 })
 if ($Running.Count -gt 0) {
     $ids = ($Running | ForEach-Object { $_.Id }) -join ', '
     Write-Error ("promptmend from $Tool or $Cli is running (process $ids): wait for it to " +
-        "finish or close it (the interface, a trigger), then run this again. Nothing was changed.")
+        "finish or close it (the interface, a trigger), then run this again. promptmend was not changed.")
     exit 1
 }
 

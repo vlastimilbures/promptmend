@@ -151,8 +151,9 @@ function Invoke-PromptMendInstall {
     }
 
     # The processes named $Names (promptmend.exe by default) started from $Folder or from one
-    # of the $Files (not readable: skipped; the exe channel's rename below then fails and is
-    # rolled back).
+    # of the $Files, best effort. A path .Path cannot read (an elevated process, a 32-bit
+    # shell) is asked of CIM; unreadable both ways, the process is skipped (the exe channel's
+    # rename below then fails and is rolled back).
     function Get-RunningFrom([string]$Folder, [string[]]$Names = @('promptmend'),
             [string[]]$Files = @()) {
         $prefix = (Get-PathKey $Folder) + '\'
@@ -161,6 +162,11 @@ function Invoke-PromptMendInstall {
         foreach ($proc in @(Get-Process -Name $Names -ErrorAction SilentlyContinue)) {
             $path = $null
             try { $path = $proc.Path } catch { $path = $null }
+            if (-not $path) {
+                try {
+                    $path = (Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.Id)" -ErrorAction SilentlyContinue).ExecutablePath
+                } catch { $path = $null }
+            }
             if (-not $path) { continue }
             $key = Get-PathKey $path
             if ($key.StartsWith($prefix) -or $exact -contains $key) { $found += $proc }
@@ -169,14 +175,14 @@ function Invoke-PromptMendInstall {
     }
 
     function Assert-NotRunning([string]$Folder, [string[]]$Names = @('promptmend'),
-            [string[]]$Files = @(), [string]$What = '') {
+            [string[]]$Files = @(), [string]$What = '', [string]$Unchanged = 'Nothing was changed.') {
         $running = Get-RunningFrom $Folder $Names $Files
         if ($running.Count -gt 0) {
             if (-not $What) { $What = "promptmend.exe from $Folder" }
             $ids = ($running | ForEach-Object { $_.Id }) -join ', '
             throw ("$What is running (process $ids): wait for it to " +
                 'finish or close it (the interface, a trigger), then run this again. ' +
-                'Nothing was changed.')
+                $Unchanged)
         }
     }
 
@@ -556,7 +562,7 @@ function Invoke-PromptMendInstall {
         # from it (the interface holds Scripts\python.exe) would leave no promptmend at all
         # (#356): refused before uv touches anything.
         $tool = Join-Path $toolDir 'promptmend'
-        Assert-NotRunning $tool @('python', 'pythonw', 'promptmend') @($cli) "promptmend from $tool or $cli"
+        Assert-NotRunning $tool @('python', 'pythonw', 'promptmend') @($cli) "promptmend from $tool or $cli" 'promptmend was not changed.'
         $receipt = Join-Path $tool 'uv-receipt.toml'
         if ((Test-Path -LiteralPath $receipt) -and
                 ((Get-Content -Raw -LiteralPath $receipt) -match '(?m)\beditable\s*=')) {

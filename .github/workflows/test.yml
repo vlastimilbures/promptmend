@@ -235,7 +235,7 @@ jobs:
             $out = powershell -NoProfile -ExecutionPolicy ByPass -Command "try { Get-Content -Raw '$script' | Invoke-Expression } catch { [Console]::Out.WriteLine(`$_.Exception.Message); exit 1 }" | Out-String
             $code = $LASTEXITCODE
             Write-Host $out
-            if ($code -eq 0 -or -not $out.Contains("is running (process") -or -not $out.Contains([string]$proc.Id) -or -not $out.Contains('Nothing was changed.')) {
+            if ($code -eq 0 -or -not $out.Contains("is running (process $($proc.Id)") -or -not $out.Contains('promptmend was not changed.')) {
               throw "install.ps1 did not refuse while $python ran (exit $code)"
             }
             if ($out.Contains('> uv tool install')) { throw "uv ran before the refusal" }

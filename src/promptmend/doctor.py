@@ -142,13 +142,13 @@ CLOSE_FIRST = "close the interface and any running promptmend, then "
 _CLOSE_FIRST_CHANNELS = ("uv", "editable")
 
 
-def upgrade_hint(install: Mapping[str, Any], platform: str = sys.platform) -> str:
+def upgrade_hint(install: Mapping[str, Any], plat: str = sys.platform) -> str:
     """The update command for the install check's data: a checkout's own wins over the
     launcher's channel, since an editable tool sits in uv's bin folder too. On Windows a
     uv-backed one starts with CLOSE_FIRST, ahead of the command, which stays whole."""
     channel = "editable" if install.get("editable") else str(install.get("channel") or "")
-    command = update_check.upgrade_command(channel, platform)
-    if platform == "win32" and channel in _CLOSE_FIRST_CHANNELS:
+    command = update_check.upgrade_command(channel, plat)
+    if plat == "win32" and channel in _CLOSE_FIRST_CHANNELS:
         return CLOSE_FIRST + command
     return command
 

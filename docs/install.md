@@ -322,15 +322,19 @@ promptmend doctor
 
 On Windows, close the interface and every running `promptmend` (a trigger still working, a
 `promptmend` in another terminal) before you update a uv install, from PyPI, a Release wheel
-or a checkout. uv removes the old install before it deletes its folder, and a running
-`promptmend` holds a file there (`Scripts\python.exe`), so the update stops with
+or a checkout. uv uninstalls the old version first and only then deletes its folder, and a
+running `promptmend` holds a file there (`Scripts\python.exe`), so the update stops with
 `failed to remove directory …\Scripts: Access is denied` and leaves no working install:
 the command and every trigger then fail with
-`ModuleNotFoundError: No module named 'promptmend'`. To recover, close it and run the same update again. The one-command install
-with `PROMPTMEND_CHANNEL=uv` and `.\scripts\install_windows.ps1` check first: while a
-`promptmend` from uv's tool folder (or uv's `promptmend.exe` launcher) runs, they stop and
-change nothing, as the exe channel does. On Windows, `doctor` and the About screen put
-"close the interface and any running promptmend, then" before a uv update command.
+`ModuleNotFoundError: No module named 'promptmend'`. To recover, close it and run the same
+update again. The one-command install with `PROMPTMEND_CHANNEL=uv` and
+`.\scripts\install_windows.ps1` check first: while a `promptmend` from uv's tool folder (or
+uv's `promptmend.exe` launcher) runs, they stop and leave the install as it was, as the exe
+channel does. The check is best effort and runs once, before uv starts: a trigger that starts
+during the update can still break it the same way, so avoid using the triggers until it ends
+(and run it again if one did). A manual `uv tool install --force` checks nothing. On Windows,
+`doctor` and the About screen put "close the interface and any running promptmend, then"
+before a uv or checkout update command.
 
 The one-command install puts the newest release over the old one with the same launcher
 (`%LOCALAPPDATA%\Programs\promptmend\promptmend.exe`, or uv's with `PROMPTMEND_CHANNEL=uv`),

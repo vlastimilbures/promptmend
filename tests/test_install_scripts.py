@@ -217,7 +217,10 @@ def test_uv_refuses_while_promptmend_runs() -> None:
         code.index("$bin = Read-Native 'uv' @('tool', 'dir', '--bin')"),
         code.index("$cli = Join-Path $bin 'promptmend.exe'"),
         code.index("$tool = Join-Path $toolDir 'promptmend'"),
-        code.index("Assert-NotRunning $tool @('python', 'pythonw', 'promptmend') @($cli) "),
+        code.index(
+            "Assert-NotRunning $tool @('python', 'pythonw', 'promptmend') @($cli) "
+            "\"promptmend from $tool or $cli\" 'promptmend was not changed.'"
+        ),
         code.index("Assert-Native 'uv' $InstallArgs"),
     ]
     assert steps == sorted(steps)
@@ -228,9 +231,13 @@ def test_uv_refuses_while_promptmend_runs() -> None:
     assert "Get-Process -Name $Names -ErrorAction SilentlyContinue" in running
     assert "try { $path = $proc.Path } catch { $path = $null }" in running
     assert "$key.StartsWith($prefix) -or $exact -contains $key" in running
+    cim = 'Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.Id)"'
+    assert running.index("$path = $proc.Path") < running.index(cim)
+    assert running.index(cim) < running.index("if (-not $path) { continue }")
     # The exe channel keeps its defaults: promptmend.exe under its folder only.
     assert "[string[]]$Names = @('promptmend')" in running
-    assert "Nothing was changed." in INSTALL.read_text("utf-8")
+    assert "[string]$Unchanged = 'Nothing was changed.'" in _function("Assert-NotRunning")
+    assert "Assert-NotRunning $Dest\n" in _function("Install-Exe")
 
 
 # The contributor installer runs the same `uv tool install --force`, so it refuses the same way.
@@ -247,7 +254,9 @@ def test_install_windows_refuses_while_promptmend_runs() -> None:
     assert steps == sorted(steps)
     assert "(Get-PathKey $path).StartsWith($Prefix)" in code
     assert "(Get-PathKey $path) -eq (Get-PathKey $Cli)" in code
-    assert "Nothing was changed." in code
+    cim = 'Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)"'
+    assert code.index("$path = $_.Path") < code.index(cim) < code.index("if ($Running.Count")
+    assert "promptmend was not changed." in code
 
 
 # The exe channel: the dry run stops before anything is touched; the hash is checked before
