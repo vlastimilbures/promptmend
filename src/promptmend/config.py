@@ -11,7 +11,13 @@ from typing import Any
 from . import config_files
 from .config_files import CONFIG_VERSION, VERSION_KEY, ConfigFileError, SecretStoreError
 from .providers.registry import PROVIDERS
-from .redaction import InvalidExtraPattern, compile_extra, safe_repr, set_user_patterns
+from .redaction import (
+    GATE_PACKS,
+    InvalidExtraPattern,
+    compile_extra,
+    safe_repr,
+    set_user_patterns,
+)
 
 
 def _parse_value(raw: str) -> str:
@@ -194,7 +200,7 @@ def _saved_layer(
         if key not in known:
             note(source, f"{safe_repr(key)} in {name} is not a setting; it was ignored")
             continue
-        text = config_files.scalar_text(value)
+        text = saved_text(key, value)
         if text is None:
             fail(source, f"{key} in {name} must be text, a number or true/false", (key,))
             continue
@@ -301,6 +307,22 @@ def secret_names() -> tuple[str, ...]:
     return tuple(f.metadata["env"] for f in setting_fields() if f.metadata["secret"])
 
 
+def list_names() -> tuple[str, ...]:
+    """The settings that hold a comma-separated list (PROMPT_PROFILE_OVERRIDES,
+    PROMPT_GATE_PACKS)."""
+    return tuple(f.metadata["env"] for f in setting_fields() if str(f.type).startswith("tuple"))
+
+
+def saved_text(name: str, value: object) -> str | None:
+    """A config.toml value as setting text (config_files.scalar_text), or None when it is not
+    one. A list setting also takes an array of text, joined with commas: releases up to 0.26.0
+    saved PROMPT_PROFILE_OVERRIDES that way, and such a file loads instead of failing every
+    trigger. Any other array, or one holding anything but text, stays refused."""
+    if isinstance(value, list) and name in list_names():
+        return ",".join(value) if all(isinstance(v, str) for v in value) else None
+    return config_files.scalar_text(value)
+
+
 # Parsers raise ValueError(what the value must be); _env and _override name the setting.
 def _bool(raw: str) -> bool:
     # Strict, so a typo such as OLLAMA_THINK=1 is reported instead of silently meaning false.
@@ -371,6 +393,16 @@ def _builtin_profiles(raw: str) -> tuple[str, ...]:
 
     if any(name not in PROFILES for name in names):
         raise ValueError(f"empty or a comma-separated list of {', '.join(PROFILES)}")
+    return names
+
+
+def _gate_packs(raw: str) -> tuple[str, ...]:
+    """PROMPT_GATE_PACKS: a comma-separated list of redaction.GATE_PACKS names, duplicates
+    dropped; empty turns every pack off. An unknown name is an error, never a pack silently
+    left out of the gate."""
+    names = tuple(dict.fromkeys(name.strip().lower() for name in raw.split(",") if name.strip()))
+    if any(name not in GATE_PACKS for name in names):
+        raise ValueError(f"empty or a comma-separated list of {', '.join(GATE_PACKS)}")
     return names
 
 
@@ -503,6 +535,21 @@ def _override[T](raw: str | None, option: str, parse: Callable[[str], T]) -> T |
         raise ValueError(f"{option} must be {exc} or {KEEP}, got {safe_repr(raw)}") from None
 
 
+# PROMPT_TIMEOUT_SECONDS' built-in default; also loading_limit()'s, known without any setting.
+DEFAULT_TIMEOUT = "30"
+
+
+def loading_limit(timeout: str | None) -> float:
+    """How long improve's watchdog lets Settings.load() take, before any setting is read: the
+    call's ``--timeout`` when it is a valid number, else PROMPT_TIMEOUT_SECONDS' built-in
+    default (a bad value is reported once the settings are loaded, as before)."""
+    try:
+        seconds = _override(timeout, "--timeout", _positive_float)
+    except ValueError:
+        seconds = None
+    return float(DEFAULT_TIMEOUT) if seconds is None else seconds
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime settings resolved at instantiation, not import time."""
@@ -516,7 +563,7 @@ class Settings:
     # and prints only markers (errors, the sent-despite note, a cut-off note), so a successful
     # trigger just vanishes and the user pastes when ready.
     output: str = _env("PROMPT_OUTPUT", PASTE, _output)
-    timeout: float = _env("PROMPT_TIMEOUT_SECONDS", "30", _positive_float)
+    timeout: float = _env("PROMPT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT, _positive_float)
     # Low by default: the rewrite must reproduce fixed template wordings verbatim.
     # Empty omits the temperature from every OpenRouter, Ollama and LM Studio request (models
     # that reject the field); Anthropic and OpenAI have their own (anthropic_temperature,
@@ -601,6 +648,10 @@ class Settings:
     # Extra `;`-separated regexes the data-protection gate blocks on, e.g. internal project
     # code names or customer-ID formats. Compiled by redaction.compile_extra().
     extra_patterns: str = _env("PROMPT_EXTRA_PATTERNS", "", _regexes)
+    # The locale-specific pattern packs the gate scans with besides the built-in patterns
+    # (redaction.GATE_PACKS; `vn`: Vietnamese ID numbers and confidentiality labels). Empty
+    # turns them off, which weakens the gate.
+    gate_packs: tuple[str, ...] = _env("PROMPT_GATE_PACKS", "vn", _gate_packs)
     # Local usage history (history.py): metadata only, never prompt, clipboard, output,
     # persona or key text, kept in user_data_dir() on this device. false records nothing.
     history: bool = _env("PROMPT_HISTORY", "true", _bool)

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 
 from .providers.base import Provider, ProviderError
 from .providers.registry import PROVIDERS
-from .redaction import SOFT_FINDINGS, scan_draft
+from .redaction import GATE_PACKS, SOFT_FINDINGS, scan_draft
 
 
 def _block_message(
@@ -49,7 +50,8 @@ class GatedProvider:
 
     ``allow_flagged`` sends a draft once despite soft findings only (SOFT_FINDINGS); the
     caller shows ``sent_despite`` with the result. ``allow_override`` (ALLOW_CLOUD_OVERRIDE)
-    turns the gate off for every finding."""
+    turns the gate off for every finding. ``packs`` (PROMPT_GATE_PACKS) names the
+    locale-specific pattern packs scanned besides the built-in patterns."""
 
     def __init__(
         self,
@@ -60,6 +62,7 @@ class GatedProvider:
         name: str = "openrouter",
         relay: bool = False,
         gate_local: bool = False,
+        packs: Collection[str] = GATE_PACKS,
     ) -> None:
         self._inner = inner
         self._name = name
@@ -67,12 +70,13 @@ class GatedProvider:
         self._gate_local = gate_local
         self._allow_override = allow_override
         self._extra_patterns = extra_patterns
+        self._packs = packs
         self._allow_flagged = allow_flagged
         self.sent_despite: tuple[str, ...] = ()
 
     def generate(self, prompt: str, system_prompt: str) -> str:
         self.sent_despite = ()
-        findings = scan_draft(prompt, self._extra_patterns)
+        findings = scan_draft(prompt, self._extra_patterns, self._packs)
         if findings and not self._allow_override:
             hard = [f for f in findings if f not in SOFT_FINDINGS]
             if hard or not self._allow_flagged:

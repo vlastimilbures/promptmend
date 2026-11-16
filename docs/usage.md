@@ -105,6 +105,22 @@ the watchdog prints it. If the rewrite came back but copying it to the clipboard
 ([clipboard output](#output-paste-or-clipboard) or `--copy`) stalls, the marker says the
 clipboard did not answer and the rewrite is pasted instead.
 
+Loading the settings counts too: it only reads files, but a stalled file system (a redirected
+`%APPDATA%` on a managed Windows laptop, say) can block it. Until the settings have loaded,
+the limit is the call's `--timeout`, or else 30 seconds (the built-in default of
+`PROMPT_TIMEOUT_SECONDS`, since no setting is known yet). A load that does not finish within
+that limit plus 2 seconds ends with `[promptmend: the settings did not load within …s]`,
+exit code 0, and no usage-history row (whether to keep one is itself a setting). Once they
+have loaded, the configured limit takes over, still counted from the same start, so a longer
+`PROMPT_TIMEOUT_SECONDS` or `PROMPT_PRO_TIMEOUT_SECONDS` is unaffected. If the load itself
+took a second or more (start-up before it not counted), the timed-out marker says how much of
+the limit it used (`… timed out after 30.0s, 12.3s of it loading the settings`). If start-up
+and the load used up the whole limit, the run ends right there, before it reads the draft,
+and sends nothing: the marker says which took the time
+(`[promptmend: starting up took 31.0s, past the 30.0s time limit; nothing was sent]`, or
+`the settings took 29.0s to load, 31.0s in all, …`). `promptmend persona` loads the settings
+the same way, counted from its own start, and has the same bound.
+
 The watchdog is a thread that steps in at the limit plus 1.5 seconds. From then on no request
 is started, not even a retry; it writes the usage history for up to 0.4 seconds, then prints
 its marker and ends the process. A request the run had already begun (one still waiting for
