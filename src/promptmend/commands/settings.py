@@ -72,6 +72,7 @@ _PERSONA_INPUTS = frozenset(
         "PROMPT_PRO_PROFILE",
         "PROMPT_PROFILE_OVERRIDES",
         "PROMPT_EXTRA_PATTERNS",
+        "PROMPT_GATE_PACKS",
         "PROMPT_LOCAL_ONLY",
         "PROMPT_GATE_LOCAL",
     }
@@ -231,7 +232,7 @@ def unset_setting(name: str) -> tuple[bool, Path]:
 @guard
 def config_validate() -> None:
     """Check the settings as improve reads them. Exit 4 when there is anything to fix."""
-    from ..doctor import persona_problem
+    from ..doctor import gate_packs_note, persona_problem
     from ..prompt_builder import system_prompt
 
     problems = []
@@ -250,6 +251,8 @@ def config_validate() -> None:
         problems.append(flagged)
     for problem in dict.fromkeys(problems):
         typer.echo(f"problem: {problem}")
+    if note := gate_packs_note(settings):
+        typer.echo(f"note: {note}")
     if problems:
         raise typer.Exit(common.PROBLEMS)
     typer.echo("The settings are valid.")

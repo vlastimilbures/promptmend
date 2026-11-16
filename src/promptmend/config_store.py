@@ -73,7 +73,7 @@ class SavedSettings:
     def values(self) -> dict[str, str]:
         """The settings in the file, as strings, keyed by env var name."""
         known = env_names()
-        texts = {k: config_files.scalar_text(v) for k, v in self.table.items() if k in known}
+        texts = {k: config.saved_text(k, v) for k, v in self.table.items() if k in known}
         return {k: v for k, v in texts.items() if v is not None}
 
 
@@ -95,9 +95,13 @@ def _toml_value(name: str, raw: str) -> Any:
     """``raw`` validated by the setting's own parser, as the TOML value to save: true/false,
     a number or text. Raises the same ValueError a bad value in a .env does. A value that
     parses to None (an empty PROMPT_TEMPERATURE) is saved as the empty text, since None
-    means "remove the setting" to save_settings()."""
+    means "remove the setting" to save_settings(). A list (PROMPT_PROFILE_OVERRIDES,
+    PROMPT_GATE_PACKS) is saved as its canonical comma-separated text: config.toml holds
+    only scalars (config_files.scalar_text), and the setting's parser reads the text back."""
     value = config.parse_setting(name, _FIELDS[name].metadata["parse"], raw)
-    return raw if value is None else value
+    if value is None:
+        return raw
+    return ",".join(value) if isinstance(value, tuple) else value
 
 
 def _changed_keys(old: Mapping[str, Any], new: Mapping[str, Any]) -> tuple[str, ...]:

@@ -347,6 +347,130 @@ def test_save_settings_empty_value(saved_mode: Path) -> None:
     assert Settings.load().temperature == 0.2
 
 
+# A representative valid value, different from the default where one exists, for every
+# setting config.toml may hold. A new setting fails test_round_trip_covers_every_setting
+# until it is listed here.
+_ROUND_TRIP = {
+    "PROMPT_PROVIDER": "ollama",
+    "PROMPT_PROFILE": "general",
+    "PROMPT_PERSONA": "Data engineer at a bank",
+    "PROMPT_OUTPUT": "clipboard",
+    "PROMPT_TIMEOUT_SECONDS": "45",
+    "PROMPT_TEMPERATURE": "0.5",
+    "OLLAMA_BASE_URL": "http://127.0.0.1:11500",
+    "OLLAMA_MODEL": "llama3:8b",
+    "OLLAMA_THINK": "true",
+    "OLLAMA_NUM_CTX": "8192",
+    "OPENROUTER_BASE_URL": "https://openrouter.example.com/api/v1",
+    "OPENROUTER_MODEL": "openai/gpt-6-luna",
+    "OPENROUTER_MAX_TOKENS": "1200",
+    "OPENROUTER_PROVIDER": "openai",
+    "OPENROUTER_REASONING_EFFORT": "low",
+    "OPENROUTER_ALLOW_FALLBACKS": "false",
+    "OPENROUTER_DATA_COLLECTION": "deny",
+    "OPENROUTER_PRO_MODEL": "google/gemini-3.5-flash-lite",
+    "OPENROUTER_PRO_PROVIDER": "google-ai-studio",
+    "OPENROUTER_PRO_REASONING_EFFORT": "high",
+    "OPENROUTER_PRO_MAX_TOKENS": "3000",
+    "PROMPT_PRO_TIMEOUT_SECONDS": "90",
+    "PROMPT_PRO_PROFILE": "general",
+    "PROMPT_PROFILE_OVERRIDES": "general,default",
+    "LMSTUDIO_BASE_URL": "http://127.0.0.1:1300/v1",
+    "LMSTUDIO_MODEL": "qwen3-8b",
+    "ANTHROPIC_BASE_URL": "https://anthropic.example.com",
+    "ANTHROPIC_MODEL": "claude-opus-5",
+    "ANTHROPIC_MAX_TOKENS": "1800",
+    "ANTHROPIC_TEMPERATURE": "0.3",
+    "OPENAI_BASE_URL": "https://openai.example.com/v1",
+    "OPENAI_MODEL": "gpt-6",
+    "OPENAI_MAX_TOKENS": "1600",
+    "OPENAI_REASONING_EFFORT": "medium",
+    "OPENAI_TEMPERATURE": "0.7",
+    "ALLOW_CLOUD_OVERRIDE": "true",
+    "PROMPT_LOCAL_ONLY": "true",
+    "PROMPT_GATE_LOCAL": "true",
+    "PROMPT_EXTRA_PATTERNS": r"project[- ]falcon;CUST-\d{6}",
+    "PROMPT_GATE_PACKS": "",
+    "PROMPT_HISTORY": "false",
+    "PROMPT_HISTORY_RETENTION_DAYS": "30",
+    "PROMPT_UPDATE_CHECK": "false",
+}
+_ATTRS = {f.metadata["env"]: f for f in config.setting_fields()}
+
+
+def test_round_trip_covers_every_setting() -> None:
+    assert set(_ROUND_TRIP) == set(env_names()) - set(secret_names())
+
+
+# Every setting `config set` (and the interface's Settings pane, the same save_setting())
+# saves reads back in strict mode, as the triggers load it, to the value its parser gives.
+# A list setting is saved as text: an array in config.toml failed every trigger (#231).
+@pytest.mark.parametrize(
+    ("name", "raw"),
+    [
+        *_ROUND_TRIP.items(),
+        ("PROMPT_GATE_PACKS", "vn"),
+        ("PROMPT_GATE_PACKS", " VN, vn "),
+        ("PROMPT_PROFILE_OVERRIDES", "default"),
+        ("PROMPT_PROFILE_OVERRIDES", ""),
+    ],
+)
+def test_saved_setting_round_trips(saved_mode: Path, name: str, raw: str) -> None:
+    from promptmend.commands.settings import save_setting
+
+    field_ = _ATTRS[name]
+    expected = config.parse_setting(name, field_.metadata["parse"], raw)
+    save_setting(name, raw)
+    assert config_files.scalar_text(config_store.read_settings().table[name]) is not None
+    assert getattr(Settings.load(), field_.name) == expected
+    assert getattr(ConfigLayers.resolve(strict=True).settings(), field_.name) == expected
+
+
+# A list setting saved as an array of text by 0.26.0 or earlier (#231) loads in strict mode,
+# as the triggers read it, `config get` shows it as text, and it keeps loading after another
+# setting is saved.
+@pytest.mark.parametrize(
+    ("toml", "attr", "expected"),
+    [
+        (
+            'PROMPT_PROFILE_OVERRIDES = ["general", "default"]\n',
+            "profile_overrides",
+            ("general", "default"),
+        ),
+        ("PROMPT_PROFILE_OVERRIDES = []\n", "profile_overrides", ()),
+        ('PROMPT_GATE_PACKS = ["vn"]\n', "gate_packs", ("vn",)),
+        ("PROMPT_GATE_PACKS = []\n", "gate_packs", ()),
+    ],
+)
+def test_array_saved_before_loads(
+    saved_mode: Path, toml: str, attr: str, expected: tuple[str, ...]
+) -> None:
+    _write(saved_mode / "config.toml", toml)
+    assert getattr(ConfigLayers.resolve(strict=True).settings(), attr) == expected
+    assert getattr(Settings.load(), attr) == expected
+    name = toml.split(" =")[0]
+    assert config_store.read_settings().values[name] == ",".join(expected)
+    config_store.save_settings(config_store.read_settings(), {"OLLAMA_MODEL": "m"})
+    assert getattr(ConfigLayers.resolve(strict=True).settings(), attr) == expected
+
+
+# Any other array stays refused: one for a scalar setting, or a list setting's array holding
+# anything but text.
+@pytest.mark.parametrize(
+    "toml",
+    [
+        'OLLAMA_MODEL = ["a"]\n',
+        'PROMPT_PROVIDER = ["ollama"]\n',
+        "PROMPT_GATE_PACKS = [1]\n",
+        'PROMPT_PROFILE_OVERRIDES = ["general", true]\n',
+    ],
+)
+def test_other_arrays_stay_refused(saved_mode: Path, toml: str) -> None:
+    _write(saved_mode / "config.toml", toml)
+    with pytest.raises(ValueError, match="must be text, a number or true/false"):
+        Settings.load()
+
+
 @pytest.mark.parametrize(
     ("changes", "error"),
     [

@@ -19,6 +19,19 @@ All notable changes to this project are documented here. The format follows
   account; an access list that cannot be read is reported as not checked. Until now the
   access list was set and checked only when the file was written. macOS and Linux keep their
   mode check, whose hint now names `chmod 600`.
+- Data-protection gate: the Vietnamese patterns (the `vietnam_id_12` and `vietnam_id_9`
+  national ID numbers and the Vietnamese confidentiality labels) are now a named pattern pack,
+  `vn`, turned on by the new setting `PROMPT_GATE_PACKS` (a comma-separated list of packs;
+  default `vn`, #231). With the default the gate flags exactly what it flagged before, under
+  the same finding names, so no install is weakened by the upgrade. An empty value turns the
+  pack off, which weakens the gate (docs/privacy.md "Pattern packs"); an unknown pack name is
+  rejected when settings load. A Vietnamese password (`mật khẩu là …`) stays flagged whatever
+  the setting. `doctor`, `config validate` and the interface scan the persona with the same
+  packs. A pack that is off (also an empty `${VAR}` the value expanded from) shows as
+  information in `doctor`'s new `gate_packs` check (`--json`: `packs`, `off`) and as a
+  `note:` line from `config validate`, whose exit code it does not change.
+- Match files: the `-iok-` comment names "a national ID number", and the cloud triggers'
+  comments say "where your organisation's policy permits" (#231).
 - The pro tier's time limit, `PROMPT_PRO_TIMEOUT_SECONDS`, now defaults to 45 seconds, not 60
   (#311, the owner's choice). Pro calls finish well within that in the
   [benchmark](https://github.com/vlastimilbures/promptmend/blob/main/docs/benchmark.md#at-a-glance) and on a scanned Windows laptop (p95 about 21 s,
@@ -73,6 +86,15 @@ All notable changes to this project are documented here. The format follows
   do not use (`-p-` still pastes the persona), and `promptmend config validate` names it;
   the error names the setting but never quotes the URL. doctor's `local_servers` says the
   URL is not used and does not probe it (nor the default repair mode puts in its place).
+
+### Fixed
+- `promptmend config set PROMPT_PROFILE_OVERRIDES …` (and the interface's Settings pane)
+  wrote the list to `config.toml` as a TOML array, which settings then refused to read: every
+  trigger pasted `[promptmend: PROMPT_PROFILE_OVERRIDES in config.toml must be text, a number
+  or true/false]` until the line was removed. A list setting is now saved as its
+  comma-separated text, and an array saved by an earlier version now loads, joined with
+  commas, so an affected install works again without any change (#231). An array for any
+  other setting, or one holding anything but text, is still refused.
 
 ## 0.26.0 - 2026-11-16
 
