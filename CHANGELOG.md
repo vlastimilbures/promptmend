@@ -156,6 +156,17 @@ All notable changes to this project are documented here. The format follows
   (`git show v0.25.0:docs/prompt-candidates/PLAN.md`).
 
 ### Fixed
+- Windows: the one-command install with `PROMPTMEND_CHANNEL=uv` and
+  `scripts/install_windows.ps1` no longer break a uv install while a `promptmend` runs
+  (#356): the open interface holds the tool's `Scripts\python.exe`, so uv uninstalled the old
+  version, then stopped with `failed to remove directory …\Scripts: Access is denied`, and
+  `promptmend` and every trigger failed with `ModuleNotFoundError` until the update was run
+  again. Both now refuse before uv runs, leaving promptmend unchanged, while a process from
+  uv's promptmend tool folder or uv's `promptmend.exe` launcher runs, as the exe channel does
+  (best effort: checked once, before uv starts). A manual `uv tool install --force` still
+  needs the interface and every running `promptmend` closed first. On Windows, `doctor` and the interface's About screen put "close the interface and
+  any running promptmend, then" before a uv or checkout update command. docs/install.md
+  ("Update") and docs/troubleshooting.md say how to recover.
 - `promptmend doctor` now reports a match file you edited after a deploy as `modified`, not
   `foreign`, when Espanso's folder is reached through a link (#339), such as a
   `~/.config/espanso` linked from a dotfiles repository (or, on Windows, a folder spelled in

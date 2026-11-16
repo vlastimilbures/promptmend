@@ -21,7 +21,8 @@
 # same Release (attested, never a PyPI upload that may come later):
 # `uv tool install --force <Release>/promptmend-<version>-py3-none-any.whl -c <Release>/constraints.txt`,
 # then `uv tool update-shell` and `promptmend doctor --no-clipboard` (the launcher stays in
-# uv's tool bin folder).
+# uv's tool bin folder). A promptmend still running from uv's tool folder, or its launcher
+# there, stops it before uv runs (#356).
 #
 # Overrides (environment variables):
 #   PROMPTMEND_CHANNEL       exe (default) or uv
@@ -149,26 +150,39 @@ function Invoke-PromptMendInstall {
         return $true
     }
 
-    # The promptmend.exe processes started from $Folder (not readable: skipped; the rename
-    # below then fails and is rolled back).
-    function Get-RunningFrom([string]$Folder) {
+    # The processes named $Names (promptmend.exe by default) started from $Folder or from one
+    # of the $Files, best effort. A path .Path cannot read (an elevated process, a 32-bit
+    # shell) is asked of CIM; unreadable both ways, the process is skipped (the exe channel's
+    # rename below then fails and is rolled back).
+    function Get-RunningFrom([string]$Folder, [string[]]$Names = @('promptmend'),
+            [string[]]$Files = @()) {
         $prefix = (Get-PathKey $Folder) + '\'
+        $exact = @($Files | Where-Object { $_ } | ForEach-Object { Get-PathKey $_ })
         $found = @()
-        foreach ($proc in @(Get-Process -Name promptmend -ErrorAction SilentlyContinue)) {
+        foreach ($proc in @(Get-Process -Name $Names -ErrorAction SilentlyContinue)) {
             $path = $null
             try { $path = $proc.Path } catch { $path = $null }
-            if ($path -and (Get-PathKey $path).StartsWith($prefix)) { $found += $proc }
+            if (-not $path) {
+                try {
+                    $path = (Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.Id)" -ErrorAction SilentlyContinue).ExecutablePath
+                } catch { $path = $null }
+            }
+            if (-not $path) { continue }
+            $key = Get-PathKey $path
+            if ($key.StartsWith($prefix) -or $exact -contains $key) { $found += $proc }
         }
         return , $found
     }
 
-    function Assert-NotRunning([string]$Folder) {
-        $running = Get-RunningFrom $Folder
+    function Assert-NotRunning([string]$Folder, [string[]]$Names = @('promptmend'),
+            [string[]]$Files = @(), [string]$What = '', [string]$Unchanged = 'Nothing was changed.') {
+        $running = Get-RunningFrom $Folder $Names $Files
         if ($running.Count -gt 0) {
+            if (-not $What) { $What = "promptmend.exe from $Folder" }
             $ids = ($running | ForEach-Object { $_.Id }) -join ', '
-            throw ("promptmend.exe from $Folder is running (process $ids): wait for it to " +
+            throw ("$What is running (process $ids): wait for it to " +
                 'finish or close it (the interface, a trigger), then run this again. ' +
-                'Nothing was changed.')
+                $Unchanged)
         }
     }
 
@@ -542,7 +556,14 @@ function Invoke-PromptMendInstall {
         Write-Host "uv: $((Get-Command uv).Source)"
 
         $toolDir = Read-Native 'uv' @('tool', 'dir')
-        $receipt = Join-Path $toolDir 'promptmend\uv-receipt.toml'
+        $bin = Read-Native 'uv' @('tool', 'dir', '--bin')
+        $cli = Join-Path $bin 'promptmend.exe'
+        # uv removes the old tool before it deletes its folder, so a promptmend still running
+        # from it (the interface holds Scripts\python.exe) would leave no promptmend at all
+        # (#356): refused before uv touches anything.
+        $tool = Join-Path $toolDir 'promptmend'
+        Assert-NotRunning $tool @('python', 'pythonw', 'promptmend') @($cli) "promptmend from $tool or $cli" 'promptmend was not changed.'
+        $receipt = Join-Path $tool 'uv-receipt.toml'
         if ((Test-Path -LiteralPath $receipt) -and
                 ((Get-Content -Raw -LiteralPath $receipt) -match '(?m)\beditable\s*=')) {
             Write-Host ('Note: promptmend is installed as editable from a checkout; this replaces ' +
@@ -556,9 +577,7 @@ function Invoke-PromptMendInstall {
 
         Write-Step "Adding uv's tool folder to your PATH"
         Assert-Native 'uv' @('tool', 'update-shell')
-        $bin = Read-Native 'uv' @('tool', 'dir', '--bin')
         Update-SessionPath @($bin)
-        $cli = Join-Path $bin 'promptmend.exe'
         if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) {
             throw "promptmend.exe is not in $bin; check the uv tool install output above."
         }

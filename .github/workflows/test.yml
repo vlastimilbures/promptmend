@@ -218,6 +218,33 @@ jobs:
           $expected = $wheel.Name.Split('-')[1]
           if ($installed -ne $expected) { throw "installed $installed, expected $expected" }
           Write-Host "promptmend $installed from $bin"
+      # A promptmend running from uv's tool folder (here its Scripts\python.exe, as the open
+      # interface holds it) makes the uv channel refuse before uv runs, so the install stays
+      # whole (#356).
+      - name: Refuse a uv reinstall while promptmend runs
+        working-directory: ${{ runner.temp }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $wheel = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\*.whl" | Select-Object -First 1
+          $env:PROMPTMEND_WHEEL = $wheel.FullName
+          $env:PROMPTMEND_CONSTRAINTS = "$env:GITHUB_WORKSPACE\dist\constraints.txt"
+          $python = Join-Path (uv tool dir).Trim() 'promptmend\Scripts\python.exe'
+          $proc = Start-Process -FilePath $python -ArgumentList '-c', '"import time; time.sleep(120)"' -PassThru -WindowStyle Hidden
+          try {
+            $script = "$env:GITHUB_WORKSPACE\scripts\install.ps1"
+            $out = powershell -NoProfile -ExecutionPolicy ByPass -Command "try { Get-Content -Raw '$script' | Invoke-Expression } catch { [Console]::Out.WriteLine(`$_.Exception.Message); exit 1 }" | Out-String
+            $code = $LASTEXITCODE
+            Write-Host $out
+            if ($code -eq 0 -or -not $out.Contains("is running (process $($proc.Id)") -or -not $out.Contains('promptmend was not changed.')) {
+              throw "install.ps1 did not refuse while $python ran (exit $code)"
+            }
+            if ($out.Contains('> uv tool install')) { throw "uv ran before the refusal" }
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+          $bin = (uv tool dir --bin).Trim()
+          & "$bin\promptmend.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "promptmend no longer runs after the refusal" }
       # Start-up through uv's promptmend.exe shim, the launcher Espanso runs (#306), in the job
       # summary next to frozen-windows' numbers, with whether Defender's real-time protection
       # was on (as the runner reports it, not assumed). No time is asserted
