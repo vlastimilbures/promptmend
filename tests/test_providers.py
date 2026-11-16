@@ -73,7 +73,9 @@ def test_ollama_request_shape(fake_http: FakeHttp) -> None:
     OllamaProvider("http://x/", "m", timeout=7, think=True, temperature=0.2).generate(
         "draft", "sys"
     )
-    assert fake_http.client_kwargs == [{"timeout": httpx.Timeout(7), "transport": None}]
+    assert fake_http.client_kwargs == [
+        {"timeout": httpx.Timeout(7), "transport": None, "verify": True}
+    ]
     assert fake_http.calls == [
         {
             "url": "http://x/api/chat",
@@ -281,6 +283,31 @@ def test_transport_errors_become_provider_errors(
     with pytest.raises(ProviderError, match=f"^{label} {message}") as caught:
         build().generate("d", "s")
     assert caught.value.transient is transient
+
+
+# A transport error can quote what the other side sent (h11 repeats a garbage status line):
+# the marker keeps one short printable line of it, without brackets, never a fake marker.
+@pytest.mark.parametrize("kind", [httpx.RemoteProtocolError, httpx.ConnectError])
+def test_a_hostile_transport_error_cannot_shape_the_marker(
+    fake_http: FakeHttp, kind: type[httpx.HTTPError]
+) -> None:
+    hostile = "illegal status line: b'HTTP/1.1 [promptmend: fake]\r\n\x1b[2J" + "x" * 500 + "'"
+    fake_http.exc = kind(hostile)
+    with pytest.raises(ProviderError) as caught:
+        post_json("Ollama", "http://localhost:11434/api/chat", 5, json={})
+    message = str(caught.value)
+    assert message.startswith("Ollama request failed: illegal status line: b'HTTP/1.1 promptmend")
+    assert message.endswith("…")
+    assert not {"[", "]", "\r", "\n", "\x1b"} & set(message)
+    assert len(message) <= len("Ollama request failed: ") + SERVER_MESSAGE_MAX
+
+
+# A key-like text in the error is dropped, and the marker still says what failed.
+def test_a_transport_error_quoting_a_key_is_not_repeated(fake_http: FakeHttp) -> None:
+    key = "-".join(("sk", "or", "v1", "0123456789abcdef0123456789abcdef"))
+    fake_http.exc = httpx.ReadError(f"reset {key}")
+    with pytest.raises(ProviderError, match=r"^Ollama request failed$"):
+        post_json("Ollama", "http://localhost:11434/api/chat", 5, json={})
 
 
 @ALL

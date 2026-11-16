@@ -24,6 +24,10 @@ hiddenimports = [
     "sqlite3",
     "csv",
     "decimal",
+    # tls.os_trust_store() (#314): a missing truststore would fall back to certifi silently,
+    # so the OS trust store must not depend on the scan finding a function-level import.
+    "truststore",
+    "truststore._windows",
 ]
 datas = [
     *collect_data_files("promptmend"),
