@@ -125,6 +125,23 @@ def test_trigger_request(stub_provider: StubProvider, trigger: str) -> None:
         assert cfg.timeout == base.timeout
 
 
+# -ip- names no provider, so PROMPT_PRO_PROVIDER moves it to Anthropic or OpenAI with their own
+# model and the pro time limit and profile; -if- names OpenRouter and stays there (#278).
+@pytest.mark.parametrize("pro_provider", ["anthropic", "openai"])
+def test_pro_provider_moves_ip_only(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, pro_provider: str
+) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", pro_provider)
+    monkeypatch.setenv("PROMPT_PRO_PROFILE", "general")
+    base = Settings()
+    name, cfg, prompt = _replay(stub_provider, "-ip-")
+    spec = PROVIDERS[pro_provider]
+    assert (name, spec.model(cfg), cfg.timeout) == (pro_provider, spec.model(base), 45.0)
+    assert _profile(prompt) == "general"
+    name, cfg, _ = _replay(stub_provider, "-if-")
+    assert (name, cfg.openrouter_model) == ("openrouter", base.openrouter_pro_model)
+
+
 # OPENROUTER_PRO_MAX_TOKENS reaches the pro triggers only; the -if- popup's max tokens pick
 # beats it and its `default` keeps it (#31).
 def test_pro_max_tokens_reach_triggers(
@@ -397,7 +414,10 @@ SLACK = 20.0
 
 def _provider(trigger: str) -> str:
     args = SCRIPT_VARS[trigger]
-    return args[args.index("--provider") + 1]
+    if "--provider" in args:
+        return args[args.index("--provider") + 1]
+    # -ip- names none, so it runs on PROMPT_PRO_PROVIDER (OpenRouter as shipped).
+    return Settings().provider_for(args[args.index("--tier") + 1] if "--tier" in args else "")
 
 
 def _timed_run(

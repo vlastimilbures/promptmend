@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ from conftest import read_env_file
 
 from promptmend import config
 from promptmend.config import ConfigLayers, Finding, Settings, env_names, split_model_spec
+from promptmend.providers.registry import PROVIDERS
 
 
 # Settings() reads env vars at instantiation, not at import time.
@@ -38,6 +40,7 @@ def test_defaults() -> None:
     assert settings.openrouter_pro_provider == "openai"
     assert settings.openrouter_pro_reasoning_effort == "low"
     assert settings.pro_timeout == 45.0
+    assert settings.pro_provider == "openrouter"
     assert settings.openrouter_pro_max_tokens is None
     assert settings.lmstudio_base_url == "http://127.0.0.1:1234/v1"
     assert settings.lmstudio_model == "local-model"
@@ -84,16 +87,16 @@ def test_for_call(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (other.profile, other.timeout) == ("general", settings.pro_timeout)
 
 
-# Only OpenRouter has a pro tier: for any other provider for_call("pro") keeps the standard
-# profile and timeout, even with PROMPT_PRO_PROFILE set (#31).
-@pytest.mark.parametrize("provider", ["ollama", "lmstudio", "anthropic", "openai"])
-def test_for_call_pro_tier_is_openrouter_only(
+# Ollama and LM Studio have no pro tier: for_call("pro") keeps the standard profile and
+# timeout there, even with PROMPT_PRO_PROFILE set (#31).
+@pytest.mark.parametrize("provider", ["ollama", "lmstudio"])
+def test_for_call_pro_tier_not_on_local_providers(
     monkeypatch: pytest.MonkeyPatch, provider: str
 ) -> None:
     monkeypatch.setenv("PROMPT_PRO_PROFILE", "general")
     settings = Settings()
-    call = settings.for_call("pro", provider=provider)
-    assert (call.profile, call.timeout) == (settings.profile, settings.timeout)
+    assert settings.for_call("pro", provider=provider) == settings
+    assert settings.tier_preset("pro", provider) is None
     assert settings.for_call("pro", provider=provider, timeout="7").timeout == 7
     pro = settings.for_call("pro", provider="openrouter")
     assert (pro.profile, pro.timeout) == ("general", settings.pro_timeout)
@@ -101,25 +104,145 @@ def test_for_call_pro_tier_is_openrouter_only(
         settings.for_call("ultra", provider=provider)
 
 
-# --tier pro needs OpenRouter's pro tier and --effort a provider with an effort setting (the
-# registry's router and effort); the neutral values pass anywhere.
+# The pro tier on Anthropic or OpenAI directly (#278): that provider's own model, effort and
+# cap, with the pro time limit and profile; nothing of OpenRouter's pro tier is swapped in.
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_pro_tier_on_a_direct_provider(monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROFILE", "general")
+    monkeypatch.setenv("PROMPT_PRO_TIMEOUT_SECONDS", "50")
+    settings = Settings()
+    spec = PROVIDERS[provider]
+    assert settings.tier_preset("pro", provider) == config.Preset(
+        "pro", provider, spec.model(settings), None, None, None, 50.0, "general"
+    )
+    call = settings.for_call("pro", provider=provider)
+    assert call == replace(settings, timeout=50.0, profile="general")
+    assert (spec.max_tokens(call), spec.reasoning_effort(call)) == (
+        spec.max_tokens(settings),
+        spec.reasoning_effort(settings),
+    )
+    # Another model than the tier's loses PROMPT_PRO_PROFILE, as on OpenRouter.
+    other = settings.for_call("pro", provider=provider, model="m", max_tokens="900")
+    assert (spec.model(other), other.profile, spec.max_tokens(other)) == ("m", "default", 900)
+    assert settings.for_call("pro", provider=provider, timeout="7").timeout == 7
+
+
+# PROMPT_PRO_PROVIDER picks the provider of a pro call that names none; a call that names its
+# provider runs that provider's pro tier (-if-: --provider openrouter).
+@pytest.mark.parametrize("pro_provider", ["openrouter", "anthropic", "openai"])
+def test_pro_provider_picks_the_unnamed_provider(
+    monkeypatch: pytest.MonkeyPatch, pro_provider: str
+) -> None:
+    monkeypatch.setenv("PROMPT_PROVIDER", "ollama")
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", f" {pro_provider.upper()} ")
+    settings = Settings()
+    assert settings.pro_provider == pro_provider
+    assert (settings.provider_for("pro"), settings.provider_for("standard")) == (
+        pro_provider,
+        "ollama",
+    )
+    preset = settings.tier_preset("pro")
+    assert preset is not None
+    assert preset.provider == pro_provider
+    assert settings.for_tier("pro") == settings.for_tier("pro", pro_provider)
+    assert settings.for_call("pro") == settings.for_call("pro", provider=pro_provider)
+    # -if- names OpenRouter, so OPENROUTER_PRO_* applies whatever PROMPT_PRO_PROVIDER says.
+    named = settings.for_call("pro", provider="openrouter")
+    assert (named.openrouter_model, named.openrouter_provider) == ("openai/gpt-6-luna", "openai")
+    assert settings.tier_preset("standard") is None
+
+
+# PROMPT_PRO_PROVIDER is strict: only a provider with the pro tier, never empty.
+@pytest.mark.parametrize("raw", ["", "ollama", "lmstudio", "open-router", "x y"])
+def test_pro_provider_rejects_others(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", raw)
+    expected = r"^PROMPT_PRO_PROVIDER must be one of openrouter, anthropic, openai, got "
+    with pytest.raises(ValueError, match=expected):
+        Settings()
+    with pytest.raises(ValueError, match=expected):
+        ConfigLayers.resolve().settings()
+    layers = ConfigLayers.resolve(strict=False)
+    assert layers.entries["PROMPT_PRO_PROVIDER"].value == "openrouter"
+    assert any("PROMPT_PRO_PROVIDER" in f.message for f in layers.findings)
+
+
+# The pro tier's resolved call on OpenRouter is what for_tier() built before presets (#278):
+# the same model, pin, effort, cap, timeout and profile, for the defaults and a spread of
+# saved configs. ``before`` is main's for_tier(), written out field by field.
+@pytest.mark.parametrize(
+    "env",
+    [
+        {},
+        {"PROMPT_PRO_PROFILE": "general"},
+        {"OPENROUTER_PRO_MAX_TOKENS": "4000", "OPENROUTER_MAX_TOKENS": "1000"},
+        {
+            "OPENROUTER_PRO_MODEL": "anthropic/claude-x",
+            "OPENROUTER_PRO_PROVIDER": "anthropic",
+            "OPENROUTER_PRO_REASONING_EFFORT": "high",
+            "PROMPT_PRO_TIMEOUT_SECONDS": "90",
+        },
+        {"PROMPT_PROVIDER": "ollama", "PROMPT_PROFILE": "general"},
+        {"OPENROUTER_PRO_REASONING_EFFORT": "", "OPENROUTER_PRO_PROVIDER": ""},
+        {"PROMPT_LOCAL_ONLY": "true", "OPENROUTER_DATA_COLLECTION": "deny"},
+    ],
+    ids=["default", "pro-profile", "caps", "custom", "ollama-default", "empties", "local-only"],
+)
+def test_openrouter_pro_tier_parity(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    s = Settings()
+    before = replace(
+        s,
+        openrouter_model=s.openrouter_pro_model,
+        openrouter_provider=s.openrouter_pro_provider,
+        openrouter_reasoning_effort=s.openrouter_pro_reasoning_effort,
+        openrouter_max_tokens=s.openrouter_pro_max_tokens or s.openrouter_max_tokens,
+        timeout=s.pro_timeout,
+        profile=s.pro_profile or s.profile,
+    )
+    assert s.for_tier("pro") == before
+    assert s.for_call("pro") == before
+    assert s.for_call("pro", provider="openrouter") == before
+    knobs = {"model": "default", "effort": "default", "max_tokens": "default"}
+    assert s.for_call("pro", provider="openrouter", timeout="default", **knobs) == before
+    assert s.provider_for("pro") == "openrouter"
+    assert s.for_call("standard", provider="openrouter") == s
+
+
+# --tier pro needs a provider with the pro tier and --effort one with an effort setting (the
+# registry's pro and effort); the neutral values pass anywhere.
 def test_provider_options() -> None:
     config.check_provider_options("openrouter", "pro", "high")
+    config.check_provider_options("openai", "pro", "high")
+    config.check_provider_options("anthropic", "pro", None)
     config.check_provider_options("openai", "standard", "high")
     for neutral in ((("standard", None)), ("standard", "default")):
         config.check_provider_options("ollama", *neutral)
     with pytest.raises(
         ValueError,
-        match=r"^--tier pro applies only to OpenRouter, --effort only to OpenRouter and OpenAI, "
-        r"not 'lmstudio'$",
+        match=r"^--tier pro applies only to OpenRouter, Anthropic and OpenAI, --effort only to "
+        r"OpenRouter and OpenAI, not 'lmstudio'$",
     ):
         config.check_provider_options("lmstudio", "pro", "low")
-    with pytest.raises(ValueError, match=r"^--tier pro applies only to OpenRouter, not 'openai'$"):
-        config.check_provider_options("openai", "pro", "low")
+    with pytest.raises(
+        ValueError, match=r"^--effort applies only to OpenRouter and OpenAI, not 'anthropic'"
+    ):
+        config.check_provider_options("anthropic", "pro", "low")
     with pytest.raises(
         ValueError, match=r"^--effort applies only to OpenRouter and OpenAI, not 'x y'$"
     ):
         config.check_provider_options("x y", "standard", "none")
+
+
+# The setting that names the model a call runs: OPENROUTER_PRO_MODEL only on OpenRouter's pro
+# tier; Anthropic's and OpenAI's pro tier keep their own model.
+def test_model_setting() -> None:
+    assert config.model_setting("openrouter", "pro") == "OPENROUTER_PRO_MODEL"
+    assert config.model_setting("openrouter", "standard") == "OPENROUTER_MODEL"
+    assert config.model_setting("openai", "pro") == "OPENAI_MODEL"
+    assert config.model_setting("anthropic", "pro") == "ANTHROPIC_MODEL"
+    assert config.model_setting("ollama", "pro") == "OLLAMA_MODEL"
+    assert config.PRO_PROVIDERS == ("openrouter", "anthropic", "openai")
 
 
 # --max-tokens is kept for the local providers too, which have no cap setting of their own.

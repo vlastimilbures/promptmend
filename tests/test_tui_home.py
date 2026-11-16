@@ -133,6 +133,21 @@ def test_a_missing_key_is_the_headline_and_points_to_providers() -> None:
     )
 
 
+# -ip- names no provider: its row follows PROMPT_PRO_PROVIDER, with that provider's own model
+# and key (#278).
+def test_pro_row_follows_the_pro_provider() -> None:
+    state = _with_env(
+        ready(), OPENROUTER_API_KEY="-".join(("a", "b")), PROMPT_PRO_PROVIDER="openai"
+    )
+    row = _rows(state)["Pro (-ip-)"]
+    assert (row.status, row.text, row.detail) == (doctor.FAIL, "openai · gpt-6-luna", "key not set")
+    assert row.problem == "OPENAI_API_KEY is not set, so -ip- cannot rewrite"
+    state = _with_env(ready(), ANTHROPIC_API_KEY="k", PROMPT_PRO_PROVIDER="anthropic")
+    row = _rows(state)["Pro (-ip-)"]
+    assert (row.status, row.detail) == (doctor.OK, "key set")
+    assert row.text == f"anthropic · {state.settings.anthropic_model}"
+
+
 def test_local_only_refuses_the_cloud_triggers() -> None:
     state = _with_env(ready(), OPENROUTER_API_KEY="-".join(("a", "b")), PROMPT_LOCAL_ONLY="true")
     found = _rows(state)

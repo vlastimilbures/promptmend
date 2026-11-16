@@ -27,7 +27,7 @@ from textual.widgets import Button, Label, Select, Static, TextArea
 
 from .. import pipeline, recorder, sanitize, smoke
 from ..commands import common
-from ..config import TIERS, ConfigLayers, Settings, check_provider_options, has_pro_tier
+from ..config import TIERS, ConfigLayers, Settings, check_provider_options, model_setting
 from ..factory import PROVIDER_NAMES, check_base_url, leaves_machine
 from ..prompt_builder import ADDED, PROFILES
 from . import teach
@@ -107,13 +107,6 @@ def usage_line(attempts: Sequence[AttemptUsage], latency_ms: float, *, stub: boo
         f"{latency_ms:.0f} ms · {requests} · tokens in {_tokens(inputs)}, "
         f"out {_tokens([a.output for a in attempts])} · cost {_cost(attempts, stub=stub)}"
     )
-
-
-def _model_setting(provider: str, tier: str) -> str:
-    """The setting that names the model a call runs (for_call(): pro only on OpenRouter)."""
-    if tier == "pro" and has_pro_tier(provider):
-        return "OPENROUTER_PRO_MODEL"
-    return f"{provider.upper()}_MODEL"
 
 
 def _profiles(names: Sequence[str]) -> list[tuple[str, str]]:
@@ -225,7 +218,7 @@ class TryPane(Pane):
     def _preview(
         self, layers: ConfigLayers, cfg: Settings, provider: str, tier: str, length: int
     ) -> str:
-        model = _model_setting(provider, tier)
+        model = model_setting(provider, tier)
         url = f"{provider.upper()}_BASE_URL"
         recorded = (
             "It is recorded in the usage history as -try- (a direct call, no trigger)."

@@ -6,7 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Added
+- The pro tier can run on Anthropic or OpenAI directly, not only through OpenRouter (#278).
+  The new setting `PROMPT_PRO_PROVIDER` (`openrouter`, the default, `anthropic` or `openai`)
+  picks where `-ip-` and `promptmend improve --tier pro` run when the call names no
+  provider. On OpenRouter the pro tier keeps its `OPENROUTER_PRO_*` settings; on Anthropic
+  and OpenAI it runs that provider's own model, effort and output cap (`OPENAI_MODEL` is
+  already the pro model, `gpt-6-luna`), with `PROMPT_PRO_TIMEOUT_SECONDS` and
+  `PROMPT_PRO_PROFILE` on every provider. It is gated like any cloud call and refused by
+  `PROMPT_LOCAL_ONLY=true`. `--provider anthropic --tier pro` and `--provider openai --tier
+  pro`, refused before, now run that provider's pro tier; `--effort` stays refused for
+  Anthropic. With the settings left as they are, the pro tier runs exactly as before. See
+  [the pro tier](https://github.com/vlastimilbures/promptmend/blob/main/docs/usage.md#the-pro-tier).
+
 ### Changed
+- `-ip-` no longer passes `--provider openrouter`, so it follows `PROMPT_PRO_PROVIDER`
+  (OpenRouter by default, as before; #278). Deploy updates the match file; one you edited
+  keeps the old line and stays on OpenRouter. `-if-` still names OpenRouter, since its model
+  list is OpenRouter's. A bare `promptmend improve --tier pro` now runs on
+  `PROMPT_PRO_PROVIDER`, not `PROMPT_PROVIDER`: with `PROMPT_PROVIDER` set to a provider
+  without the pro tier, it was refused before. The interface's Home, Triggers and Try tabs,
+  `promptmend doctor` (`keys`) and setup name the pro trigger's provider the same way, and
+  doctor's `keys` message now reads `-ip- uses OpenAI` for a single trigger (not `use`).
 - https calls (the cloud providers and the daily update check) now check the server's
   certificate against the operating system's trust store (the macOS keychain, the Windows
   certificate store, the system CA bundle on Linux) through the new `truststore` dependency,

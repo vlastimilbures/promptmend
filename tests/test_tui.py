@@ -2622,7 +2622,8 @@ def test_triggers_match_the_match_files() -> None:
         for m in yaml.safe_load(path.read_text("utf-8"))["matches"]
     }
     assert {t for t, item in found.items() if item.active} == shipped
-    assert (found["-ip-"].provider, found["-ip-"].tier) == ("openrouter", "pro")
+    assert (found["-ip-"].provider, found["-ip-"].tier) == (None, "pro")  # PROMPT_PRO_PROVIDER
+    assert (found["-if-"].provider, found["-if-"].tier) == ("openrouter", "pro")
     assert (found["-ilm-"].provider, found["-ilm-"].profile) == ("lmstudio", "general")
     assert (found["-ic-"].active, found["-ic-"].provider) == (False, "anthropic")
     assert (found["-io-"].active, found["-io-"].provider) == (False, "openai")

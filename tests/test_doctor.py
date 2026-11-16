@@ -301,6 +301,14 @@ def _keys(
     return doctor._keys_check(layers, layers.settings(), shipped, deployed)
 
 
+# -ip- names no provider, so it needs PROMPT_PRO_PROVIDER's key; -if- stays on OpenRouter.
+def test_keys_follow_the_pro_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    check = _keys(monkeypatch, PROMPT_PRO_PROVIDER="openai", OPENROUTER_API_KEY="k")
+    assert check.status == "fail"
+    assert check.data["triggers"] == {"OPENAI_API_KEY": ["-ip-"]}
+    assert check.message == "-ip- uses OpenAI, but OPENAI_API_KEY is not set"
+
+
 def test_keys_name_the_triggers_that_need_them(monkeypatch: pytest.MonkeyPatch) -> None:
     check = _keys(monkeypatch)
     assert check.status == "fail"
@@ -327,7 +335,7 @@ def test_keys_only_count_active_rewrite_triggers(monkeypatch: pytest.MonkeyPatch
     # A trigger naming no provider runs on PROMPT_PROVIDER.
     bare = [assets.Trigger("-x-", "prompts-llm.yml", True, "improve")]
     check = _keys(monkeypatch, "anthropic", triggers=bare)
-    assert check.message == "-x- use Anthropic, but ANTHROPIC_API_KEY is not set"
+    assert check.message == "-x- uses Anthropic, but ANTHROPIC_API_KEY is not set"
 
 
 def test_keys_mention_prompt_provider_only_for_a_bare_improve(

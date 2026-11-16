@@ -20,6 +20,7 @@ from promptmend.config import Settings
 from promptmend.pipeline import _read_input
 from promptmend.prompt_builder import system_prompt
 from promptmend.providers.base import TRUNCATED_NOTE, ProviderError
+from promptmend.providers.registry import PROVIDERS
 
 if TYPE_CHECKING:
     from conftest import FakeHttp, StubProvider
@@ -844,17 +845,17 @@ def test_ollama_capped_hint(fake_http: FakeHttp) -> None:
     assert improve(*args).stdout.endswith("before writing any text; raise --max-tokens]")
 
 
-# --tier pro applies only to OpenRouter and --effort only to OpenRouter and OpenAI: elsewhere
-# they are refused inline with no call; the neutral values (--tier standard, --effort default)
-# are not.
-_PRO = "--tier pro applies only to OpenRouter"
+# --tier pro applies only to OpenRouter, Anthropic and OpenAI and --effort only to OpenRouter
+# and OpenAI: elsewhere they are refused inline with no call; the neutral values (--tier
+# standard, --effort default) are not.
+_PRO = "--tier pro applies only to OpenRouter, Anthropic and OpenAI"
 _EFFORT = "--effort applies only to OpenRouter and OpenAI"
 
 
 @pytest.mark.parametrize(
     ("provider", "args", "refusal"),
     [
-        *((p, ["--tier", "pro"], _PRO) for p in ("ollama", "lmstudio", "anthropic", "openai")),
+        *((p, ["--tier", "pro"], _PRO) for p in ("ollama", "lmstudio")),
         *((p, ["--effort", e], _EFFORT) for p in ("ollama", "lmstudio", "anthropic")
           for e in ("high", "none")),
     ],
@@ -879,13 +880,49 @@ def test_neutral_tier_and_effort_pass_for_local(fake_http: FakeHttp) -> None:
     assert _local_body(fake_http, "ollama", *args)["model"] == "qwen3:8b"
 
 
-# PROMPT_PROVIDER decides when --provider is not given.
+# PROMPT_PROVIDER decides when --provider is not given; on the pro tier PROMPT_PRO_PROVIDER
+# does (#278), so PROMPT_PROVIDER=ollama no longer stops `improve --tier pro`.
 def test_provider_options_use_configured_provider(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp
 ) -> None:
     monkeypatch.setenv("PROMPT_PROVIDER", "ollama")
-    result = improve("--tier", "pro", "--source", "argument", "--text", "d")
-    assert result.stdout == "[promptmend: --tier pro applies only to OpenRouter, not 'ollama']"
+    result = improve("--effort", "high", "--source", "argument", "--text", "d")
+    assert result.stdout == f"[promptmend: {_EFFORT}, not 'ollama']"
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "anthropic")
+    result = improve("--tier", "pro", "--effort", "low", "--source", "argument", "--text", "d")
+    assert result.stdout == f"[promptmend: {_EFFORT}, not 'anthropic']"
+    assert fake_http.requests == []
+
+
+# The pro tier on Anthropic and OpenAI directly (#278): `improve --tier pro` with no --provider
+# runs on PROMPT_PRO_PROVIDER, with that provider's own model, cap and effort, the pro time
+# limit and PROMPT_PRO_PROFILE; the request goes to that provider's API, gated as ever.
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_pro_tier_runs_on_the_pro_provider(
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, provider: str
+) -> None:
+    monkeypatch.setenv(f"{provider.upper()}_API_KEY", "-".join(("test", "key")))
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", provider)
+    monkeypatch.setenv("PROMPT_PRO_PROFILE", "general")
+    fake_http.reply(_CLOUD_BODIES[provider])
+    result = improve("--tier", "pro", "--source", "argument", "--text", "draft")
+    assert (result.exit_code, result.stdout) == (0, "ok")
+    (call,) = fake_http.calls
+    cfg = Settings()
+    spec = PROVIDERS[provider]
+    assert call["url"].startswith(spec.url(cfg))
+    body = call["json"]
+    assert body["model"] == spec.model(cfg)
+    assert body[spec.cap_field] == spec.max_tokens(cfg)
+    if spec.effort:
+        assert body["reasoning_effort"] == spec.reasoning_effort(cfg)
+    assert not {"reasoning", "provider"} & set(body)  # nothing of OpenRouter's
+    prompt = body["system"] if provider == "anthropic" else body["messages"][0]["content"]
+    assert prompt == system_prompt("general")
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
+    refused = improve("--tier", "pro", "--source", "argument", "--text", "draft")
+    assert refused.stdout.startswith("[promptmend: PROMPT_LOCAL_ONLY=true")
+    assert len(fake_http.requests) == 1
 
 
 # An empty PROMPT_TEMPERATURE omits the temperature from every request that uses it.

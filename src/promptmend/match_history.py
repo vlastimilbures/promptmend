@@ -20,6 +20,7 @@ KNOWN_SOURCES: dict[str, frozenset[str]] = {
     ),
     "prompts-llm.yml": frozenset(
         {
+            "18a161b9746f98364a21dedc23c374f2b62942a40bd9283b3a862fbc621ffd65",
             "2e120ea22d5791f4f9666d39d59aace143f8f50777bdb1f94246a2b07ac1085f",
             "2f4a39feed880856a5f11ac5ae4a37a7ff690a88a07a3afc58b3556d9aedfa09",
             "4a4849ede41c0b99546b6f914bb460e3707c063267e2a52678aa86e8d838f39d",

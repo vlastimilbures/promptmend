@@ -214,7 +214,9 @@ def test_pro_tier_on_another_provider_is_refused() -> None:
         await run(app, pilot, DRAFT, provider="ollama", tier="pro")
 
     seen = drive(scenario)
-    assert seen.result == "[promptmend: --tier pro applies only to OpenRouter, not 'ollama']"
+    assert seen.result == (
+        "[promptmend: --tier pro applies only to OpenRouter, Anthropic and OpenAI, not 'ollama']"
+    )
     assert seen.stub_requests is None
 
 

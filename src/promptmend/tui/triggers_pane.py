@@ -34,8 +34,9 @@ class TriggersPane(Pane):
     def compose(self) -> ComposeResult:
         yield Static(
             "Each trigger names its provider in its command line, so PROMPT_PROVIDER does not "
-            "change these. An empty PROMPT_PRO_PROFILE means PROMPT_PROFILE. A local trigger "
-            "stays deployed while its server is down: State says what it needs.",
+            "change these; -ip- runs on PROMPT_PRO_PROVIDER. An empty PROMPT_PRO_PROFILE means "
+            "PROMPT_PROFILE. A local trigger stays deployed while its server is down: State "
+            "says what it needs.",
             classes="note",
             markup=False,
         )
@@ -63,7 +64,9 @@ class TriggersPane(Pane):
         table.clear()
         for t in state.triggers:
             if t.command == "improve":
-                provider = t.provider or "PROMPT_PROVIDER"
+                provider = t.provider or (
+                    "PROMPT_PRO_PROVIDER" if t.tier == "pro" else "PROMPT_PROVIDER"
+                )
                 profile = t.profile or (
                     "PROMPT_PRO_PROFILE" if t.tier == "pro" else "PROMPT_PROFILE"
                 )

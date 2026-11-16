@@ -41,10 +41,11 @@ matches:
           args: ["__PROMPT_WORKFLOW__", "improve", "--trigger-id", "iok", "--provider", "openrouter", "--allow-flagged", "--source", "clipboard"]
 
   # Same rewrite on the pro tier: a reasoning model (OPENROUTER_PRO_MODEL) for hard,
-  # multi-part drafts. Slower (about 6 s median, 9 s p95) but more rigorous. Same cloud
-  # caveats as above.
+  # multi-part drafts. Slower (about 6 s median, 9 s p95) but more rigorous. It names no
+  # provider, so it runs on PROMPT_PRO_PROVIDER: OpenRouter unless set to anthropic or
+  # openai, which run that provider's own model directly. Same cloud caveats as above.
   - trigger: "-ip-"
-    label: "PromptMend: rewrite on the pro tier (OpenRouter)"
+    label: "PromptMend: rewrite on the pro tier (PROMPT_PRO_PROVIDER, OpenRouter by default)"
     left_word: true
     replace: "{{output}}"
     force_mode: clipboard
@@ -52,11 +53,12 @@ matches:
       - name: output
         type: script
         params:
-          args: ["__PROMPT_WORKFLOW__", "improve", "--trigger-id", "ip", "--provider", "openrouter", "--tier", "pro", "--source", "clipboard"]
+          args: ["__PROMPT_WORKFLOW__", "improve", "--trigger-id", "ip", "--tier", "pro", "--source", "clipboard"]
 
   # Same rewrite, but a popup picks the model and its settings for this one call.
   # Built on the pro tier, so "default" in each list means the OPENROUTER_PRO_* setting
-  # (for the model: OPENROUTER_PRO_MODEL with its OPENROUTER_PRO_PROVIDER pin).
+  # (for the model: OPENROUTER_PRO_MODEL with its OPENROUTER_PRO_PROVIDER pin). Its models
+  # are OpenRouter's, so it names OpenRouter whatever PROMPT_PRO_PROVIDER says.
   # Each model carries its OpenRouter endpoint pin as model@endpoint (@auto = OpenRouter's
   # own routing), since one pin only serves one vendor's models. Every field is a fixed
   # choice, never free text, and each reaches the CLI as one whole argument.

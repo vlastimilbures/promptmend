@@ -302,11 +302,12 @@ def deployed_triggers(espanso_dir: Path) -> tuple[list[assets.Trigger], bool]:
 
 def _rewrites(triggers: list[assets.Trigger], settings: config.Settings) -> dict[str, list[str]]:
     """Each provider the active rewrite triggers run on, with those triggers, in file order;
-    a trigger naming no provider runs on PROMPT_PROVIDER."""
+    a trigger naming no provider runs on PROMPT_PROVIDER (PROMPT_PRO_PROVIDER on the pro tier)."""
     found: dict[str, list[str]] = {}
     for t in triggers:
         if t.active and t.command == "improve":
-            found.setdefault(t.provider or settings.provider, []).append(t.trigger)
+            provider = t.provider or settings.provider_for(t.tier or "standard")
+            found.setdefault(provider, []).append(t.trigger)
     return found
 
 
@@ -333,7 +334,8 @@ def _keys_check(
         missing[route.key] = names
         label = factory.PROVIDER_LABELS[provider]
         if deployed:
-            problems.append(f"{', '.join(names)} use {label}, but {route.key} is not set")
+            use = "uses" if len(names) == 1 else "use"
+            problems.append(f"{', '.join(names)} {use} {label}, but {route.key} is not set")
         else:
             problems.append(
                 f"{', '.join(names)} will use {label} once deployed, but {route.key} is not set"

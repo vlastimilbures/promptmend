@@ -422,6 +422,9 @@ def _regexes(raw: str) -> str:
 
 
 TIERS = ("standard", "pro")
+# The providers with the pro tier (registry.ProviderSpec ``pro``): PROMPT_PRO_PROVIDER's
+# values, and the ones --tier pro accepts.
+PRO_PROVIDERS = tuple(name for name, spec in PROVIDERS.items() if spec.pro)
 # OpenRouter `reasoning.effort` and OpenAI `reasoning_effort` values accepted by --effort.
 EFFORTS = ("none", "minimal", "low", "medium", "high")
 
@@ -460,6 +463,14 @@ def _effort(raw: str) -> str:
 DATA_COLLECTION = ("allow", "deny")
 
 
+def _pro_provider(raw: str) -> str:
+    """PROMPT_PRO_PROVIDER: a provider with the pro tier. Strict: a typo would otherwise
+    surface only when -ip- runs."""
+    if raw.strip().lower() not in PRO_PROVIDERS:
+        raise ValueError(f"one of {', '.join(PRO_PROVIDERS)}")
+    return raw.strip().lower()
+
+
 def _data_collection(raw: str) -> str:
     if raw.lower() not in ("", *DATA_COLLECTION):
         raise ValueError(f"empty or one of {', '.join(DATA_COLLECTION)}")
@@ -487,25 +498,41 @@ AUTO_ENDPOINT = "auto"
 
 
 def has_pro_tier(provider: str) -> bool:
-    """Whether ``provider`` has the pro tier: OpenRouter alone (its spec's ``router``)."""
+    """Whether ``provider`` has the pro tier (its spec's ``pro``): OpenRouter, Anthropic and
+    OpenAI."""
     spec = PROVIDERS.get(provider)
-    return spec is not None and spec.router
+    return spec is not None and spec.pro
+
+
+def model_setting(provider: str, tier: str) -> str:
+    """The setting that names the model a call on ``provider`` and ``tier`` runs
+    (Settings.tier_preset()): OPENROUTER_PRO_MODEL on OpenRouter's pro tier, else the
+    provider's own model setting (Anthropic's and OpenAI's pro tier keep theirs)."""
+    spec = PROVIDERS.get(provider)
+    if tier == "pro" and spec is not None and spec.router:
+        return "OPENROUTER_PRO_MODEL"
+    return f"{provider.upper()}_MODEL"
+
+
+def _listed(labels: list[str]) -> str:
+    """`A`, `A and B`, `A, B and C`."""
+    return " and ".join(filter(None, (", ".join(labels[:-1]), labels[-1])))
 
 
 def check_provider_options(provider: str, tier: str, effort: str | None) -> None:
     """Refuse --tier pro for a provider without the pro tier and --effort for one without a
-    reasoning-effort setting (registry.ProviderSpec ``router`` and ``effort``); silently
+    reasoning-effort setting (registry.ProviderSpec ``pro`` and ``effort``); silently
     ignoring them would paste a rewrite the user did not ask for. The neutral values (--tier
     standard, --effort default) pass."""
     spec = PROVIDERS.get(provider)
     refused = []
-    if tier == "pro" and not (spec and spec.router):
-        refused.append(("--tier pro", [s.label for s in PROVIDERS.values() if s.router]))
+    if tier == "pro" and not (spec and spec.pro):
+        refused.append(("--tier pro", [s.label for s in PROVIDERS.values() if s.pro]))
     if effort not in (None, KEEP) and not (spec and spec.effort):
         refused.append(("--effort", [s.label for s in PROVIDERS.values() if s.effort]))
     if refused:
         parts = [
-            f"{option}{' applies' if i == 0 else ''} only to {' and '.join(labels)}"
+            f"{option}{' applies' if i == 0 else ''} only to {_listed(labels)}"
             for i, (option, labels) in enumerate(refused)
         ]
         raise ValueError(f"{', '.join(parts)}, not {safe_repr(provider)}")
@@ -548,6 +575,22 @@ def loading_limit(timeout: str | None) -> float:
     except ValueError:
         seconds = None
     return float(DEFAULT_TIMEOUT) if seconds is None else seconds
+
+
+@dataclass(frozen=True)
+class Preset:
+    """A quality tier on one provider: what Settings.for_tier() swaps in. ``effort``, ``cap``
+    and ``endpoint`` (the OpenRouter pin) are None where the tier keeps the provider's own
+    setting; ``model`` is what the call runs unless a --model replaces it."""
+
+    tier: str
+    provider: str
+    model: str
+    effort: str | None
+    cap: int | None
+    endpoint: str | None
+    timeout: float
+    profile: str
 
 
 @dataclass(frozen=True)
@@ -608,6 +651,10 @@ class Settings:
         "OPENROUTER_PRO_MAX_TOKENS", "", _optional_positive_int
     )
     pro_timeout: float = _env("PROMPT_PRO_TIMEOUT_SECONDS", "45", _positive_float)
+    # Where a pro call runs when it names no provider (-ip-, `improve --tier pro`): OpenRouter
+    # with OPENROUTER_PRO_*, or Anthropic or OpenAI directly with their own settings. A call
+    # that names its provider (-if-: --provider openrouter) runs that provider's pro tier.
+    pro_provider: str = _env("PROMPT_PRO_PROVIDER", "openrouter", _pro_provider)
     # Profile for the pro tier; empty (the default) uses PROMPT_PROFILE, so both tiers send
     # the same prompt. An escape hatch for a prompt tuned to OPENROUTER_PRO_MODEL.
     pro_profile: str = _env("PROMPT_PRO_PROFILE", "")
@@ -672,46 +719,78 @@ class Settings:
         written."""
         return ConfigLayers.resolve().settings()
 
-    def for_tier(self, tier: str) -> Settings:
-        """Settings for a quality tier: `standard` as-is, `pro` with the OPENROUTER_PRO_*
-        model, endpoint, effort and output cap (if set), and PROMPT_PRO_PROFILE if set. Only
-        OpenRouter has a pro tier."""
-        if tier == "standard":
-            return self
-        if tier == "pro":
-            return replace(
-                self,
-                openrouter_model=self.openrouter_pro_model,
-                openrouter_provider=self.openrouter_pro_provider,
-                openrouter_reasoning_effort=self.openrouter_pro_reasoning_effort,
-                openrouter_max_tokens=self.openrouter_pro_max_tokens or self.openrouter_max_tokens,
-                timeout=self.pro_timeout,
-                profile=self.pro_profile or self.profile,
+    def provider_for(self, tier: str) -> str:
+        """The provider a call on ``tier`` runs when it names none: PROMPT_PRO_PROVIDER for
+        the pro tier, PROMPT_PROVIDER otherwise."""
+        return self.pro_provider if tier == "pro" else self.provider
+
+    def tier_preset(self, tier: str, provider: str | None = None) -> Preset | None:
+        """The pro tier on ``provider`` (provider_for() when None), or None: the standard
+        tier, and a provider without the pro tier (has_pro_tier()), keep the settings as they
+        are. On OpenRouter the pro tier has its own model, endpoint, effort and output cap
+        (OPENROUTER_PRO_*; an empty OPENROUTER_PRO_MAX_TOKENS: OPENROUTER_MAX_TOKENS); on
+        Anthropic or OpenAI it keeps that provider's model, effort and cap. Everywhere it
+        takes PROMPT_PRO_TIMEOUT_SECONDS and PROMPT_PRO_PROFILE (empty: PROMPT_PROFILE)."""
+        if tier not in TIERS:
+            raise ValueError(f"Unknown tier: {safe_repr(tier)}. Choose from: {', '.join(TIERS)}")
+        name = provider or self.provider_for(tier)
+        if tier == "standard" or not has_pro_tier(name):
+            return None
+        spec = PROVIDERS[name]
+        profile = self.pro_profile or self.profile
+        if spec.router:
+            return Preset(
+                tier,
+                name,
+                self.openrouter_pro_model,
+                self.openrouter_pro_reasoning_effort,
+                self.openrouter_pro_max_tokens or self.openrouter_max_tokens,
+                self.openrouter_pro_provider,
+                self.pro_timeout,
+                profile,
             )
-        raise ValueError(f"Unknown tier: {safe_repr(tier)}. Choose from: {', '.join(TIERS)}")
+        return Preset(tier, name, spec.model(self), None, None, None, self.pro_timeout, profile)
+
+    def for_tier(self, tier: str, provider: str | None = None) -> Settings:
+        """Settings for a quality tier on ``provider`` (provider_for() when None): `standard`
+        as-is, `pro` with its tier_preset() swapped in."""
+        preset = self.tier_preset(tier, provider)
+        if preset is None:
+            return self
+        spec = PROVIDERS[preset.provider]
+        changes: dict[str, Any] = {
+            spec.model_field: preset.model,
+            "timeout": preset.timeout,
+            "profile": preset.profile,
+        }
+        if preset.effort is not None and spec.effort:
+            changes[spec.effort] = preset.effort
+        if preset.cap is not None and spec.cap:
+            changes[spec.cap] = preset.cap
+        if preset.endpoint is not None:
+            changes["openrouter_provider"] = preset.endpoint
+        return replace(self, **changes)
 
     def for_call(
         self,
         tier: str,
         *,
-        provider: str = "openrouter",
+        provider: str | None = None,
         model: str | None = None,
         effort: str | None = None,
         max_tokens: str | None = None,
         timeout: str | None = None,
         output: str | None = None,
     ) -> Settings:
-        """Settings for one CLI call on ``provider``: for_tier(), then the per-call overrides.
-        Only OpenRouter has a pro tier (has_pro_tier()), so another provider keeps the standard
-        settings (the tier name is still checked). A set PROMPT_PRO_PROFILE is meant for
-        OPENROUTER_PRO_MODEL, so a pro call that runs another model (one picked in the -if-
-        popup) uses PROMPT_PROFILE instead."""
-        pro = tier == "pro" and has_pro_tier(provider)
-        tiered = self.for_tier(tier)
-        cfg = (tiered if pro else self).with_overrides(
+        """Settings for one CLI call on ``provider`` (provider_for() when None): for_tier(),
+        then the per-call overrides. A set PROMPT_PRO_PROFILE is meant for the pro tier's
+        model, so a pro call that runs another model (one picked in the -if- popup) uses
+        PROMPT_PROFILE instead."""
+        preset = self.tier_preset(tier, provider)
+        cfg = self.for_tier(tier, provider).with_overrides(
             model=model, effort=effort, max_tokens=max_tokens, timeout=timeout, output=output
         )
-        if pro and cfg.openrouter_model != self.openrouter_pro_model:
+        if preset is not None and PROVIDERS[preset.provider].model(cfg) != preset.model:
             return replace(cfg, profile=self.profile)
         return cfg
 

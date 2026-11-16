@@ -21,7 +21,7 @@ match files it writes into Espanso. Read it after [installing](install.md) and r
 | Trigger | What it does | Provider | Key | Leaves the machine | Profile |
 |---------|--------------|----------|-----|--------------------|---------|
 | `-i-` | Rewrites the clipboard into the golden template | OpenRouter | `OPENROUTER_API_KEY` | Yes, [gated](privacy.md#the-data-protection-gate) | `PROMPT_PROFILE` (`default`) |
-| `-ip-` | The same rewrite on the pro tier (a reasoning model, slower) | OpenRouter | `OPENROUTER_API_KEY` | Yes, [gated](privacy.md#the-data-protection-gate) | `PROMPT_PRO_PROFILE`, else `PROMPT_PROFILE` |
+| `-ip-` | The same rewrite on the [pro tier](#the-pro-tier) (a reasoning model, slower) | `PROMPT_PRO_PROVIDER` (OpenRouter) | that provider's (`OPENROUTER_API_KEY`) | Yes, [gated](privacy.md#the-data-protection-gate) | `PROMPT_PRO_PROFILE`, else `PROMPT_PROFILE` |
 | `-if-` | The same rewrite; a [form](#the--if--form) picks model, effort, tokens and timeout | OpenRouter | `OPENROUTER_API_KEY` | Yes, [gated](privacy.md#the-data-protection-gate) | as `-ip-` |
 | `-iok-` | `-i-`, sent once despite a flagged label, ID, email or IBAN ([overriding a block](privacy.md#overriding-a-block)) | OpenRouter | `OPENROUTER_API_KEY` | Yes, gated, flagged soft findings let through | `PROMPT_PROFILE` |
 | `-il-` | General prompt improvement, fully local | Ollama | — | No (see below) | `general` |
@@ -56,6 +56,29 @@ For a draft that pastes an email, a thread or a document to work on, use `-ip-`.
 tier copies the pasted material into `INPUTS` word for word (up to about 60 lines), while
 `-i-`'s faster model often summarises a short pasted email instead (CONTRIBUTING, "Known gaps
 in the default prompt", #42).
+
+### The pro tier
+
+A tier is a preset: the provider, model, reasoning effort, output cap, time limit and profile
+a call runs with. `-i-` runs the standard tier, `-ip-` and `-if-` the pro tier. `-ip-` names
+no provider, so it runs on `PROMPT_PRO_PROVIDER`:
+
+- `openrouter` (the default): `OPENROUTER_PRO_MODEL` (`openai/gpt-6-luna`) on its
+  `OPENROUTER_PRO_PROVIDER` pin at `OPENROUTER_PRO_REASONING_EFFORT`, capped at
+  `OPENROUTER_PRO_MAX_TOKENS` (empty: `OPENROUTER_MAX_TOKENS`).
+- `openai`: OpenAI's own API with its own settings: `OPENAI_MODEL` (`gpt-6-luna`, the same
+  model) at `OPENAI_REASONING_EFFORT`, capped at `OPENAI_MAX_TOKENS`. Needs `OPENAI_API_KEY`.
+- `anthropic`: Anthropic's own API with `ANTHROPIC_MODEL` and its own settings. Needs
+  `ANTHROPIC_API_KEY`.
+
+On every provider the pro tier takes `PROMPT_PRO_TIMEOUT_SECONDS` and `PROMPT_PRO_PROFILE`, and
+the draft goes through the [gate](privacy.md#the-data-protection-gate) as for any cloud call;
+`PROMPT_LOCAL_ONLY=true` refuses it. `-if-` stays on OpenRouter whatever `PROMPT_PRO_PROVIDER`
+says, since its model list is OpenRouter's. A call that names its provider runs that
+provider's pro tier (`promptmend improve --provider openai --tier pro`); Ollama and LM Studio
+have none. A match file you edited keeps the `--provider openrouter` that `-ip-` had in earlier
+releases, so it stays on OpenRouter until you remove that pair. The settings are in
+[Configuration](configuration.md#pro-tier).
 
 Each match has a label starting with `PromptMend:`, which Espanso's search bar
 (Alt+Space / Option+Space by default) shows instead of the `{{output}}` placeholder.

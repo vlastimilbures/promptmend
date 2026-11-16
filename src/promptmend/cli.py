@@ -151,7 +151,11 @@ _TRIGGER_ID = typer.Option(
 # error on stderr and exit 2, which Espanso cannot show. make_provider() reports it inline.
 @app.command()
 def improve(
-    provider: str | None = typer.Option(None, help=", ".join(PROVIDER_NAMES)),
+    provider: str | None = typer.Option(
+        None,
+        help=f"{', '.join(PROVIDER_NAMES)}; defaults to PROMPT_PROVIDER (PROMPT_PRO_PROVIDER with "
+        "--tier pro)",
+    ),
     profile: str | None = typer.Option(
         None,
         help=(
@@ -164,7 +168,8 @@ def improve(
     ),
     tier: str = typer.Option(
         "standard",
-        help=f"{', '.join(TIERS)}; pro uses the OPENROUTER_PRO_* reasoning model (OpenRouter only)",
+        help=f"{', '.join(TIERS)}; pro: OPENROUTER_PRO_* on OpenRouter, the pro time limit and "
+        "profile on Anthropic and OpenAI",
     ),
     effort: str | None = typer.Option(
         None,

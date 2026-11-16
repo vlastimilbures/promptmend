@@ -19,6 +19,7 @@ from ..config import (
     EFFORTS,
     ENV_SOURCE,
     OUTPUTS,
+    PRO_PROVIDERS,
     Entry,
     setting_fields,
 )
@@ -120,6 +121,13 @@ SETTINGS: tuple[Meta, ...] = (
     ),
     _m(_MOD, "OPENROUTER_PRO_MAX_TOKENS", TEXT, "The pro tier's output cap; empty: the same."),
     _m(_MOD, "PROMPT_PRO_TIMEOUT_SECONDS", TEXT, "Seconds before a pro call gives up."),
+    _m(
+        _MOD,
+        "PROMPT_PRO_PROVIDER",
+        CHOICE,
+        "Where -ip- runs: OpenRouter's pro tier, or Anthropic or OpenAI directly.",
+        PRO_PROVIDERS,
+    ),
     _m(
         _MOD,
         "PROMPT_PRO_PROFILE",

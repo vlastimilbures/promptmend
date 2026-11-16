@@ -190,18 +190,28 @@ has no certificate of its own; the server's certificate behind it is checked as 
 | `OPENROUTER_MAX_TOKENS` | `2400` | Output cap (cost control), for both tiers unless `OPENROUTER_PRO_MAX_TOKENS` is set |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | API endpoint; must be `https://` |
 
-### OpenRouter pro tier
+### Pro tier
 
-Used by `-ip-`, `-if-` and `--tier pro`.
+Used by `-ip-`, `-if-` and `--tier pro`. A tier is a preset: the provider, model, reasoning
+effort, output cap, time limit and profile a call runs with. `PROMPT_PRO_PROVIDER` picks the
+provider of a pro call that names none (`-ip-`, `promptmend improve --tier pro`); a call that
+names one runs that provider's pro tier (`-if-` names OpenRouter, since its model list is
+OpenRouter's). On OpenRouter the pro tier has its own model, endpoint pin, effort and output
+cap (the `OPENROUTER_PRO_*` rows). On Anthropic and OpenAI it keeps that provider's own model,
+effort and cap ([Anthropic](#anthropic), [OpenAI](#openai): `OPENAI_MODEL` is already the pro
+model). Every provider takes the two `PROMPT_PRO_*` rows below. Ollama and LM Studio have no
+pro tier. With every setting left as shipped, the pro tier runs exactly as before this choice
+existed: OpenRouter, `openai/gpt-6-luna` on the `openai` endpoint at effort `low`.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `OPENROUTER_PRO_MODEL` | `openai/gpt-6-luna` | Model for the pro tier |
-| `OPENROUTER_PRO_PROVIDER` | `openai` | Endpoint pin for the pro tier |
-| `OPENROUTER_PRO_REASONING_EFFORT` | `low` | Reasoning effort for the pro tier |
-| `OPENROUTER_PRO_MAX_TOKENS` | *(empty)* | Output cap for the pro tier, whose reasoning counts against it; empty = `OPENROUTER_MAX_TOKENS` |
-| `PROMPT_PRO_TIMEOUT_SECONDS` | `45` | Time limit for one pro-tier call, retry included |
-| `PROMPT_PRO_PROFILE` | *(empty)* | Profile for the pro tier when it runs `OPENROUTER_PRO_MODEL`; empty = `PROMPT_PROFILE` |
+| `PROMPT_PRO_PROVIDER` | `openrouter` | Where a pro call that names no provider runs: `openrouter`, `anthropic` or `openai`. It sends the draft to that provider, [gated](privacy.md#the-data-protection-gate), and needs its key; `PROMPT_LOCAL_ONLY=true` refuses each of them |
+| `OPENROUTER_PRO_MODEL` | `openai/gpt-6-luna` | Model for the pro tier on OpenRouter |
+| `OPENROUTER_PRO_PROVIDER` | `openai` | Endpoint pin for the pro tier on OpenRouter |
+| `OPENROUTER_PRO_REASONING_EFFORT` | `low` | Reasoning effort for the pro tier on OpenRouter |
+| `OPENROUTER_PRO_MAX_TOKENS` | *(empty)* | Output cap for the pro tier on OpenRouter, whose reasoning counts against it; empty = `OPENROUTER_MAX_TOKENS` |
+| `PROMPT_PRO_TIMEOUT_SECONDS` | `45` | Time limit for one pro-tier call, retry included, on any provider |
+| `PROMPT_PRO_PROFILE` | *(empty)* | Profile for the pro tier when it runs its own model (not one picked in `-if-`); empty = `PROMPT_PROFILE` |
 
 ### Anthropic
 
