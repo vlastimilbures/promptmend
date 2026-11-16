@@ -179,7 +179,7 @@ Used by `-ip-`, `-if-` and `--tier pro`.
 | `OPENROUTER_PRO_PROVIDER` | `openai` | Endpoint pin for the pro tier |
 | `OPENROUTER_PRO_REASONING_EFFORT` | `low` | Reasoning effort for the pro tier |
 | `OPENROUTER_PRO_MAX_TOKENS` | *(empty)* | Output cap for the pro tier, whose reasoning counts against it; empty = `OPENROUTER_MAX_TOKENS` |
-| `PROMPT_PRO_TIMEOUT_SECONDS` | `60` | Time limit for one pro-tier call, retry included |
+| `PROMPT_PRO_TIMEOUT_SECONDS` | `45` | Time limit for one pro-tier call, retry included |
 | `PROMPT_PRO_PROFILE` | *(empty)* | Profile for the pro tier when it runs `OPENROUTER_PRO_MODEL`; empty = `PROMPT_PROFILE` |
 
 ### Anthropic
