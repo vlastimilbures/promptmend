@@ -560,7 +560,7 @@ class Settings:
     openrouter_pro_max_tokens: int | None = _env(
         "OPENROUTER_PRO_MAX_TOKENS", "", _optional_positive_int
     )
-    pro_timeout: float = _env("PROMPT_PRO_TIMEOUT_SECONDS", "60", _positive_float)
+    pro_timeout: float = _env("PROMPT_PRO_TIMEOUT_SECONDS", "45", _positive_float)
     # Profile for the pro tier; empty (the default) uses PROMPT_PROFILE, so both tiers send
     # the same prompt. An escape hatch for a prompt tuned to OPENROUTER_PRO_MODEL.
     pro_profile: str = _env("PROMPT_PRO_PROFILE", "")
