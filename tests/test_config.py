@@ -152,11 +152,19 @@ def test_pro_provider_picks_the_unnamed_provider(
     assert settings.tier_preset("standard") is None
 
 
-# PROMPT_PRO_PROVIDER is strict: only a provider with the pro tier, never empty.
-@pytest.mark.parametrize("raw", ["", "ollama", "lmstudio", "open-router", "x y"])
+# An empty PROMPT_PRO_PROVIDER (a line left as `PROMPT_PRO_PROVIDER=`) means the default.
+@pytest.mark.parametrize("raw", ["", "  "])
+def test_empty_pro_provider_is_openrouter(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", raw)
+    assert Settings().pro_provider == config.DEFAULT_PRO_PROVIDER == "openrouter"
+    assert ConfigLayers.resolve().settings().provider_for("pro") == "openrouter"
+
+
+# PROMPT_PRO_PROVIDER is strict otherwise: only a provider with the pro tier.
+@pytest.mark.parametrize("raw", ["ollama", "lmstudio", "open-router", "x y"])
 def test_pro_provider_rejects_others(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", raw)
-    expected = r"^PROMPT_PRO_PROVIDER must be one of openrouter, anthropic, openai, got "
+    expected = r"^PROMPT_PRO_PROVIDER must be empty or one of openrouter, anthropic, openai, got "
     with pytest.raises(ValueError, match=expected):
         Settings()
     with pytest.raises(ValueError, match=expected):

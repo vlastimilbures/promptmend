@@ -52,6 +52,7 @@ CHECK_IDS = (
     "path_shadow",
     "config",
     "keys",
+    "pro_provider",
     "persona",
     "gate_packs",
     "espanso",
@@ -74,6 +75,7 @@ DATA_KEYS = {
     "path_shadow": ("command", "found", "launcher"),
     "config": ("mode", "files", "valid", "findings"),
     "keys": ("keys", "provider", "triggers"),
+    "pro_provider": ("pro_provider", "deployed", "stale"),
     "persona": ("set", "local_only", "findings"),
     "gate_packs": ("packs", "off"),
     "espanso": (
@@ -309,6 +311,50 @@ def _rewrites(triggers: list[assets.Trigger], settings: config.Settings) -> dict
             provider = t.provider or settings.provider_for(t.tier or "standard")
             found.setdefault(provider, []).append(t.trigger)
     return found
+
+
+def stale_pro_pins(deployed: list[assets.Trigger], settings: config.Settings) -> dict[str, str]:
+    """Each active deployed pro trigger that still names a provider the shipped one leaves to
+    PROMPT_PRO_PROVIDER (-ip-'s `--provider openrouter` before #278), with that provider, when
+    PROMPT_PRO_PROVIDER is set away from its default to another one: the setting does not
+    reach that trigger until a deploy writes the new file. -if- names OpenRouter as shipped,
+    so it never counts."""
+    if settings.pro_provider == config.DEFAULT_PRO_PROVIDER:
+        return {}
+    shipped = {t.trigger: t for t in assets.triggers()}
+    stale = {}
+    for t in deployed:
+        ours = shipped.get(t.trigger)
+        if (
+            t.active
+            and t.command == "improve"
+            and t.tier == "pro"
+            and t.provider not in (None, settings.pro_provider)
+            and ours is not None
+            and ours.provider is None
+        ):
+            stale[t.trigger] = str(t.provider)
+    return stale
+
+
+def stale_pro_message(stale: dict[str, str], pro_provider: str) -> str:
+    """What doctor and Home say about stale_pro_pins()."""
+    named = ", ".join(f"{name} still names {provider}" for name, provider in stale.items())
+    return (
+        f"the deployed match file is older: {named}, so PROMPT_PRO_PROVIDER={pro_provider} "
+        "does not apply to it; redeploy to apply it (`promptmend espanso deploy`)"
+    )
+
+
+def _pro_provider_check(
+    settings: config.Settings, triggers: list[assets.Trigger], deployed: bool
+) -> Check:
+    """Whether PROMPT_PRO_PROVIDER reaches the deployed pro trigger (stale_pro_pins())."""
+    stale = stale_pro_pins(triggers, settings) if deployed else {}
+    data = {"pro_provider": settings.pro_provider, "deployed": deployed, "stale": stale}
+    if stale:
+        return Check("pro_provider", WARN, stale_pro_message(stale, settings.pro_provider), data)
+    return Check("pro_provider", OK, f"the pro tier runs on {settings.pro_provider}", data)
 
 
 def _keys_check(
@@ -1054,6 +1100,7 @@ def _run(
     clock("keys", started)
     checks += [
         timed("keys", lambda: _keys_check(layers, settings, triggers, deployed)),
+        timed("pro_provider", lambda: _pro_provider_check(settings, triggers, deployed)),
         timed("persona", lambda: _persona_check(settings, _persona_readable())),
         timed("gate_packs", lambda: _gate_packs_check(settings)),
         espanso,

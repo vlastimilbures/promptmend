@@ -142,6 +142,24 @@ def test_pro_provider_moves_ip_only(
     assert (name, cfg.openrouter_model) == ("openrouter", base.openrouter_pro_model)
 
 
+# With PROMPT_PRO_PROVIDER unset, -ip- runs OpenRouter's pro tier whatever PROMPT_PROVIDER says,
+# as when it named OpenRouter itself (#278).
+@pytest.mark.parametrize("configured", ["ollama", "anthropic"])
+def test_ip_ignores_prompt_provider(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, configured: str
+) -> None:
+    monkeypatch.setenv("PROMPT_PROVIDER", configured)
+    monkeypatch.delenv("PROMPT_PRO_PROVIDER", raising=False)
+    base = Settings()
+    name, cfg, _ = _replay(stub_provider, "-ip-")
+    assert name == "openrouter"
+    assert (cfg.openrouter_model, cfg.openrouter_provider) == (
+        base.openrouter_pro_model,
+        base.openrouter_pro_provider,
+    )
+    assert (cfg.openrouter_reasoning_effort, cfg.timeout) == ("low", base.pro_timeout)
+
+
 # OPENROUTER_PRO_MAX_TOKENS reaches the pro triggers only; the -if- popup's max tokens pick
 # beats it and its `default` keeps it (#31).
 def test_pro_max_tokens_reach_triggers(

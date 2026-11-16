@@ -894,6 +894,27 @@ def test_provider_options_use_configured_provider(
     assert fake_http.requests == []
 
 
+# A bare `improve --tier pro` runs on PROMPT_PRO_PROVIDER, OpenRouter's pro tier by default,
+# whatever PROMPT_PROVIDER says (#278): the request goes to OpenRouter with the pro model, pin
+# and effort.
+@pytest.mark.parametrize("configured", ["ollama", "openai"])
+def test_bare_pro_call_runs_openrouter_pro(
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, configured: str
+) -> None:
+    monkeypatch.setenv("PROMPT_PROVIDER", configured)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
+    fake_http.reply(_CLOUD_BODIES["openrouter"])
+    result = improve("--tier", "pro", "--source", "argument", "--text", "draft")
+    assert (result.exit_code, result.stdout) == (0, "ok")
+    (call,) = fake_http.calls
+    cfg = Settings()
+    assert call["url"].startswith(cfg.openrouter_base_url)
+    body = call["json"]
+    assert body["model"] == cfg.openrouter_pro_model
+    assert body["provider"]["order"] == [cfg.openrouter_pro_provider]
+    assert body["reasoning"] == {"effort": cfg.openrouter_pro_reasoning_effort, "exclude": True}
+
+
 # The pro tier on Anthropic and OpenAI directly (#278): `improve --tier pro` with no --provider
 # runs on PROMPT_PRO_PROVIDER, with that provider's own model, cap and effort, the pro time
 # limit and PROMPT_PRO_PROFILE; the request goes to that provider's API, gated as ever.

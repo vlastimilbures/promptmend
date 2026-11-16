@@ -58,6 +58,9 @@ class State:
     stage: str = FULL
     # A quick State whose full read failed (why, for the rows that wait): see not_checked().
     failed: str | None = None
+    # The triggers in the match files Espanso has (doctor.deployed_triggers()): what really
+    # runs when the file is older or edited. None before the full read, or with none deployed.
+    deployed: list[assets.Trigger] | None = None
 
     @property
     def full(self) -> bool:
@@ -216,6 +219,10 @@ def gather(group_by: str = "trigger", first: State | None = None) -> State:
             found=found,
             plan=plan,
         )
+    deployed = None
+    if plan is not None:
+        found_triggers, any_deployed = doctor.deployed_triggers(plan.espanso_dir)
+        deployed = found_triggers if any_deployed else None
     stats: list[history.StatsRow] = []
     stats_error = None
     try:
@@ -232,6 +239,7 @@ def gather(group_by: str = "trigger", first: State | None = None) -> State:
         update=CHECKING,
         pending=pending,
         stage=FULL,
+        deployed=deployed,
     )
     # Landed already (a cached answer, the check turned off): one State, no "checking".
     return state.settled() if pending.done() else state

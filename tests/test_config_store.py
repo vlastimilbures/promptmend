@@ -416,6 +416,7 @@ def test_round_trip_covers_every_setting() -> None:
         ("PROMPT_PROFILE_OVERRIDES", ""),
         ("PROMPT_PRO_PROVIDER", "anthropic"),
         ("PROMPT_PRO_PROVIDER", " OpenRouter "),
+        ("PROMPT_PRO_PROVIDER", ""),
     ],
 )
 def test_saved_setting_round_trips(saved_mode: Path, name: str, raw: str) -> None:

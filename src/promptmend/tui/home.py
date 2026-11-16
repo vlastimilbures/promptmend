@@ -103,8 +103,10 @@ def _version_row(state: State) -> HomeRow:
 def _trigger_row(state: State, label: str, name: str) -> HomeRow:
     """The provider and model a trigger runs (its command line names them; PROMPT_PROVIDER,
     or PROMPT_PRO_PROVIDER on the pro tier, only when it does not), and whether its key is
-    there."""
-    trigger = next((t for t in state.triggers if t.trigger == name), None)
+    there. The deployed match file's command line wins over the shipped one, since that is
+    what Espanso runs: an older -ip- still names OpenRouter (doctor.stale_pro_pins())."""
+    deployed = state.deployed or []
+    trigger = next((t for t in [*deployed, *state.triggers] if t.trigger == name), None)
     cfg = state.settings
     tier = (trigger.tier if trigger else None) or "standard"
     provider = (trigger.provider if trigger else None) or cfg.provider_for(tier)
@@ -121,6 +123,10 @@ def _trigger_row(state: State, label: str, name: str) -> HomeRow:
         problem = f"{route.key} is not set, so {name} cannot rewrite"
         return HomeRow(FAIL, label, text, "key not set", "settings", problem)
     detail = "key set" if route.key else ("no key needed" if route.remote else "stays local")
+    stale = {k: v for k, v in doctor.stale_pro_pins(deployed, cfg).items() if k == name}
+    if stale:
+        problem = doctor.stale_pro_message(stale, cfg.pro_provider)
+        return HomeRow(WARN, label, text, "redeploy", "triggers", problem)
     return HomeRow(OK, label, text, detail, "settings")
 
 

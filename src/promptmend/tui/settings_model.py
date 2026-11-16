@@ -95,7 +95,7 @@ SETTINGS: tuple[Meta, ...] = (
         _MOD,
         "PROMPT_PROVIDER",
         CHOICE,
-        "Provider of a bare `promptmend improve` and the Try tab; triggers name their own.",
+        "Provider of a bare `promptmend improve` and the Try tab; -ip- uses PROMPT_PRO_PROVIDER.",
         PROVIDER_NAMES,
     ),
     _m(_MOD, "OPENROUTER_MODEL", TEXT, "OpenRouter's model for -i-."),
@@ -125,7 +125,7 @@ SETTINGS: tuple[Meta, ...] = (
         _MOD,
         "PROMPT_PRO_PROVIDER",
         CHOICE,
-        "Where -ip- runs: OpenRouter's pro tier, or Anthropic or OpenAI directly.",
+        "Which API -ip- calls, once deployed: OpenRouter, Anthropic or OpenAI.",
         PRO_PROVIDERS,
     ),
     _m(

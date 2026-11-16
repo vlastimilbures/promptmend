@@ -3,6 +3,7 @@ history store are faked; the CLI-level tests are in tests/test_commands.py."""
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 from collections.abc import Sequence
@@ -370,6 +371,49 @@ def test_deployed_triggers_read_the_files_espanso_has(tmp_path: Path) -> None:
     active = [t.trigger for t in found if t.active and t.command == "improve"]
     assert active == ["-i-", "-iok-", "-if-", "-il-", "-ilm-"]
     assert {t.provider for t in found if t.trigger == "-il-"} == {"ollama"}
+
+
+def _older_ip(tmp_path: Path) -> list[assets.Trigger]:
+    """The triggers of a deployed prompts-llm.yml from before #278: -ip- names OpenRouter."""
+    text = deploy.render(assets.read_match("prompts-llm.yml"), LAUNCHER)
+    old = '"--trigger-id", "ip", "--provider", "openrouter", "--tier"'
+    _deploy(tmp_path, "prompts-llm.yml", text.replace('"--trigger-id", "ip", "--tier"', old))
+    found, deployed = doctor.deployed_triggers(tmp_path)
+    assert deployed
+    return found
+
+
+# An older deployed -ip- still names OpenRouter: a PROMPT_PRO_PROVIDER set to another provider
+# does not reach it until a deploy, which pro_provider says (#278). -if- never counts.
+def test_pro_provider_warns_about_an_older_deployed_ip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    found = _older_ip(tmp_path)
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "anthropic")
+    settings = config.Settings()
+    assert doctor.stale_pro_pins(found, settings) == {"-ip-": "openrouter"}
+    check = doctor._pro_provider_check(settings, found, True)
+    assert check.status == "warn"
+    assert check.data == {
+        "pro_provider": "anthropic",
+        "deployed": True,
+        "stale": {"-ip-": "openrouter"},
+    }
+    assert "-ip- still names openrouter" in check.message
+    assert check.message.endswith("redeploy to apply it (`promptmend espanso deploy`)")
+    # The keys check follows the deployed file: OpenRouter's key, not Anthropic's.
+    keys = doctor._keys_check(ConfigLayers.resolve(strict=False), settings, found, True)
+    assert keys.data["triggers"] == {"OPENROUTER_API_KEY": ["-i-", "-iok-", "-ip-", "-if-"]}
+    # Not deployed yet, the default, or the current file: nothing to warn about.
+    assert doctor._pro_provider_check(settings, found, False).status == "ok"
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openrouter")
+    assert doctor._pro_provider_check(config.Settings(), found, True).status == "ok"
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
+    current = assets.triggers()
+    check = doctor._pro_provider_check(config.Settings(), current, True)
+    assert (check.status, check.message) == ("ok", "the pro tier runs on openai")
+    inactive = [dataclasses.replace(t, active=False) for t in found]
+    assert doctor.stale_pro_pins(inactive, config.Settings()) == {}
 
 
 # --- local servers (#220) -----------------------------------------------------------------

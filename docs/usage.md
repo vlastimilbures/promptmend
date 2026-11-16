@@ -61,7 +61,9 @@ in the default prompt", #42).
 
 A tier is a preset: the provider, model, reasoning effort, output cap, time limit and profile
 a call runs with. `-i-` runs the standard tier, `-ip-` and `-if-` the pro tier. `-ip-` names
-no provider, so it runs on `PROMPT_PRO_PROVIDER`:
+no provider, so it runs on `PROMPT_PRO_PROVIDER` once the current match file is deployed
+(`promptmend espanso deploy`; `promptmend doctor` and Home warn while an older one still
+names OpenRouter):
 
 - `openrouter` (the default): `OPENROUTER_PRO_MODEL` (`openai/gpt-6-luna`) on its
   `OPENROUTER_PRO_PROVIDER` pin at `OPENROUTER_PRO_REASONING_EFFORT`, capped at
@@ -69,7 +71,8 @@ no provider, so it runs on `PROMPT_PRO_PROVIDER`:
 - `openai`: OpenAI's own API with its own settings: `OPENAI_MODEL` (`gpt-6-luna`, the same
   model) at `OPENAI_REASONING_EFFORT`, capped at `OPENAI_MAX_TOKENS`. Needs `OPENAI_API_KEY`.
 - `anthropic`: Anthropic's own API with `ANTHROPIC_MODEL` and its own settings. Needs
-  `ANTHROPIC_API_KEY`.
+  `ANTHROPIC_API_KEY`. It sends the `default` profile (or `PROMPT_PRO_PROFILE`), which the
+  [benchmark](benchmark.md) has not scored on Claude.
 
 On every provider the pro tier takes `PROMPT_PRO_TIMEOUT_SECONDS` and `PROMPT_PRO_PROFILE`, and
 the draft goes through the [gate](privacy.md#the-data-protection-gate) as for any cloud call;

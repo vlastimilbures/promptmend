@@ -2232,11 +2232,37 @@ def test_triggers_say_when_espanso_cannot_name_its_folder(espanso: FakeRunner) -
     drive(scenario)
 
 
+# An older deployed -ip- still names OpenRouter: the Triggers tab shows that provider until a
+# redeploy, and Home warns, when PROMPT_PRO_PROVIDER names another (#278).
+def test_triggers_show_an_older_deployed_ip(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from promptmend import assets
+
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "anthropic")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
+    old = '"--trigger-id", "ip", "--provider", "openrouter", "--tier"'
+    text = assets.read_match("prompts-llm.yml").replace('"--trigger-id", "ip", "--tier"', old)
+    (espanso.root / "match" / "prompts-llm.yml").write_text(text, "utf-8")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("4")
+        rows = table_rows(app, "triggers", "#triggers")
+        assert rows["-ip-"][1:3] == ["openrouter until redeployed", "pro"]
+        assert rows["-if-"][1] == "openrouter"
+        pro = next(line for line in _home_text(app).splitlines() if "Pro (-ip-)" in line)
+        assert "openrouter · openai/gpt-6-luna" in pro
+        assert "redeploy" in pro
+
+    drive(scenario)
+
+
 def test_triggers_show_fixed_providers_and_deploy(espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await pilot.press("4")
         rows = table_rows(app, "triggers", "#triggers")
         assert rows["-i-"][1:5] == ["openrouter", "standard", "PROMPT_PROFILE", "missing"]
+        assert rows["-ip-"][1:3] == ["PROMPT_PRO_PROVIDER", "pro"]
         assert rows["-il-"][1:4] == ["ollama", "standard", "general"]
         assert rows["-ic-"][4] == "commented out"
         assert "PROMPT_PROVIDER does not change these" in str(

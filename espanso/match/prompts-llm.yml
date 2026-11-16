@@ -45,7 +45,7 @@ matches:
   # provider, so it runs on PROMPT_PRO_PROVIDER: OpenRouter unless set to anthropic or
   # openai, which run that provider's own model directly. Same cloud caveats as above.
   - trigger: "-ip-"
-    label: "PromptMend: rewrite on the pro tier (PROMPT_PRO_PROVIDER, OpenRouter by default)"
+    label: "PromptMend: rewrite on the pro tier"
     left_word: true
     replace: "{{output}}"
     force_mode: clipboard

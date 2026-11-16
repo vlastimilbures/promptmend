@@ -169,7 +169,7 @@ has no certificate of its own; the server's certificate behind it is checked as 
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `PROMPT_PROVIDER` | `openrouter` | Provider when `--provider` is not given: a bare `promptmend improve` and the interface's Try tab. The triggers name their own provider, so it does not change them |
+| `PROMPT_PROVIDER` | `openrouter` | Provider when `--provider` is not given: a bare `promptmend improve` on the standard tier and the interface's Try tab. The triggers name their own provider (`-ip-` runs on `PROMPT_PRO_PROVIDER`), so it does not change them |
 | `PROMPT_PROFILE` | `default` | Profile when `--profile` is not given (`-i-`, and `-if-` on a non-pro model) |
 | `PROMPT_PERSONA` | *(empty)* | Your first-person role, see [Persona](profiles.md#persona) |
 | `PROMPT_PROFILE_OVERRIDES` | *(empty)* | Comma-separated built-in profiles (`default`, `general`) your own same-named file replaces, see [Profiles](profiles.md#replacing-a-built-in) |
@@ -200,12 +200,14 @@ OpenRouter's). On OpenRouter the pro tier has its own model, endpoint pin, effor
 cap (the `OPENROUTER_PRO_*` rows). On Anthropic and OpenAI it keeps that provider's own model,
 effort and cap ([Anthropic](#anthropic), [OpenAI](#openai): `OPENAI_MODEL` is already the pro
 model). Every provider takes the two `PROMPT_PRO_*` rows below. Ollama and LM Studio have no
-pro tier. With every setting left as shipped, the pro tier runs exactly as before this choice
+pro tier. On Anthropic the pro tier sends `PROMPT_PRO_PROFILE` (empty: `PROMPT_PROFILE`, the
+`default` profile) as everywhere, but the [benchmark](benchmark.md) has not scored that
+combination. With every setting left as shipped, the pro tier runs exactly as before this choice
 existed: OpenRouter, `openai/gpt-6-luna` on the `openai` endpoint at effort `low`.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `PROMPT_PRO_PROVIDER` | `openrouter` | Where a pro call that names no provider runs: `openrouter`, `anthropic` or `openai`. It sends the draft to that provider, [gated](privacy.md#the-data-protection-gate), and needs its key; `PROMPT_LOCAL_ONLY=true` refuses each of them |
+| `PROMPT_PRO_PROVIDER` | `openrouter` | Which API a pro call that names no provider calls: `openrouter`, `anthropic` or `openai`; empty = `openrouter`. For `-ip-` it applies once the current match file is deployed (`promptmend doctor` warns while an older one still names OpenRouter). Not to be confused with `OPENROUTER_PRO_PROVIDER`, the endpoint pin inside OpenRouter. It sends the draft to that provider, [gated](privacy.md#the-data-protection-gate), and needs its key; `PROMPT_LOCAL_ONLY=true` refuses each of them |
 | `OPENROUTER_PRO_MODEL` | `openai/gpt-6-luna` | Model for the pro tier on OpenRouter |
 | `OPENROUTER_PRO_PROVIDER` | `openai` | Endpoint pin for the pro tier on OpenRouter |
 | `OPENROUTER_PRO_REASONING_EFFORT` | `low` | Reasoning effort for the pro tier on OpenRouter |

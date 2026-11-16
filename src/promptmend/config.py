@@ -463,12 +463,18 @@ def _effort(raw: str) -> str:
 DATA_COLLECTION = ("allow", "deny")
 
 
+# PROMPT_PRO_PROVIDER's default, which an empty value also means.
+DEFAULT_PRO_PROVIDER = "openrouter"
+
+
 def _pro_provider(raw: str) -> str:
-    """PROMPT_PRO_PROVIDER: a provider with the pro tier. Strict: a typo would otherwise
-    surface only when -ip- runs."""
-    if raw.strip().lower() not in PRO_PROVIDERS:
-        raise ValueError(f"one of {', '.join(PRO_PROVIDERS)}")
-    return raw.strip().lower()
+    """PROMPT_PRO_PROVIDER: a provider with the pro tier; empty means the default, as for a
+    line left as `PROMPT_PRO_PROVIDER=`. Strict otherwise: a typo would surface only when -ip-
+    runs."""
+    name = raw.strip().lower() or DEFAULT_PRO_PROVIDER
+    if name not in PRO_PROVIDERS:
+        raise ValueError(f"empty or one of {', '.join(PRO_PROVIDERS)}")
+    return name
 
 
 def _data_collection(raw: str) -> str:
@@ -654,7 +660,7 @@ class Settings:
     # Where a pro call runs when it names no provider (-ip-, `improve --tier pro`): OpenRouter
     # with OPENROUTER_PRO_*, or Anthropic or OpenAI directly with their own settings. A call
     # that names its provider (-if-: --provider openrouter) runs that provider's pro tier.
-    pro_provider: str = _env("PROMPT_PRO_PROVIDER", "openrouter", _pro_provider)
+    pro_provider: str = _env("PROMPT_PRO_PROVIDER", DEFAULT_PRO_PROVIDER, _pro_provider)
     # Profile for the pro tier; empty (the default) uses PROMPT_PROFILE, so both tiers send
     # the same prompt. An escape hatch for a prompt tuned to OPENROUTER_PRO_MODEL.
     pro_profile: str = _env("PROMPT_PRO_PROFILE", "")
@@ -754,7 +760,10 @@ class Settings:
     def for_tier(self, tier: str, provider: str | None = None) -> Settings:
         """Settings for a quality tier on ``provider`` (provider_for() when None): `standard`
         as-is, `pro` with its tier_preset() swapped in."""
-        preset = self.tier_preset(tier, provider)
+        return self._with_preset(self.tier_preset(tier, provider))
+
+    def _with_preset(self, preset: Preset | None) -> Settings:
+        """These settings with ``preset`` swapped in; None changes nothing."""
         if preset is None:
             return self
         spec = PROVIDERS[preset.provider]
@@ -787,7 +796,7 @@ class Settings:
         model, so a pro call that runs another model (one picked in the -if- popup) uses
         PROMPT_PROFILE instead."""
         preset = self.tier_preset(tier, provider)
-        cfg = self.for_tier(tier, provider).with_overrides(
+        cfg = self._with_preset(preset).with_overrides(
             model=model, effort=effort, max_tokens=max_tokens, timeout=timeout, output=output
         )
         if preset is not None and PROVIDERS[preset.provider].model(cfg) != preset.model:

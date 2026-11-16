@@ -148,6 +148,33 @@ def test_pro_row_follows_the_pro_provider() -> None:
     assert row.text == f"anthropic · {state.settings.anthropic_model}"
 
 
+# An older deployed -ip- still names OpenRouter: Home shows what Espanso really runs (no false
+# "OPENAI_API_KEY is not set") and warns that PROMPT_PRO_PROVIDER needs a redeploy (#278).
+def test_pro_row_follows_an_older_deployed_ip() -> None:
+    older = [
+        dataclasses.replace(t, provider="openrouter") if t.trigger == "-ip-" else t
+        for t in ready().triggers
+    ]
+    base = dataclasses.replace(ready(), deployed=older)
+    state = _with_env(base, OPENROUTER_API_KEY="-".join(("a", "b")), PROMPT_PRO_PROVIDER="openai")
+    row = _rows(state)["Pro (-ip-)"]
+    assert (row.status, row.text, row.detail, row.jump) == (
+        doctor.WARN,
+        "openrouter · openai/gpt-6-luna",
+        "redeploy",
+        "triggers",
+    )
+    assert "PROMPT_PRO_PROVIDER=openai does not apply" in row.problem
+    assert "promptmend espanso deploy" in row.problem
+    # The default PROMPT_PRO_PROVIDER: the older file runs as the setting says, no warning.
+    state = _with_env(base, OPENROUTER_API_KEY="-".join(("a", "b")))
+    assert _rows(state)["Pro (-ip-)"].status == doctor.OK
+    # The current file deployed: the setting applies.
+    current = dataclasses.replace(ready(), deployed=list(ready().triggers))
+    state = _with_env(current, OPENAI_API_KEY="k", PROMPT_PRO_PROVIDER="openai")
+    assert _rows(state)["Pro (-ip-)"].text == "openai · gpt-6-luna"
+
+
 def test_local_only_refuses_the_cloud_triggers() -> None:
     state = _with_env(ready(), OPENROUTER_API_KEY="-".join(("a", "b")), PROMPT_LOCAL_ONLY="true")
     found = _rows(state)
