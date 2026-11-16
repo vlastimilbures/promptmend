@@ -30,10 +30,10 @@ promptmend improve --tier pro --source clipboard   # the reasoning model behind 
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `--provider` | `PROMPT_PROVIDER` | `ollama`, `lmstudio`, `openrouter`, `anthropic`, `openai` |
-| `--profile` | `PROMPT_PROFILE` (`PROMPT_PRO_PROFILE`, if set, with `--tier pro` on `OPENROUTER_PRO_MODEL`) | `default`, `general`, or one of [your own profiles](profiles.md#your-own-profiles) |
+| `--provider` | `PROMPT_PROVIDER` (`PROMPT_PRO_PROVIDER` with `--tier pro`) | `ollama`, `lmstudio`, `openrouter`, `anthropic`, `openai` |
+| `--profile` | `PROMPT_PROFILE` (`PROMPT_PRO_PROFILE`, if set, with `--tier pro` on the pro tier's own model) | `default`, `general`, or one of [your own profiles](profiles.md#your-own-profiles) |
 | `--model` | the provider's configured model | Overrides the model of whichever provider runs; `model@endpoint` also pins the OpenRouter endpoint (`@auto` unpins) |
-| `--tier` | `standard` | OpenRouter only: `pro` uses the `OPENROUTER_PRO_*` settings |
+| `--tier` | `standard` | OpenRouter, Anthropic and OpenAI: `pro` uses the `OPENROUTER_PRO_*` settings on OpenRouter, and the provider's own settings with the pro time limit and profile on Anthropic and OpenAI (see [the pro tier](usage.md#the-pro-tier)) |
 | `--effort` | `OPENROUTER_REASONING_EFFORT` (`OPENROUTER_PRO_REASONING_EFFORT` with `--tier pro`) or `OPENAI_REASONING_EFFORT` | OpenRouter and OpenAI only: `none`, `minimal`, `low`, `medium`, `high` |
 | `--max-tokens` | `OPENROUTER_MAX_TOKENS` (`OPENROUTER_PRO_MAX_TOKENS`, if set, with `--tier pro`), `ANTHROPIC_MAX_TOKENS` or `OPENAI_MAX_TOKENS`; no cap for Ollama and LM Studio | Output cap for this call (Ollama: `num_predict`) |
 | `--timeout` | `PROMPT_TIMEOUT_SECONDS` (`PROMPT_PRO_TIMEOUT_SECONDS` with `--tier pro`) | Time limit in seconds for this call, retry included |
@@ -43,7 +43,7 @@ promptmend improve --tier pro --source clipboard   # the reasoning model behind 
 | `--copy` | off | With `paste` output, also copy the result to the clipboard (no effect with `clipboard`); if the copy fails, the result is still printed after the error marker |
 | `--allow-flagged` | off | Send this one draft despite soft findings of the gate (what `-iok-` passes; see [overriding a block](privacy.md#overriding-a-block)) |
 
-`--tier pro` with any provider but OpenRouter, and `--effort` (other than `default`) with any
+`--tier pro` with Ollama or LM Studio, and `--effort` (other than `default`) with any
 provider but OpenRouter and OpenAI, are refused with a `[promptmend: …]` marker, and no call
 is made: no other provider has a pro tier, or a reasoning-effort control.
 
@@ -85,7 +85,7 @@ read gives the `[role]` placeholder. See [Persona](profiles.md#persona).
 | `promptmend espanso deploy [--dry-run]` / `status` / `detach` | Writes, checks or removes the match files. See [Managing the match files](usage.md#managing-the-match-files) |
 | `promptmend stats [--by trigger\|provider\|model\|day] [--json] [--verbose]` | Calls, latency, tokens and costs from the [usage history](privacy.md#usage-history); `--verbose` also says what the history records and how to read the numbers (below) |
 | `promptmend history export [--format json\|csv] [-o FILE]` / `prune [--older-than DAYS]` / `reset` | Exports the history (metadata only), deletes old records (asking first when the age is shorter than `PROMPT_HISTORY_RETENTION_DAYS`), or deletes them all |
-| `promptmend doctor [--json] [--timing [--runs N]]` | Version and whether a newer release exists (information only, with the update command for your install channel; `--json` adds `latest`, `update_available` and `checked_at`; one pypi.org request a day (an hour after a failure), `PROMPT_UPDATE_CHECK=false` turns it off), CLI path and install channel, whether the `promptmend` first on PATH is this install's (an older CLI there runs with other settings), config validity, a gate pack that `PROMPT_GATE_PACKS` leaves off (`gate_packs`, information only), keys set or not (a missing key names the deployed triggers that need it), whether the Ollama or LM Studio a deployed trigger uses answers (on Windows also a `localhost` URL, which costs about 2 s a call: `--json` lists such settings in `slow_localhost`), Espanso found and running, each deployed match file (`in sync`, `stale`, `modified`, `missing`, or `foreign` for one no deploy wrote; a linked Espanso folder is compared as the folder it points to), launcher drift, history health, SQLite version and the history's journal mode, the folders, what https certificates are checked against (`tls`: the operating system's trust store, the bundle `SSL_CERT_FILE`/`SSL_CERT_DIR` names, or certifi's where the trust store cannot load), and a clipboard read test that reports only the length (`--no-clipboard` skips it). Safe to paste into an issue: it never shows a key, your persona or clipboard text. `--timing` also measures how fast this install starts (below); without `--timing`, `doctor` runs no PromptMend child and times nothing, and `--runs` without it is a usage error |
+| `promptmend doctor [--json] [--timing [--runs N]]` | Version and whether a newer release exists (information only, with the update command for your install channel; `--json` adds `latest`, `update_available` and `checked_at`; one pypi.org request a day (an hour after a failure), `PROMPT_UPDATE_CHECK=false` turns it off), CLI path and install channel, whether the `promptmend` first on PATH is this install's (an older CLI there runs with other settings), config validity, a gate pack that `PROMPT_GATE_PACKS` leaves off (`gate_packs`, information only), keys set or not (a missing key names the deployed triggers that need it), whether `PROMPT_PRO_PROVIDER` reaches the deployed `-ip-` (`pro_provider`: an older match file still names OpenRouter until a deploy), whether the Ollama or LM Studio a deployed trigger uses answers (on Windows also a `localhost` URL, which costs about 2 s a call: `--json` lists such settings in `slow_localhost`), Espanso found and running, each deployed match file (`in sync`, `stale`, `modified`, `missing`, or `foreign` for one no deploy wrote; a linked Espanso folder is compared as the folder it points to), launcher drift, history health, SQLite version and the history's journal mode, the folders, what https certificates are checked against (`tls`: the operating system's trust store, the bundle `SSL_CERT_FILE`/`SSL_CERT_DIR` names, or certifi's where the trust store cannot load), and a clipboard read test that reports only the length (`--no-clipboard` skips it). Safe to paste into an issue: it never shows a key, your persona or clipboard text. `--timing` also measures how fast this install starts (below); without `--timing`, `doctor` runs no PromptMend child and times nothing, and `--runs` without it is a usage error |
 
 ## Reading stats
 
@@ -98,8 +98,9 @@ provider's dashboard for what you were charged.
 - An unknown cost is counted as unknown (`N attempt(s) with an unknown cost`), never as 0.
 - A call counts once the CLI rendered its output, which does not mean it was pasted (with
   clipboard output, that the rewrite was copied).
-- Triggers that name a provider (`-i-`, `-ip-`, `-if-`, `-iok-`, `-il-`, `-ilm-`) ignore
-  `PROMPT_PROVIDER`, so changing it does not move their calls to another provider.
+- Triggers that name a provider (`-i-`, `-if-`, `-iok-`, `-il-`, `-ilm-`) ignore
+  `PROMPT_PROVIDER`, so changing it does not move their calls to another provider. `-ip-`
+  names none and runs on `PROMPT_PRO_PROVIDER`, so changing that one does, once deployed.
 - By trigger, a real run from the interface's Try tab is listed as `-try-`, and a bare
   `promptmend improve` as `no trigger (direct call)`.
 

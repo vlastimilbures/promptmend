@@ -60,7 +60,7 @@ deployed trigger uses it.
 ### The trigger stays and nothing happens
 
 Espanso shows nothing while the CLI runs, up to the call's time limit:
-`PROMPT_TIMEOUT_SECONDS`, `PROMPT_PRO_TIMEOUT_SECONDS` on the OpenRouter pro tier (`-ip-`),
+`PROMPT_TIMEOUT_SECONDS`, `PROMPT_PRO_TIMEOUT_SECONDS` on the pro tier (`-ip-`),
 or the timeout picked in the [-if- form](usage.md#the--if--form). A run still going blocks
 every later trigger until it ends. Every run ends by its limit plus 2 s, plus Python's
 start-up, with a rewrite or a marker (see [While it runs](usage.md#while-it-runs)); nothing at
@@ -80,7 +80,7 @@ paste. To tell the cases apart:
     [Usage history](#usage-history) and `promptmend doctor`'s `history` line), and with
     `PROMPT_HISTORY=false` nothing is recorded.
 - Run the trigger's own call in a terminal to see the time and the marker without Espanso;
-  for `-ip-`: `time promptmend improve --provider openrouter --tier pro --source argument --text "…"`
+  for `-ip-`: `time promptmend improve --tier pro --source argument --text "…"`
   (in PowerShell: `Measure-Command { promptmend improve … | Out-Default }`). It adds a row of
   its own, as a direct call.
 - `promptmend doctor --timing` measures the start-up alone (see

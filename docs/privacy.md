@@ -67,9 +67,9 @@ unless `PROMPT_GATE_LOCAL=true`), and name what it matches, never the text.
 
 | Provider | Recipients |
 |----------|------------|
-| OpenRouter (`-i-`, `-iok-`, `-ip-`, `-if-`) | OpenRouter (`OPENROUTER_BASE_URL`), and the upstream endpoint that serves the model: the one pinned by `OPENROUTER_PROVIDER` (`OPENROUTER_PRO_PROVIDER` for `-ip-`, the form's pick for `-if-`), or another endpoint serving the same model when OpenRouter falls back, which `OPENROUTER_ALLOW_FALLBACKS` allows by default (`false` makes the pin binding). An empty pin leaves the choice to OpenRouter. The request carries an `X-Title: promptmend` header, which attributes the calls to this app in OpenRouter's dashboard (the benchmark script sends `promptmend-bench`) |
-| Anthropic (`-ic-`, commented out) | Anthropic (`ANTHROPIC_BASE_URL`) |
-| OpenAI (`-io-`, commented out) | OpenAI (`OPENAI_BASE_URL`), called directly, not through OpenRouter |
+| OpenRouter (`-i-`, `-iok-`, `-if-`, and `-ip-` while `PROMPT_PRO_PROVIDER` is `openrouter`, the default) | OpenRouter (`OPENROUTER_BASE_URL`), and the upstream endpoint that serves the model: the one pinned by `OPENROUTER_PROVIDER` (`OPENROUTER_PRO_PROVIDER` for `-ip-`, the form's pick for `-if-`), or another endpoint serving the same model when OpenRouter falls back, which `OPENROUTER_ALLOW_FALLBACKS` allows by default (`false` makes the pin binding). An empty pin leaves the choice to OpenRouter. The request carries an `X-Title: promptmend` header, which attributes the calls to this app in OpenRouter's dashboard (the benchmark script sends `promptmend-bench`) |
+| Anthropic (`-ic-`, commented out; `-ip-` with `PROMPT_PRO_PROVIDER=anthropic`, once the current match file is deployed) | Anthropic (`ANTHROPIC_BASE_URL`) |
+| OpenAI (`-io-`, commented out; `-ip-` with `PROMPT_PRO_PROVIDER=openai`, once the current match file is deployed) | OpenAI (`OPENAI_BASE_URL`), called directly, not through OpenRouter |
 | Ollama / LM Studio on `localhost` (`-il-`, `-ilm-`) | Nobody else, as long as the server on this machine runs the model itself (a `localhost` relay that forwards to a cloud API is not detected; a `cloud`-tagged Ollama model is the next row). These triggers use the `general` profile, which has no persona |
 | Ollama / LM Studio at another address, or an Ollama `cloud` model | The configured server (`OLLAMA_BASE_URL`/`api/chat` or `LMSTUDIO_BASE_URL`); for a cloud model, that Ollama server also forwards the request to ollama.com (this tool sends no key there). With an `http://` URL anyone on the network path can read the draft too. The gate applies as for the cloud providers |
 
@@ -229,8 +229,9 @@ the model name, or use the model under its `cloud`-tagged name.
 
 ## Local only
 
-Each trigger names its own provider, so `PROMPT_PROVIDER` does not make `-i-` local. To rule
-out cloud calls, set `PROMPT_LOCAL_ONLY=true`:
+Each trigger names its own provider (`-ip-` runs on `PROMPT_PRO_PROVIDER`, always a cloud
+API), so `PROMPT_PROVIDER` does not make `-i-` local. To rule out cloud calls, set
+`PROMPT_LOCAL_ONLY=true`:
 
 ```bash
 promptmend config set PROMPT_LOCAL_ONLY true

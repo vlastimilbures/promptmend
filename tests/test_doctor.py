@@ -3,8 +3,10 @@ history store are faked; the CLI-level tests are in tests/test_commands.py."""
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -301,6 +303,14 @@ def _keys(
     return doctor._keys_check(layers, layers.settings(), shipped, deployed)
 
 
+# -ip- names no provider, so it needs PROMPT_PRO_PROVIDER's key; -if- stays on OpenRouter.
+def test_keys_follow_the_pro_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    check = _keys(monkeypatch, PROMPT_PRO_PROVIDER="openai", OPENROUTER_API_KEY="k")
+    assert check.status == "fail"
+    assert check.data["triggers"] == {"OPENAI_API_KEY": ["-ip-"]}
+    assert check.message == "-ip- uses OpenAI, but OPENAI_API_KEY is not set"
+
+
 def test_keys_name_the_triggers_that_need_them(monkeypatch: pytest.MonkeyPatch) -> None:
     check = _keys(monkeypatch)
     assert check.status == "fail"
@@ -327,7 +337,7 @@ def test_keys_only_count_active_rewrite_triggers(monkeypatch: pytest.MonkeyPatch
     # A trigger naming no provider runs on PROMPT_PROVIDER.
     bare = [assets.Trigger("-x-", "prompts-llm.yml", True, "improve")]
     check = _keys(monkeypatch, "anthropic", triggers=bare)
-    assert check.message == "-x- use Anthropic, but ANTHROPIC_API_KEY is not set"
+    assert check.message == "-x- uses Anthropic, but ANTHROPIC_API_KEY is not set"
 
 
 def test_keys_mention_prompt_provider_only_for_a_bare_improve(
@@ -362,6 +372,135 @@ def test_deployed_triggers_read_the_files_espanso_has(tmp_path: Path) -> None:
     active = [t.trigger for t in found if t.active and t.command == "improve"]
     assert active == ["-i-", "-iok-", "-if-", "-il-", "-ilm-"]
     assert {t.provider for t in found if t.trigger == "-il-"} == {"ollama"}
+
+
+def _older_ip(tmp_path: Path) -> list[assets.Trigger]:
+    """The triggers of a deployed prompts-llm.yml from before #278: -ip- names OpenRouter."""
+    text = deploy.render(assets.read_match("prompts-llm.yml"), LAUNCHER)
+    old = '"--trigger-id", "ip", "--provider", "openrouter", "--tier"'
+    _deploy(tmp_path, "prompts-llm.yml", text.replace('"--trigger-id", "ip", "--tier"', old))
+    found, deployed = doctor.deployed_triggers(tmp_path)
+    assert deployed
+    return found
+
+
+# An older deployed -ip- still names OpenRouter: a PROMPT_PRO_PROVIDER set to another provider
+# does not reach it until a deploy, which pro_provider says (#278). -if- never counts.
+def test_pro_provider_warns_about_an_older_deployed_ip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    found = _older_ip(tmp_path)
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "anthropic")
+    settings = config.Settings()
+    assert doctor.stale_pro_pins(found, settings) == {"-ip-": "openrouter"}
+    check = doctor._pro_provider_check(settings, found, True)
+    assert check.status == "warn"
+    assert check.data == {
+        "pro_provider": "anthropic",
+        "deployed": True,
+        "stale": {"-ip-": "openrouter"},
+    }
+    assert check.message.startswith(
+        "the deployed -ip- is from an older release and still names openrouter, so "
+        "PROMPT_PRO_PROVIDER=anthropic does not apply to it; redeploy to apply it "
+        "(`promptmend espanso deploy`, "
+    )
+    assert "`promptmend espanso deploy --on-conflict ours`" in check.message
+    # The keys check follows the deployed file: OpenRouter's key, not Anthropic's.
+    keys = doctor._keys_check(ConfigLayers.resolve(strict=False), settings, found, True)
+    assert keys.data["triggers"] == {"OPENROUTER_API_KEY": ["-i-", "-iok-", "-ip-", "-if-"]}
+    # Not deployed yet, the default, or the current file: nothing to warn about.
+    assert doctor._pro_provider_check(settings, found, False).status == "ok"
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openrouter")
+    assert doctor._pro_provider_check(config.Settings(), found, True).status == "ok"
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
+    current = assets.triggers()
+    check = doctor._pro_provider_check(config.Settings(), current, True)
+    assert (check.status, check.message) == ("ok", "the pro tier runs on openai")
+    inactive = [dataclasses.replace(t, active=False) for t in found]
+    assert doctor.stale_pro_pins(inactive, config.Settings()) == {}
+
+
+# The -i- and -ip- blocks of prompts-llm.yml as v0.20.0 shipped them: a `type: shell` var whose
+# one `cmd:` string holds the launcher and the options (v0.7.0 to v0.20.0), here deployed.
+V0_20_0_BLOCKS = r"""matches:
+  - trigger: "-i-"
+    label: "PromptMend: rewrite the clipboard (OpenRouter)"
+    left_word: true
+    replace: "{{output}}"
+    force_mode: clipboard
+    vars:
+      - name: output
+        type: shell
+        params:
+          cmd: "\"/home/me/.local/bin/promptmend\" improve --trigger-id i --provider openrouter --source clipboard"
+
+  - trigger: "-ip-"
+    label: "PromptMend: rewrite on the pro tier (OpenRouter)"
+    left_word: true
+    replace: "{{output}}"
+    force_mode: clipboard
+    vars:
+      - name: output
+        type: shell
+        params:
+          cmd: "\"/home/me/.local/bin/promptmend\" improve --trigger-id ip --provider openrouter --tier pro --source clipboard"
+"""  # noqa: E501 - the shipped lines, verbatim
+
+
+# A file deployed by v0.7.0 to v0.20.0 is read too: its triggers name OpenRouter, so the keys
+# check and pro_provider are right for it (#278).
+def test_shell_form_triggers_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    found = assets.triggers_in(V0_20_0_BLOCKS, "prompts-llm.yml")
+    assert [(t.trigger, t.command, t.provider, t.tier) for t in found] == [
+        ("-i-", "improve", "openrouter", None),
+        ("-ip-", "improve", "openrouter", "pro"),
+    ]
+    monkeypatch.setenv("PROMPT_PROVIDER", "ollama")
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
+    settings = config.Settings()
+    assert doctor.stale_pro_pins(found, settings) == {"-ip-": "openrouter"}
+    keys = doctor._keys_check(ConfigLayers.resolve(strict=False), settings, found, True)
+    assert keys.data["triggers"] == {"OPENROUTER_API_KEY": ["-i-", "-ip-"]}
+
+
+# A crafted 400 KB line that never closes the shell form is refused in linear time: the
+# launcher pattern cannot backtrack over `\"`, which a launcher never holds.
+@pytest.mark.parametrize("unit", ["a", "\\a", 'a\\" b', "\\\\"])
+def test_shell_form_parse_is_linear(unit: str) -> None:
+    line = 'cmd: "\\"' + unit * (400_000 // len(unit))
+    started = time.perf_counter()
+    assert assets.triggers_in(f'- trigger: "-x-"\n{line}\n', "x.yml")[0].command is None
+    assert time.perf_counter() - started < 1.0
+
+
+# A deployed pin that names no provider is never counted, so its text is never echoed.
+def test_stale_pro_pins_ignore_unknown_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
+    odd = [assets.Trigger("-ip-", "prompts-llm.yml", True, "improve", "sk-secret", None, "pro")]
+    assert doctor.stale_pro_pins(odd, config.Settings()) == {}
+
+
+# The fallback espanso check, when the check itself raises, still names the folder read.
+def test_espanso_check_failure_keeps_the_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def broken(*_: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(doctor, "_espanso_check", broken)
+    report = doctor.run(clipboard=False, espanso_dir=tmp_path, runner=lambda argv: None)
+    check = next(c for c in report.checks if c.id == "espanso")
+    assert (check.status, check.data["config_dir"]) == ("fail", str(tmp_path))
+
+
+# A pin other than OpenRouter was written in by hand: the message says so, not "older".
+def test_pro_provider_names_a_hand_written_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
+    edited = [assets.Trigger("-ip-", "prompts-llm.yml", True, "improve", "anthropic", None, "pro")]
+    check = doctor._pro_provider_check(config.Settings(), edited, True)
+    assert check.status == "warn"
+    assert check.message.startswith("the deployed -ip- names anthropic itself, so ")
 
 
 # --- local servers (#220) -----------------------------------------------------------------
