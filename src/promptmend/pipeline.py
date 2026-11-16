@@ -5,7 +5,7 @@ gate, the marker that words a failure, its history outcome, the sent-despite not
 delivery of a finished rewrite to the clipboard.
 
 It imports neither Typer nor the CLI, so the interface uses it without the command wiring
-and a Typer-free trigger entry (#313) can build on it. Printing (trigger._emit()) and
+and a Typer-free trigger entry (#313) can build on it. Printing (trigger.emit()) and
 improve's watchdog stay in trigger.py: both need Typer (typer.echo, typer.Exit), and the
 watchdog is the one decision of what a trigger run prints."""
 
@@ -59,7 +59,7 @@ def _clipboard(op: str, *args: str) -> object:
         raise ClipboardUnavailable(f"Clipboard unavailable: {exc}") from exc
 
 
-def _read_input(source: str, text: str | None) -> str:
+def read_input(source: str, text: str | None) -> str:
     if source == "clipboard":
         # Checked before reading, so a vault password is never even loaded, let alone sent or
         # pasted back, whichever provider the trigger uses. None (cannot tell) reads it anyway.
@@ -93,7 +93,7 @@ def sent_despite_note(built: object) -> str:
     return ""
 
 
-def _copy_failed(text: str, rec: recorder.Recorder) -> str:
+def copy_failed(text: str, rec: recorder.Recorder) -> str:
     """Copy ``text`` (the rewrite) for clipboard output and --copy: "" on success, else the
     marker to print before the rewrite, which is then pasted rather than lost (outcome
     clipboard_failed)."""
@@ -110,14 +110,14 @@ def _copy_failed(text: str, rec: recorder.Recorder) -> str:
     return ""
 
 
-def _deliver(result: str, note: str, rec: recorder.Recorder) -> str:
+def deliver(result: str, note: str, rec: recorder.Recorder) -> str:
     """Clipboard output: copy the rewrite and return what to print, which is only the
     markers (the sent-despite ``note``, a stop note), so a plain success prints nothing and
     Espanso just erases the trigger. If the copy fails, the rewrite is printed after the
-    error marker instead (_copy_failed()). The stop note (split_stop_note()) is printed, never
+    error marker instead (copy_failed()). The stop note (split_stop_note()) is printed, never
     copied."""
     rewrite, stop = split_stop_note(result)
-    error = _copy_failed(rewrite, rec)
+    error = copy_failed(rewrite, rec)
     if error:
         return f"{note}{error}{result}"
     return "\n\n".join(marker for marker in (note.rstrip("\n"), stop) if marker)

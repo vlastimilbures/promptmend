@@ -17,7 +17,7 @@ import promptmend.pipeline as pipeline
 from promptmend import config
 from promptmend.cli import app
 from promptmend.config import Settings
-from promptmend.pipeline import _read_input
+from promptmend.pipeline import read_input
 from promptmend.prompt_builder import system_prompt
 from promptmend.providers.base import TRUNCATED_NOTE, ProviderError
 from promptmend.providers.registry import PROVIDERS
@@ -37,21 +37,21 @@ def _no_clipboard(*args: Any) -> None:
     raise pyperclip.PyperclipException("no clipboard mechanism")
 
 
-# _read_input reads from the requested source, and rejects unknown sources.
+# read_input reads from the requested source, and rejects unknown sources.
 def test_read_input_argument() -> None:
-    assert _read_input("argument", "hello") == "hello"
+    assert read_input("argument", "hello") == "hello"
 
 
 def test_read_input_invalid_source() -> None:
     with pytest.raises(ProviderError, match="source must be"):
-        _read_input("bogus", None)
+        read_input("bogus", None)
 
 
-# _read_input surfaces a pyperclip failure as a ProviderError.
+# read_input surfaces a pyperclip failure as a ProviderError.
 def test_read_input_clipboard_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pyperclip, "paste", _no_clipboard)
     with pytest.raises(ProviderError, match="Clipboard unavailable"):
-        _read_input("clipboard", None)
+        read_input("clipboard", None)
 
 
 # A clipboard failure at the CLI level surfaces inline instead of a traceback.
@@ -107,7 +107,7 @@ def test_too_long_stdin_is_read_bounded(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(sys, "stdin", Huge())
     with pytest.raises(ProviderError, match=r"^Input is too long \(over 50000 chars\)$"):
-        _read_input("stdin", None)
+        read_input("stdin", None)
     assert sizes == [50_001]
     result = improve("--provider", "ollama", "--source", "stdin", input="x" * 50_001)
     assert result.stdout == "[promptmend: Input is too long (over 50000 chars)]"

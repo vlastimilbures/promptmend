@@ -1,15 +1,18 @@
-"""The trigger runs' output and time limit, below their Typer commands in cli.py: _emit(),
-the only way anything a trigger prints reaches Espanso; _Watchdog, the hard time limit of
+"""The trigger runs' output and time limit, below their Typer commands in cli.py: emit(),
+the only way anything a trigger prints reaches Espanso; Watchdog, the hard time limit of
 improve (and of persona's settings load) and the one decision of what a run prints; and
-_improve(), the run itself, which reads the draft, calls pipeline.rewrite() and prints the
+run_improve(), the run itself, which reads the draft, calls pipeline.rewrite() and prints the
 rewrite or its marker, then records the run.
 
-_emit(), _flushed() and _improve() share this module because each acts on the
+emit(), flush_output() and run_improve() share this module because each acts on the
 watchdog. It sits between cli.py (which imports it) and pipeline.py (which it imports, and
 which never imports it back), and keeps the Typer it needs for printing and typer.Exit out of
-pipeline.py. The pipeline names below are imported into this module, so _improve() looks them
-up here: a test patches trigger.marker for an improve run, pipeline.rewrite for the Try tab,
-and pipeline.make_provider, pipeline.is_concealed or pipeline._clipboard for both."""
+pipeline.py. Each pipeline name has one lookup site, the pipeline module, at call time
+(pipeline.rewrite(), never a name imported into this module), so one patch reaches an improve
+run and the Try tab alike: a test patches pipeline.rewrite, pipeline.marker,
+pipeline.make_provider, pipeline.is_concealed or pipeline._clipboard. cli.py likewise calls
+these through the module (trigger.emit() and the rest), so a patch of trigger.emit reaches
+persona too."""
 
 from __future__ import annotations
 
@@ -22,25 +25,15 @@ from collections.abc import Callable
 
 import typer
 
-from . import recorder
+from . import pipeline, recorder
 from .config import CLIPBOARD, Settings, check_provider_options, loading_limit
 from .factory import PROVIDER_NAMES
-from .pipeline import (
-    Rewrite,
-    _copy_failed,
-    _deliver,
-    _read_input,
-    failure_outcome,
-    marker,
-    rewrite,
-    sent_despite_note,
-)
 from .providers.base import split_stop_note, timed_out_message
 from .providers.registry import PROVIDERS
 from .sanitize import clean
 
 
-def _emit(text: str, watch: _Watchdog | None = None) -> None:
+def emit(text: str, watch: Watchdog | None = None) -> None:
     """The only way anything reaches Espanso: unsafe characters stripped, and no trailing
     newline, since Espanso inserts stdout verbatim. With improve's ``watch``, it first claims
     the output; if the watchdog already has, nothing is printed and the run ends there."""
@@ -84,7 +77,7 @@ _hard_exit: Callable[[int], object] = os._exit
 _IDLE = "idle"
 # A finished rewrite is being copied to the clipboard (clipboard output or --copy).
 _DELIVERING = "delivering"
-# _emit() is printing the run's own output; the watchdog leaves it alone.
+# emit() is printing the run's own output; the watchdog leaves it alone.
 _CLAIMED = "claimed"
 # The output is out and flushed; only the history is left.
 _FLUSHED = "flushed"
@@ -111,9 +104,9 @@ def _write_fd(fd: int, data: bytes) -> None:
         data = data[os.write(fd, data) :]
 
 
-class _Watchdog:
+class Watchdog:
     """improve's hard time limit, and the one decision of what is printed: the run's
-    own output (_emit()) or the watchdog's marker, exactly one of them.
+    own output (emit()) or the watchdog's marker, exactly one of them.
 
     arm_loading() starts a provisional daemon timer before the settings load, on
     config.loading_limit() (the call's --timeout, else the built-in default), since a stalled
@@ -136,7 +129,7 @@ class _Watchdog:
       the attempt in flight kept as a timeout.
     - delivering (the rewrite came back, its clipboard copy has not returned): CLIPBOARD_STALLED
       and the rewrite, the way a failed copy prints them; outcome clipboard_failed.
-    - claimed (_emit() is printing): nothing; the run finishes on its own.
+    - claimed (emit() is printing): nothing; the run finishes on its own.
     - flushed (only the run's history write is left): the process ends at once, silently.
       That write is then cut off: its row is lost without the lost-write count going up, and
       a sidecar lock or temp file it held stays until history._STALE_LOCK lets the next write
@@ -165,7 +158,7 @@ class _Watchdog:
     for its marker and history (none: no settings) until it is out.
     """
 
-    def __init__(self, rec: recorder.Recorder, ran: Rewrite) -> None:
+    def __init__(self, rec: recorder.Recorder, ran: pipeline.Rewrite) -> None:
         from . import entry
 
         self._rec, self._ran = rec, ran
@@ -273,7 +266,7 @@ class _Watchdog:
         self._move(_DELIVERING)
 
     def claim(self) -> None:
-        """Take the output for _emit(); an armed watchdog then keeps a final timer at the hard
+        """Take the output for emit(); an armed watchdog then keeps a final timer at the hard
         deadline, for a run that flushed but is still writing its history."""
         self._move(_CLAIMED)
         if self._timer is not None and self._final is None:
@@ -349,7 +342,7 @@ class _Watchdog:
                 note, rewrite = self._delivered
                 text = note + CLIPBOARD_STALLED + rewrite
             else:
-                text = sent_despite_note(self._ran.built) + text
+                text = pipeline.sent_despite_note(self._ran.built) + text
             data = clean(text).replace("\n", os.linesep).encode("utf-8", errors="replace")
             # From here to _hard_exit the main thread can run only while os.write's system
             # call releases the GIL, a few milliseconds: no new request can be started (the
@@ -358,10 +351,10 @@ class _Watchdog:
             _write_fd(1, data)
 
 
-def _improve(
-    watch: _Watchdog,
+def run_improve(
+    watch: Watchdog,
     rec: recorder.Recorder,
-    ran: Rewrite,
+    ran: pipeline.Rewrite,
     *,
     provider: str | None,
     profile: str | None,
@@ -397,11 +390,11 @@ def _improve(
             # An unknown name is left to make_provider(), which reports it as such.
             if provider in PROVIDER_NAMES:
                 check_provider_options(provider, tier, effort)
-            raw = _read_input(source, text)
+            raw = pipeline.read_input(source, text)
             watch.proceed()
             # The rewrite comes back cleaned, which matters here too: --copy and clipboard
             # output put it on the clipboard.
-            result = rewrite(
+            result = pipeline.rewrite(
                 raw, provider, cfg, profile, ran, allow_flagged=allow_flagged, observer=rec.observer
             )
     except typer.Exit:
@@ -410,11 +403,11 @@ def _improve(
     except Exception as exc:
         # Nothing may traceback or exit nonzero: Espanso cannot surface stderr, so emit a
         # visible bracketed marker instead of a blank expansion.
-        _emit(sent_despite_note(ran.built) + marker(exc), watch)
+        emit(pipeline.sent_despite_note(ran.built) + pipeline.marker(exc), watch)
         rec.emitted()
-        _flushed(watch)
+        flush_output(watch)
         rec.profile_id = ran.profile_id
-        rec.outcome = failure_outcome(exc, rec)
+        rec.outcome = pipeline.failure_outcome(exc, rec)
         # After the paste text is out, so history can never change it (see recorder.py).
         rec.finish()
         raise typer.Exit(0) from None
@@ -422,30 +415,32 @@ def _improve(
     if expired is not None:
         # No time left for the call: end here, with nothing sent (#331). Outside the try, as
         # the rewrite's own output is, so a failing write cannot lead to a second emit.
-        _emit(expired, watch)
+        emit(expired, watch)
         rec.emitted()
-        _flushed(watch)
+        flush_output(watch)
         rec.outcome = recorder.ERROR_MARKER
         rec.finish()
         raise typer.Exit(0)
     rec.profile_id = ran.profile_id
-    note = sent_despite_note(ran.built)
+    note = pipeline.sent_despite_note(ran.built)
     if cfg.output == CLIPBOARD or copy:
         # Before the copy, so a watchdog firing during it says the clipboard stalled, not that
         # the call timed out.
         watch.delivering(note, result)
     if cfg.output == CLIPBOARD:
-        _emit(_deliver(result, note, rec), watch)
+        emit(pipeline.deliver(result, note, rec), watch)
     else:
         # Like clipboard output, the stop note is printed but not copied.
-        printed = note + (_copy_failed(split_stop_note(result)[0], rec) if copy else "") + result
-        _emit(printed, watch)
+        printed = (
+            note + (pipeline.copy_failed(split_stop_note(result)[0], rec) if copy else "") + result
+        )
+        emit(printed, watch)
     rec.emitted()
-    _flushed(watch)
+    flush_output(watch)
     rec.finish()
 
 
-def _flushed(watch: _Watchdog) -> None:
+def flush_output(watch: Watchdog) -> None:
     """Flush the output, then tell the watchdog only the history is left."""
     with contextlib.suppress(Exception):
         sys.stdout.flush()

@@ -450,7 +450,7 @@ def _timed_run(
 
 def _used_the_limit(limit: float) -> str:
     """A regex for the markers of a run whose start-up (and settings load) already used up
-    ``limit`` before its call (trigger._Watchdog.arm_loading() and arm()): it sent nothing."""
+    ``limit`` before its call (trigger.Watchdog.arm_loading() and arm()): it sent nothing."""
     past = re.escape(_past(limit))
     return (
         rf"\[promptmend: (?:starting up took \d+\.\ds, {past}"
@@ -466,10 +466,10 @@ def test_used_the_limit_matches_the_watchdog(
 ) -> None:
     from promptmend import recorder
     from promptmend.pipeline import Rewrite
-    from promptmend.trigger import _Watchdog
+    from promptmend.trigger import Watchdog
 
-    monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
-    watch = _Watchdog(recorder.Recorder("improve", "i"), Rewrite())
+    monkeypatch.setattr(Watchdog, "_fire", lambda self: None)
+    watch = Watchdog(recorder.Recorder("improve", "i"), Rewrite())
     now = time.monotonic()
     watch._started, watch._load_started = now - startup - load, now - load
     marker = watch.arm(Settings(timeout=LIMIT), "openrouter")
