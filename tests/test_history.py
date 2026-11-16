@@ -1,5 +1,6 @@
 import contextlib
 import csv
+import errno
 import io
 import json
 import os
@@ -929,8 +930,11 @@ def test_a_lock_whose_nonce_cannot_be_written_is_removed(
     with pytest.raises(OSError, match="no handle"), store._sidecar_lock(time.monotonic() + 1):
         pass
     assert not lock.exists()
-    with pytest.raises(OSError, match=r"Errno 9"):  # EBADF: closed, not leaked
+    # Closed, not leaked: EBADF (Windows raises WinError 6, ERROR_INVALID_HANDLE, which
+    # CPython maps to EBADF; the winerror check keeps it platform-neutral either way).
+    with pytest.raises(OSError) as closed:  # noqa: PT011 (checked by errno below)
         os.fstat(opened[0])
+    assert closed.value.errno == errno.EBADF or getattr(closed.value, "winerror", None) == 6
 
     class FullDisk:
         def __init__(self, fd: int) -> None:
