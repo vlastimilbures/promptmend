@@ -192,7 +192,9 @@ def test_install_command() -> None:
 def _function(name: str) -> str:
     """The code lines of one of install.ps1's functions, up to the next one."""
     code = "\n".join(_lines())
-    start = code.index(f"function {name} {{")
+    match = re.search(rf"^function {re.escape(name)}[ (]", code, re.MULTILINE)
+    assert match, name
+    start = match.start()
     end = code.find("\nfunction ", start + 1)
     return code[start : end if end != -1 else None]
 
@@ -213,22 +215,61 @@ def test_exe_order() -> None:
     dry = code.index("$env:PROMPTMEND_DRY_RUN")
     steps = [
         code.index("Assert-NotRunning $Dest"),
+        code.index("$uvTool = Find-UvTool"),
+        code.index("Remove-Stale $Programs $Dest"),
         code.index("Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Zip"),
         code.index("$Actual = Get-Sha256 $Zip"),
         code.index("if ($Expected -and $Actual -ne $Expected)"),
-        code.index("Expand-Archive -LiteralPath $Zip -DestinationPath $Stage"),
+        code.index("Expand-Zip $Zip $Stage"),
         code.index("& $NewExe --version"),
         code.rindex("Assert-NotRunning $Dest"),
-        code.index("Rename-Item -LiteralPath $Dest -NewName"),
-        code.index("Move-Item -LiteralPath $New -Destination $Dest"),
-        code.index("Rename-Item -LiteralPath $Old -NewName"),  # the rollback
-        code.index("Remove-Item -LiteralPath $Old -Recurse -Force"),
+        code.index("Invoke-Retried { Rename-Item -LiteralPath $Dest -NewName $OldName }"),
+        code.index("Invoke-Retried { Move-Item -LiteralPath $New -Destination $Dest }"),
+        code.index("Invoke-Retried { Rename-Item -LiteralPath $Old -NewName $DestName }"),
+        code.index("Invoke-Retried { Remove-Item -LiteralPath $Old -Recurse -Force }"),
+        # Interrupted between the two renames: the old folder goes back.
+        code.index("if ($hadOld -and -not (Test-Path -LiteralPath $Dest)"),
         code.index("Add-UserPath $Dest"),
         code.index("Invoke-Native $Exe @('doctor', '--no-clipboard')"),
+        code.index("if ($uvTool) {"),
     ]
     assert dry < steps[0]
     assert steps == sorted(steps)
     assert code.count("Assert-NotRunning $Dest") == 2
+    # An unrendered copy says so before it asks for a version.
+    assert code.index("if ($ReleaseZipSha256 -eq $UnrenderedHash) {") < code.index(
+        "$Version = Get-Version"
+    )
+    assert "Expand-Archive" not in code
+
+
+# The zip is unpacked with .NET (it throws; 5.1's Expand-Archive ignores the error
+# preference) and every file entry must arrive; renames retry while a scanner holds a file;
+# only this script's own leftover folders are swept, never the previous install's only copy.
+def test_exe_helpers() -> None:
+    unzip = _function("Expand-Zip")
+    assert "[IO.Compression.ZipFile]::ExtractToDirectory($Zip, $Folder)" in unzip
+    assert "if ($files -ne $entries) {" in unzip
+    retried = _function("Invoke-Retried")
+    assert "if ($i -ge 10) { throw }" in retried
+    assert "Start-Sleep -Milliseconds 500" in retried
+    stale = _function("Remove-Stale")
+    assert r"'^promptmend\.(new|old)-[0-9a-f]{8}\z'" in stale
+    assert "(Get-RunningFrom $dir.FullName).Count -gt 0" in stale
+    assert "-not (Test-Path -LiteralPath $Dest)" in stale
+
+
+# With a uv install still there, every next step names the exe by its full path and the bare
+# `promptmend` block (which may run the uv CLI) is skipped.
+def test_uv_install_found() -> None:
+    code = _function("Install-Exe")
+    found = code[code.index("if ($uvTool) {") :]
+    found = found[: found.index("Write-Step 'Installed.")]
+    assert "Write-Warning" in found
+    assert "return" in found
+    text = INSTALL.read_text("utf-8")
+    assert "Write-Host \"  & '$Exe' setup " in text
+    assert "PROMPTMEND_CHANNEL=uv set" in text
 
 
 # exe is the default, uv the named fallback; an unknown value, or a local file of the other

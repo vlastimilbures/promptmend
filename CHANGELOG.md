@@ -33,17 +33,22 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 - Windows: the one-command install (`install.ps1`) now installs the frozen
   `promptmend.exe` by default (#185), which started 1.7 to 2.2 times faster than the uv
-  install on a machine with endpoint scanning (#304). It downloads
+  install on a machine with endpoint scanning (#304). **Rerunning install.ps1 to update now
+  installs the exe, next to an existing uv install; set `PROMPTMEND_CHANNEL=uv` to keep
+  updating a uv install.** It then warns that both are installed and the triggers still call
+  the uv one, and names the switch steps by the exe's full path. It downloads
   `promptmend-<version>-windows-x64.zip` from the same Release and refuses it, changing
   nothing, unless its SHA-256 is the one the release workflow wrote into that `install.ps1`
   (the release now renders the installer from the zip it built and checks the hash again
-  before attaching both). It unpacks the zip next to `%LOCALAPPDATA%\Programs\promptmend`,
-  checks that the new exe starts, then swaps the folders (the old one renamed away, put back
-  if the swap fails); while a `promptmend.exe` from that folder runs, it stops and changes
-  nothing. It adds the folder to the user PATH once and runs the exe's `promptmend doctor
-  --no-clipboard`. If a uv install of promptmend is still there, it prints the switch steps
-  (the exe's `setup`, then `uv tool uninstall promptmend`); it still never runs setup or a
-  deploy. `PROMPTMEND_CHANNEL=uv` keeps the previous uv install (`PROMPTMEND_WHEEL` implies
+  before attaching both). The hash catches a corrupted or swapped download; it ships in the
+  same release, so `gh attestation verify` remains the check of where the files came from.
+  It unpacks the zip next to `%LOCALAPPDATA%\Programs\promptmend` and checks that every file
+  arrived and the new exe starts, then swaps the folders (the old one renamed away, put back
+  if the swap fails or is interrupted; renames retry while a scanner holds a file, and
+  folders an interrupted run left are swept); while a `promptmend.exe` from that folder runs,
+  it stops and changes nothing. It adds the folder to the user PATH once (an unexpanded
+  `%VARIABLE%` there stays one) and runs the exe's `promptmend doctor --no-clipboard`. It
+  still never runs setup or a deploy. `PROMPTMEND_CHANNEL=uv` keeps the previous uv install (`PROMPTMEND_WHEEL` implies
   it), any other channel is refused, and `PROMPTMEND_ZIP` installs a local zip. The exe is
   not signed yet. `doctor` reports such an exe as the `installer` channel and names the
   one-command install as its update (`doctor --json` keeps `schema_version` 1). The frozen

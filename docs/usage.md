@@ -278,7 +278,8 @@ recognised as ours and updated. `detach` likewise removes only files whose conte
 what was written, and reports any you edited.
 
 The launcher written into the matches is the install channel's stable entry point (uv's tool
-bin, Homebrew's `bin/`), never a versioned path an upgrade would remove; `--launcher PATH`
+bin, Homebrew's `bin/`, WinGet's alias, or on Windows the exe the one-command install put in
+`%LOCALAPPDATA%\Programs\promptmend`), never a versioned path an upgrade would remove; `--launcher PATH`
 overrides it. A manifest entry for a file that no longer exists (its folder was deleted, or
 Espanso now uses another config folder) is forgotten by the next `deploy`; until then `doctor`
 mentions it but does not judge its launcher.

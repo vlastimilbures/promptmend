@@ -145,24 +145,29 @@ It prints each command before running it, and:
 
 1. downloads `promptmend-<version>-windows-x64.zip` from that same Release ([the
    exe](#the-exe)) and refuses it, changing nothing, unless its SHA-256 is the one the
-   release recorded in `install.ps1`;
-2. unpacks it into a new folder next to `%LOCALAPPDATA%\Programs\promptmend` and runs the
-   new `promptmend.exe --version` once, then swaps the folders: the old one is renamed away,
-   the new one takes its name, and the old one is deleted (or renamed back if the swap
-   fails). While a `promptmend.exe` from that folder runs (the interface, or a trigger), it
-   stops and changes nothing;
+   release recorded in `install.ps1`. That catches a corrupted or swapped download; the hash
+   ships in the same release, so to check where the files came from, verify them with
+   `gh attestation verify` (see [Verify a download](#verify-a-download));
+2. unpacks it into a new folder next to `%LOCALAPPDATA%\Programs\promptmend`, checks that
+   every file arrived and runs the new `promptmend.exe --version` once, then swaps the
+   folders: the old one is renamed away, the new one takes its name, and the old one is
+   deleted (or renamed back if the swap fails or is interrupted). While a `promptmend.exe`
+   from that folder runs (the interface, or a trigger), it stops and changes nothing;
 3. adds `%LOCALAPPDATA%\Programs\promptmend` to your user PATH (once), so a new terminal
    finds `promptmend` (in Windows Terminal, only once every window was closed);
 4. runs the new exe's `promptmend doctor --no-clipboard`, which lists what [Set up](#set-up)
    still has to do.
 
 It never runs `promptmend setup` or `promptmend espanso deploy`: it only names them as the
-next step. If a uv install of promptmend is still there, it names the steps to switch to the
-exe (see [Switch from a uv install](#switch-from-a-uv-install)).
+next step. If a uv install of promptmend is still there, it warns that both are installed
+and the triggers still call the uv one, and names the steps to switch to the exe by its full
+path (see [Switch from a uv install](#switch-from-a-uv-install)). Rerunning the command on a
+machine that has only a uv install therefore installs the exe beside it: set
+`PROMPTMEND_CHANNEL=uv` (below) to keep updating the uv install instead.
 
-The exe is not signed yet, so SmartScreen or Defender may warn about it, or an endpoint
-protection product hold it back, the first time it runs. If your machine refuses it, use the
-uv channel below.
+The exe is not signed yet. Defender or another endpoint protection product may scan it,
+which makes the first start slower, or block it. If your machine refuses it, use the uv
+channel below.
 
 To install another release, use that release's own `install.ps1`
 (`…/releases/download/v<version>/install.ps1` in place of
@@ -296,7 +301,7 @@ command below for your channel when a newer release exists.
 |---------|----------------|
 | Homebrew | `brew update && brew upgrade promptmend` |
 | One-command install (the exe, `installer` in `doctor`) | `powershell -ExecutionPolicy ByPass -c "irm https://github.com/vlastimilbures/promptmend/releases/latest/download/install.ps1 \| iex"` again; close the interface first |
-| One-command install with uv | The same command again, with `PROMPTMEND_CHANNEL=uv` set and `PROMPTMEND_VERSION` unset |
+| One-command install with uv | The same command again, with `PROMPTMEND_CHANNEL=uv` set and `PROMPTMEND_VERSION` unset. Without `PROMPTMEND_CHANNEL=uv` it now installs the exe beside the uv install (see [Switch from a uv install](#switch-from-a-uv-install)) |
 | uv from PyPI | `uv tool install --force promptmend -c <latest constraints URL>` (below) |
 | uv from a Release wheel | The install command with the new version and `--force` |
 | WinGet (once published) | `winget upgrade vlastimilbures.PromptMend` |
@@ -355,7 +360,9 @@ one-command install (which prints these steps when it finds the uv install):
 2. `uv tool uninstall promptmend`. Until then the uv one may come first on `PATH`, which
    `doctor` reports as `path_shadow`.
 
-Your settings, keys and usage history stay: both installs use the same folders.
+Your settings, keys and usage history stay: both installs use the same folders. To keep the
+uv install instead, delete `%LOCALAPPDATA%\Programs\promptmend` (and its PATH entry) and
+update with `PROMPTMEND_CHANNEL=uv` set ([One command with uv](#one-command-with-uv)).
 
 ## Uninstall
 

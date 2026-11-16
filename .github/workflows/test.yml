@@ -142,12 +142,13 @@ jobs:
           $rendered = "$env:RUNNER_TEMP\install.ps1"
           uv run --no-project python "$env:GITHUB_WORKSPACE\scripts\render_installer.py" $version $rendered --zip $standin
           if ($LASTEXITCODE -ne 0) { throw "render_installer exited $LASTEXITCODE" }
-          # stdout and the error a refusal throws; Has-Text ignores where an error was wrapped.
+          # stdout, ending in the message of the error a refusal throws, written on one line to
+          # stdout (an error record would wrap at the console width and go to stderr).
           function Invoke-Rendered {
-            powershell -NoProfile -ExecutionPolicy ByPass -Command "Get-Content -Raw '$rendered' | Invoke-Expression" 2>&1 | Out-String
+            powershell -NoProfile -ExecutionPolicy ByPass -Command "try { Get-Content -Raw '$rendered' | Invoke-Expression } catch { [Console]::Out.WriteLine(`$_.Exception.Message); exit 1 }" | Out-String
           }
           function Has-Text([string]$Out, [string]$Text) {
-            return ($Out -replace '\s', '').Contains(($Text -replace '\s', ''))
+            return $Out.Contains($Text)
           }
           $env:PROMPTMEND_DRY_RUN = '1'
           $download = "https://github.com/vlastimilbures/promptmend/releases/download/v$version"
@@ -329,10 +330,13 @@ jobs:
           exit 0  # not doctor's 4
       # install.ps1's default channel (#185) with this zip (PROMPTMEND_ZIP), run as the
       # one-liner runs it (Windows PowerShell 5.1, `irm | iex`), from a copy rendered with this
-      # zip's hash: a fresh install, then a reinstall over it; the exe must answer from
+      # zip's hash: a fresh install, then a reinstall over it while the promptmend-ci copy runs
+      # (an exe from another folder must not block it); the exe must answer from
       # %LOCALAPPDATA%\Programs\promptmend, on the user PATH once, with doctor naming the
-      # installer channel. Refused, and nothing changed: a zip whose hash is not the one the
-      # copy carries, and any install while a promptmend.exe from that folder runs.
+      # installer channel, and an unexpanded %USERPROFILE% entry already on the user PATH must
+      # stay unexpanded (the value an expandable string). Refused, and nothing changed: a zip
+      # whose hash is not the one the copy carries, and any install while a promptmend.exe from
+      # that folder runs. The user PATH is restored at the end.
       - name: Install it with install.ps1 (the exe channel)
         working-directory: ${{ runner.temp }}
         shell: powershell
@@ -340,6 +344,7 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $zip = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\promptmend-*-windows-x64.zip" | Select-Object -First 1
           $version = $zip.Name.Split('-')[1]
+          $hash = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $dest = "$env:LOCALAPPDATA\Programs\promptmend"
           $exe = "$dest\promptmend.exe"
           if (Test-Path $dest) { throw "$dest exists before the install" }
@@ -347,59 +352,97 @@ jobs:
             uv run --no-project python "$env:GITHUB_WORKSPACE\scripts\render_installer.py" $version $Out --zip $Zip
             if ($LASTEXITCODE -ne 0) { throw "render_installer exited $LASTEXITCODE" }
           }
+          # The installer's output in $Log, ending in the message of the error a refusal
+          # throws, on one line on stdout (an error record would wrap and go to stderr).
           function Invoke-Installer([string]$Script, [string]$Log) {
-            powershell -NoProfile -ExecutionPolicy ByPass -Command "Get-Content -Raw '$Script' | Invoke-Expression" 2>&1 | Tee-Object -FilePath $Log | Out-Host
+            powershell -NoProfile -ExecutionPolicy ByPass -Command "try { Get-Content -Raw '$Script' | Invoke-Expression } catch { [Console]::Out.WriteLine(`$_.Exception.Message); exit 1 }" | Tee-Object -FilePath $Log | Out-Host
             return $LASTEXITCODE
           }
           function Has-Text([string]$Log, [string]$Text) {
-            return ((Get-Content -Raw $Log) -replace '\s', '').Contains(($Text -replace '\s', ''))
+            return (Get-Content -Raw $Log).Contains($Text)
           }
-          $rendered = "$env:RUNNER_TEMP\install-exe.ps1"
-          Render $rendered $zip.FullName
-          $env:PROMPTMEND_ZIP = $zip.FullName
-          foreach ($run in 'fresh', 'again') {
-            $log = "$env:RUNNER_TEMP\install-exe-$run.log"
-            $code = Invoke-Installer $rendered $log
-            if ($code -ne 0) { throw "install.ps1 ($run) exited $code" }
-            if (-not (Has-Text $log "SHA-256: $((Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant())")) { throw "install.ps1 ($run) printed no hash" }
-            $installed = (& $exe --version).Trim()
-            if ($installed -ne $version) { throw "the installed exe says $installed, the zip is $version" }
+          function Stop-Tree($Process) {
+            & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null
           }
-          $left = @(Get-ChildItem "$env:LOCALAPPDATA\Programs" -Directory -Filter 'promptmend.*')
-          if ($left.Count -ne 0) { throw "install.ps1 left $($left.FullName -join ', ')" }
-          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ieq $dest }
-          if (@($userPath).Count -ne 1) { throw "$dest is $(@($userPath).Count) times on the user PATH" }
-          $report = (& $exe doctor --no-clipboard --json) | Out-String | ConvertFrom-Json
-          if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE" }
-          $report.checks.install | ConvertTo-Json -Depth 5
-          if ($report.checks.install.data.channel -ne 'installer') { throw "doctor does not see the installer channel" }
-          if ($report.checks.install.data.launcher -ne $exe) { throw "the launcher is not $exe" }
 
-          # A marker in the installed folder: still there after each refusal below.
-          $marker = "$dest\ci-marker.txt"
-          Set-Content -LiteralPath $marker -Value 'kept'
-          $bad = "$env:RUNNER_TEMP\install-bad-hash.ps1"
-          $other = "$env:RUNNER_TEMP\other.zip"
-          [IO.File]::WriteAllText($other, 'not this zip')
-          Render $bad $other
-          $log = "$env:RUNNER_TEMP\install-bad-hash.log"
-          $code = Invoke-Installer $bad $log
-          if ($code -eq 0) { throw "a zip with another hash was installed" }
-          if (-not (Has-Text $log 'nothing was changed')) { throw "the hash refusal did not say so" }
-          if (-not (Test-Path $marker)) { throw "the hash refusal changed $dest" }
-
-          # doctor --timing runs for a while, its children from the same folder.
-          $busy = Start-Process -FilePath $exe -ArgumentList 'doctor', '--timing', '--runs', '50', '--no-clipboard' -PassThru -WindowStyle Hidden
+          # The user PATH as it was, then with an unexpanded entry.
+          $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+          $hadPath = $envKey.GetValueNames() -contains 'Path'
+          $rawPath = $null
+          $pathKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+          if ($hadPath) {
+            $rawPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $pathKind = $envKey.GetValueKind('Path')
+          }
+          $seed = '%USERPROFILE%\ci-x'
+          $seeded = if ($rawPath) { "$($rawPath.TrimEnd(';'));$seed" } else { $seed }
+          $envKey.SetValue('Path', $seeded, [Microsoft.Win32.RegistryValueKind]::ExpandString)
           try {
-            Start-Sleep -Seconds 3
-            if ($busy.HasExited) { throw "doctor --timing ended before the check (exit $($busy.ExitCode))" }
-            $log = "$env:RUNNER_TEMP\install-busy.log"
-            $code = Invoke-Installer $rendered $log
-            if ($code -eq 0) { throw "install.ps1 replaced the folder while its exe was running" }
-            if (-not (Has-Text $log "promptmend.exe from $dest is running")) { throw "the running refusal did not say so" }
-            if (-not (Test-Path $marker)) { throw "the running refusal changed $dest" }
+            $rendered = "$env:RUNNER_TEMP\install-exe.ps1"
+            Render $rendered $zip.FullName
+            $env:PROMPTMEND_ZIP = $zip.FullName
+            foreach ($run in 'fresh', 'again') {
+              $other = $null
+              if ($run -eq 'again') {
+                # The promptmend-ci copy, running from another folder: no reason to refuse.
+                $other = Start-Process -FilePath $env:FROZEN_EXE -ArgumentList 'doctor', '--timing', '--runs', '50', '--no-clipboard' -PassThru -WindowStyle Hidden
+                Start-Sleep -Seconds 3
+                if ($other.HasExited) { throw "the promptmend-ci doctor --timing ended early (exit $($other.ExitCode))" }
+              }
+              try {
+                $log = "$env:RUNNER_TEMP\install-exe-$run.log"
+                $code = Invoke-Installer $rendered $log
+                if ($code -ne 0) { throw "install.ps1 ($run) exited $code" }
+              } finally {
+                if ($other) { Stop-Tree $other }
+              }
+              if (-not (Has-Text $log "SHA-256: $hash")) { throw "install.ps1 ($run) printed no hash" }
+              $installed = (& $exe --version).Trim()
+              if ($installed -ne $version) { throw "the installed exe says $installed, the zip is $version" }
+            }
+            $left = @(Get-ChildItem "$env:LOCALAPPDATA\Programs" -Directory | Where-Object { $_.Name -match '^promptmend\.(new|old)-' })
+            if ($left.Count -ne 0) { throw "install.ps1 left $($left.FullName -join ', ')" }
+            $raw = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $kind = $envKey.GetValueKind('Path')
+            if ($kind -ne [Microsoft.Win32.RegistryValueKind]::ExpandString) { throw "the user PATH is now $kind, not ExpandString" }
+            if (@($raw -split ';' | Where-Object { $_ -eq $seed }).Count -ne 1) { throw "the unexpanded $seed entry did not survive: $raw" }
+            $entries = @($raw -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ieq $dest })
+            if ($entries.Count -ne 1) { throw "$dest is $($entries.Count) times on the user PATH: $raw" }
+            $report = (& $exe doctor --no-clipboard --json) | Out-String | ConvertFrom-Json
+            if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE" }
+            $report.checks.install | ConvertTo-Json -Depth 5
+            if ($report.checks.install.data.channel -ne 'installer') { throw "doctor does not see the installer channel" }
+            if ($report.checks.install.data.launcher -ne $exe) { throw "the launcher is not $exe" }
+
+            # A marker in the installed folder: still there after each refusal below.
+            $marker = "$dest\ci-marker.txt"
+            Set-Content -LiteralPath $marker -Value 'kept'
+            $bad = "$env:RUNNER_TEMP\install-bad-hash.ps1"
+            $otherZip = "$env:RUNNER_TEMP\other.zip"
+            [IO.File]::WriteAllText($otherZip, 'not this zip')
+            Render $bad $otherZip
+            $log = "$env:RUNNER_TEMP\install-bad-hash.log"
+            $code = Invoke-Installer $bad $log
+            if ($code -eq 0) { throw "a zip with another hash was installed" }
+            if (-not (Has-Text $log 'nothing was changed')) { throw "the hash refusal did not say so" }
+            if (-not (Test-Path $marker)) { throw "the hash refusal changed $dest" }
+
+            # doctor --timing runs for a while, its children from the same folder.
+            $busy = Start-Process -FilePath $exe -ArgumentList 'doctor', '--timing', '--runs', '50', '--no-clipboard' -PassThru -WindowStyle Hidden
+            try {
+              Start-Sleep -Seconds 3
+              if ($busy.HasExited) { throw "doctor --timing ended before the check (exit $($busy.ExitCode))" }
+              $log = "$env:RUNNER_TEMP\install-busy.log"
+              $code = Invoke-Installer $rendered $log
+              if ($code -eq 0) { throw "install.ps1 replaced the folder while its exe was running" }
+              if (-not (Has-Text $log "promptmend.exe from $dest is running")) { throw "the running refusal did not say so" }
+              if (-not (Test-Path $marker)) { throw "the running refusal changed $dest" }
+            } finally {
+              Stop-Tree $busy
+            }
           } finally {
-            & taskkill.exe /PID $busy.Id /T /F | Out-Null
+            if ($hadPath) { $envKey.SetValue('Path', $rawPath, $pathKind) } else { $envKey.DeleteValue('Path', $false) }
+            $envKey.Close()
           }
           Write-Host "install.ps1 installed promptmend $version into $dest"
           exit 0  # not doctor's 4

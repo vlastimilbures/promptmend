@@ -13,7 +13,9 @@
 # into a fresh folder next to %LOCALAPPDATA%\Programs\promptmend, which is then swapped in
 # (the old folder renamed away first and renamed back if the swap fails, deleted once it
 # worked); a promptmend.exe still running from that folder stops it before any change. The
-# folder goes on the user PATH, then `promptmend.exe doctor --no-clipboard` runs.
+# folder goes on the user PATH, then `promptmend.exe doctor --no-clipboard` runs. With a uv
+# install of promptmend still there, it warns that the triggers still call that one and names
+# the switch steps by the exe's full path (PROMPTMEND_CHANNEL=uv keeps updating uv instead).
 #
 # uv: uv if missing (winget, else uv's official installer), then the wheel attached to that
 # same Release (attested, never a PyPI upload that may come later):
@@ -214,6 +216,59 @@ function Invoke-PromptMendInstall {
         return $version
     }
 
+    # Runs $Action, retried for about five seconds: an antivirus scanner or the search indexer
+    # often holds a file that was just written open for a moment.
+    function Invoke-Retried([scriptblock]$Action) {
+        for ($i = 1; ; $i++) {
+            try {
+                & $Action
+                return
+            } catch {
+                if ($i -ge 10) { throw }
+                Start-Sleep -Milliseconds 500
+            }
+        }
+    }
+
+    # Unpacks $Zip into $Folder with .NET (throws on any error, unlike Windows PowerShell 5.1's
+    # Expand-Archive, which ignores this script's error preference), then checks that every
+    # file entry arrived.
+    function Expand-Zip([string]$Zip, [string]$Folder) {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [IO.Compression.ZipFile]::ExtractToDirectory($Zip, $Folder)
+        $archive = [IO.Compression.ZipFile]::OpenRead($Zip)
+        try {
+            $entries = @($archive.Entries | Where-Object { $_.Name }).Count
+        } finally {
+            $archive.Dispose()
+        }
+        $files = @(Get-ChildItem -LiteralPath $Folder -Recurse -File -Force).Count
+        if ($files -ne $entries) {
+            throw "The zip holds $entries files, but $files were unpacked; nothing was changed."
+        }
+    }
+
+    # Folders an interrupted earlier run left next to $Dest, deleted when nothing runs from
+    # them (best effort). A promptmend.old-* folder is kept while $Dest is missing: it may be
+    # the only copy of the previous install.
+    function Remove-Stale([string]$Programs, [string]$Dest) {
+        $stale = @(Get-ChildItem -LiteralPath $Programs -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^promptmend\.(new|old)-[0-9a-f]{8}\z' })
+        foreach ($dir in $stale) {
+            if ($dir.Name -like 'promptmend.old-*' -and -not (Test-Path -LiteralPath $Dest)) {
+                Write-Warning "Kept $($dir.FullName): an earlier run was interrupted, and it may hold your previous install."
+                continue
+            }
+            if ((Get-RunningFrom $dir.FullName).Count -gt 0) { continue }
+            Write-Command 'Remove-Item' @('-LiteralPath', $dir.FullName, '-Recurse', '-Force')
+            try {
+                Remove-Item -LiteralPath $dir.FullName -Recurse -Force
+            } catch {
+                Write-Warning "Could not delete $($dir.FullName) (delete it later): $($_.Exception.Message)"
+            }
+        }
+    }
+
     # The frozen exe (the default channel).
     function Install-Exe {
         $Programs = Join-Path $env:LOCALAPPDATA 'Programs'
@@ -233,11 +288,12 @@ function Invoke-PromptMendInstall {
             $Source = (Resolve-Path -LiteralPath $env:PROMPTMEND_ZIP).Path
             $ZipName = 'promptmend-windows-x64.zip'
         } else {
-            $Version = Get-Version
             if ($ReleaseZipSha256 -eq $UnrenderedHash) {
-                throw ('This copy of install.ps1 holds no hash of the Windows zip: use the one ' +
-                    "attached to a GitHub Release ($Repo/releases), or set PROMPTMEND_CHANNEL=uv.")
+                throw ('This copy of install.ps1 holds no hash of the Windows zip: use the ' +
+                    "install.ps1 attached to a GitHub Release ($Repo/releases), or set " +
+                    'PROMPTMEND_CHANNEL=uv.')
             }
+            $Version = Get-Version
             if ($Version -ne $ReleaseVersion) {
                 throw ("This install.ps1 checks the zip of PromptMend $ReleaseVersion only. For " +
                     "$Version, run that release's own ($Repo/releases/download/v$Version/install.ps1 " +
@@ -261,10 +317,16 @@ function Invoke-PromptMendInstall {
         }
 
         Assert-NotRunning $Dest
+        # Before anything changes: a uv install the triggers may still call.
+        $uvTool = Find-UvTool
+        if (Test-Path -LiteralPath $Programs) { Remove-Stale $Programs $Dest }
         $Temp = Join-Path ([IO.Path]::GetTempPath()) ('promptmend-install-' + (New-Id))
         $Id = New-Id
         $Stage = Join-Path $Programs "promptmend.new-$Id"
         $Old = Join-Path $Programs "promptmend.old-$Id"
+        $OldName = Split-Path -Leaf $Old
+        $DestName = Split-Path -Leaf $Dest
+        $hadOld = $false
         try {
             New-Item -ItemType Directory -Path $Temp | Out-Null
             $Zip = Join-Path $Temp $ZipName
@@ -288,8 +350,8 @@ function Invoke-PromptMendInstall {
                 New-Item -ItemType Directory -Path $Programs | Out-Null
             }
             New-Item -ItemType Directory -Path $Stage | Out-Null
-            Write-Command 'Expand-Archive' @('-LiteralPath', $Zip, '-DestinationPath', $Stage)
-            Expand-Archive -LiteralPath $Zip -DestinationPath $Stage
+            Write-Command '[IO.Compression.ZipFile]::ExtractToDirectory' @($Zip, $Stage)
+            Expand-Zip $Zip $Stage
             $New = Join-Path $Stage 'promptmend'
             $NewExe = Join-Path $New 'promptmend.exe'
             if (-not (Test-Path -LiteralPath $NewExe -PathType Leaf) -or
@@ -313,25 +375,26 @@ function Invoke-PromptMendInstall {
 
             Write-Step "Replacing $Dest"
             Assert-NotRunning $Dest
-            $hadOld = Test-Path -LiteralPath $Dest
-            if ($hadOld) {
-                Write-Command 'Rename-Item' @('-LiteralPath', $Dest, '-NewName', (Split-Path -Leaf $Old))
+            if (Test-Path -LiteralPath $Dest) {
+                Write-Command 'Rename-Item' @('-LiteralPath', $Dest, '-NewName', $OldName)
                 try {
-                    Rename-Item -LiteralPath $Dest -NewName (Split-Path -Leaf $Old)
+                    Invoke-Retried { Rename-Item -LiteralPath $Dest -NewName $OldName }
                 } catch {
                     throw ("$Dest could not be moved aside (a file in it is in use?): " +
                         "$($_.Exception.Message) Nothing was changed.")
                 }
+                $hadOld = $true
             }
             Write-Command 'Move-Item' @('-LiteralPath', $New, '-Destination', $Dest)
             try {
-                Move-Item -LiteralPath $New -Destination $Dest
+                Invoke-Retried { Move-Item -LiteralPath $New -Destination $Dest }
             } catch {
                 $why = $_.Exception.Message
                 if ($hadOld) {
-                    Write-Command 'Rename-Item' @('-LiteralPath', $Old, '-NewName', (Split-Path -Leaf $Dest))
+                    Write-Command 'Rename-Item' @('-LiteralPath', $Old, '-NewName', $DestName)
                     try {
-                        Rename-Item -LiteralPath $Old -NewName (Split-Path -Leaf $Dest)
+                        Invoke-Retried { Rename-Item -LiteralPath $Old -NewName $DestName }
+                        $hadOld = $false
                     } catch {
                         throw ("The new folder could not be moved to ${Dest} ($why), nor the " +
                             "previous one back: rename $Old to promptmend by hand.")
@@ -342,12 +405,21 @@ function Invoke-PromptMendInstall {
             if ($hadOld) {
                 Write-Command 'Remove-Item' @('-LiteralPath', $Old, '-Recurse', '-Force')
                 try {
-                    Remove-Item -LiteralPath $Old -Recurse -Force
+                    Invoke-Retried { Remove-Item -LiteralPath $Old -Recurse -Force }
                 } catch {
                     Write-Warning "The previous install stays in $Old (delete it later): $($_.Exception.Message)"
                 }
+                $hadOld = $false
             }
         } finally {
+            # Interrupted (Ctrl+C) between moving the old folder aside and moving the new one in:
+            # the old one goes back.
+            if ($hadOld -and -not (Test-Path -LiteralPath $Dest) -and (Test-Path -LiteralPath $Old)) {
+                Write-Host "Putting the previous $Dest back"
+                try { Rename-Item -LiteralPath $Old -NewName $DestName } catch {
+                    Write-Warning "Rename $Old to promptmend by hand: $($_.Exception.Message)"
+                }
+            }
             foreach ($leftover in $Stage, $Temp) {
                 if (Test-Path -LiteralPath $leftover) {
                     Remove-Item -LiteralPath $leftover -Recurse -Force -ErrorAction SilentlyContinue
@@ -368,13 +440,20 @@ function Invoke-PromptMendInstall {
             throw "promptmend doctor failed with exit code $code."
         }
 
-        $uvTool = Find-UvTool
+        # With a uv install still there, a bare `promptmend` may well be the uv one (uv's bin
+        # folder usually comes first on PATH), so every step names the exe by its full path.
         if ($uvTool) {
-            Write-Step 'A uv tool install of promptmend is still there'
-            Write-Host "  $uvTool"
-            Write-Host 'Your Espanso triggers may still call it. To switch them to the exe (this script runs neither):'
-            Write-Host "  & '$Exe' setup     # or: & '$Exe' espanso deploy, so the match files call the exe"
+            Write-Host ''
+            Write-Warning ("PromptMend is now installed twice: the exe in $Dest and uv's tool in " +
+                "$uvTool. Your Espanso triggers still call the uv one, and 'promptmend' in a " +
+                'terminal may be the uv one too.')
+            Write-Step 'To switch to the exe (this script runs neither):'
+            Write-Host "  & '$Exe' setup                 # settings, key, test call; the deploy makes the triggers call the exe"
             Write-Host '  uv tool uninstall promptmend'
+            Write-Host ('To keep the uv install instead, delete ' + $Dest + ' and run this ' +
+                'command again with PROMPTMEND_CHANNEL=uv set (in PowerShell: $env:PROMPTMEND_CHANNEL = "uv").')
+            Write-Host "Uninstall: see $Repo/blob/main/docs/install.md#uninstall"
+            return
         }
 
         Write-Step 'Installed. Next steps (this script runs neither):'
