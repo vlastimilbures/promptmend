@@ -886,3 +886,10 @@ def test_trickling_server_hits_the_time_limit(monkeypatch: pytest.MonkeyPatch) -
         elapsed = time.monotonic() - started
     assert caught.value.transient is True
     assert elapsed < 2
+
+
+# #368: urlsplit() raises on an unclosed bracket; Settings refuses it, and a URL that got past
+# it anyway is not this machine rather than a traceback.
+@pytest.mark.parametrize("url", ["http://[::1", "http://[::1/api/chat", "http://[nope]/v1"])
+def test_is_loopback_on_a_malformed_url(url: str) -> None:
+    assert is_loopback(url) is False
