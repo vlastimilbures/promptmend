@@ -19,14 +19,15 @@ import warnings
 # The subcommands the Espanso match files run, always as the first argument.
 TRIGGER_COMMANDS = frozenset({"improve", "persona"})
 
-# When main() started an improve run (time.monotonic()), for its watchdog, which
-# counts the time limit from here; None until then, and once take_start() has read it.
+# When main() started a trigger run, improve or persona (time.monotonic()), for its watchdog,
+# which counts the time limit from here; None until then, and once take_start() has read it.
 _started: float | None = None
 
 
 def take_start() -> float | None:
-    """The time main() started improve, read once (so a later run in the same process, such
-    as a test's, counts from its own start), or None when the CLI was started another way."""
+    """The time main() started a trigger command, read once (so a later run in the same
+    process, such as a test's, counts from its own start), or None when the CLI was started
+    another way."""
     global _started
     started, _started = _started, None
     return started
@@ -75,7 +76,7 @@ def self_command() -> list[str]:
 
 def main() -> None:
     global _started
-    if sys.argv[1:2] == ["improve"]:
+    if sys.argv[1:2] and sys.argv[1] in TRIGGER_COMMANDS:
         _started = time.monotonic()
     if sys.argv[1:] == ["--version"]:
         # Answered before the CLI and its dependencies load: the same line Typer's
