@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 ### Changed
+- https calls (the cloud providers and the daily update check) now check the server's
+  certificate against the operating system's trust store (the macOS keychain, the Windows
+  certificate store, the system CA bundle on Linux) through the new `truststore` dependency,
+  not against certifi's bundle (#314). A company network that inspects HTTPS with a root IT
+  installed in the system store now works without `SSL_CERT_FILE`. `SSL_CERT_FILE` and
+  `SSL_CERT_DIR` still work as before and, when set, replace the trust store; where
+  truststore cannot load, calls fall back to certifi's bundle, never to no verification.
+  `promptmend doctor` reports which one applies in a new `tls` check (`doctor --json`:
+  `verified_against`, `ca_variable`), and warns when either variable names a file or folder
+  that is not there (without showing the path). An untrusted certificate now gives our own
+  marker, `…: the server's certificate is not trusted by this computer (TLS verification
+  failed: <reason>); see promptmend doctor`, with the operating system's reason shortened to
+  one printable line, since part of it comes from the server's certificate. See
+  [Certificates](https://github.com/vlastimilbures/promptmend/blob/main/docs/configuration.md#certificates).
 - Data-protection gate: the Vietnamese patterns (the `vietnam_id_12` and `vietnam_id_9`
   national ID numbers and the Vietnamese confidentiality labels) are now a named pattern pack,
   `vn`, turned on by the new setting `PROMPT_GATE_PACKS` (a comma-separated list of packs;
@@ -56,6 +70,10 @@ All notable changes to this project are documented here. The format follows
   runs 3.12.
 
 ### Fixed
+- A connection or transport failure's marker (`… request failed: …`) now repeats the
+  error's text as one short printable line without brackets (at most 160 characters, and not
+  at all when it matches a sensitive pattern), like a server's own reason. It could quote
+  what the other side sent, such as a garbled status line, in full.
 - `improve` and `persona`: loading the settings is now bounded by the watchdog too (#331).
   A load that a stalled file system (a redirected `%APPDATA%`, say) blocks ends within the
   call's `--timeout`, else the built-in 30 s, plus 2 s, with

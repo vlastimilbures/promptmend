@@ -48,6 +48,10 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for key in env_names():
         monkeypatch.delenv(key, raising=False)
+    # A developer's CA bundle would switch every https client off the OS trust store (#314,
+    # tls.verify()); a test of that branch sets its own.
+    for key in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+        monkeypatch.delenv(key, raising=False)
     monkeypatch.chdir(tmp_path)
     # Point the loader at a per-test file (PROMPTMEND_ENV, legacy mode): unsetting it leaves
     # legacy mode.

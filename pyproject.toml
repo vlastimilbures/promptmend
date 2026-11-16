@@ -36,12 +36,15 @@ classifiers = [
   "Topic :: Utilities",
 ]
 dependencies = [
-  "httpx>=0.27,<1",
+  "httpx>=0.28,<1",
   "pyperclip>=1.9,<2",
   # The full-screen interface (`promptmend` on a terminal, `ui`); imported only there.
   "textual>=8.2.8,<9",
   # Writes config.toml and secrets.toml; imported only when saving, never by a trigger.
   "tomli-w>=1.2,<2",
+  # Verifies TLS against the operating system's trust store (#314); imported only for an
+  # https call.
+  "truststore>=0.10.5,<1",
   "typer>=0.28.0,<1",
 ]
 
