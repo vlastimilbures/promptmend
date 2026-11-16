@@ -44,6 +44,8 @@ if TYPE_CHECKING:
     from textual.widget import Widget
     from typer.testing import Result
 
+    from promptmend.tui.setup_wizard import SetupScreen
+
 # Kept at import, before the espanso fixture replaces it.
 REAL_RESOLVE_LAUNCHER = deploy.resolve_launcher
 # Built at runtime, so no key-shaped literal lands in the repo (gitleaks).
@@ -120,6 +122,10 @@ def drive(
             if settled:
                 await settle(pilot)
             await scenario(app, pilot)
+            # A check still on its way would land while run_test() tears the screens down,
+            # which repaints a pane whose widgets are gone (#350): it lands here first.
+            if app.state is not None and app.state.pending is not None:
+                await landed(app, pilot)
 
     asyncio.run(main())
     return app
@@ -332,6 +338,28 @@ def test_a_landed_update_check_makes_one_state(
     assert state.settled() is state
 
 
+async def focus_a_key_field(wizard: SetupScreen, pilot: Pilot[int]) -> Input:
+    """The wizard on its keys step, the focus on the OpenRouter key field, `typed` in it. go()
+    moves the focus after the next refresh (to Next, on this step), so the field is focused
+    only once every such move has landed: one landing after it took the focus back to Next
+    (Windows 3.12, #350). The refresh wait gives the order (the screen runs its after-refresh
+    callbacks first in, first out, so go()'s ran before it returns); waiting for Next only
+    asserts the premise, that Next is where go() puts the focus."""
+    wizard.go("keys")
+    try:
+        await asyncio.wait_for(wizard.wait_for_refresh(), 10)  # after the go()s' own callbacks
+    except TimeoutError:
+        raise AssertionError(f"the keys step never refreshed\n{threads_now(pilot.app)}") from None
+    next_step = wizard.query_one("#setup-next-step", Button)
+    await until(pilot, lambda: pilot.app.focused is next_step, lambda: pilot.app.focused)
+    field = wizard.query_one("#setup-key-OPENROUTER_API_KEY", Input)
+    field.focus()
+    await until(pilot, lambda: pilot.app.focused is field, lambda: pilot.app.focused)
+    field.value = "typed"
+    await pilot.pause()
+    return field
+
+
 async def landed(app: ManageApp, pilot: Pilot[int]) -> State:
     """Wait (pausing, at most ~10 s) until the late update check is on screen."""
     for _ in range(1000):
@@ -409,12 +437,7 @@ def test_a_late_update_keeps_cursors_and_focus(
         await settle(pilot)
         wizard = app.screen
         assert isinstance(wizard, SetupScreen)
-        wizard.go("keys")
-        await pilot.pause()
-        field = wizard.query_one("#setup-key-OPENROUTER_API_KEY", Input)
-        field.focus()
-        field.value = "typed"
-        await pilot.pause()
+        field = await focus_a_key_field(wizard, pilot)
         blocked.release.set()
         await landed(app, pilot)
         await pilot.pause()
@@ -477,7 +500,12 @@ def test_a_late_update_of_an_older_reload_is_dropped(
         app.post_message(LateUpdate(newer, app.generation - 1))
         await pilot.pause()
         assert app.state is state
+        # This reload's own check lands before the scenario ends: run_test() tears the screens
+        # down while the app still handles messages, so one landing then repaints a Home
+        # pane already emptied (NoMatches, ubuntu 3.14, #350). A real run stops handling
+        # messages before it closes the screens.
         blocked.release.set()
+        assert (await landed(app, pilot)).update == blocked.answer
 
     drive(scenario)
 
@@ -853,16 +881,10 @@ def test_the_full_stage_keeps_the_persons_place(espanso: FakeRunner) -> None:
         await pilot.pause()
         key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
         app.open_setup()
-        await until(pilot, lambda: isinstance(app.screen, SetupScreen))
+        await until(pilot, lambda: isinstance(app.screen, SetupScreen) and app.screen.is_mounted)
         wizard = app.screen
         assert isinstance(wizard, SetupScreen)
-        await pilot.pause()
-        wizard.go("keys")
-        await pilot.pause()
-        field = wizard.query_one("#setup-key-OPENROUTER_API_KEY", Input)
-        field.focus()
-        field.value = "typed"
-        await pilot.pause()
+        field = await focus_a_key_field(wizard, pilot)
         blocked.release.set()
         await settle(pilot)
         assert _state(app).full
