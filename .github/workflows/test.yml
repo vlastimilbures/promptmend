@@ -165,7 +165,7 @@ jobs:
           $out = Invoke-Rendered
           if ($LASTEXITCODE -ne 0) { throw "uv dry run exited $LASTEXITCODE`n$out" }
           Write-Host $out
-          $want = "> uv tool install --force --compile-bytecode $download/promptmend-$version-py3-none-any.whl -c $download/constraints.txt"
+          $want = "> uv tool install --force --compile-bytecode --python >=3.13 $download/promptmend-$version-py3-none-any.whl -c $download/constraints.txt"
           if (-not $out.Contains($want)) { throw "the dry run did not print: $want" }
           $env:PROMPTMEND_VERSION = '0.18.0'
           $out = Invoke-Rendered

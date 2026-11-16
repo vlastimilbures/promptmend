@@ -90,9 +90,14 @@ def check_python(version: tuple[int, ...]) -> None:
         raise SystemExit(f"the Windows zip needs Python {wanted} or later, not {found} (#348)")
 
 
-def build(out_dir: Path = REPO / "dist", work: Path = REPO / "build" / "pyinstaller") -> Path:
-    """Run PyInstaller on the spec, then zip its onedir output into ``out_dir``."""
-    check_python((sys.version_info.major, sys.version_info.minor))
+def build(
+    out_dir: Path = REPO / "dist",
+    work: Path = REPO / "build" / "pyinstaller",
+    python: tuple[int, ...] = tuple(sys.version_info[:2]),
+) -> Path:
+    """Run PyInstaller on the spec, then zip its onedir output into ``out_dir``; ``python``
+    is the running version, refused below MIN_PYTHON."""
+    check_python(python)
     dist = work / "dist"
     subprocess.run(  # noqa: S603 - this interpreter's PyInstaller, a fixed argv
         [

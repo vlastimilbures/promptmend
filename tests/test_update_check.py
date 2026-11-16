@@ -355,7 +355,19 @@ def test_tests_never_reach_pypi() -> None:
     ],
 )
 def test_upgrade_command(channel: str, command: str) -> None:
-    assert update_check.upgrade_command(channel) == command
+    assert update_check.upgrade_command(channel, "darwin") == command
+
+
+# On Windows a uv update asks for Python 3.13 or later, as install.ps1 does (#348): a --force
+# install picks its Python again. macOS and Linux keep the plain command.
+@pytest.mark.parametrize(
+    ("platform", "windows"), [("win32", True), ("darwin", False), ("linux", False)]
+)
+def test_a_windows_uv_update_asks_for_python_3_13(platform: str, windows: bool) -> None:
+    command = update_check.upgrade_command("uv", platform)
+    assert ('--python ">=3.13"' in command) is windows
+    assert command.replace(' --python ">=3.13"', "") == update_check._UV
+    assert update_check.upgrade_command("installer", platform) == update_check.INSTALL_PS1
 
 
 @pytest.mark.parametrize(
@@ -374,7 +386,7 @@ def test_the_upgrade_commands_are_the_documented_ones() -> None:
     from pathlib import Path
 
     install = (Path(__file__).resolve().parents[1] / "docs" / "install.md").read_text("utf-8")
-    for command in update_check.UPGRADE_COMMANDS.values():
+    for command in (*update_check.UPGRADE_COMMANDS.values(), update_check._UV_WIN32):
         assert command in install, command
     for script in ("./scripts/install_macos.sh", r".\scripts\install_windows.ps1"):
         assert script in install, script

@@ -12,7 +12,6 @@ import sys
 import zipfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -315,8 +314,7 @@ def test_build_runs_pyinstaller_then_zips(tmp_path: Path, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(subprocess, "run", fake)
     # The test suite runs on 3.12 too; the build itself must not (below).
-    monkeypatch.setattr(bw, "MIN_PYTHON", (3, 12))
-    out = bw.build(tmp_path / "out", tmp_path / "work")
+    out = bw.build(tmp_path / "out", tmp_path / "work", python=(3, 14))
     assert out == tmp_path / "out" / bw.zip_name(bw.version())
     assert out.is_file()
     ((*head, spec),) = calls
@@ -335,9 +333,8 @@ def test_build_refuses_python_3_12(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     neither the release nor CI may build it on 3.12."""
     calls: list[object] = []
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a))
-    monkeypatch.setattr(sys, "version_info", SimpleNamespace(major=3, minor=12))
     with pytest.raises(SystemExit, match=r"Python 3\.13 or later, not 3\.12 \(#348\)"):
-        bw.build(tmp_path / "out", tmp_path / "work")
+        bw.build(tmp_path / "out", tmp_path / "work", python=(3, 12, 10))
     assert not calls
     assert not (tmp_path / "out").exists()
 
@@ -351,8 +348,13 @@ def test_release_and_ci_build_the_zip_on_the_same_python() -> None:
         text = (workflows / workflow).read_text("utf-8")
         body = re.split(rf"^  {job}:\n", text, flags=re.MULTILINE)[1]
         body = re.split(r"^  \S", body, flags=re.MULTILINE)[0]
+        # No other Python sneaks in past setup-uv's.
+        assert "UV_PYTHON" not in body, (workflow, job)
+        assert "--python" not in body, (workflow, job)
         found: list[str] = re.findall(r'python-version: "([\d.]+)"', body)
         (python,) = found
+        # And the built exe must report that Python (doctor's version check).
+        assert f'.StartsWith("{python}.")' in body, (workflow, job)
         return python
 
     release = job_python("release.yml", "build-windows")

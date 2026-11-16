@@ -114,7 +114,7 @@ Espanso not answering, pressing `r` again and again still shows the settings row
 and the newest press is checked once an earlier check ends. On Windows with Python 3.12 the
 interface now gives its background reads their turn (#348); the effect is still to be
 measured on a real machine. The exe is built on Python 3.14 from the release after 0.26.0
-on, and a uv install can choose 3.13 or later (see [Windows](install.md#windows)). While a reload reads the rest, the Version row keeps the
+on, and the Windows uv installs ask for 3.13 or later (see [Windows](install.md#windows)). While a reload reads the rest, the Version row keeps the
 answer it already had; it may then say `checking` again until that reload's update check
 lands.
 

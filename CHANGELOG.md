@@ -25,9 +25,15 @@ All notable changes to this project are documented here. The format follows
   the next release on. On Windows with Python 3.12 the interface's background work (its
   checks, the update check, the setup plan) ran far slower while it was open. CI's
   `frozen-windows` job builds and tests the zip on the same Python, and
-  `scripts/build_windows.py build` refuses a Python older than 3.13. A uv install on Windows
-  keeps the 3.12 workaround; docs/install.md now recommends `uv tool install --python 3.13 …`
-  there.
+  `scripts/build_windows.py build` refuses a Python older than 3.13; the release checks the
+  exe's Python too.
+- Windows, uv channel: the one-command install with `PROMPTMEND_CHANNEL=uv` and
+  `scripts/install_windows.ps1` now install on Python 3.13 or later (`--python ">=3.13"`),
+  one uv finds or downloads (#348). uv picks the Python again on every `--force` install, so
+  the update command `promptmend doctor` and the interface's About screen give on Windows
+  carries the same option, as docs/install.md's uv section and Update table do. macOS and
+  Linux are unchanged. The interface's 3.12 workaround stays for a uv install that still
+  runs 3.12.
 
 ## 0.26.0 - 2026-11-16
 
