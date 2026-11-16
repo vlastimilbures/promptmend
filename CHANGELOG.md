@@ -14,8 +14,9 @@ All notable changes to this project are documented here. The format follows
   an access list for your account alone on Windows), not by encryption.
 - Windows: `promptmend doctor` and `config validate` now notice a `secrets.toml` whose access
   list was widened after it was written (#284): an entry or an owner other than your account,
-  SYSTEM and Administrators. The finding says to save a key again with
-  `promptmend secrets set`, which rewrites the file private to your account. Until now the
+  SYSTEM and Administrators (a symlinked file is checked where it points). The finding says
+  to save a key again with `promptmend secrets set`, which rewrites the file private to your
+  account; an access list that cannot be read is reported as not checked. Until now the
   access list was set and checked only when the file was written. macOS and Linux keep their
   mode check, whose hint now names `chmod 600`.
 - Ollama and LM Studio: the default `OLLAMA_BASE_URL` is now `http://127.0.0.1:11434` and

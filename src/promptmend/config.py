@@ -227,8 +227,8 @@ def _secrets_layer(
     for key in values:
         if key not in secrets:
             note(store.source, f"{safe_repr(key)} is not a secret setting; it was ignored")
-    if not strict and store.exposed():
-        note(store.source, store.exposed_hint())
+    if not strict and (exposure := store.exposure()):
+        note(store.source, exposure)
     return Layer(store.source, {k: v for k, v in values.items() if k in secrets})
 
 

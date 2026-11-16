@@ -118,8 +118,20 @@ _TOKEN_USER = 1
 _SDDL_REVISION_1 = 1
 
 
+# advapi32 and kernel32, loaded once per process (the interface asks on its loop thread).
+_DLLS: tuple[Any, Any] | None = None
+
+
 def _win32() -> tuple[Any, Any]:
-    """advapi32 and kernel32 with the signatures used here (64-bit safe handles)."""
+    """advapi32 and kernel32 with the signatures used here (64-bit safe handles), loaded on
+    first use and then reused."""
+    global _DLLS  # a lazy, per-process cache
+    if _DLLS is None:
+        _DLLS = _load_win32()
+    return _DLLS
+
+
+def _load_win32() -> tuple[Any, Any]:
     import ctypes
     from ctypes import POINTER, c_int, c_void_p, wintypes
 
@@ -359,8 +371,10 @@ def _user_sids() -> tuple[str, str]:
 # gives every profile folder these entries): SYSTEM and the Administrators group, by SDDL
 # alias and SID. Either can take any file anyway, so an entry for them is not an exposure.
 _TRUSTED_SIDS = ("SY", "S-1-5-18", "BA", "S-1-5-32-544")
-# ACE types that deny access (SDDL): they never open a file to anyone.
-_DENY_ACES = frozenset({"D", "OD", "XD"})
+# ACE types that deny access (SDDL): they never open a file to anyone. A conditional
+# (callback) entry holds a parenthesised condition, which the parser does not take apart, so
+# any such entry makes the whole descriptor count as open (fails closed).
+_DENY_ACES = frozenset({"D", "OD"})
 # SDDL's OWNER RIGHTS: an entry for whoever owns the file.
 _OWNER_RIGHTS = ("OW", "S-1-3-4")
 
@@ -370,8 +384,8 @@ def opens_to_others(sddl: str, sids: tuple[str, ...]) -> bool:
     account in other than ``sids`` (the user's SID and its SDDL alias), SYSTEM or
     Administrators: an allow entry for anyone else, an owner who is someone else (an owner
     can change the access list at will), a null DACL (``NO_ACCESS_CONTROL``, open to
-    everyone) or a descriptor that cannot be parsed. Deny and inherit-only entries grant
-    nothing; an empty DACL grants nothing to anyone."""
+    everyone) or a descriptor that cannot be parsed (a conditional entry among them). Deny
+    and inherit-only entries grant nothing; an empty DACL grants nothing to anyone."""
     trusted = {*sids, *_TRUSTED_SIDS}
     found = re.fullmatch(r"(?:O:([^:()]+?))?D:([A-Z]*)((?:\([^()]*\))*)", sddl)
     if not found:
@@ -396,9 +410,11 @@ def opens_to_others(sddl: str, sids: tuple[str, ...]) -> bool:
 
 def open_to_others(path: Path) -> bool:
     """Windows: ``path``'s owner or access list lets another account in (opens_to_others).
-    Raises OSError when the descriptor cannot be read."""
+    A symlink is resolved first, as write_atomic writes through it. Raises OSError when the
+    descriptor cannot be read."""
     sid, alias = _user_sids()
-    sddl = _read_security(path, _OWNER_SECURITY_INFORMATION | _DACL_SECURITY_INFORMATION)
+    target = Path(os.path.realpath(path))
+    sddl = _read_security(target, _OWNER_SECURITY_INFORMATION | _DACL_SECURITY_INFORMATION)
     return opens_to_others(sddl, (sid, alias))
 
 
@@ -497,27 +513,41 @@ class FileSecretStore:
             return {}
         return {k: v for k, v in loaded[0].items() if isinstance(v, str)}
 
-    def exposed(self) -> bool:
+    def _open(self) -> bool | None:
         """The file is open to other accounts: on POSIX readable or writable by the group or
         others; on Windows an owner or access-list entry for anyone but the user, SYSTEM and
-        Administrators (open_to_others). False when it cannot be checked. Only the
-        management commands ask (repair mode), never a trigger."""
+        Administrators (open_to_others). False when there is no file; None when it exists but
+        could not be checked (any failure: this check must never break the settings)."""
+        if not is_file(self.path):
+            return False
         try:
             if _WINDOWS:
                 return open_to_others(self.path)
             return bool(self.path.stat().st_mode & 0o077)
-        except OSError:
-            return False
+        except Exception:  # an unknown answer, reported as such
+            return None
 
-    @staticmethod
-    def exposed_hint() -> str:
-        """What to do about a secrets file that exposed() reports."""
-        if _WINDOWS:
-            return (
-                "the secrets file's access list lets other accounts in; save a key again with "
-                "`promptmend secrets set <NAME>`, which rewrites it private to your account"
-            )
-        return "the secrets file can be read by other users; make it private (chmod 600)"
+    def exposed(self) -> bool:
+        """The file is known to be open to other accounts (see _open)."""
+        return self._open() is True
+
+    def exposure(self) -> str | None:
+        """The repair-mode finding about the file's permissions, or None when it is private
+        or missing. Names no value. Only the management commands ask, never a trigger."""
+        found = self._open()
+        if found is False:
+            return None
+        if not _WINDOWS:
+            if found is None:
+                return "could not check the secrets file's permissions"
+            return "the secrets file can be read by other users; make it private (chmod 600)"
+        fix = (
+            "save a key again with `promptmend secrets set <NAME>`, which rewrites it "
+            "private to your account"
+        )
+        if found is None:
+            return f"could not check the secrets file's access list; {fix}"
+        return f"the secrets file's access list or owner is not private to your account; {fix}"
 
     def _write(self, values: Mapping[str, str]) -> None:
         try:

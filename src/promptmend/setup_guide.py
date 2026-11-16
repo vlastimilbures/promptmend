@@ -51,8 +51,9 @@ PROFILE_INTRO = (
 )
 
 KEYS_INTRO = (
-    "Keys are saved in the secrets file (secrets.toml, readable only by you), never in "
-    "config.toml, and are never shown again. Leave a field empty to keep what is there."
+    "Keys are saved in the secrets file (secrets.toml, a plaintext file readable only by "
+    "your account), never in config.toml, and are never shown again. Leave a field empty "
+    "to keep what is there."
 )
 
 

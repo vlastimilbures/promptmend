@@ -606,7 +606,7 @@ def test_restrict_to_user_refuses_leftovers(
         (f"O:{SID}D:P(A;;FA;;;{SID})(A;;0x1200a9;;;WD)", True),
         (f"O:{SID}D:P(A;;FA;;;{SID})(A;ID;FR;;;AU)", True),
         (f"O:{SID}D:P(A;;FA;;;{SID})(A;;FA;;;S-1-5-21-9-9-9-1002)", True),
-        (f"O:{SID}D:P(OA;;FA;;;{SID})(XA;;FR;;;BU;(x))", True),
+        (f'O:{SID}D:P(A;;FA;;;{SID})(XA;;FR;;;{SID};(WIN://SYSAPPID Contains "x"))', True),
         (f"O:S-1-5-21-9-9-9-1002D:P(A;;FA;;;{SID})", True),
         (f"D:P(A;;FA;;;{SID})(A;;FA;;;OW)", True),
         (f"O:{SID}D:NO_ACCESS_CONTROL", True),
@@ -627,7 +627,7 @@ def test_restrict_to_user_refuses_leftovers(
         "everyone-read",
         "inherited-authenticated-users",
         "another-account",
-        "callback-ace",
+        "conditional-ace-fails-closed",
         "another-owner",
         "owner-rights-unknown-owner",
         "null-dacl",
@@ -639,23 +639,35 @@ def test_opens_to_others(sddl: str, open_: bool) -> None:
     assert config_files.opens_to_others(sddl, (SID, "LA")) is open_
 
 
-# exposed() on Windows reads the owner and DACL (Windows API mocked, so this runs on every
-# OS); repair mode (doctor, config validate) then reports it with the Windows fix, strict
-# mode (the triggers) never asks.
+_FIX = (
+    "save a key again with `promptmend secrets set <NAME>`, which rewrites it private to "
+    "your account"
+)
+_WINDOWS_OPEN = f"the secrets file's access list or owner is not private to your account; {_FIX}"
+_WINDOWS_UNKNOWN = f"could not check the secrets file's access list; {_FIX}"
+
+
+# exposed() on Windows reads the owner and DACL of the file a symlink points to (Windows API
+# mocked, so this runs on every OS); repair mode (doctor, config validate) then reports it
+# with the Windows fix, strict mode (the triggers) never asks. A descriptor that cannot be
+# read, whatever the error, is reported as not checked and never breaks the settings.
 @pytest.mark.parametrize(
-    ("descriptor", "exposed"),
+    ("descriptor", "exposed", "finding"),
     [
-        (f"O:{SID}D:P(A;;FA;;;{SID})(A;;FR;;;BU)", True),
-        (f"O:{SID}D:P(A;;FA;;;{SID})", False),
-        (OSError(2, "missing"), False),
+        (f"O:{SID}D:P(A;;FA;;;{SID})(A;;FR;;;BU)", True, _WINDOWS_OPEN),
+        (f"O:S-1-5-21-9-9-9-1002D:P(A;;FA;;;{SID})", True, _WINDOWS_OPEN),
+        (f"O:{SID}D:P(A;;FA;;;{SID})", False, None),
+        (OSError(5, "denied"), False, _WINDOWS_UNKNOWN),
+        (RuntimeError("ctypes"), False, _WINDOWS_UNKNOWN),
     ],
-    ids=["widened", "private", "unreadable"],
+    ids=["widened", "foreign-owner", "private", "os-error", "other-error"],
 )
 def test_windows_exposed_secrets_file_is_reported(
     saved_mode: Path,
     monkeypatch: pytest.MonkeyPatch,
-    descriptor: str | OSError,
+    descriptor: str | Exception,
     exposed: bool,
+    finding: str | None,
 ) -> None:
     path = _write(saved_mode / "secrets.toml", f'OPENROUTER_API_KEY = "{OPENROUTER_VALUE}"\n')
     asked: list[tuple[Path, int]] = []
@@ -671,24 +683,38 @@ def test_windows_exposed_secrets_file_is_reported(
     monkeypatch.setattr(config_files, "_canonical_dacl", lambda sddl: sddl)
     monkeypatch.setattr(config_files, "_read_security", read_security)
     assert FileSecretStore(path).exposed() is exposed
-    assert asked == [(path, 0x1 | 0x4)]
+    assert asked == [(Path(os.path.realpath(path)), 0x1 | 0x4)]
     assert ConfigLayers.resolve().findings == ()
     messages = [f.message for f in ConfigLayers.resolve(strict=False).findings]
-    if exposed:
-        assert messages == [
-            "the secrets file's access list lets other accounts in; save a key again with "
-            "`promptmend secrets set <NAME>`, which rewrites it private to your account"
-        ]
-    else:
-        assert messages == []
+    assert messages == ([finding] if finding else [])
 
 
-# A SID lookup that fails counts as not checked, never as a crash.
-def test_windows_exposed_without_a_sid(saved_mode: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = _write(saved_mode / "secrets.toml", f'OPENROUTER_API_KEY = "{OPENROUTER_VALUE}"\n')
+# No file: nothing to check, nothing reported. A SID lookup that fails counts as not checked.
+def test_windows_exposed_without_a_file_or_a_sid(
+    saved_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(config_files, "_WINDOWS", True)
+    missing = FileSecretStore(saved_mode / "secrets.toml")
+    assert (missing.exposed(), missing.exposure()) == (False, None)
+    path = _write(saved_mode / "secrets.toml", f'OPENROUTER_API_KEY = "{OPENROUTER_VALUE}"\n')
     monkeypatch.setattr(config_files, "current_user_sid", lambda: "")
-    assert FileSecretStore(path).exposed() is False
+    assert (FileSecretStore(path).exposed(), FileSecretStore(path).exposure()) == (
+        False,
+        _WINDOWS_UNKNOWN,
+    )
+
+
+# POSIX: a mode that cannot be read is reported as not checked, not as private.
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_posix_mode_that_cannot_be_checked(
+    saved_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config_files, "is_file", lambda path: True)
+    store = FileSecretStore(saved_mode / "missing.toml")
+    assert (store.exposed(), store.exposure()) == (
+        False,
+        "could not check the secrets file's permissions",
+    )
 
 
 def _widen(path: Path, sddl: str) -> None:
@@ -710,7 +736,7 @@ def test_widened_secrets_file_is_exposed_on_windows(saved_mode: Path) -> None:
     _widen(path, f"D:P(A;;FA;;;{sid})(A;;FR;;;BU)")
     assert store.exposed() is True
     findings = [f.message for f in ConfigLayers.resolve(strict=False).findings]
-    assert any("access list lets other accounts in" in m for m in findings), findings
+    assert _WINDOWS_OPEN in findings, findings
     _widen(path, f"D:P(A;;FA;;;{sid})(A;;FA;;;SY)(A;;FA;;;BA)")
     assert store.exposed() is False
     _widen(path, f"D:P(A;;FA;;;{sid})(A;;FR;;;WD)")

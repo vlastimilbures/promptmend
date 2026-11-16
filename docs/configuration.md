@@ -93,7 +93,8 @@ promptmend secrets remove OPENROUTER_API_KEY
 `secrets.toml`, the secrets file, is a private plaintext file: the keys in it are not
 encrypted. What keeps other accounts out is its file permissions: mode 600 on macOS and Linux,
 and on Windows an access list that grants your account alone (no SYSTEM, no Administrators,
-nothing inherited). Anyone who can read the file as you, or a backup of it, can read the keys.
+nothing inherited). Anyone who can read the file as you, an administrator or root, or a
+backup of it, can read the keys.
 A keychain or Windows Credential Manager is not supported. Keys are never logged, never shown
 in a traceback, and sent only as the authentication header of their own provider.
 
