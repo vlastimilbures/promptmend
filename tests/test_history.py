@@ -775,6 +775,96 @@ def test_health_combines_the_marker_and_the_drop_files(
     assert (health.lost_writes, health.tracking_incomplete) == (2, True)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_a_drop_file_is_owner_only(store: HistoryStore) -> None:
+    store.path.parent.mkdir(parents=True)
+    assert store._count_dropped(1)
+    (drop,) = store._drop_files()
+    assert stat.S_IMODE(drop.stat().st_mode) == 0o600
+
+
+def test_many_dropped_writes_take_one_drop_file(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(self: HistoryStore, dropped: int) -> None:
+        raise PermissionError("in use by another process")
+
+    # A spool of many entries that are not valid, settled while the marker cannot be written.
+    store.path.parent.mkdir(parents=True)
+    dropped = 250_000
+    store.spool_path.write_text(json.dumps({"version": 1, "records": [0] * dropped}), "utf-8")
+    monkeypatch.setattr(history, "_SPOOL_BYTES", 10 * 1024 * 1024)
+    monkeypatch.setattr(HistoryStore, "_count_lost", fail)
+    store._settle_spool(set(), (), time.monotonic() + 5)
+    (drop,) = store._drop_files()
+    assert drop.name.endswith(f".{dropped}.drop")
+    assert not store.spool_path.exists()
+    assert store.health().lost_writes == dropped
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "history.lost.x.drop",
+        f"history.lost.{'a' * 32}.0.drop",
+        f"history.lost.{'a' * 32}.01.drop",
+        f"history.lost.{'a' * 32}.-3.drop",
+        f"history.lost.{'a' * 32}.².drop",
+        f"history.lost.{'a' * 32}.drop",
+    ],
+)
+def test_a_drop_file_of_another_shape_counts_once_and_is_reported(
+    store: HistoryStore, name: str
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    (store.path.parent / name).touch()
+    health = store.health()
+    assert (health.lost_writes, health.tracking_incomplete) == (1, True)
+
+
+def test_a_drop_file_removed_while_health_reads_is_skipped(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert store.record(_op())
+    gone = store.lost_path.with_name(f"{history.LOST_NAME}.{'b' * 32}.4.drop")
+    monkeypatch.setattr(HistoryStore, "_drop_files", lambda self: [gone])
+    health = store.health()  # a concurrent reset() removed it between the listing and stat
+    assert (health.lost_writes, health.tracking_incomplete) == (0, False)
+
+
+# A garbage lock file (not ASCII) once made the release raise after the spool was written,
+# and the write was then counted as lost too.
+def test_a_garbage_lock_file_never_fails_the_work_done_under_it(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert store.record(_op())
+    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    real_save = HistoryStore._save_spool
+
+    def save(self: HistoryStore, records: list[object]) -> None:
+        real_save(self, records)
+        lock.write_bytes(b"\xff\xfe not ascii")
+
+    monkeypatch.setattr(HistoryStore, "_save_spool", save)
+    monkeypatch.setattr(HistoryStore, "_write", _timeout)
+    assert store.record(_op()) is False
+    lock.unlink()
+    health = store.health()
+    assert (health.spooled, health.lost_writes) == (1, 0)
+
+
+def test_a_spool_that_is_not_valid_is_replaced_and_counted_once(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    store.spool_path.write_text("{not json", "utf-8")
+    monkeypatch.setattr(HistoryStore, "_write", _timeout)
+    assert store.record(_op()) is False
+    assert len(_spool(store)["records"]) == 1
+    assert _lost(store) == 1
+    assert store._drop_files() == []
+
+
 def test_a_drop_file_that_cannot_be_created_is_reported(tmp_path: Path) -> None:
     blocker = tmp_path / "file"
     blocker.write_text("x")
@@ -1009,11 +1099,13 @@ def test_concurrent_writers_complete_or_drop_without_duplicates(
     # Each write is one transaction: no operation without its attempts.
     assert {op_id for op_id, _ in keys} == ids
     # Most writes get through; the rest were spooled (and are stored now) or counted as lost,
-    # even one whose spool lock was not free in time (#335).
+    # even one whose spool lock was not free in time (#335). An operation that is missing had
+    # both of its calls fail (any() gets a list, so both run) and neither spooled (a spooled
+    # record is stored by now), so each of the two was counted.
     assert len(stored) > count
     health = store.health()
     files = sorted(p.name for p in store.path.parent.iterdir())
-    assert health.lost_writes >= 4 * count - len(ids), (health, files)
+    assert health.lost_writes >= 2 * (4 * count - len(ids)), (health, files)
 
 
 _MARKER = """

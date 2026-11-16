@@ -12,8 +12,9 @@ spool file of the same allowlisted columns, which the next record(), stats(), ex
 replay() stores. A record that is truly dropped (the spool is full or cannot be written,
 or its lock is not free in time) is counted: in a small sidecar marker or, when the marker's
 lock is not free in time or the marker cannot be written, in a new empty drop file of its own,
-which needs no lock. health() reports both, so lost tracking stays visible; only a data folder
-that takes no new file at all (which health() reports as not writable) loses a count.
+which needs no lock. health() reports both, so lost tracking stays visible. A data folder that
+takes no new file at all (a full disk, missing permissions) loses the count; health() reports
+such a folder when it can see that it is not writable.
 
 sqlite3, tomllib, csv and decimal are imported inside the functions that use them, so
 importing this module (for the paths) costs nothing on the trigger path.
@@ -47,8 +48,8 @@ if TYPE_CHECKING:
 DB_NAME = "history.sqlite3"
 # Sidecar marker of dropped writes, next to the database (JSON: count and last time).
 LOST_NAME = "history.lost"
-# One empty `history.lost.<random>.drop` file per write dropped while the marker could not be
-# updated (its lock not free in time): created with O_EXCL, so it needs no lock.
+# An empty `history.lost.<random>.<n>.drop` file counts n writes dropped while the marker could
+# not be updated (its lock not free in time): created with O_EXCL, so it needs no lock.
 _DROP_SUFFIX = ".drop"
 # Records whose write missed its budget, next to the database, until a later write stores them
 # (JSON: {"version": 1, "records": [{"operation": {column: value}, "attempts": [...]}]}).
@@ -222,6 +223,8 @@ _VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,39}")
 _OUTCOME = re.compile(r"[a-z][a-z0-9_]{0,39}")
 _OPERATION_ID = re.compile(r"[0-9a-f]{32}")
 _TIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+# A drop file of _count_dropped(): a random id and the positive number of writes it counts.
+_DROP_NAME = re.compile(re.escape(LOST_NAME) + r"\.[0-9a-f]{32}\.([1-9][0-9]{0,9})\.drop")
 # The error kinds providers/base.py records (see AttemptUsage); tests/test_history.py checks
 # that the two lists match.
 ERROR_KINDS = (
@@ -776,14 +779,15 @@ class HistoryStore:
         return True
 
     def _count_dropped(self, dropped: int) -> bool:
-        """Count ``dropped`` writes without the sidecar lock: one new empty drop file each,
-        created exclusively under a random name, so it never waits for or blocks another
-        writer. health() adds them to the marker's count; reset() removes them. False when
-        one cannot be created. Never raises."""
+        """Count ``dropped`` writes without the sidecar lock: one new empty, owner-only drop
+        file, ``history.lost.<random>.<dropped>.drop``, created exclusively under a random
+        name, so it never waits for or blocks another writer, and one file whatever the count.
+        health() adds them to the marker's count; reset() removes them. False when it cannot
+        be created. Never raises."""
         try:
-            for _ in range(dropped):
-                name = f"{LOST_NAME}.{uuid.uuid4().hex}{_DROP_SUFFIX}"
-                os.close(os.open(self.lost_path.with_name(name), os.O_CREAT | os.O_EXCL))
+            name = f"{LOST_NAME}.{uuid.uuid4().hex}.{dropped}{_DROP_SUFFIX}"
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            os.close(os.open(self.lost_path.with_name(name), flags, 0o600))
         except Exception:
             return False
         return True
@@ -979,7 +983,9 @@ class HistoryStore:
         try:
             yield
         finally:
-            with contextlib.suppress(OSError):
+            # Any error (a garbage lock file is not ASCII): the work under the lock is done,
+            # and raising here would count it as failed.
+            with contextlib.suppress(Exception):
                 if lock.read_text(encoding="ascii") == nonce:
                     lock.unlink()
 
@@ -1060,10 +1066,16 @@ class HistoryStore:
             sidecar_ok = False
         try:
             # Drop files need no lock: each is written once, empty, and never changed.
-            drops = self._drop_files()
-            info["lost_writes"] += len(drops)
-            for drop in drops:
-                when = datetime.fromtimestamp(drop.stat().st_mtime, UTC).strftime(_TIME_FORMAT)
+            for drop in self._drop_files():
+                try:
+                    mtime = drop.stat().st_mtime
+                except FileNotFoundError:
+                    continue  # a concurrent reset() removed it, and its count with it
+                count = _drop_count(drop.name)
+                if count is None:
+                    count, sidecar_ok = 1, False
+                info["lost_writes"] += count
+                when = datetime.fromtimestamp(mtime, UTC).strftime(_TIME_FORMAT)
                 info["last_lost_utc"] = max(info["last_lost_utc"] or when, when)
         except Exception:
             sidecar_ok = False
@@ -1275,6 +1287,13 @@ class HistoryStore:
                 for row in conn.execute(sql + " ORDER BY operation_id, seq")
             ]
         return ops, attempts
+
+
+def _drop_count(name: str) -> int | None:
+    """The count in a drop file's name (``history.lost.<32 hex>.<n>.drop``, n > 0), None
+    when the name is not of that shape."""
+    match = _DROP_NAME.fullmatch(name)
+    return int(match[1]) if match else None
 
 
 def _break_stale(lock: Path) -> bool:
