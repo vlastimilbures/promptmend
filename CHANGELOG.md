@@ -43,9 +43,10 @@ All notable changes to this project are documented here. The format follows
   before attaching both). The hash catches a corrupted or swapped download; it ships in the
   same release, so `gh attestation verify` remains the check of where the files came from.
   It unpacks the zip next to `%LOCALAPPDATA%\Programs\promptmend` and checks that every file
-  arrived and the new exe starts, then swaps the folders (the old one renamed away, put back
-  if the swap fails or is interrupted; renames retry while a scanner holds a file, and
-  folders an interrupted run left are swept); while a `promptmend.exe` from that folder runs,
+  arrived and the new exe starts, then swaps the folders (the old one renamed away and put
+  back if the swap fails; interrupted, it is put back when possible, otherwise the next run
+  keeps the `promptmend.old-…` folder and says so; renames retry while a scanner holds a
+  file, and folders an interrupted run left are swept once an hour old); while a `promptmend.exe` from that folder runs,
   it stops and changes nothing. It adds the folder to the user PATH once (an unexpanded
   `%VARIABLE%` there stays one) and runs the exe's `promptmend doctor --no-clipboard`. It
   still never runs setup or a deploy. `PROMPTMEND_CHANNEL=uv` keeps the previous uv install (`PROMPTMEND_WHEEL` implies

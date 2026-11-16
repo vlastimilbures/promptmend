@@ -151,7 +151,8 @@ It prints each command before running it, and:
 2. unpacks it into a new folder next to `%LOCALAPPDATA%\Programs\promptmend`, checks that
    every file arrived and runs the new `promptmend.exe --version` once, then swaps the
    folders: the old one is renamed away, the new one takes its name, and the old one is
-   deleted (or renamed back if the swap fails or is interrupted). While a `promptmend.exe`
+   deleted (or renamed back if the swap fails; if it is interrupted, put back when possible,
+   otherwise the next run keeps the `promptmend.old-…` folder and tells you). While a `promptmend.exe`
    from that folder runs (the interface, or a trigger), it stops and changes nothing;
 3. adds `%LOCALAPPDATA%\Programs\promptmend` to your user PATH (once), so a new terminal
    finds `promptmend` (in Windows Terminal, only once every window was closed);

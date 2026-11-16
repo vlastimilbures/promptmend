@@ -250,15 +250,19 @@ function Invoke-PromptMendInstall {
 
     # Folders an interrupted earlier run left next to $Dest, deleted when nothing runs from
     # them (best effort). A promptmend.old-* folder is kept while $Dest is missing: it may be
-    # the only copy of the previous install.
+    # the only copy of the previous install. A folder changed within the last hour is left
+    # alone too: it may be the stage of another run going on now.
     function Remove-Stale([string]$Programs, [string]$Dest) {
         $stale = @(Get-ChildItem -LiteralPath $Programs -Directory -Force -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match '^promptmend\.(new|old)-[0-9a-f]{8}\z' })
+        $recent = (Get-Date).AddHours(-1)
         foreach ($dir in $stale) {
             if ($dir.Name -like 'promptmend.old-*' -and -not (Test-Path -LiteralPath $Dest)) {
-                Write-Warning "Kept $($dir.FullName): an earlier run was interrupted, and it may hold your previous install."
+                Write-Warning ("Kept $($dir.FullName): an earlier run was interrupted, and it may " +
+                    'hold your previous install (rename it to promptmend to get that back).')
                 continue
             }
+            if ($dir.LastWriteTime -gt $recent) { continue }
             if ((Get-RunningFrom $dir.FullName).Count -gt 0) { continue }
             Write-Command 'Remove-Item' @('-LiteralPath', $dir.FullName, '-Recurse', '-Force')
             try {
@@ -360,14 +364,24 @@ function Invoke-PromptMendInstall {
             }
             # Run once before the swap: an exe that cannot start here (blocked, broken) leaves the
             # installed one alone.
-            $ErrorActionPreference = 'Continue'
             Write-Command $NewExe @('--version')
-            $got = ((& $NewExe --version 2>$null) | Out-String).Trim()
-            $code = $LASTEXITCODE
-            $ErrorActionPreference = 'Stop'
+            $ErrorActionPreference = 'Continue'
+            try {
+                # Set by this call only: a stale exit code of an earlier command cannot pass.
+                $global:LASTEXITCODE = -1
+                $got = ((& $NewExe --version 2>$null) | Out-String).Trim()
+                $code = $LASTEXITCODE
+            } catch {
+                throw "The new promptmend.exe did not start ($($_.Exception.Message)); nothing was changed."
+            } finally {
+                $ErrorActionPreference = 'Stop'
+            }
             Write-Host $got
             if ($code -ne 0) {
                 throw "The new promptmend.exe did not start (exit code $code); nothing was changed."
+            }
+            if ($got -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+') {
+                throw "The new promptmend.exe printed no version ('$got'); nothing was changed."
             }
             if ($Version -and $got -ne $Version) {
                 throw "The new promptmend.exe says $got, not $Version; nothing was changed."
@@ -412,18 +426,22 @@ function Invoke-PromptMendInstall {
                 $hadOld = $false
             }
         } finally {
-            # Interrupted (Ctrl+C) between moving the old folder aside and moving the new one in:
-            # the old one goes back.
-            if ($hadOld -and -not (Test-Path -LiteralPath $Dest) -and (Test-Path -LiteralPath $Old)) {
-                Write-Host "Putting the previous $Dest back"
-                try { Rename-Item -LiteralPath $Old -NewName $DestName } catch {
-                    Write-Warning "Rename $Old to promptmend by hand: $($_.Exception.Message)"
+            # Only .NET calls here: after Ctrl+C (a pipeline stop) Windows PowerShell 5.1 refuses
+            # to run cmdlets in a finally block. Interrupted between moving the old folder aside
+            # and moving the new one in, the old one goes back when possible; otherwise the next
+            # run keeps the promptmend.old-* folder and says so.
+            if ($hadOld -and -not [IO.Directory]::Exists($Dest) -and [IO.Directory]::Exists($Old)) {
+                try {
+                    [IO.Directory]::Move($Old, $Dest)
+                    [Console]::WriteLine("Put the previous $Dest back.")
+                } catch {
+                    [Console]::WriteLine("Could not put the previous install back: rename $Old to $DestName by hand.")
                 }
             }
             foreach ($leftover in $Stage, $Temp) {
-                if (Test-Path -LiteralPath $leftover) {
-                    Remove-Item -LiteralPath $leftover -Recurse -Force -ErrorAction SilentlyContinue
-                }
+                try {
+                    if ([IO.Directory]::Exists($leftover)) { [IO.Directory]::Delete($leftover, $true) }
+                } catch { }
             }
         }
 
@@ -445,10 +463,12 @@ function Invoke-PromptMendInstall {
         if ($uvTool) {
             Write-Host ''
             Write-Warning ("PromptMend is now installed twice: the exe in $Dest and uv's tool in " +
-                "$uvTool. Your Espanso triggers still call the uv one, and 'promptmend' in a " +
+                "$uvTool. Your Espanso triggers may still call the uv one, and 'promptmend' in a " +
                 'terminal may be the uv one too.')
             Write-Step 'To switch to the exe (this script runs neither):'
-            Write-Host "  & '$Exe' setup                 # settings, key, test call; the deploy makes the triggers call the exe"
+            # Quoted for PowerShell: a ' in the path doubles.
+            $quoted = $Exe.Replace("'", "''")
+            Write-Host "  & '$quoted' setup                 # settings, key, test call; the deploy makes the triggers call the exe"
             Write-Host '  uv tool uninstall promptmend'
             Write-Host ('To keep the uv install instead, delete ' + $Dest + ' and run this ' +
                 'command again with PROMPTMEND_CHANNEL=uv set (in PowerShell: $env:PROMPTMEND_CHANNEL = "uv").')

@@ -228,7 +228,7 @@ def test_exe_order() -> None:
         code.index("Invoke-Retried { Rename-Item -LiteralPath $Old -NewName $DestName }"),
         code.index("Invoke-Retried { Remove-Item -LiteralPath $Old -Recurse -Force }"),
         # Interrupted between the two renames: the old folder goes back.
-        code.index("if ($hadOld -and -not (Test-Path -LiteralPath $Dest)"),
+        code.index("if ($hadOld -and -not [IO.Directory]::Exists($Dest)"),
         code.index("Add-UserPath $Dest"),
         code.index("Invoke-Native $Exe @('doctor', '--no-clipboard')"),
         code.index("if ($uvTool) {"),
@@ -257,6 +257,21 @@ def test_exe_helpers() -> None:
     assert r"'^promptmend\.(new|old)-[0-9a-f]{8}\z'" in stale
     assert "(Get-RunningFrom $dir.FullName).Count -gt 0" in stale
     assert "-not (Test-Path -LiteralPath $Dest)" in stale
+    assert "if ($dir.LastWriteTime -gt $recent) { continue }" in stale
+
+
+# The finally block uses .NET only (5.1 runs no cmdlet there after Ctrl+C), and the new exe's
+# start check needs an exit code set by that very call and a version on its stdout.
+def test_exe_finally_and_start_check() -> None:
+    code = _function("Install-Exe")
+    final = code[code.index("} finally {\nif ($hadOld") : code.index("Write-Step 'Adding it")]
+    assert "[IO.Directory]::Move($Old, $Dest)" in final
+    for cmdlet in ("Rename-Item", "Remove-Item", "Test-Path", "Write-Host", "Write-Warning"):
+        assert cmdlet not in final, cmdlet
+    start = code.index("$global:LASTEXITCODE = -1")
+    assert start < code.index("& $NewExe --version") < code.index("$code = $LASTEXITCODE")
+    assert "The new promptmend.exe did not start ($($_.Exception.Message))" in code
+    assert "if ($got -cnotmatch '^[0-9]+\\.[0-9]+\\.[0-9]+') {" in code
 
 
 # With a uv install still there, every next step names the exe by its full path and the bare
@@ -268,7 +283,9 @@ def test_uv_install_found() -> None:
     assert "Write-Warning" in found
     assert "return" in found
     text = INSTALL.read_text("utf-8")
-    assert "Write-Host \"  & '$Exe' setup " in text
+    assert '$quoted = $Exe.Replace("\'", "\'\'")' in found
+    assert "Write-Host \"  & '$quoted' setup " in text
+    assert "& '$Exe'" not in text
     assert "PROMPTMEND_CHANNEL=uv set" in text
 
 

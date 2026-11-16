@@ -95,12 +95,11 @@ jobs:
   # The Windows user installer (#186), run as the one-liner runs it (Windows PowerShell 5.1,
   # `irm | iex`). A rendered copy is dry-run on both channels to check the Release URLs and
   # the zip hash it would install with, and the refusals; the uv channel's installs use the
-  # wheel and constraints.txt built here through the local override (frozen-windows installs
-  # the exe channel from its own zip), so
-  # promptmend never comes from PyPI. The first install runs with uv hidden from PATH, so the
-  # script installs uv itself (winget, else uv's installer); the second, with uv, must
-  # reinstall in place; then `doctor --timing` through uv's shim goes to the job summary. It
-  # never deploys.
+  # wheel and constraints.txt built here through the local override, so promptmend never comes
+  # from PyPI (frozen-windows installs the exe channel from its own zip). The first install
+  # runs with uv hidden from PATH, so the script installs uv itself (winget, else uv's
+  # installer); the second, with uv, must reinstall in place; then `doctor --timing` through
+  # uv's shim goes to the job summary. It never deploys.
   install-script:
     runs-on: windows-latest
     timeout-minutes: 20
