@@ -174,8 +174,24 @@ def test_version_with_a_newer_release(monkeypatch: pytest.MonkeyPatch) -> None:
     assert set(check.data) == set(doctor.DATA_KEYS["version"])
     # A checkout's own update wins over its uv launcher.
     editable = doctor._version_check(update, _install("uv", editable=True))
-    assert editable.message.endswith(f"available: {update_check.upgrade_command('editable')}")
+    assert editable.message.endswith(f"available: {doctor.upgrade_hint({'editable': True})}")
     assert doctor._version_check(update, None).message.endswith("see docs/install.md")
+
+
+# On Windows, uv cannot update a tool a running promptmend holds and leaves none (#356): a
+# uv-backed hint says to close it first, ahead of the command, which stays whole.
+@pytest.mark.parametrize("channel", ["uv", "editable"])
+def test_a_windows_uv_hint_says_close_first(channel: str) -> None:
+    install = {"channel": "uv", "editable": channel == "editable"}
+    command = update_check.upgrade_command(channel, "win32")
+    assert doctor.upgrade_hint(install, "win32") == doctor.CLOSE_FIRST + command
+    assert doctor.upgrade_hint(install, "darwin") == update_check.upgrade_command(channel, "darwin")
+
+
+@pytest.mark.parametrize("channel", ["homebrew", "installer", "winget", "script"])
+def test_other_hints_are_the_command(channel: str) -> None:
+    install = {"channel": channel, "editable": False}
+    assert doctor.upgrade_hint(install, "win32") == update_check.upgrade_command(channel)
 
 
 @pytest.mark.parametrize(

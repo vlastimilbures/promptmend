@@ -207,6 +207,49 @@ def test_order() -> None:
     assert code.index("$env:PROMPTMEND_DRY_RUN") < refresh
 
 
+# uv removes the old tool before it deletes its folder, so a promptmend still running from it
+# would leave none (#356): the uv channel refuses one before `uv tool install`, matched by the
+# tool folder and uv's launcher, both read from uv first.
+def test_uv_refuses_while_promptmend_runs() -> None:
+    code = _function("Install-WithUv")
+    steps = [
+        code.index("$toolDir = Read-Native 'uv' @('tool', 'dir')"),
+        code.index("$bin = Read-Native 'uv' @('tool', 'dir', '--bin')"),
+        code.index("$cli = Join-Path $bin 'promptmend.exe'"),
+        code.index("$tool = Join-Path $toolDir 'promptmend'"),
+        code.index("Assert-NotRunning $tool @('python', 'pythonw', 'promptmend') @($cli) "),
+        code.index("Assert-Native 'uv' $InstallArgs"),
+    ]
+    assert steps == sorted(steps)
+    assert code.index("$env:PROMPTMEND_DRY_RUN") < steps[0]
+    assert code.count("Assert-NotRunning") == 1
+    assert code.count("'tool', 'dir', '--bin'") == 1
+    running = _function("Get-RunningFrom")
+    assert "Get-Process -Name $Names -ErrorAction SilentlyContinue" in running
+    assert "try { $path = $proc.Path } catch { $path = $null }" in running
+    assert "$key.StartsWith($prefix) -or $exact -contains $key" in running
+    # The exe channel keeps its defaults: promptmend.exe under its folder only.
+    assert "[string[]]$Names = @('promptmend')" in running
+    assert "Nothing was changed." in INSTALL.read_text("utf-8")
+
+
+# The contributor installer runs the same `uv tool install --force`, so it refuses the same way.
+def test_install_windows_refuses_while_promptmend_runs() -> None:
+    lines = (SCRIPTS / "install_windows.ps1").read_text("utf-8").splitlines()
+    code = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
+    steps = [
+        code.index("$ToolBin = (uv tool dir --bin)"),
+        code.index("$ToolDir = (uv tool dir)"),
+        code.index("Get-Process -Name python, pythonw, promptmend -ErrorAction SilentlyContinue"),
+        code.index("if ($Running.Count -gt 0) {"),
+        code.index("uv tool install --editable . --force"),
+    ]
+    assert steps == sorted(steps)
+    assert "(Get-PathKey $path).StartsWith($Prefix)" in code
+    assert "(Get-PathKey $path) -eq (Get-PathKey $Cli)" in code
+    assert "Nothing was changed." in code
+
+
 # The exe channel: the dry run stops before anything is touched; the hash is checked before
 # anything is unpacked, the new exe runs once before the swap, and a running exe is refused
 # before the download and again right before the swap.

@@ -189,7 +189,9 @@ It then installs uv if it is missing (`winget install --id astral-sh.uv -e`, or 
 official installer where there is no winget), installs the wheel attached to the same Release
 with its `constraints.txt` and `--force` (PyPI is not used), and runs `uv tool update-shell`
 and `promptmend doctor --no-clipboard`. It says so when it replaces an editable install from a
-checkout. A `PROMPTMEND_CHANNEL` other than `exe` or `uv` is refused.
+checkout. While a `promptmend` from uv's tool folder runs (the interface, or a trigger), or
+uv's `promptmend.exe` launcher, it stops before uv runs and changes nothing (see
+[Update](#update)). A `PROMPTMEND_CHANNEL` other than `exe` or `uv` is refused.
 
 ### uv
 
@@ -302,7 +304,7 @@ command below for your channel when a newer release exists.
 |---------|----------------|
 | Homebrew | `brew update && brew upgrade promptmend` |
 | One-command install (the exe, `installer` in `doctor`) | `powershell -ExecutionPolicy ByPass -c "irm https://github.com/vlastimilbures/promptmend/releases/latest/download/install.ps1 \| iex"` again; close the interface first |
-| One-command install with uv | The same command again, with `PROMPTMEND_CHANNEL=uv` set and `PROMPTMEND_VERSION` unset. Without `PROMPTMEND_CHANNEL=uv` it now installs the exe beside the uv install (see [Switch from a uv install](#switch-from-a-uv-install)) |
+| One-command install with uv | The same command again, with `PROMPTMEND_CHANNEL=uv` set and `PROMPTMEND_VERSION` unset; close the interface first. Without `PROMPTMEND_CHANNEL=uv` it now installs the exe beside the uv install (see [Switch from a uv install](#switch-from-a-uv-install)) |
 | uv from PyPI | `uv tool install --force promptmend -c <latest constraints URL>` (below) |
 | uv from a Release wheel | The install command with the new version and `--force` |
 | WinGet (once published) | `winget upgrade vlastimilbures.PromptMend` |
@@ -317,6 +319,18 @@ too):
 uv tool install --force promptmend -c https://github.com/vlastimilbures/promptmend/releases/latest/download/constraints.txt
 promptmend doctor
 ```
+
+On Windows, close the interface and every running `promptmend` (a trigger still working, a
+`promptmend` in another terminal) before you update a uv install, from PyPI, a Release wheel
+or a checkout. uv removes the old install before it deletes its folder, and a running
+`promptmend` holds a file there (`Scripts\python.exe`), so the update stops with
+`failed to remove directory …\Scripts: Access is denied` and leaves no working install:
+the command and every trigger then fail with
+`ModuleNotFoundError: No module named 'promptmend'`. To recover, close it and run the same update again. The one-command install
+with `PROMPTMEND_CHANNEL=uv` and `.\scripts\install_windows.ps1` check first: while a
+`promptmend` from uv's tool folder (or uv's `promptmend.exe` launcher) runs, they stop and
+change nothing, as the exe channel does. On Windows, `doctor` and the About screen put
+"close the interface and any running promptmend, then" before a uv update command.
 
 The one-command install puts the newest release over the old one with the same launcher
 (`%LOCALAPPDATA%\Programs\promptmend\promptmend.exe`, or uv's with `PROMPTMEND_CHANNEL=uv`),
