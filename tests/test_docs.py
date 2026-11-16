@@ -97,10 +97,12 @@ def test_contributing_tree_lists_every_module() -> None:
     assert missing == [], f"add {missing} to the project tree in CONTRIBUTING.md"
 
 
-# A fenced code block, top level or indented under a list item (#362): ``` or ~~~, closed by
-# a fence of the same character at least as long as the opener.
+# A fenced code block, top level or indented under a list item (#362): ``` (no backtick in
+# its info string) or ~~~, closed by a fence of the same character at least as long, or left
+# open to the end of the page. The runs are possessive, so an opener never shrinks to fit.
 _FENCE = re.compile(
-    r"^[ \t]*(?P<fence>(?P<c>[`~])(?P=c){2,})[^\n]*\n(?P<body>.*?)^[ \t]*(?P=fence)(?P=c)*[ \t]*$",
+    r"^[ \t]*(?:(?P<b>`{3,}+)[^`\n]*|(?P<t>~{3,}+)[^\n]*)\n(?P<body>.*?)"
+    r"(?:^[ \t]*(?(b)(?P=b)`*|(?P=t)~*)[ \t]*$|\Z)",
     re.MULTILINE | re.DOTALL,
 )
 _INVOCATION = re.compile(r"(?<![\w/\\-])promptmend(?![\w:=-])([^`\n#]*)")
@@ -135,15 +137,36 @@ def _documented_invocations(text: str) -> list[str]:
 
 # A fence indented under a list item is code like a top-level one (#362): its lines are read
 # as invocations, and the prose after it keeps its own spans, so a plain-text "promptmend is
-# not changed" is never read as a command.
-def test_indented_fences_are_code_blocks() -> None:
-    text = (
-        "1. Run:\n\n   ```bash\n   promptmend doctor\n   ```\n\n"
-        "2. Or:\n\n    ~~~~\n    promptmend setup\n    ```\n    ~~~~~\n\n"
-        "Then promptmend is not changed; run `promptmend ui`.\n"
-    )
-    assert _documented_invocations(text) == [" doctor", " setup", " ui"]
-    assert _spans(text) == ["promptmend ui"]
+# not changed" is never read as a command. A fence closes only on its own character, at least
+# as long, else at the end of the page; a line opening with ```promptmend …``` is a span.
+@pytest.mark.parametrize(
+    ("text", "invocations", "spans"),
+    [
+        (
+            "1. Run:\n\n   ```bash\n   promptmend doctor\n   ```\n\n"
+            "Then promptmend is not changed; run `promptmend ui`.\n",
+            [" doctor", " ui"],
+            ["promptmend ui"],
+        ),
+        (
+            "2. Or:\n\n    ~~~~\n    promptmend setup\n    ```\n    `promptmend persona`\n"
+            "    ~~~~~\n\nThen `promptmend ui`.\n",
+            [" setup", " persona", " ui"],
+            ["promptmend ui"],
+        ),
+        ("````md\n```\npromptmend history\n", [" history"], []),
+        (
+            "```promptmend stats``` prints the totals.\n\n```\npromptmend doctor\n```\n",
+            [" doctor", " stats"],
+            ["promptmend stats"],
+        ),
+    ],
+)
+def test_indented_fences_are_code_blocks(
+    text: str, invocations: list[str], spans: list[str]
+) -> None:
+    assert _documented_invocations(text) == invocations
+    assert _spans(text) == spans
 
 
 # The Unreleased notes plus the newest release's, so the check never runs on an empty or
