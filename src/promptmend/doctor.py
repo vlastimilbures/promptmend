@@ -51,6 +51,7 @@ CHECK_IDS = (
     "config",
     "keys",
     "persona",
+    "gate_packs",
     "espanso",
     "match_files",
     "launcher",
@@ -71,6 +72,7 @@ DATA_KEYS = {
     "config": ("mode", "files", "valid", "findings"),
     "keys": ("keys", "provider", "triggers"),
     "persona": ("set", "local_only", "findings"),
+    "gate_packs": ("packs", "off"),
     "espanso": (
         "found",
         "config_dir",
@@ -497,7 +499,7 @@ def persona_findings(settings: config.Settings) -> list[str]:
     the key patterns, as `config set` checks every value with the same scan()."""
     from .redaction import compile_extra, scan
 
-    return scan(settings.persona, compile_extra(settings.extra_patterns))
+    return scan(settings.persona, compile_extra(settings.extra_patterns), settings.gate_packs)
 
 
 def _persona_stays_local(settings: config.Settings) -> bool:
@@ -566,6 +568,36 @@ def _persona_check(settings: config.Settings, readable: bool = True) -> Check:
             why = "not used by the configured profiles"
         return Check("persona", INFO, f"matches {', '.join(findings)}; {why}", data)
     return Check("persona", OK, "PROMPT_PERSONA matches no data-protection pattern", data)
+
+
+def _packs_off(settings: config.Settings) -> list[str]:
+    from .redaction import GATE_PACKS
+
+    return [pack for pack in GATE_PACKS if pack not in settings.gate_packs]
+
+
+def gate_packs_note(settings: config.Settings) -> str | None:
+    """The note for gate packs PROMPT_GATE_PACKS leaves off (an empty value, or an empty
+    ${VAR} it expanded from), or None when every pack is on. Information, not a problem: a
+    pack may be off on purpose, but the gate then flags less."""
+    from .redaction import GATE_PACK_COVERS
+
+    off = _packs_off(settings)
+    if not off:
+        return None
+    return "; ".join(
+        f"gate pack {pack} is off (PROMPT_GATE_PACKS): the gate does not flag "
+        f"{GATE_PACK_COVERS[pack]}"
+        for pack in off
+    )
+
+
+def _gate_packs_check(settings: config.Settings) -> Check:
+    data = {"packs": list(settings.gate_packs), "off": _packs_off(settings)}
+    note = gate_packs_note(settings)
+    if note:
+        return Check("gate_packs", INFO, note, data)
+    return Check("gate_packs", OK, "every gate pack is on", data)
 
 
 def _espanso_check(runner: deploy.Runner, espanso_dir: Path | None) -> tuple[Check, Path]:
@@ -991,6 +1023,7 @@ def _run(
     checks += [
         timed("keys", lambda: _keys_check(layers, settings, triggers, deployed)),
         timed("persona", lambda: _persona_check(settings, _persona_readable())),
+        timed("gate_packs", lambda: _gate_packs_check(settings)),
         espanso,
     ]
     checks.append(timed("match_files", lambda: _match_check(target, compare, manifest, plan)))
