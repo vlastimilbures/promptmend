@@ -431,17 +431,22 @@ def test_entry_start_is_taken_once(monkeypatch: pytest.MonkeyPatch) -> None:
     assert entry.take_start() is None
 
 
-# The limit counts from that start: a run that began long ago fires at once.
-def test_limit_counts_from_entry_start(monkeypatch: pytest.MonkeyPatch) -> None:
+# The limit counts from that start: time already spent comes off the timer's wait, and a
+# run that began past its limit gets only the margin, for its marker and history.
+@pytest.mark.parametrize(("ago", "timeout", "wait"), [(10.0, 30.0, 20.0), (100.0, 1.0, 0.0)])
+def test_limit_counts_from_entry_start(
+    monkeypatch: pytest.MonkeyPatch, ago: float, timeout: float, wait: float
+) -> None:
     from promptmend import entry
 
-    monkeypatch.setattr(entry, "_started", time.monotonic() - 100)
+    monkeypatch.setattr(entry, "_started", time.monotonic() - ago)
     watch, _ = _watchdog()
     monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
-    watch.arm(Settings(timeout=1), "ollama")
+    watch.arm(Settings(timeout=timeout), "ollama")
     try:
         assert watch._timer is not None
-        assert watch._timer.interval == 0.0
+        expected = wait + trigger.WATCHDOG_MARGIN - trigger._WATCHDOG_HISTORY
+        assert watch._timer.interval == pytest.approx(expected, abs=0.5)
     finally:
         watch.cancel()
 
@@ -930,6 +935,44 @@ def test_used_up_limit_sends_nothing(
     (op,) = history_rows("operations")
     assert op["outcome"] == "error_marker"
     assert history_rows("attempts") == []
+
+
+# Start-up alone ran past the provisional limit: arm_loading()'s marker says so, not that the
+# settings did not load (they have not begun to).
+def test_arm_loading_after_a_slow_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    import re
+
+    monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
+    watch, _ = _watchdog()
+    watch._started = time.monotonic() - 100
+    watch.arm_loading("1")
+    watch.cancel()
+    expected = (
+        r"\[promptmend: starting up took 1\d\d\.\ds, past the 1\.0s time limit; nothing was sent\]"
+    )
+    assert re.fullmatch(expected, watch._marker)
+
+
+# A run that reaches arm() 3 s past its hard deadline still gets one bounded window for its
+# error_marker row: the watchdog does not end it before the history is written.
+def test_used_up_limit_still_records(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_provider: StubProvider,
+    history_rows: HistoryRows,
+) -> None:
+    from promptmend import entry
+
+    monkeypatch.setenv("PROMPT_TIMEOUT_SECONDS", "5")
+    monkeypatch.setattr(entry, "_started", time.monotonic() - (5 + trigger.WATCHDOG_MARGIN + 3))
+    exits = Exits()
+    monkeypatch.setattr(trigger, "_hard_exit", exits)
+    result = runner.invoke(app, ["improve", "--provider", "ollama", "--trigger-id", "il"])
+    assert result.exit_code == 0
+    assert result.stdout.startswith("[promptmend: starting up took 1")
+    assert exits.codes == []
+    (op,) = history_rows("operations")
+    assert op["outcome"] == "error_marker"
+    assert stub_provider.calls == []
 
 
 # A timer that cannot start costs neither improve nor persona its output.

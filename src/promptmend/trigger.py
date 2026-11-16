@@ -101,6 +101,11 @@ def _start_timer(at: float, action: Callable[[], None]) -> threading.Timer:
     return timer
 
 
+def _past(limit: float) -> str:
+    """The end of a marker for a run that used up its limit before its call."""
+    return f"past the {limit}s time limit; nothing was sent"
+
+
 def _write_fd(fd: int, data: bytes) -> None:
     while data:
         data = data[os.write(fd, data) :]
@@ -187,10 +192,17 @@ class _Watchdog:
         """Before Settings.load(): the provisional limit, from the call's ``timeout`` option
         or the built-in default; nothing about the settings is known yet."""
         limit = loading_limit(timeout)
-        self._load_started = time.monotonic()
+        now = self._load_started = time.monotonic()
         self._loading = True
-        self._marker = f"[promptmend: the settings did not load within {limit}s]"
         self._deadline = self._started + limit + WATCHDOG_MARGIN
+        if now >= self._deadline - _WATCHDOG_HISTORY:
+            # Start-up alone ran past the limit: the timer fires at once, and not because of
+            # the settings, which have not begun to load.
+            self._marker = (
+                f"[promptmend: starting up took {now - self._started:.1f}s, {_past(limit)}]"
+            )
+        else:
+            self._marker = f"[promptmend: the settings did not load within {limit}s]"
         self._timer = _start_timer(self._deadline - _WATCHDOG_HISTORY, self._fire)
 
     def arm(self, cfg: Settings, provider: str) -> str | None:
@@ -206,7 +218,7 @@ class _Watchdog:
         now = time.monotonic()
         took, loading = now - self._started, now - self._load_started
         expired = took >= cfg.timeout
-        limit = f"past the {cfg.timeout}s time limit; nothing was sent"
+        limit = _past(cfg.timeout)
         if expired and loading >= _SLOW_LOAD:
             text = f"the settings took {loading:.1f}s to load, {took:.1f}s in all, {limit}"
         elif expired:
@@ -227,6 +239,10 @@ class _Watchdog:
             self._loading = False
             self._marker = f"[promptmend: {text}]"
             self._deadline = self._started + cfg.timeout + WATCHDOG_MARGIN
+            if expired:
+                # The run ends at once with its marker: give its history row the same margin
+                # a run within its limit has, rather than a deadline already past.
+                self._deadline = max(self._deadline, now + WATCHDOG_MARGIN)
             self._timer = _start_timer(self._deadline - _WATCHDOG_HISTORY, self._fire)
         return self._marker if expired else None
 
@@ -377,24 +393,17 @@ def _improve(
         )
         # From here the run has a hard deadline: reading the clipboard can block too.
         expired = watch.arm(cfg, provider)
-        if expired is not None:
-            # No time left for the call: end here, with nothing sent (#331).
-            _emit(expired, watch)
-            rec.emitted()
-            _flushed(watch)
-            rec.outcome = recorder.ERROR_MARKER
-            rec.finish()
-            raise typer.Exit(0)
-        # An unknown name is left to make_provider(), which reports it as such.
-        if provider in PROVIDER_NAMES:
-            check_provider_options(provider, tier, effort)
-        raw = _read_input(source, text)
-        watch.proceed()
-        # The rewrite comes back cleaned, which matters here too: --copy and clipboard output
-        # put it on the clipboard.
-        result = rewrite(
-            raw, provider, cfg, profile, ran, allow_flagged=allow_flagged, observer=rec.observer
-        )
+        if expired is None:
+            # An unknown name is left to make_provider(), which reports it as such.
+            if provider in PROVIDER_NAMES:
+                check_provider_options(provider, tier, effort)
+            raw = _read_input(source, text)
+            watch.proceed()
+            # The rewrite comes back cleaned, which matters here too: --copy and clipboard
+            # output put it on the clipboard.
+            result = rewrite(
+                raw, provider, cfg, profile, ran, allow_flagged=allow_flagged, observer=rec.observer
+            )
     except typer.Exit:
         # proceed()'s: the watchdog has ended the run, so no marker of its own follows.
         raise
@@ -410,6 +419,15 @@ def _improve(
         rec.finish()
         raise typer.Exit(0) from None
 
+    if expired is not None:
+        # No time left for the call: end here, with nothing sent (#331). Outside the try, as
+        # the rewrite's own output is, so a failing write cannot lead to a second emit.
+        _emit(expired, watch)
+        rec.emitted()
+        _flushed(watch)
+        rec.outcome = recorder.ERROR_MARKER
+        rec.finish()
+        raise typer.Exit(0)
     rec.profile_id = ran.profile_id
     note = sent_despite_note(ran.built)
     if cfg.output == CLIPBOARD or copy:
