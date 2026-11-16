@@ -113,7 +113,7 @@ uv run pytest -m live
 - **The Espanso contract.** The CLI prints the result with no trailing newline, and every failure
   as `[promptmend: …]` with exit code 0. Espanso cannot show stderr or exit codes, so a
   traceback or a blank line reaches the user as a silent failure. Print only through
-  `trigger._emit()`, which strips control and invisible characters from whatever gets pasted.
+  `trigger.emit()`, which strips control and invisible characters from whatever gets pasted.
   `tests/test_trigger_contract.py` compares the whole stdout of `improve` and `persona` byte
   for byte; a change there is a change to what every trigger pastes. On Windows each newline
   in the output is printed as CRLF (Python's standard streams translate it there); the test
@@ -407,7 +407,7 @@ promptmend/
 ├── src/promptmend/               the promptmend CLI
 │   ├── cli.py                    the Typer app: improve and persona commands; mounts the
 │   │                             management commands lazily
-│   ├── trigger.py                improve's run: _emit() (the single output sink), the watchdog
+│   ├── trigger.py                improve's run: emit() (the single output sink), the watchdog
 │   ├── pipeline.py               the rewrite's steps (input, rewrite(), markers, delivery),
 │   │                             Typer-free, shared with the interface's Try tab
 │   ├── entry.py                  console-script entry: empty stderr for a trigger

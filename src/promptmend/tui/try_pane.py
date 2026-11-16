@@ -334,7 +334,7 @@ class TryPane(Pane):
             text = pipeline.marker(exc)
             if rec is not None:
                 rec.outcome = pipeline.failure_outcome(exc, rec)
-        # Cleaned as improve's output is (trigger._emit()), the sent-despite note included.
+        # Cleaned as improve's output is (trigger.emit()), the sent-despite note included.
         shown = sanitize.clean(pipeline.sent_despite_note(ran.built) + text)
         outcome = Outcome(
             shown, error, usage_line(attempts, latency, stub=command is None), requests
