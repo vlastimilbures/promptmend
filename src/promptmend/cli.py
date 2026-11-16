@@ -1,7 +1,7 @@
 """The Typer wiring of the promptmend CLI: the app and its version callback, the improve and
 persona trigger commands, and the lazy mounting of the management commands (commands/, the
-interface) so a trigger never loads them. The trigger run itself is in trigger.py (_emit(),
-the watchdog, _improve()); the rewrite's domain steps are in pipeline.py, the sanitiser in
+interface) so a trigger never loads them. The trigger run itself is in trigger.py (emit(),
+the watchdog, run_improve()); the rewrite's domain steps are in pipeline.py, the sanitiser in
 sanitize.py. persona's placeholder and _persona_alone() stay here with the command:
 they are persona's whole logic, and doctor and scripts/check_wheel.py read the placeholder.
 
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import typer
 from typer.core import TyperGroup
 
-from . import recorder
+from . import pipeline, recorder, trigger
 from .config import (
     EFFORTS,
     KEEP,
@@ -28,9 +28,7 @@ from .config import (
     Settings,
 )
 from .factory import PROVIDER_NAMES
-from .pipeline import Rewrite
 from .redaction import redact_words
-from .trigger import _emit, _flushed, _improve, _Watchdog
 
 if TYPE_CHECKING:
     from typer._click import Command, Context
@@ -195,10 +193,10 @@ def improve(
 ) -> None:
     """Improve a draft prompt. Errors are printed inline so Espanso shows them."""
     rec = recorder.Recorder("improve", trigger_id)
-    ran = Rewrite()
-    watch = _Watchdog(rec, ran)
+    ran = pipeline.Rewrite()
+    watch = trigger.Watchdog(rec, ran)
     try:
-        _improve(
+        trigger.run_improve(
             watch,
             rec,
             ran,
@@ -238,7 +236,7 @@ def persona(trigger_id: str | None = _TRIGGER_ID) -> None:
     # persona makes no network call and reads no clipboard, but loading the settings can
     # stall on a file system: the same provisional watchdog as improve's load bounds it (#331).
     rec = recorder.Recorder("persona", trigger_id)
-    watch = _Watchdog(rec, Rewrite())
+    watch = trigger.Watchdog(rec, pipeline.Rewrite())
     try:
         try:
             # Inside the try: a timer that cannot start still leaves the persona printed.
@@ -249,9 +247,9 @@ def persona(trigger_id: str | None = _TRIGGER_ID) -> None:
         except Exception:
             # Same contract as improve: never a traceback or blank expansion in Espanso.
             text = _persona_alone() or PERSONA_PLACEHOLDER
-        _emit(text, watch)
+        trigger.emit(text, watch)
         rec.emitted()
-        _flushed(watch)
+        trigger.flush_output(watch)
         rec.finish()
     finally:
         watch.cancel()

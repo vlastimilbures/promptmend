@@ -31,7 +31,7 @@ from promptmend.pipeline import Rewrite
 from promptmend.providers import base
 from promptmend.providers.base import post_json, timed_out_message
 from promptmend.providers.usage import AttemptUsage, Meter, RunEnded, openai_usage
-from promptmend.trigger import _Watchdog
+from promptmend.trigger import Watchdog
 
 if TYPE_CHECKING:
     from conftest import FakeHttp, HistoryRows, StubProvider
@@ -67,9 +67,9 @@ def exits(monkeypatch: pytest.MonkeyPatch) -> Exits:
     return fake
 
 
-def _watchdog(provider: str = "openrouter") -> tuple[_Watchdog, recorder.Recorder]:
+def _watchdog(provider: str = "openrouter") -> tuple[Watchdog, recorder.Recorder]:
     rec = recorder.Recorder("improve", "i")
-    watch = _Watchdog(rec, Rewrite())
+    watch = Watchdog(rec, Rewrite())
     watch._marker = f"[promptmend: {timed_out_message('OpenRouter', LIMIT)}]"
     return watch, rec
 
@@ -95,7 +95,7 @@ def test_steps_after_firing_end_the_run(exits: Exits, step: str) -> None:
 # silently, without a second result or a second history row.
 def test_flushed_run_ends_silently(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
     watch, rec = _watchdog()
-    trigger._emit("the rewrite", watch)
+    trigger.emit("the rewrite", watch)
     watch.flushed()
     watch._fire()
     assert capfd.readouterr().out == "the rewrite"
@@ -108,19 +108,19 @@ def test_emit_first_leaves_the_watchdog_nothing(
     exits: Exits, capfd: pytest.CaptureFixture[str]
 ) -> None:
     watch, _ = _watchdog()
-    trigger._emit("the rewrite", watch)
+    trigger.emit("the rewrite", watch)
     watch._fire()
     assert capfd.readouterr().out == "the rewrite"
     assert exits.codes == []
 
 
 # The watchdog fired first: its marker goes straight to fd 1, it exits 0, and the run's own
-# output is never printed (the run ends at its _emit()).
+# output is never printed (the run ends at its emit()).
 def test_watchdog_first_wins_alone(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
     watch, rec = _watchdog()
     watch._fire()
     with pytest.raises(typer.Exit) as raised:
-        trigger._emit("the rewrite", watch)
+        trigger.emit("the rewrite", watch)
     assert raised.value.exit_code == 0
     assert capfd.readouterr().out == MARKER
     assert exits.codes == [0]
@@ -133,16 +133,16 @@ def test_race_prints_exactly_one(exits: Exits, capfd: pytest.CaptureFixture[str]
         watch, _ = _watchdog()
         started = threading.Barrier(2, timeout=10)
 
-        def fire(watch: _Watchdog = watch, started: threading.Barrier = started) -> None:
+        def fire(watch: Watchdog = watch, started: threading.Barrier = started) -> None:
             started.wait()
             watch._fire()
 
         thread = threading.Thread(target=fire)
         thread.start()
         started.wait()
-        # The loser of the race is _emit() when its Exit says so.
+        # The loser of the race is emit() when its Exit says so.
         with contextlib.suppress(typer.Exit):
-            trigger._emit("the rewrite", watch)
+            trigger.emit("the rewrite", watch)
         thread.join(10)
         assert not thread.is_alive()
         assert capfd.readouterr().out in ("the rewrite", MARKER)
@@ -331,14 +331,14 @@ def test_normal_run_cancels_the_timer(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, exits: Exits
 ) -> None:
     timers: list[threading.Timer] = []
-    arm = _Watchdog.arm
+    arm = Watchdog.arm
 
-    def recorded(self: _Watchdog, cfg: Settings, provider: str) -> None:
+    def recorded(self: Watchdog, cfg: Settings, provider: str) -> None:
         arm(self, cfg, provider)
         assert self._timer is not None
         timers.append(self._timer)
 
-    monkeypatch.setattr(_Watchdog, "arm", recorded)
+    monkeypatch.setattr(Watchdog, "arm", recorded)
     args = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
     result = runner.invoke(app, args)
     assert (result.exit_code, result.stdout) == (0, "improved")
@@ -442,7 +442,7 @@ def test_limit_counts_from_entry_start(
 
     monkeypatch.setattr(entry, "_started", time.monotonic() - ago)
     watch, _ = _watchdog()
-    monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
+    monkeypatch.setattr(Watchdog, "_fire", lambda self: None)
     watch.arm(Settings(timeout=timeout), "ollama")
     try:
         assert watch._timer is not None
@@ -517,8 +517,8 @@ def test_no_request_after_marker_while_building(
 def test_claim_starts_the_final_timer(monkeypatch: pytest.MonkeyPatch) -> None:
     from promptmend import entry
 
-    monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
-    monkeypatch.setattr(_Watchdog, "_final_exit", lambda self: None)
+    monkeypatch.setattr(Watchdog, "_fire", lambda self: None)
+    monkeypatch.setattr(Watchdog, "_final_exit", lambda self: None)
     monkeypatch.setattr(entry, "_started", None)
     monkeypatch.setattr(trigger, "time", SimpleNamespace(monotonic=lambda: 1000.0))
     watch, _ = _watchdog()
@@ -575,7 +575,7 @@ def test_flush_after_the_final_timer_ends_at_once(
     exits: Exits, capfd: pytest.CaptureFixture[str]
 ) -> None:
     watch, _ = _watchdog()
-    trigger._emit("the rewrite", watch)
+    trigger.emit("the rewrite", watch)
     watch._final_exit()  # still printing: left alone
     assert exits.codes == []
     watch.flushed()
@@ -637,9 +637,9 @@ def test_attempt_begun_before_the_marker_sends_before_it(
         events.append("marker")
         write_fd(fd, data)
 
-    fire = _Watchdog._fire
+    fire = Watchdog._fire
 
-    def fire_once_begun(self: _Watchdog) -> None:
+    def fire_once_begun(self: Watchdog) -> None:
         begun.wait(10)  # however slow the run is to reach its request
         fire(self)
 
@@ -649,7 +649,7 @@ def test_attempt_begun_before_the_marker_sends_before_it(
             super().__call__(code)
 
     monkeypatch.setattr(base, "_exchange", blocked)
-    monkeypatch.setattr(_Watchdog, "_fire", fire_once_begun)
+    monkeypatch.setattr(Watchdog, "_fire", fire_once_begun)
     monkeypatch.setattr(fake_http, "handler", handled)
     monkeypatch.setattr(recorder.Recorder, "finish", history_write)
     monkeypatch.setattr(trigger, "_write_fd", marker_out)
@@ -679,7 +679,7 @@ def test_proceed_exit_is_not_a_failure(
         failures.append(exc)
         return ""
 
-    monkeypatch.setattr(trigger, "marker", failed)
+    monkeypatch.setattr(pipeline, "marker", failed)
     result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")
     assert failures == []
@@ -773,7 +773,7 @@ def test_arm_words_the_load(
 ) -> None:
     import re
 
-    monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
+    monkeypatch.setattr(Watchdog, "_fire", lambda self: None)
     watch, _ = _watchdog()
     now = time.monotonic()
     watch._started, watch._load_started = now - startup - load, now - load
@@ -870,10 +870,10 @@ def test_slow_load_then_stall_in_process(
 ) -> None:
     import re
 
-    watches: list[_Watchdog] = []
-    arm = _Watchdog.arm
+    watches: list[Watchdog] = []
+    arm = Watchdog.arm
 
-    def recorded(self: _Watchdog, cfg: Settings, provider: str) -> str | None:
+    def recorded(self: Watchdog, cfg: Settings, provider: str) -> str | None:
         watches.append(self)
         return arm(self, cfg, provider)
 
@@ -881,7 +881,7 @@ def test_slow_load_then_stall_in_process(
         watches[0]._fire()
         return "a draft"
 
-    monkeypatch.setattr(_Watchdog, "arm", recorded)
+    monkeypatch.setattr(Watchdog, "arm", recorded)
     monkeypatch.setattr(trigger, "_SLOW_LOAD", 0.0)  # every load counts as slow
     monkeypatch.setattr(pipeline, "_clipboard", stalled)
     monkeypatch.setattr(trigger, "_hard_exit", Exits())
@@ -943,7 +943,7 @@ def test_used_up_limit_sends_nothing(
 def test_arm_loading_after_a_slow_start(monkeypatch: pytest.MonkeyPatch) -> None:
     import re
 
-    monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
+    monkeypatch.setattr(Watchdog, "_fire", lambda self: None)
     watch, _ = _watchdog()
     watch._started = time.monotonic() - 100
     watch.arm_loading("1")
@@ -1004,7 +1004,7 @@ def test_claim_without_a_final_timer_still_prints(
         raise RuntimeError("can't start new thread")
 
     monkeypatch.setattr(trigger, "_start_timer", no_thread)
-    trigger._emit("the rewrite", watch)
+    trigger.emit("the rewrite", watch)
     assert watch._final is None
     assert capfd.readouterr().out == "the rewrite"
 
