@@ -171,6 +171,40 @@ def test_anthropic_sends_effort(fake_http: FakeHttp) -> None:
     assert "thinking" not in body
 
 
+# A model without an effort control gets no output_config, so a saved older model keeps
+# working (#277); any other id, a future one too, gets the effort, and a level the model
+# may not take is the user's choice and is sent as set.
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-5-20250929",
+        "claude-haiku-4-5-20251001",
+        "claude-opus-4-1-20250805",
+        "claude-opus-4-20250514",
+        "claude-opus-4-0",
+        "claude-sonnet-4-20250514",
+        "claude-3-7-sonnet-20250219",
+        "claude-2.1",
+        " Claude-Haiku-4-5 ",
+    ],
+)
+def test_anthropic_no_effort_models(fake_http: FakeHttp, model: str) -> None:
+    fake_http.reply(_anthropic_body("ok"))
+    AnthropicProvider("http://x/", model, "key", effort="low").generate("draft", "sys")
+    assert "output_config" not in fake_http.calls[0]["json"]
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["claude-sonnet-4-6", "claude-opus-4-5", "claude-opus-4-8", "claude-haiku-5-5", "claude-x-9"],
+)
+def test_anthropic_effort_models(fake_http: FakeHttp, model: str) -> None:
+    fake_http.reply(_anthropic_body("ok"))
+    AnthropicProvider("http://x/", model, "key", effort="xhigh").generate("draft", "sys")
+    assert fake_http.calls[0]["json"]["output_config"] == {"effort": "xhigh"}
+
+
 # The default Anthropic setup (#277): Claude Sonnet 5.5, effort low, an 8000-token cap that
 # leaves room for thinking, and neither temperature nor thinking.
 def test_anthropic_default_request_body(

@@ -8,6 +8,27 @@ from .usage import Meter, UsageObserver, anthropic_usage
 # The Messages API pins its schema via a required version header.
 ANTHROPIC_VERSION = "2023-06-01"
 
+# Model id prefixes of Claude models that reject `output_config.effort` with HTTP 400 (#277):
+# Sonnet 4.5, Haiku 4.5, Opus 4.1, Opus 4 and Sonnet 4 (dated ids and -0 aliases), and every
+# Claude 3 and 2 model. Any other id, including one released later, gets the effort; a level
+# a model does not take (xhigh on a 4.6 model) is the user's explicit choice and is sent.
+NO_EFFORT_MODELS = (
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+    "claude-opus-4-1",
+    "claude-opus-4-0",
+    "claude-opus-4-2025",
+    "claude-sonnet-4-0",
+    "claude-sonnet-4-2025",
+    "claude-3",
+    "claude-2",
+)
+
+
+def takes_effort(model: str) -> bool:
+    """Whether ``model`` accepts `output_config.effort`: not one of ``NO_EFFORT_MODELS``."""
+    return not model.strip().lower().startswith(NO_EFFORT_MODELS)
+
 
 @dataclass
 class AnthropicProvider:
@@ -23,7 +44,8 @@ class AnthropicProvider:
     timeout: float = 30
     max_tokens: int = 1200
     temperature: float | None = None
-    # `output_config.effort` (config.ANTHROPIC_EFFORTS); empty sends no output_config.
+    # `output_config.effort` (config.ANTHROPIC_EFFORTS); empty, or a model in
+    # NO_EFFORT_MODELS, sends no output_config.
     effort: str = ""
     # Receives one AttemptUsage per HTTP attempt; see providers/usage.py.
     observer: UsageObserver | None = field(default=None, repr=False, compare=False)
@@ -51,7 +73,7 @@ class AnthropicProvider:
             payload["temperature"] = self.temperature
         # No `thinking` field: the default (adaptive) is the one setting every current Claude
         # model accepts (Sonnet 5.5 and Opus 5.5 reject `disabled`); effort bounds it.
-        if self.effort:
+        if self.effort and takes_effort(self.model):
             payload["output_config"] = {"effort": self.effort}
         meter = (
             Meter(self.observer, self.name, self.model, anthropic_usage)

@@ -15,8 +15,28 @@ All notable changes to this project are documented here. The format follows
   call now sends `output_config.effort` from the new `ANTHROPIC_EFFORT` setting (default
   `low`: short or no thinking on a rewrite; empty omits the field, for a model without an
   effort control), and `ANTHROPIC_MAX_TOKENS` now defaults to 8000, not 2400. No `thinking`
-  field is sent: Claude Sonnet 5.5 rejects `disabled`. A live call on these defaults is still
-  to be confirmed by the owner.
+  field is sent: Claude Sonnet 5.5 rejects `disabled`. The effort is never sent to a model
+  without an effort control, so a saved `ANTHROPIC_MODEL` of Claude Sonnet 4.5, Haiku 4.5,
+  Opus 4.1, Opus 4, Sonnet 4 or any Claude 3 or 2 model keeps working; a level a model does
+  not take (`xhigh` on a 4.6 model) is sent as set. Thinking is billed as output, so the
+  most one call can cost in output rises from 2,400 to 8,000 tokens (about $0.024 to $0.08
+  on Claude Sonnet 5.5), and a long reply may now end on the time-limit marker. `--effort`
+  with `--provider anthropic` is still refused; its message now says to set
+  `ANTHROPIC_EFFORT` instead. A live call on these defaults is still to be confirmed by the
+  owner.
+- Data-protection gate: the Vietnamese patterns (the `vietnam_id_12` and `vietnam_id_9`
+  national ID numbers and the Vietnamese confidentiality labels) are now a named pattern pack,
+  `vn`, turned on by the new setting `PROMPT_GATE_PACKS` (a comma-separated list of packs;
+  default `vn`, #231). With the default the gate flags exactly what it flagged before, under
+  the same finding names, so no install is weakened by the upgrade. An empty value turns the
+  pack off, which weakens the gate (docs/privacy.md "Pattern packs"); an unknown pack name is
+  rejected when settings load. A Vietnamese password (`mật khẩu là …`) stays flagged whatever
+  the setting. `doctor`, `config validate` and the interface scan the persona with the same
+  packs. A pack that is off (also an empty `${VAR}` the value expanded from) shows as
+  information in `doctor`'s new `gate_packs` check (`--json`: `packs`, `off`) and as a
+  `note:` line from `config validate`, whose exit code it does not change.
+- Match files: the `-iok-` comment names "a national ID number", and the cloud triggers'
+  comments say "where your organisation's policy permits" (#231).
 - The pro tier's time limit, `PROMPT_PRO_TIMEOUT_SECONDS`, now defaults to 45 seconds, not 60
   (#311, the owner's choice). Pro calls finish well within that in the
   [benchmark](https://github.com/vlastimilbures/promptmend/blob/main/docs/benchmark.md#at-a-glance) and on a scanned Windows laptop (p95 about 21 s,
@@ -71,6 +91,15 @@ All notable changes to this project are documented here. The format follows
   do not use (`-p-` still pastes the persona), and `promptmend config validate` names it;
   the error names the setting but never quotes the URL. doctor's `local_servers` says the
   URL is not used and does not probe it (nor the default repair mode puts in its place).
+
+### Fixed
+- `promptmend config set PROMPT_PROFILE_OVERRIDES …` (and the interface's Settings pane)
+  wrote the list to `config.toml` as a TOML array, which settings then refused to read: every
+  trigger pasted `[promptmend: PROMPT_PROFILE_OVERRIDES in config.toml must be text, a number
+  or true/false]` until the line was removed. A list setting is now saved as its
+  comma-separated text, and an array saved by an earlier version now loads, joined with
+  commas, so an affected install works again without any change (#231). An array for any
+  other setting, or one holding anything but text, is still refused.
 
 ## 0.26.0 - 2026-11-16
 

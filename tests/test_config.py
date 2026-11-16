@@ -121,6 +121,16 @@ def test_provider_options() -> None:
         ValueError, match=r"^--effort applies only to OpenRouter and OpenAI, not 'x y'$"
     ):
         config.check_provider_options("x y", "standard", "none")
+    with pytest.raises(
+        ValueError,
+        match=r"^--effort applies only to OpenRouter and OpenAI, not 'anthropic'; "
+        r"set ANTHROPIC_EFFORT instead$",
+    ):
+        config.check_provider_options("anthropic", "standard", "low")
+    with pytest.raises(
+        ValueError, match=r"^--tier pro applies only to OpenRouter, not 'anthropic'$"
+    ):
+        config.check_provider_options("anthropic", "pro", None)
 
 
 # --max-tokens is kept for the local providers too, which have no cap setting of their own.

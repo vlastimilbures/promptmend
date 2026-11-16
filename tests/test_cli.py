@@ -870,7 +870,10 @@ def test_provider_options_refused(
     monkeypatch.setenv("OPENAI_API_KEY", "-".join(("test", "key")))
     result = improve("--provider", provider, *args, "--source", "argument", "--text", "d")
     assert result.exit_code == 0
-    assert result.stdout == f"[promptmend: {refusal}, not '{provider}']"
+    hint = (
+        "; set ANTHROPIC_EFFORT instead" if provider == "anthropic" and "--effort" in args else ""
+    )
+    assert result.stdout == f"[promptmend: {refusal}, not '{provider}'{hint}]"
     assert fake_http.requests == []
 
 
