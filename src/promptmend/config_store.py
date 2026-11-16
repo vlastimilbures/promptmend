@@ -73,7 +73,7 @@ class SavedSettings:
     def values(self) -> dict[str, str]:
         """The settings in the file, as strings, keyed by env var name."""
         known = env_names()
-        texts = {k: config_files.scalar_text(v) for k, v in self.table.items() if k in known}
+        texts = {k: config.saved_text(k, v) for k, v in self.table.items() if k in known}
         return {k: v for k, v in texts.items() if v is not None}
 
 

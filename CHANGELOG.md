@@ -39,9 +39,9 @@ All notable changes to this project are documented here. The format follows
   wrote the list to `config.toml` as a TOML array, which settings then refused to read: every
   trigger pasted `[promptmend: PROMPT_PROFILE_OVERRIDES in config.toml must be text, a number
   or true/false]` until the line was removed. A list setting is now saved as its
-  comma-separated text (#231). Fix an affected install with `promptmend config set
-  PROMPT_PROFILE_OVERRIDES <names>` again, or `promptmend config unset
-  PROMPT_PROFILE_OVERRIDES`.
+  comma-separated text, and an array saved by an earlier version now loads, joined with
+  commas, so an affected install works again without any change (#231). An array for any
+  other setting, or one holding anything but text, is still refused.
 
 ## 0.26.0 - 2026-11-16
 

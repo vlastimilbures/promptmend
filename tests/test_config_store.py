@@ -426,16 +426,49 @@ def test_saved_setting_round_trips(saved_mode: Path, name: str, raw: str) -> Non
     assert getattr(ConfigLayers.resolve(strict=True).settings(), field_.name) == expected
 
 
-# An install that saved PROMPT_PROFILE_OVERRIDES as an array (before #231) is repaired by
-# saving it again or unsetting it, as the CHANGELOG says.
-@pytest.mark.parametrize("repair", ["set", "unset"])
-def test_array_saved_before_is_repaired(saved_mode: Path, repair: str) -> None:
-    _write(saved_mode / "config.toml", 'PROMPT_PROFILE_OVERRIDES = ["general"]\n')
+# A list setting saved as an array of text by 0.26.0 or earlier (#231) loads in strict mode,
+# as the triggers read it, `config get` shows it as text, and it keeps loading after another
+# setting is saved.
+@pytest.mark.parametrize(
+    ("toml", "attr", "expected"),
+    [
+        (
+            'PROMPT_PROFILE_OVERRIDES = ["general", "default"]\n',
+            "profile_overrides",
+            ("general", "default"),
+        ),
+        ("PROMPT_PROFILE_OVERRIDES = []\n", "profile_overrides", ()),
+        ('PROMPT_GATE_PACKS = ["vn"]\n', "gate_packs", ("vn",)),
+        ("PROMPT_GATE_PACKS = []\n", "gate_packs", ()),
+    ],
+)
+def test_array_saved_before_loads(
+    saved_mode: Path, toml: str, attr: str, expected: tuple[str, ...]
+) -> None:
+    _write(saved_mode / "config.toml", toml)
+    assert getattr(ConfigLayers.resolve(strict=True).settings(), attr) == expected
+    assert getattr(Settings.load(), attr) == expected
+    name = toml.split(" =")[0]
+    assert config_store.read_settings().values[name] == ",".join(expected)
+    config_store.save_settings(config_store.read_settings(), {"OLLAMA_MODEL": "m"})
+    assert getattr(ConfigLayers.resolve(strict=True).settings(), attr) == expected
+
+
+# Any other array stays refused: one for a scalar setting, or a list setting's array holding
+# anything but text.
+@pytest.mark.parametrize(
+    "toml",
+    [
+        'OLLAMA_MODEL = ["a"]\n',
+        'PROMPT_PROVIDER = ["ollama"]\n',
+        "PROMPT_GATE_PACKS = [1]\n",
+        'PROMPT_PROFILE_OVERRIDES = ["general", true]\n',
+    ],
+)
+def test_other_arrays_stay_refused(saved_mode: Path, toml: str) -> None:
+    _write(saved_mode / "config.toml", toml)
     with pytest.raises(ValueError, match="must be text, a number or true/false"):
         Settings.load()
-    change = "general" if repair == "set" else None
-    config_store.save_settings(config_store.read_settings(), {"PROMPT_PROFILE_OVERRIDES": change})
-    assert Settings.load().profile_overrides == (("general",) if change else ())
 
 
 @pytest.mark.parametrize(

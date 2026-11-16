@@ -200,7 +200,7 @@ def _saved_layer(
         if key not in known:
             note(source, f"{safe_repr(key)} in {name} is not a setting; it was ignored")
             continue
-        text = config_files.scalar_text(value)
+        text = saved_text(key, value)
         if text is None:
             fail(source, f"{key} in {name} must be text, a number or true/false", (key,))
             continue
@@ -302,6 +302,22 @@ def secret_names() -> tuple[str, ...]:
     """The settings that hold a secret (API keys): saved only in the secret store, never in
     config.toml, and kept out of repr()."""
     return tuple(f.metadata["env"] for f in setting_fields() if f.metadata["secret"])
+
+
+def list_names() -> tuple[str, ...]:
+    """The settings that hold a comma-separated list (PROMPT_PROFILE_OVERRIDES,
+    PROMPT_GATE_PACKS)."""
+    return tuple(f.metadata["env"] for f in setting_fields() if str(f.type).startswith("tuple"))
+
+
+def saved_text(name: str, value: object) -> str | None:
+    """A config.toml value as setting text (config_files.scalar_text), or None when it is not
+    one. A list setting also takes an array of text, joined with commas: releases up to 0.26.0
+    saved PROMPT_PROFILE_OVERRIDES that way, and such a file loads instead of failing every
+    trigger. Any other array, or one holding anything but text, stays refused."""
+    if isinstance(value, list) and name in list_names():
+        return ",".join(value) if all(isinstance(v, str) for v in value) else None
+    return config_files.scalar_text(value)
 
 
 # Parsers raise ValueError(what the value must be); _env and _override name the setting.
