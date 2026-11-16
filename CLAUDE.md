@@ -44,9 +44,11 @@ uv run pre-commit run --all-files               # also YAML checks, gitleaks and
   or the relevant docs/ page.
 - After editing `espanso/match/`, rerun `scripts/update_match_history.py` (it regenerates
   `match_history.KNOWN_SOURCES`; `tests/test_deploy.py` checks it).
-- The variant wordings in `prompts/default.md`, the `-p-` template in
-  `espanso/match/prompts-template.yml`, `scripts/bench_models.py` and `tests/test_bench.py`
-  change together. Before shipping a `default` change, ask the owner to re-run the benchmark
+- The fixed wordings live only in `src/promptmend/prompts/default.md` (parsed by
+  `promptmend.wordings`). After editing one, run `scripts/render_prompt_template.py`
+  (`tests/test_wordings.py` fails while the `-p-` template is stale), then
+  `scripts/update_match_history.py`, and keep the in-file few-shot examples in step (tested).
+  `tests/test_bench.py::test_needles_are_unchanged` fails when a needle moves. Before shipping a `default` change, ask the owner to re-run the benchmark
   (`--suite all --system-prompt-file`) on both default models. `general.md` is scored with
   `--profile general` and pinned by `tests/test_prompts.py::test_general_profile_contract`.
   Known weaknesses are in CONTRIBUTING.md.
@@ -86,7 +88,7 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   stderr empty (`entry.main()`'s `quiet_trigger()` silences warnings and points fd 2 at the
   null device before importing the CLI), catch every failure, print a `[promptmend: ...]`
   marker on stdout and exit 0. Never `ignore_error: true`: a crash must still fail visibly.
-- Everything printed goes through `trigger._emit()`. Markers are pasted into the focused app, so an error that quotes a value goes through
+- Everything printed goes through `trigger.emit()`. Markers are pasted into the focused app, so an error that quotes a value goes through
   `redaction.safe_repr()` / `redact_words()`.
 - `tests/test_yaml.py` enforces, for every match (commented-out ones too): `force_mode:
   clipboard` on every CLI match, its own `label:` (`PromptMend: …`), `left_word: true`, and a
@@ -108,6 +110,8 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   machine (`leaves_machine()`: OpenRouter, Anthropic and OpenAI always; Ollama/LM Studio on a
   non-loopback URL or an Ollama `cloud` model) in `gate.GatedProvider`, which runs
   `redaction.scan_draft()` and blocks a flagged draft unless `ALLOW_CLOUD_OVERRIDE=true`.
+  Region-specific patterns are named packs (`redaction.GATE_PACKS`), switched by
+  `PROMPT_GATE_PACKS` (default `vn`); a new pack keeps the default findings unchanged.
 - **A new provider that can leave the machine must return through `_gate()` and be reported by
   `leaves_machine()`:** a cloud API is a `cloud=True` spec in `providers/registry.PROVIDERS`
   (always gated, key required, https only; `tests/test_registry.py`).
@@ -120,23 +124,25 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
 - The smoke and Try-tab stub runs get `smoke.PLACEHOLDER_KEY`, never the real key.
 - `providers.base.post_json()` is the only HTTP call that carries a draft (doctor's PyPI and
   local-server checks make their own GETs); a loopback URL bypasses env/system
-  proxies. The gate is a heuristic, not a guarantee (say so in docs).
+  proxies. Its https client verifies with `tls.verify()` (the OS trust store via
+  `truststore`, or the bundle `SSL_CERT_FILE`/`SSL_CERT_DIR` names); never `verify=False`,
+  and a new https client that carries a draft uses `tls.verify()` too. The gate is a heuristic, not a guarantee (say so in docs).
 
 ## Settings
 
 - `config.Settings` is a frozen dataclass; values are parsed strictly and a bad one raises a
   `ValueError` naming the variable (never quoting a secret). API keys are `secret` (out of
-  `repr()`), and only `secret_names()` live in the secret store, never in `config.toml`.
+  `repr()`), and only `secret_names()` live in the secrets file, never in `config.toml`.
 - `ConfigLayers.resolve()` merges, lowest first: built-in default < saved settings
   (`config.toml`; `PROMPTMEND_ENV` names a single `.env` instead, the only `.env` ever read) <
-  the secret store < the real environment; per-call overrides come after
+  the secrets file < the real environment; per-call overrides come after
   (`Settings.for_call()`/`with_overrides()`). It never reads the cwd, never writes
   `os.environ`, and takes only `env_names()` keys (a `.env` cannot set `HTTPS_PROXY` or
   anything else). Strict mode (the triggers, the Try tab) fails closed with a marker; repair
   mode (`strict=False`, the management commands) reports findings and falls back a layer,
   and reports a `.env` earlier releases read (`config.unread_env_files()`, #275).
 - Legacy mode: with `PROMPTMEND_ENV` set (the conftest default) there is no `config.toml` and
-  no secret store, and `config set`/`secrets set` refuse.
+  no secrets file, and `config set`/`secrets set` refuse.
 - Adding a setting: a field and parser in `config.py`, a row in docs/configuration.md, a line
   in `.env.example` and an entry in `tui/settings_model.SETTINGS`; `tests/test_docs.py` and
   `tests/test_tui_settings_model.py` fail without the last three.
@@ -147,7 +153,7 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
 
 `improve` and `persona` start on every keystroke trigger, so their import set is pinned by
 `tests/test_trigger_contract.py` (`FORBIDDEN`, ceilings). They run through `cli.py` (the Typer
-wiring), `trigger.py` (`_emit()`, the watchdog, the run), `pipeline.py` (the rewrite's steps,
+wiring), `trigger.py` (`emit()`, the watchdog, `run_improve()`), `pipeline.py` (the rewrite's steps,
 Typer-free, shared with the Try tab) and `sanitize.py`; none of them imports `cli`. New heavy
 imports go inside the function that needs them; `cli._LAZY_COMMANDS` loads a management
 command only when it runs. `entry.self_command()` is the argv prefix for any child that runs
