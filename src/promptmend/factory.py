@@ -73,7 +73,10 @@ def check_base_url(name: str, cfg: Settings) -> None:
     if spec is None or not spec.cloud:
         return
     url = spec.url(cfg)
-    scheme = urlsplit(url).scheme
+    try:
+        scheme = urlsplit(url).scheme
+    except ValueError:  # a malformed URL (#368), which Settings refuses
+        scheme = ""
     if not (scheme == "https" or (scheme == "http" and is_loopback(url))):
         raise GateBlocked(f"{spec.url_setting} must be an https:// URL")
 

@@ -121,9 +121,15 @@ setting commented out with its default, so later default changes still reach you
 - A `.env` must be UTF-8 (a byte order mark is fine); any other encoding is an error.
 - Booleans are `true` or `false`. Timeouts and token caps are numbers above 0. Temperature may
   be 0, or empty to send none.
+- Every `*_BASE_URL` must be an `http://` or `https://` URL with a host and, if it has one,
+  a port from 0 to 65535. A malformed one, such as `http://[::1` (no closing bracket) or
+  `http://127.0.0.1:99999`, is an error when the settings load: every rewrite trigger, even
+  one for another provider, stops with a marker until it is fixed (`-p-` still pastes the
+  persona), and `promptmend config validate` names the setting.
 - Anything else is reported inline rather than silently ignored. An error repeats the bad
   value only when it is short, does not look like a key and matches none of your
-  `PROMPT_EXTRA_PATTERNS`.
+  `PROMPT_EXTRA_PATTERNS`; it never repeats a `*_BASE_URL` (it may hold a password) or a
+  `PROMPT_EXTRA_PATTERNS` value.
 
 ## Proxies
 
@@ -173,7 +179,7 @@ Used by `-ip-`, `-if-` and `--tier pro`.
 | `OPENROUTER_PRO_PROVIDER` | `openai` | Endpoint pin for the pro tier |
 | `OPENROUTER_PRO_REASONING_EFFORT` | `low` | Reasoning effort for the pro tier |
 | `OPENROUTER_PRO_MAX_TOKENS` | *(empty)* | Output cap for the pro tier, whose reasoning counts against it; empty = `OPENROUTER_MAX_TOKENS` |
-| `PROMPT_PRO_TIMEOUT_SECONDS` | `60` | Time limit for one pro-tier call, retry included |
+| `PROMPT_PRO_TIMEOUT_SECONDS` | `45` | Time limit for one pro-tier call, retry included |
 | `PROMPT_PRO_PROFILE` | *(empty)* | Profile for the pro tier when it runs `OPENROUTER_PRO_MODEL`; empty = `PROMPT_PROFILE` |
 
 ### Anthropic
