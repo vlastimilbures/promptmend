@@ -1,7 +1,8 @@
-"""The improve trigger's run, below its Typer command in cli.py: _emit(), the only way
-anything a trigger prints reaches Espanso; _Watchdog, improve's hard time limit and the
-one decision of what a run prints; and _improve(), the run itself, which reads the draft,
-calls pipeline.rewrite() and prints the rewrite or its marker, then records the run.
+"""The trigger runs' output and time limit, below their Typer commands in cli.py: _emit(),
+the only way anything a trigger prints reaches Espanso; _Watchdog, the hard time limit of
+improve (and of persona's settings load) and the one decision of what a run prints; and
+_improve(), the run itself, which reads the draft, calls pipeline.rewrite() and prints the
+rewrite or its marker, then records the run.
 
 _emit(), _flushed() and _improve() share this module because each acts on the
 watchdog. It sits between cli.py (which imports it) and pipeline.py (which it imports, and
@@ -116,8 +117,11 @@ class _Watchdog:
     itself a setting, and history must not be imported when it is off. arm() retires that
     timer and starts the real one once the call's limit is known, on the same start, so a
     longer configured limit is unaffected; its marker names a load that took _SLOW_LOAD
-    seconds or more, and one that used up the whole limit, instead of blaming the provider.
-    A retired timer that fires anyway does nothing. When the real timer fires, by state:
+    seconds or more (measured from arm_loading(), not counting start-up), instead of blaming
+    the provider. A run whose start-up and load used up the whole limit ends in arm()'s
+    caller with a marker saying so, before its draft is read or sent. A retired timer that
+    fires anyway does nothing. persona arms only the provisional timer. When the real timer
+    fires, by state:
 
     - idle (the run is still reading its input or calling the provider): it writes the
       timed-out marker, the sent-despite note first, cleaned, UTF-8 (a lone surrogate
@@ -175,34 +179,48 @@ class _Watchdog:
         self._loading = False
         # The provisional timer arm() replaced: if it fires anyway, it does nothing.
         self._retired: threading.Timer | None = None
+        # When the settings load began (arm_loading()), so arm() words the load alone, not
+        # the start-up before it (imports, a scanned machine).
+        self._load_started = self._started
 
     def arm_loading(self, timeout: str | None) -> None:
         """Before Settings.load(): the provisional limit, from the call's ``timeout`` option
         or the built-in default; nothing about the settings is known yet."""
         limit = loading_limit(timeout)
+        self._load_started = time.monotonic()
         self._loading = True
         self._marker = f"[promptmend: the settings did not load within {limit}s]"
         self._deadline = self._started + limit + WATCHDOG_MARGIN
         self._timer = _start_timer(self._deadline - _WATCHDOG_HISTORY, self._fire)
 
-    def arm(self, cfg: Settings, provider: str) -> None:
+    def arm(self, cfg: Settings, provider: str) -> str | None:
         """The call's limit is known: replace the provisional timer with the real one, counted
-        from the same start. Does nothing once the provisional one has fired."""
+        from the same start. Does nothing once the provisional one has fired.
+
+        Returns the run's marker when start-up and the settings load have already used up the
+        whole limit: the run then ends with it at once and sends nothing (no call that could
+        not finish in time, nothing paid). The real timer is still started, with that same
+        marker, so whichever of the two prints, the text is the same."""
         spec = PROVIDERS.get(provider)
         label = spec.label if spec is not None else _UNKNOWN_LABEL
-        took = time.monotonic() - self._started
-        if took >= cfg.timeout:
-            # The call had (almost) none of its limit: never blame the provider for it.
-            text = f"the settings took {took:.1f}s to load, past the {cfg.timeout}s time limit"
-        elif took >= _SLOW_LOAD:
+        now = time.monotonic()
+        took, loading = now - self._started, now - self._load_started
+        expired = took >= cfg.timeout
+        limit = f"past the {cfg.timeout}s time limit; nothing was sent"
+        if expired and loading >= _SLOW_LOAD:
+            text = f"the settings took {loading:.1f}s to load, {took:.1f}s in all, {limit}"
+        elif expired:
+            text = f"starting up took {took:.1f}s, {limit}"
+        elif loading >= _SLOW_LOAD:
             text = (
-                f"{timed_out_message(label, cfg.timeout)}, {took:.1f}s of it loading the settings"
+                f"{timed_out_message(label, cfg.timeout)}, {loading:.1f}s of it loading the "
+                "settings"
             )
         else:
             text = timed_out_message(label, cfg.timeout)
         with self._lock:
             if self._state == _FIRED:
-                return
+                return None
             if self._timer is not None:
                 self._timer.cancel()
             self._retired = self._timer
@@ -210,6 +228,7 @@ class _Watchdog:
             self._marker = f"[promptmend: {text}]"
             self._deadline = self._started + cfg.timeout + WATCHDOG_MARGIN
             self._timer = _start_timer(self._deadline - _WATCHDOG_HISTORY, self._fire)
+        return self._marker if expired else None
 
     def cancel(self) -> None:
         for timer in (self._timer, self._final):
@@ -242,7 +261,9 @@ class _Watchdog:
         deadline, for a run that flushed but is still writing its history."""
         self._move(_CLAIMED)
         if self._timer is not None and self._final is None:
-            self._final = _start_timer(self._deadline, self._final_exit)
+            # A timer that cannot start (no thread left) must not cost the run its output.
+            with contextlib.suppress(Exception):
+                self._final = _start_timer(self._deadline, self._final_exit)
 
     def flushed(self) -> None:
         """The output is out and flushed. If the final timer already came and went while the
@@ -355,7 +376,15 @@ def _improve(
             output=output,
         )
         # From here the run has a hard deadline: reading the clipboard can block too.
-        watch.arm(cfg, provider)
+        expired = watch.arm(cfg, provider)
+        if expired is not None:
+            # No time left for the call: end here, with nothing sent (#331).
+            _emit(expired, watch)
+            rec.emitted()
+            _flushed(watch)
+            rec.outcome = recorder.ERROR_MARKER
+            rec.finish()
+            raise typer.Exit(0)
         # An unknown name is left to make_provider(), which reports it as such.
         if provider in PROVIDER_NAMES:
             check_provider_options(provider, tier, effort)

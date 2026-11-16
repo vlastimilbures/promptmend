@@ -239,9 +239,10 @@ def persona(trigger_id: str | None = _TRIGGER_ID) -> None:
     # stall on a file system: the same provisional watchdog as improve's load bounds it (#331).
     rec = recorder.Recorder("persona", trigger_id)
     watch = _Watchdog(rec, Rewrite())
-    watch.arm_loading(None)
     try:
         try:
+            # Inside the try: a timer that cannot start still leaves the persona printed.
+            watch.arm_loading(None)
             cfg = Settings.load()
             rec.track(cfg)
             text = cfg.persona or PERSONA_PLACEHOLDER

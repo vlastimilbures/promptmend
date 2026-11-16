@@ -409,8 +409,8 @@ def test_stalled_copy(
     assert op["outcome"] == "clipboard_failed"
 
 
-# entry.main() leaves the time it started an improve run for that run's watchdog, read once;
-# other commands leave none.
+# entry.main() leaves the time it started a trigger run (improve, persona) for that run's
+# watchdog, read once; other commands leave none.
 def test_entry_start_is_taken_once(monkeypatch: pytest.MonkeyPatch) -> None:
     from promptmend import entry
 
@@ -424,6 +424,9 @@ def test_entry_start_is_taken_once(monkeypatch: pytest.MonkeyPatch) -> None:
     assert before <= started <= time.monotonic()
     assert entry.take_start() is None
     monkeypatch.setattr(sys, "argv", ["promptmend", "persona"])
+    entry.main()
+    assert entry.take_start() is not None
+    monkeypatch.setattr(sys, "argv", ["promptmend", "doctor"])
     entry.main()
     assert entry.take_start() is None
 
@@ -723,32 +726,55 @@ def test_arm_loading_words_its_marker() -> None:
         watch.cancel()
 
 
-# A load that took long but finished: the marker says so instead of blaming the provider for
-# the whole limit, and one that used up the limit blames the provider not at all.
+# arm() words the load alone (from arm_loading()), apart from the start-up before it. A run
+# whose start-up and load used up the limit gets its marker back, to end with at once.
 @pytest.mark.parametrize(
-    ("took", "timeout", "expected"),
+    ("startup", "load", "timeout", "expected", "ends"),
     [
-        (5.0, 1.0, r"\[promptmend: the settings took 5\.\ds to load, past the 1\.0s time limit\]"),
         (
+            0.0,
             3.0,
             30.0,
-            r"\[promptmend: Ollama timed out after 30\.0s, 3\.\ds of it loading the settings\]",
+            r"Ollama timed out after 30\.0s, 3\.\ds of it loading the settings",
+            False,
+        ),
+        (3.0, 0.0, 30.0, r"Ollama timed out after 30\.0s", False),
+        (
+            0.0,
+            5.0,
+            1.0,
+            r"the settings took 5\.\ds to load, 5\.\ds in all, past the 1\.0s time limit; "
+            r"nothing was sent",
+            True,
+        ),
+        (
+            5.0,
+            0.0,
+            1.0,
+            r"starting up took 5\.\ds, past the 1\.0s time limit; nothing was sent",
+            True,
         ),
     ],
+    ids=["slow-load", "slow-start", "load-used-the-limit", "start-used-the-limit"],
 )
-def test_arm_after_a_slow_load(
-    monkeypatch: pytest.MonkeyPatch, took: float, timeout: float, expected: str
+def test_arm_words_the_load(
+    monkeypatch: pytest.MonkeyPatch,
+    startup: float,
+    load: float,
+    timeout: float,
+    expected: str,
+    ends: bool,
 ) -> None:
     import re
 
-    from promptmend import entry
-
     monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
-    monkeypatch.setattr(entry, "_started", time.monotonic() - took)
     watch, _ = _watchdog()
-    watch.arm(Settings(timeout=timeout), "ollama")
+    now = time.monotonic()
+    watch._started, watch._load_started = now - startup - load, now - load
+    returned = watch.arm(Settings(timeout=timeout), "ollama")
     watch.cancel()
-    assert re.fullmatch(expected, watch._marker)
+    assert re.fullmatch(rf"\[promptmend: {expected}\]", watch._marker)
+    assert returned == (watch._marker if ends else None)
 
 
 # arm() retires the provisional timer: cancelled, and if it fires anyway it does nothing.
@@ -829,31 +855,114 @@ def test_blocking_load_on_the_call_timeout(
     assert capfd.readouterr().out == "[promptmend: the settings did not load within 0.05s]"
 
 
-# A load that finished past the call's limit, then a clipboard that stalls: the marker names
-# the load, never the provider, which was not called.
+# A slow load, then a clipboard that stalls: the marker names the load's share of the limit.
+# Event-driven: the stalled read fires the watchdog itself.
 def test_slow_load_then_stall_in_process(
     monkeypatch: pytest.MonkeyPatch,
     stub_provider: StubProvider,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    load = Settings.load
+    import re
 
-    def slow(*args: Any, **kwargs: Any) -> Settings:
-        time.sleep(0.2)
-        return load(*args, **kwargs)
+    watches: list[_Watchdog] = []
+    arm = _Watchdog.arm
 
-    release = threading.Event()
-    monkeypatch.setattr(Settings, "load", slow)
-    monkeypatch.setattr(pipeline, "_clipboard", lambda op, *args: release.wait(30) and "x")
-    monkeypatch.setattr(trigger, "_hard_exit", Exits(then=release))
-    # The provisional timer (0.1 + 1.1 - 0.5 s) lets the 0.2 s load finish.
-    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 1.1)
-    result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "0.1"])
+    def recorded(self: _Watchdog, cfg: Settings, provider: str) -> str | None:
+        watches.append(self)
+        return arm(self, cfg, provider)
+
+    def stalled(op: str, *args: str) -> str:
+        watches[0]._fire()
+        return "a draft"
+
+    monkeypatch.setattr(_Watchdog, "arm", recorded)
+    monkeypatch.setattr(trigger, "_SLOW_LOAD", 0.0)  # every load counts as slow
+    monkeypatch.setattr(pipeline, "_clipboard", stalled)
+    monkeypatch.setattr(trigger, "_hard_exit", Exits())
+    result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "30"])
     assert (result.exit_code, result.stdout) == (0, "")
     out = capfd.readouterr().out
-    assert out.startswith("[promptmend: the settings took 0.")
-    assert out.endswith("s to load, past the 0.1s time limit]")
+    pattern = r"\[promptmend: Ollama timed out after 30\.0s, \d+\.\ds of it loading the settings\]"
+    assert re.fullmatch(pattern, out)
     assert stub_provider.calls == []
+
+
+# Start-up and load used up the call's limit (start-up back-dated, a fast load): the run ends
+# at once with a marker that says so, and the draft is never sent; the history keeps the run.
+@pytest.mark.parametrize("slow_load", [False, True])
+def test_used_up_limit_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_provider: StubProvider,
+    capfd: pytest.CaptureFixture[str],
+    history_rows: HistoryRows,
+    slow_load: bool,
+) -> None:
+    import re
+
+    from promptmend import entry
+
+    monkeypatch.setattr(entry, "_started", time.monotonic() - 10)
+    # The real timer's deadline stays well ahead, so the run's own marker is the one printed.
+    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 60.0)
+    if slow_load:
+        monkeypatch.setattr(trigger, "_SLOW_LOAD", 0.0)
+    read: list[str] = []
+
+    def clipboard(op: str, *args: str) -> str:
+        read.append(op)
+        return "x"
+
+    monkeypatch.setattr(pipeline, "_clipboard", clipboard)
+    monkeypatch.setattr(trigger, "_hard_exit", Exits())
+    args = ["improve", "--provider", "ollama", "--timeout", "5", "--trigger-id", "il"]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0
+    assert capfd.readouterr().out == ""
+    cause = (
+        r"the settings took \d+\.\ds to load, 1\d\.\ds in all"
+        if slow_load
+        else (r"starting up took 1\d\.\ds")
+    )
+    expected = rf"\[promptmend: {cause}, past the 5\.0s time limit; nothing was sent\]"
+    assert re.fullmatch(expected, result.stdout)
+    assert stub_provider.calls == []
+    assert read == []  # not even the draft was read
+    (op,) = history_rows("operations")
+    assert op["outcome"] == "error_marker"
+    assert history_rows("attempts") == []
+
+
+# A timer that cannot start costs neither improve nor persona its output.
+def test_no_thread_left_still_prints(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
+) -> None:
+    def no_thread(at: float, action: Any) -> threading.Timer:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setenv("PROMPT_PERSONA", "I am a tester.")
+    monkeypatch.setattr(trigger, "_start_timer", no_thread)
+    result = runner.invoke(app, ["persona", "--trigger-id", "p"])
+    assert (result.exit_code, result.stdout) == (0, "I am a tester.")
+    result = runner.invoke(app, ["improve", "--provider", "ollama", "--source", "argument"])
+    assert result.exit_code == 0
+    assert result.stdout.startswith("[promptmend: ")
+
+
+# The final timer in claim() cannot start: the output is still printed.
+def test_claim_without_a_final_timer_still_prints(
+    monkeypatch: pytest.MonkeyPatch, exits: Exits, capfd: pytest.CaptureFixture[str]
+) -> None:
+    watch, _ = _watchdog()
+    watch.arm(Settings(timeout=30), "ollama")
+    watch.cancel()
+
+    def no_thread(at: float, action: Any) -> threading.Timer:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(trigger, "_start_timer", no_thread)
+    trigger._emit("the rewrite", watch)
+    assert watch._final is None
+    assert capfd.readouterr().out == "the rewrite"
 
 
 # --- As a real process, the way Espanso runs it --------------------------------------------
@@ -938,30 +1047,38 @@ def test_name_lookup_that_never_returns() -> None:
 
 # A settings load that never returns (simulated in the child, with a 1 s built-in default or
 # the call's --timeout 1): the settings marker, exit 0 and empty stderr, within limit + margin.
+# The child silences stderr (quiet_trigger(), as entry.main() does) before importing config,
+# so no import-time warning reaches stderr for a reason of its own.
 _BLOCKED_LOAD = """
 import sys
 import threading
 
+mode = sys.argv[1]
+sys.argv = ["promptmend", *sys.argv[2:]]
+from promptmend import entry
+
+entry.quiet_trigger(sys.argv[1:])
 from promptmend import config
 
-if sys.argv[1] == "default":
+if mode == "default":
     config.DEFAULT_TIMEOUT = "1"
 config.Settings.load = classmethod(lambda cls: threading.Event().wait())
-sys.argv = ["promptmend", *sys.argv[2:]]
-from promptmend.entry import main
-
-main()
+entry.main()
 """
 
 
 @pytest.mark.parametrize(
     "args",
-    [["default", "improve"], ["option", "improve", "--timeout", "1"], ["default", "persona"]],
+    [
+        ["default", "improve", "--trigger-id", "i"],
+        ["option", "improve", "--timeout", "1", "--trigger-id", "i"],
+        ["default", "persona", "--trigger-id", "p"],
+    ],
     ids=["improve-default", "improve-timeout", "persona"],
 )
 def test_settings_load_that_never_returns(args: list[str]) -> None:
     env = smoke.stub_env(9, os.environ)
-    proc, seconds = _run([sys.executable, "-c", _BLOCKED_LOAD, *args, "--trigger-id", "i"], env)
+    proc, seconds = _run([sys.executable, "-c", _BLOCKED_LOAD, *args], env)
     assert (proc.returncode, proc.stderr) == (0, b"")
     assert proc.stdout.decode("utf-8") == "[promptmend: the settings did not load within 1.0s]"
     assert seconds <= LIMIT + trigger.WATCHDOG_MARGIN + SLACK
