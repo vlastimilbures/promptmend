@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 ### Changed
+- The pro tier's time limit, `PROMPT_PRO_TIMEOUT_SECONDS`, now defaults to 45 seconds, not 60
+  (#311). Measured pro calls take about 9 to 11 s, and Espanso stays blocked, with no
+  feedback, for as long as a stalled call lasts. To keep 60, run
+  `promptmend config set PROMPT_PRO_TIMEOUT_SECONDS 60` (or set it in the environment or the
+  `PROMPTMEND_ENV` file). The `-if-` form still offers 30, 60 and 120 s for one call; its
+  `default` choice follows the setting.
 - Ollama and LM Studio: the default `OLLAMA_BASE_URL` is now `http://127.0.0.1:11434` and
   `LMSTUDIO_BASE_URL` `http://127.0.0.1:1234/v1`, not `localhost` (#365). Windows tries
   `localhost` as `::1` first, where these servers do not listen by default, and waits about

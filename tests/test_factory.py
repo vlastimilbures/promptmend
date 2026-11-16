@@ -92,7 +92,7 @@ def test_make_provider_pro_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = make_provider("openrouter", Settings().for_tier("pro"))
     inner = _openrouter_inner(provider)
     assert inner.model == "openai/gpt-6-luna"
-    assert inner.timeout == 60.0
+    assert inner.timeout == 45.0
     assert inner.extra_body == {
         "provider": {"order": ["openai"]},
         "reasoning": {"effort": "low", "exclude": True},

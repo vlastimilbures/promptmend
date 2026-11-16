@@ -37,7 +37,7 @@ def test_defaults() -> None:
     assert settings.openrouter_pro_model == "openai/gpt-6-luna"
     assert settings.openrouter_pro_provider == "openai"
     assert settings.openrouter_pro_reasoning_effort == "low"
-    assert settings.pro_timeout == 60.0
+    assert settings.pro_timeout == 45.0
     assert settings.openrouter_pro_max_tokens is None
     assert settings.lmstudio_base_url == "http://127.0.0.1:1234/v1"
     assert settings.lmstudio_model == "local-model"
@@ -56,7 +56,7 @@ def test_for_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.for_tier("standard") is settings
     pro = settings.for_tier("pro")
     assert (pro.openrouter_model, pro.openrouter_provider) == ("x/pro", "openai")
-    assert (pro.openrouter_reasoning_effort, pro.timeout) == ("low", 60.0)
+    assert (pro.openrouter_reasoning_effort, pro.timeout) == ("low", 45.0)
     assert pro.persona == settings.persona
     assert pro.profile == settings.profile == "default"  # empty by default: one prompt
     monkeypatch.setenv("PROMPT_PRO_PROFILE", "general")
