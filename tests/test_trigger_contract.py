@@ -28,7 +28,7 @@ runner = CliRunner()
 
 PLACEHOLDER = b"I am working as [role] in [company]."
 
-# What a newline in the output becomes on this platform. trigger._emit() writes text to
+# What a newline in the output becomes on this platform. trigger.emit() writes text to
 # sys.stdout, which on Windows translates "\n" to "\r\n" (CPython opens the standard streams
 # with newline=None there, and _main()'s reconfigure() keeps that), so a multi-line rewrite and
 # the "sent despite" note reach Espanso with CRLF on Windows and LF elsewhere. CliRunner's
@@ -204,7 +204,7 @@ pyperclip.copy = copied.append
 # Whether the version was read by the time each output was printed (#318).
 import promptmend.trigger as trigger
 
-real_emit, at_output = trigger._emit, []
+real_emit, at_output = trigger.emit, []
 
 
 def emit(*args, **kwargs):
@@ -212,7 +212,7 @@ def emit(*args, **kwargs):
     at_output.append("importlib.metadata" in sys.modules)
 
 
-trigger._emit = cli._emit = emit
+trigger.emit = emit
 
 local = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
 cloud = ["improve", "--provider", "openrouter", "--source", "clipboard"]

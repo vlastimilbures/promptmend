@@ -4,7 +4,7 @@
 commands and rules; read it before changing code. `CONTRIBUTING.md` has the checks and ground
 rules. The invariants below must never be broken:
 
-- The CLI prints only through `trigger._emit()` (no trailing newline); every failure is a
+- The CLI prints only through `trigger.emit()` (no trailing newline); every failure is a
   `[promptmend: ...]` marker on stdout with exit code 0, never a traceback.
 - Build every provider with `factory.make_provider()`, which wraps any call that can leave the
   machine in the data-protection gate. The only overrides are `ALLOW_CLOUD_OVERRIDE=true` and
