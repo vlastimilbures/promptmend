@@ -255,15 +255,18 @@ def _merged_line_error(key: str) -> str:
 
 # Settings whose rejected value is never quoted, not even through safe_repr: a user regex may
 # describe the very data it guards (a project code name), and errors are pasted into the
-# focused app. The parser's message names the position instead.
+# focused app. The parser's message names the position instead. A base URL may carry a user
+# name and password (http://user:pw@host), so no rejected *_BASE_URL is quoted either.
 _UNQUOTED = frozenset({"PROMPT_EXTRA_PATTERNS"})
+_UNQUOTED_SUFFIX = "_BASE_URL"
 
 
 def parse_setting(name: str, parse: Callable[[str], Any], raw: str) -> Any:
     try:
         return parse(raw)
     except ValueError as exc:
-        got = "" if name in _UNQUOTED else f", got {safe_repr(raw)}"
+        unquoted = name in _UNQUOTED or name.endswith(_UNQUOTED_SUFFIX)
+        got = "" if unquoted else f", got {safe_repr(raw)}"
         raise ValueError(f"{name} must be {exc}{got}") from None
 
 
@@ -391,6 +394,28 @@ TIERS = ("standard", "pro")
 EFFORTS = ("none", "minimal", "low", "medium", "high")
 
 
+def is_valid_url(url: str) -> bool:
+    """Whether ``url`` is an http:// or https:// URL that urlsplit() can take apart, with a
+    host and a usable port: `http://[::1` (no closing bracket) and `http://host:99999` make
+    urlsplit() or ``.port`` raise ValueError, which would surface later as a traceback."""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(url)
+        _ = parts.port  # raises ValueError on a port out of range or not a number
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.hostname)
+
+
+def _base_url(raw: str) -> str:
+    """A provider's base URL (#368). Whether it must be https is make_provider()'s check: a
+    cloud provider may use plain http only to loopback."""
+    if not is_valid_url(raw):
+        raise ValueError("an http:// or https:// URL with a valid host and port")
+    return raw
+
+
 def _effort(raw: str) -> str:
     # A typo would otherwise reach the API and come back as an opaque HTTP 400.
     if raw.lower() not in ("", *EFFORTS):
@@ -497,13 +522,15 @@ class Settings:
     # that reject the field); Anthropic and OpenAI have their own (anthropic_temperature,
     # openai_temperature).
     temperature: float | None = _env("PROMPT_TEMPERATURE", "0.2", _temperature)
-    ollama_base_url: str = _env("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    ollama_base_url: str = _env("OLLAMA_BASE_URL", "http://127.0.0.1:11434", _base_url)
     ollama_model: str = _env("OLLAMA_MODEL", "qwen3:8b")
     ollama_think: bool = _env("OLLAMA_THINK", "false", _bool)
     # options.num_ctx, the context window in tokens: Ollama truncates a prompt longer
     # than it without an error. Empty (the default) sends nothing, so Ollama's own applies.
     ollama_num_ctx: int | None = _env("OLLAMA_NUM_CTX", "", _optional_positive_int)
-    openrouter_base_url: str = _env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    openrouter_base_url: str = _env(
+        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1", _base_url
+    )
     openrouter_model: str = _env("OPENROUTER_MODEL", "google/gemini-3.5-flash-lite")
     # Stripped: a space pasted along with a key is never part of it.
     openrouter_api_key: str = _env("OPENROUTER_API_KEY", "", str.strip, secret=True)
@@ -540,9 +567,9 @@ class Settings:
     # Built-in profiles that a same-named file in the user profile directory replaces
     # (prompt_builder.user_profiles_dir()). Empty: such a file is ignored, never a silent swap.
     profile_overrides: tuple[str, ...] = _env("PROMPT_PROFILE_OVERRIDES", "", _builtin_profiles)
-    lmstudio_base_url: str = _env("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
+    lmstudio_base_url: str = _env("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1", _base_url)
     lmstudio_model: str = _env("LMSTUDIO_MODEL", "local-model")
-    anthropic_base_url: str = _env("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+    anthropic_base_url: str = _env("ANTHROPIC_BASE_URL", "https://api.anthropic.com", _base_url)
     anthropic_model: str = _env("ANTHROPIC_MODEL", "claude-sonnet-5")
     anthropic_api_key: str = _env("ANTHROPIC_API_KEY", "", str.strip, secret=True)
     anthropic_max_tokens: int = _env("ANTHROPIC_MAX_TOKENS", "2400", _positive_int)
@@ -552,7 +579,7 @@ class Settings:
     anthropic_temperature: float | None = _env("ANTHROPIC_TEMPERATURE", "", _temperature)
     # OpenAI's own API, called at /chat/completions with the cap as
     # max_completion_tokens, which its reasoning models require.
-    openai_base_url: str = _env("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    openai_base_url: str = _env("OPENAI_BASE_URL", "https://api.openai.com/v1", _base_url)
     # The model -ip- runs through OpenRouter (openai/gpt-6-luna), benchmarked at effort low.
     openai_model: str = _env("OPENAI_MODEL", "gpt-6-luna")
     openai_api_key: str = _env("OPENAI_API_KEY", "", str.strip, secret=True)
