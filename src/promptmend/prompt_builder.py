@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
-from importlib.resources import files
 from pathlib import Path
 
 from .config import user_config_dir
 from .redaction import safe_repr
 
-_PROMPT_DIR = files(__package__) / "prompts"
+# The built-in profiles, as real files next to this module: the wheel installs the package as
+# files, and the frozen Windows build keeps them in _internal/promptmend/prompts/ (its
+# __file__ points there; scripts/build_windows.py REQUIRED checks one). Not
+# importlib.resources: it imports zipfile, and with it bz2 and lzma, each a native module a
+# Windows scanner inspects on every trigger.
+_PROMPT_DIR = Path(__file__).parent / "prompts"
 
 
 def _load_profiles() -> dict[str, str]:
@@ -22,17 +26,46 @@ def _load_profiles() -> dict[str, str]:
     }
 
 
-# The built-in profiles shipped in the package. A user's own live in user_profiles_dir().
-PROFILES: dict[str, str] = _load_profiles()
+class _BuiltinProfiles(Mapping[str, str]):
+    """The built-in profiles, name -> text, read from _PROMPT_DIR on first use rather than at
+    import: `persona` and a trigger that fails before its prompt never read them. So a
+    broken install (a missing or unreadable prompts/ folder) raises on that first access (an
+    OSError, which a trigger reports as its `[promptmend: ...]` marker), not when the
+    module is imported."""
+
+    def __init__(self) -> None:
+        self._profiles: dict[str, str] | None = None
+
+    def _loaded(self) -> dict[str, str]:
+        if self._profiles is None:
+            self._profiles = _load_profiles()
+        return self._profiles
+
+    def __getitem__(self, name: str) -> str:
+        return self._loaded()[name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._loaded())
+
+    def __len__(self) -> int:
+        return len(self._loaded())
+
+    def __repr__(self) -> str:
+        return repr(self._loaded())
+
+
+# The built-in profiles shipped in the package, in name order. A user's own live in
+# user_profiles_dir().
+PROFILES: Mapping[str, str] = _BuiltinProfiles()
 
 # Retired profile names that still resolve, so an existing .env or --profile keeps working.
-# `default-pro` was `default` minus one clause; one prompt now serves both tiers (#44).
+# `default-pro` was `default` minus one clause; one prompt serves both tiers.
 ALIASES = {"default-pro": "default"}
 
 # Replaced in a profile by the rule for how CONTEXT opens (see PROMPT_PERSONA).
 PERSONA_TOKEN = "{{PERSONA_RULE}}"  # noqa: S105 - a template placeholder, not a secret
 # Replaced by the persona and a space, or by nothing without one: the few-shot examples open
-# CONTEXT with it, so they show the persona opening the rule asks for (#49).
+# CONTEXT with it, so they show the persona opening the rule asks for.
 PERSONA_OPENING_TOKEN = "{{PERSONA_OPENING}}"  # noqa: S105 - a template placeholder
 
 # A user profile's name is its file name without `.md`: no dots, separators or spaces, so a

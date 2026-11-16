@@ -30,9 +30,9 @@ def _checks(report: doctor.Report, ids: Sequence[str] | None = None) -> Text:
 
 
 def show_routes(pane: Pane, state: State) -> None:
-    """The providers at a glance (read-only, #199 moved it from the old Providers tab): the
-    PROMPT_LOCAL_ONLY and PROMPT_PROVIDER policy, and each provider's model, base URL, whether
-    the draft leaves this machine and whether its key is set."""
+    """The providers at a glance (read-only): the PROMPT_LOCAL_ONLY and PROMPT_PROVIDER
+    policy, and each provider's model, base URL, whether the draft leaves this machine and
+    whether its key is set."""
     entries = state.layers.entries
     cfg = state.settings
     policy = (
@@ -78,6 +78,9 @@ class DiagnosticsPane(Pane):
             "Provider", "Model", "Base URL", "The draft", "Key"
         )
 
+    def show_update(self, state: State) -> None:
+        self.query_one("#all-checks", Static).update(_checks(state.report))
+
     def show(self, state: State) -> None:
         show_routes(self, state)
         layers = state.layers
@@ -90,6 +93,16 @@ class DiagnosticsPane(Pane):
             if findings
             else "No problems found in the settings files."
         )
+        if not state.full:
+            # A quick State: the checks and the history store are still being read.
+            waiting = (
+                "Checking every part (doctor's checks)…"
+                if state.failed is None
+                else f"Not checked: the checks could not run ({state.failed}); r checks again."
+            )
+            self.query_one("#all-checks", Static).update(waiting)
+            self.query_one("#store", Static).update("")
+            return
         self.query_one("#all-checks", Static).update(_checks(state.report))
         data = {c.id: c.data for c in state.report.checks}
         stored, sqlite = data.get("history", {}), data.get("sqlite", {})

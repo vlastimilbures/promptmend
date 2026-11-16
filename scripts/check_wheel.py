@@ -7,11 +7,13 @@ built wheel into a clean venv and runs this with that venv's Python (not from th
     <venv python> scripts/check_wheel.py --repo . --wheel dist/<name>.whl
 
 It checks that the package was imported from the venv, that every match file under the repo's
-espanso/match/ and every profile under src/promptmend/prompts/ resolves through
-importlib.resources, that espanso/config/ was not shipped, that `promptmend --version` prints
-the version, and that `promptmend persona` runs with an empty config. With `--constraints`
-(the release's constraints.txt, exported from uv.lock), every distribution installed next to
-the package must be pinned there at the installed version. Exits nonzero on the first failure.
+espanso/match/ resolves through importlib.resources and every profile under
+src/promptmend/prompts/ is a real file in the installed package (prompt_builder reads them
+from its own folder, #312), that espanso/config/ was not shipped, that `promptmend
+--version` prints the version, and that `promptmend persona` runs with an empty config. With
+`--constraints` (the release's constraints.txt, exported from uv.lock), every distribution
+installed next to the package must be pinned there at the installed version. Exits nonzero
+on the first failure.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from importlib import metadata
 from pathlib import Path
 
 import promptmend
-from promptmend import assets
+from promptmend import assets, prompt_builder
 from promptmend.cli import PERSONA_PLACEHOLDER
 from promptmend.prompt_builder import PROFILES, system_prompt
 
@@ -55,7 +57,10 @@ def _check_match_files(repo: Path, package: Path) -> None:
             _fail(f"{name} differs from the repo copy")
 
 
-def _check_profiles(repo: Path) -> None:
+def _check_profiles(repo: Path, package: Path) -> None:
+    folder = prompt_builder._PROMPT_DIR.resolve()
+    if folder != package / "prompts":
+        _fail(f"profiles resolve to {folder}, not the installed package's prompts/")
     expected = sorted(p.stem for p in (repo / "src" / "promptmend" / "prompts").glob("*.md"))
     if sorted(PROFILES) != expected:
         _fail(f"profiles {sorted(PROFILES)} != repo {expected}")
@@ -164,7 +169,7 @@ def main() -> None:
     repo = args.repo.resolve()
     package = _check_import(repo)
     _check_match_files(repo, package)
-    _check_profiles(repo)
+    _check_profiles(repo, package)
     _check_wheel_contents(args.wheel)
     _check_commands()
     _check_persona()

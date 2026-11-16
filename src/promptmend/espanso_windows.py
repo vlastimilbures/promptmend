@@ -1,4 +1,4 @@
-"""Espanso on Windows, without reading its output (#209, #210, #211).
+"""Espanso on Windows, without reading its output.
 
 `espansod.exe` is a GUI-subsystem program that attaches to its parent's console and writes
 there, not to a pipe: `espanso path config` and `espanso status` return nothing to us, while
@@ -7,27 +7,30 @@ worker never sees EOF and blocks the interface's exit) and our console (so Ctrl+
 the terminal kills Espanso). So on Windows nothing here reads Espanso's output:
 
 - the executable is found where Espanso puts it, not only on PATH, which a long-lived
-  Windows Terminal keeps stale (#211): the running daemon, PATH, the per-user install
+  Windows Terminal keeps stale: the running daemon, PATH, the per-user install
   folder, the uninstall registry entry;
 - the config folder is worked out as Espanso does: a portable `.espanso` folder next to the
-  executable, else `%APPDATA%\\espanso` (#210);
+  executable, else `%APPDATA%\\espanso`;
 - "running" means Espanso's named pipe exists (listing the pipes connects to none);
 - start and restart go through `cmd.exe` in a console of its own with no window, every stdio
-  handle the null device: Espanso attaches to that hidden console, never ours (#209).
+  handle the null device: Espanso attaches to that hidden console, never ours.
 
 deploy.run_command() hands every `espanso ...` call here on Windows and keeps the answer's
-shape (stdout, or a CommandFailure), so its callers do not change.
+shape (stdout, or a CommandFailure), so its callers do not change. Inside one_look() (an
+interface reload, a `doctor` run) `path config` and `status` share one process enumeration
+and one registry walk, and the registry is walked only when no earlier candidate is a file.
 """
 
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import os
 import shutil
 import subprocess
 import time
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +137,50 @@ class System:
     sleep: Callable[[float], None] = time.sleep
     clock: Callable[[], float] = time.monotonic
 
+    def once(self) -> System:
+        """This system, enumerating the processes and walking the registry at most once each
+        (a failure is remembered too): for read-only queries only, since a start polls for the
+        daemon and must see it appear."""
+        return replace(self, images=_remembered(self.images), registry=_remembered(self.registry))
+
+
+def _remembered[T](probe: Callable[[], T]) -> Callable[[], T]:
+    answer: list[T] = []
+    failed: list[Exception] = []
+
+    def ask() -> T:
+        if not answer and not failed:
+            try:
+                answer.append(probe())
+            except Exception as exc:
+                failed.append(exc)
+        if failed:
+            raise failed[0]
+        return answer[0]
+
+    return ask
+
+
+# The read-only queries one_look() answers from one look at the system.
+QUERIES = (("path", "config"), ("status",))
+_shared: contextvars.ContextVar[System | None] = contextvars.ContextVar(
+    "promptmend_espanso_look", default=None
+)
+
+
+@contextlib.contextmanager
+def one_look() -> Iterator[None]:
+    """While it is open, in this thread, run()'s QUERIES share one System.once(); a nested one
+    keeps the outer look."""
+    if _shared.get() is not None:
+        yield
+        return
+    token = _shared.set(System().once())
+    try:
+        yield
+    finally:
+        _shared.reset(token)
+
 
 def _running_daemons(system: System) -> list[Path]:
     try:
@@ -143,25 +190,33 @@ def _running_daemons(system: System) -> list[Path]:
     return [Path(image) for image in images if Path(image).name.lower() == DAEMON]
 
 
+def _candidates(system: System) -> Iterator[Path]:
+    yield from _running_daemons(system)
+    for name in ("espansod", "espanso"):
+        hit = system.which(name)
+        if hit:
+            yield Path(hit).with_name(DAEMON)
+    local = system.environ.get("LOCALAPPDATA")
+    if local:
+        yield Path(local) / "Programs" / "Espanso" / DAEMON
+    # Last and only when asked for: walking the uninstall keys is the slowest probe.
+    try:
+        locations = system.registry()
+    except Exception:
+        return
+    yield from (location / DAEMON for location in locations)
+
+
 def daemon_candidates(system: System) -> list[Path]:
     """Where espansod.exe may be, best first: the running one (the right install when a
     portable and an installed Espanso coexist), then PATH (`espanso.cmd` sits next to
     `espansod.exe`), the per-user install folder, the uninstall registry entry."""
-    found = _running_daemons(system)
-    for name in ("espansod", "espanso"):
-        hit = system.which(name)
-        if hit:
-            found.append(Path(hit).with_name(DAEMON))
-    local = system.environ.get("LOCALAPPDATA")
-    if local:
-        found.append(Path(local) / "Programs" / "Espanso" / DAEMON)
-    with contextlib.suppress(Exception):
-        found.extend(location / DAEMON for location in system.registry())
-    return found
+    return list(_candidates(system))
 
 
 def find_daemon(system: System) -> Path | None:
-    return next((path for path in daemon_candidates(system) if path.is_file()), None)
+    """The first candidate that is a file; the later ones (the registry) are not looked up."""
+    return next((path for path in _candidates(system) if path.is_file()), None)
 
 
 def config_dir(daemon: Path, system: System) -> Path:
@@ -221,11 +276,14 @@ def run(argv: Sequence[str], system: System | None = None) -> Any:
     deploy.CommandFailure, answered without reading Espanso's output."""
     from .deploy import CommandFailure
 
-    system = system or System()
+    args = tuple(argv[1:])
+    if system is None:
+        shared = _shared.get() if args in QUERIES else None
+        system = shared or System()
     daemon = find_daemon(system)
     if daemon is None:
         return CommandFailure()
-    path, args = str(daemon), tuple(argv[1:])
+    path = str(daemon)
     if args == ("path", "config"):
         return f"{config_dir(daemon, system)}\n"
     if args == ("status",):

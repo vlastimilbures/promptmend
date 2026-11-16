@@ -233,7 +233,7 @@ def test_lmstudio_request_shape(fake_http: FakeHttp) -> None:
     fake_http.reply(_openai_body("ok"))
     make_provider("lmstudio", Settings().with_overrides(max_tokens="300")).generate("d", "sys")
     call = fake_http.calls[0]
-    assert call["url"] == "http://localhost:1234/v1/chat/completions"
+    assert call["url"] == "http://127.0.0.1:1234/v1/chat/completions"
     assert call["headers"] == {"Content-Type": "application/json"}
     assert call["json"] == {
         "model": "local-model",

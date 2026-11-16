@@ -154,10 +154,10 @@ def test_make_provider_unknown() -> None:
 @pytest.mark.parametrize(
     ("name", "url", "body"),
     [
-        ("ollama", "http://localhost:11434/api/chat", {"message": {"content": "ok"}}),
+        ("ollama", "http://127.0.0.1:11434/api/chat", {"message": {"content": "ok"}}),
         (
             "lmstudio",
-            "http://localhost:1234/v1/chat/completions",
+            "http://127.0.0.1:1234/v1/chat/completions",
             {"choices": [{"message": {"content": "ok"}}]},
         ),
         (

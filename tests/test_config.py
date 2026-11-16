@@ -24,7 +24,7 @@ def test_defaults() -> None:
     assert settings.profile == "default"
     assert settings.timeout == 30.0
     assert settings.temperature == 0.2
-    assert settings.ollama_base_url == "http://localhost:11434"
+    assert settings.ollama_base_url == "http://127.0.0.1:11434"
     assert settings.ollama_model == "qwen3:8b"
     assert settings.ollama_think is False
     assert settings.openrouter_base_url == "https://openrouter.ai/api/v1"
@@ -39,7 +39,7 @@ def test_defaults() -> None:
     assert settings.openrouter_pro_reasoning_effort == "low"
     assert settings.pro_timeout == 60.0
     assert settings.openrouter_pro_max_tokens is None
-    assert settings.lmstudio_base_url == "http://localhost:1234/v1"
+    assert settings.lmstudio_base_url == "http://127.0.0.1:1234/v1"
     assert settings.lmstudio_model == "local-model"
     assert settings.anthropic_base_url == "https://api.anthropic.com"
     assert settings.anthropic_model == "claude-sonnet-5"

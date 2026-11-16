@@ -6,10 +6,12 @@ test calls a provider."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import io
 import json
 import os
 import re
+import sys
 from collections.abc import Awaitable, Callable, Iterator
 from decimal import Decimal
 from pathlib import Path
@@ -20,7 +22,7 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
-from promptmend import config, config_store, deploy, history, smoke
+from promptmend import config, config_store, deploy, history, smoke, update_check
 from promptmend.history import HistoryStore
 from promptmend.tui import (
     base,
@@ -29,17 +31,23 @@ from promptmend.tui import (
     profiles_pane,
     settings_model,
     settings_pane,
+    triggers_pane,
 )
-from promptmend.tui.app import HIGH_CONTRAST, ManageApp
+from promptmend.tui.app import HIGH_CONTRAST, TABS, ManageApp
 from promptmend.tui.home import pill
 from promptmend.tui.modals import ConfirmModal, EditModal, FormModal, PickModal, TextModal
-from promptmend.tui.state import State, gather
+from promptmend.tui.state import FULL, QUICK, State, gather, quick
 
 if TYPE_CHECKING:
     from conftest import SeedHistory
+    from textual.app import App
     from textual.widget import Widget
     from typer.testing import Result
 
+    from promptmend.tui.setup_wizard import SetupScreen
+
+# Kept at import, before the espanso fixture replaces it.
+REAL_RESOLVE_LAUNCHER = deploy.resolve_launcher
 # Built at runtime, so no key-shaped literal lands in the repo (gitleaks).
 KEY = "sk-or-v1-" + "cd34" * 16
 SIZE = (120, 50)
@@ -99,13 +107,25 @@ async def settle(pilot: Pilot[int]) -> None:
     await pilot.pause()
 
 
-def drive(scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]], **kwargs: Any) -> ManageApp:
+def drive(
+    scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]],
+    *,
+    settled: bool = True,
+    **kwargs: Any,
+) -> ManageApp:
+    """Run ``scenario`` on a ManageApp(**kwargs), once every load has ended (``settled``)
+    or at once (a scenario whose loader blocks waits itself, see until())."""
     app = ManageApp(**kwargs)
 
     async def main() -> None:
         async with app.run_test(size=SIZE) as pilot:
-            await settle(pilot)
+            if settled:
+                await settle(pilot)
             await scenario(app, pilot)
+            # A check still on its way would land while run_test() tears the screens down,
+            # which repaints a pane whose widgets are gone (#350): it lands here first.
+            if app.state is not None and app.state.pending is not None:
+                await landed(app, pilot)
 
     asyncio.run(main())
     return app
@@ -145,8 +165,1052 @@ def test_gather_asks_each_command_once(
     assert calls.count("uv tool dir") == 1
 
 
+def test_a_uv_install_starts_without_a_child_process(
+    espanso: FakeRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: the launcher comes from uv's receipt, so a reload runs no `uv` (nor `brew`):
+    only the two read-only Espanso queries, each once."""
+    import sys
+
+    monkeypatch.setattr(deploy, "resolve_launcher", REAL_RESOLVE_LAUNCHER)
+    prefix = tmp_path / "uv" / "tools" / "promptmend"
+    prefix.mkdir(parents=True)
+    exe = "promptmend.exe" if os.name == "nt" else "promptmend"
+    launcher = tmp_path / "uv-bin" / exe
+    launcher.parent.mkdir()
+    launcher.write_text("", encoding="utf-8")
+    (prefix / deploy.UV_RECEIPT).write_text(
+        "[tool]\nentrypoints = [\n"
+        f"    {{ name = 'promptmend', install-path = '{launcher}', from = 'promptmend' }},\n]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    state = gather()
+    assert state.plan is not None
+    assert state.plan.launcher == deploy.launcher_text(launcher)
+    install = next(c for c in state.report.checks if c.id == "install")
+    assert install.data["channel"] == "uv"
+    assert sorted(" ".join(c) for c in espanso.calls) == ["espanso path config", "espanso status"]
+
+
+def test_gather_makes_one_plan_one_manifest_load_and_one_repair_resolve(
+    espanso: FakeRunner, saved: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: doctor reuses the reload's settings, launcher, manifest and plan."""
+    counts = {"plan": 0, "load": 0, "repair": 0}
+    real_plan, real_load = deploy.plan, deploy.Manifest.load
+    real_resolve = config.ConfigLayers.resolve
+
+    def plan(*args: Any, **kwargs: Any) -> deploy.Plan:
+        counts["plan"] += 1
+        return real_plan(*args, **kwargs)
+
+    def load(path: Path | None = None) -> deploy.Manifest:
+        counts["load"] += 1
+        return real_load(path)
+
+    def resolve(*args: Any, **kwargs: Any) -> config.ConfigLayers:
+        counts["repair"] += kwargs.get("strict") is False
+        return real_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(deploy, "plan", plan)
+    monkeypatch.setattr(deploy.Manifest, "load", staticmethod(load))
+    monkeypatch.setattr(config.ConfigLayers, "resolve", staticmethod(resolve))
+    state = gather()
+    assert state.plan is not None
+    assert counts == {"plan": 1, "load": 1, "repair": 1}
+    match_files = next(c for c in state.report.checks if c.id == "match_files")
+    assert match_files.data["files"] == [
+        {"name": s.name, "state": s.state} for s in state.plan.steps
+    ]
+
+
+@pytest.mark.parametrize("linked", [False, True])
+def test_gather_shows_the_same_report_as_doctor(
+    espanso: FakeRunner, saved: Path, tmp_path: Path, linked: bool
+) -> None:
+    """What the reload passes doctor changes nothing in its report (#315), for a linked
+    Espanso folder too (#339: both plan the resolved folder, so doctor shares the plan and
+    sees the deployed files as deployed, an edited one as modified, none as foreign)."""
+    from promptmend import doctor
+
+    if linked:
+        link = tmp_path / "linked-espanso"
+        try:
+            link.symlink_to(espanso.root, target_is_directory=True)
+        except OSError:
+            pytest.skip("no symlinks here")
+        espanso.answers["espanso path config"] = f"{link}\n"
+    deploy.apply(_plan())
+    target = espanso.root / "match" / "prompts-core.yml"
+    target.write_text(target.read_text("utf-8") + "# mine\n", "utf-8")
+    state = gather().settled()
+    assert state.pending is None
+    alone = doctor.run(clipboard=False, update=state.update)
+    assert state.report.to_json() == alone.to_json()
+    match_files = next(c for c in alone.checks if c.id == "match_files")
+    states = {f["name"]: f["state"] for f in match_files.data["files"]}
+    assert states.pop("prompts-core.yml") == deploy.MODIFIED
+    assert set(states.values()) == {deploy.IN_SYNC}
+
+
+class BlockedPypi:
+    """An update check that waits until released, as a proxy that drops pypi.org does."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self.release = threading.Event()
+        self.answer = update_check.UpdateStatus(
+            update_check.AVAILABLE, "99.0.0", "2026-11-15T09:00:00+00:00"
+        )
+
+    def __call__(self) -> update_check.UpdateStatus:
+        assert self.release.wait(10), f"never released\n{threads_now()}"
+        return self.answer
+
+
+def test_a_blocked_pypi_delays_no_other_row(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from promptmend.tui.home import home_rows
+
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+    state = gather()  # returns while the check still waits
+    assert state.update.state == update_check.CHECKING
+    assert state.pending is not None
+    assert not state.pending.done()
+    rows = {row.label: row for row in home_rows(state)}
+    assert rows["Version"].text.endswith(" · checking")
+    assert rows["Triggers"].text.endswith("Espanso running")
+    version = next(c for c in state.report.checks if c.id == "version")
+    assert version.data["update_available"] is None
+    blocked.release.set()
+    later = state.settled()
+    assert later.update == blocked.answer
+    assert later.pending is None
+    assert home_rows(later)[0].text == "99.0.0 available"
+    version = next(c for c in later.report.checks if c.id == "version")
+    assert version.data["latest"] == "99.0.0"
+    assert "99.0.0 available" in version.message
+    # Only the version check changed; everything else is the same moment.
+    assert [c for c in later.report.checks if c.id != "version"] == [
+        c for c in state.report.checks if c.id != "version"
+    ]
+    assert later.plan is state.plan
+    assert later.layers is state.layers
+
+
+def test_an_update_check_that_never_lands_is_unknown(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from concurrent.futures import Future
+
+    from promptmend.tui import state as state_module
+
+    monkeypatch.setattr(state_module, "SETTLE_TIMEOUT", 0.0)
+    never: Future[update_check.UpdateStatus] = Future()
+    monkeypatch.setattr(state_module, "_beside", lambda work, name: never)
+    state = gather()
+    assert state.settled().update == update_check.UpdateStatus(update_check.UNKNOWN)
+    broken: Future[update_check.UpdateStatus] = Future()
+    broken.set_exception(RuntimeError("boom"))
+    monkeypatch.setattr(state_module, "_beside", lambda work, name: broken)
+    # Already landed (here: failed), so gather settles it itself.
+    assert gather().update == update_check.UpdateStatus(update_check.UNKNOWN)
+
+
+def test_a_landed_update_check_makes_one_state(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cached answer lands before the rest is read: no `checking`, nothing pending."""
+    from concurrent.futures import Future
+
+    from promptmend.tui import state as state_module
+
+    landed: Future[update_check.UpdateStatus] = Future()
+    landed.set_result(update_check.UpdateStatus(update_check.LATEST, "0.1.0", "x"))
+    monkeypatch.setattr(state_module, "_beside", lambda work, name: landed)
+    state = gather()
+    assert state.pending is None
+    assert state.update.state == update_check.LATEST
+    assert state.settled() is state
+
+
+async def focus_a_key_field(wizard: SetupScreen, pilot: Pilot[int]) -> Input:
+    """The wizard on its keys step, the focus on the OpenRouter key field, `typed` in it. go()
+    moves the focus after the next refresh (to Next, on this step), so the field is focused
+    only once every such move has landed: one landing after it took the focus back to Next
+    (Windows 3.12, #350). The refresh wait gives the order (the screen runs its after-refresh
+    callbacks first in, first out, so go()'s ran before it returns); waiting for Next only
+    asserts the premise, that Next is where go() puts the focus."""
+    wizard.go("keys")
+    try:
+        await asyncio.wait_for(wizard.wait_for_refresh(), 10)  # after the go()s' own callbacks
+    except TimeoutError:
+        raise AssertionError(f"the keys step never refreshed\n{threads_now(pilot.app)}") from None
+    next_step = wizard.query_one("#setup-next-step", Button)
+    await until(pilot, lambda: pilot.app.focused is next_step, lambda: pilot.app.focused)
+    field = wizard.query_one("#setup-key-OPENROUTER_API_KEY", Input)
+    field.focus()
+    await until(pilot, lambda: pilot.app.focused is field, lambda: pilot.app.focused)
+    field.value = "typed"
+    await pilot.pause()
+    return field
+
+
+async def landed(app: ManageApp, pilot: Pilot[int]) -> State:
+    """Wait (pausing, at most ~10 s) until the late update check is on screen."""
+    for _ in range(1000):
+        if app.state is not None and app.state.update.state != update_check.CHECKING:
+            return app.state
+        await pilot.pause(0.01)
+    raise AssertionError("the update check never landed")
+
+
+def test_the_version_row_fills_in_on_every_screen(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315 and #83: the first State says `checking`; nothing waits for pypi.org (the load
+    worker has ended), and when it answers every pane has the same next State, from the same
+    reload; an open About screen says so too."""
+    from promptmend.tui.intro import AboutScreen
+
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+    seen: list[str] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        first = _state(app)  # settle() returned: no worker waits for the check
+        assert first.update.state == update_check.CHECKING
+        await open_tab(app, pilot, *(t for t in TABS if t != "try"))
+        home = app.main.query_one("#home-pane", home_pane.HomePane)
+        assert "· checking" in _rendered(home, "#home-rows")
+        await pilot.press("a")
+        await settle(pilot)
+        assert isinstance(app.screen, AboutScreen)
+        seen.append(_rendered(app.screen, "#about-facts"))
+        blocked.release.set()
+        state = await landed(app, pilot)
+        await pilot.pause()
+        assert state.update == blocked.answer
+        assert state.plan is first.plan
+        assert app.state is state
+        # Every pane reads app.state (Pane.state), none keeps a State of its own.
+        for each in app.main.query(base.Pane):
+            assert not [v for v in vars(each).values() if isinstance(v, State)]
+        assert "99.0.0 available" in _rendered(home, "#home-rows")
+        assert "99.0.0 available" in _rendered(app.screen, "#about-facts")
+        diagnostics = pane(app, "diagnostics")
+        assert "99.0.0 available" in _rendered(diagnostics, "#all-checks")
+        version = next(c for c in state.report.checks if c.id == "version")
+        assert version.data["latest"] == "99.0.0"
+        # A tab first opened after the update landed shows it too (#316).
+        await open_tab(app, pilot, "try")
+        assert pane(app, "try").ready
+        assert pane(app, "try").state is state
+
+    drive(scenario)
+    assert "checking pypi.org" in seen[0]
+
+
+def test_a_late_update_keeps_cursors_and_focus(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: only what shows the update repaints; a table keeps its cursor and the setup
+    screen its focused key field (and what was typed in it)."""
+    from textual.widgets import DataTable
+
+    from promptmend.tui.setup_wizard import SetupScreen
+
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("3")
+        await settle(pilot)
+        table = pane(app, "profiles").query_one("#profiles", DataTable)
+        assert table.row_count > 1
+        table.move_cursor(row=1)
+        app.open_setup()
+        await settle(pilot)
+        wizard = app.screen
+        assert isinstance(wizard, SetupScreen)
+        field = await focus_a_key_field(wizard, pilot)
+        blocked.release.set()
+        await landed(app, pilot)
+        await pilot.pause()
+        assert wizard.at == "keys"
+        assert app.screen is wizard
+        assert app.focused is field
+        assert field.value == "typed"
+        assert table.cursor_row == 1
+
+    drive(scenario)
+
+
+def test_a_failed_reload_still_lets_the_shown_state_fill_in(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newer reload that reads nothing (both stages fail, #317) shows nothing, so the State
+    on screen still gets its update check: the Version row never stays `checking`."""
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+    loads: list[int] = []
+
+    def loader(group_by: str, first: State | None = None) -> State:
+        loads.append(1)
+        if len(loads) > 1:
+            raise RuntimeError("broken")
+        return gather(group_by, first)
+
+    def first(group_by: str) -> State:
+        if loads:
+            raise RuntimeError("broken too")
+        return quick(group_by)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        assert _state(app).update.state == update_check.CHECKING
+        app.reload()
+        await settle(pilot)
+        assert app.generation == 2
+        blocked.release.set()
+        assert (await landed(app, pilot)).update == blocked.answer
+
+    drive(scenario, loader=loader, quick_loader=first)
+    assert len(loads) == 2
+
+
+def test_a_late_update_of_an_older_reload_is_dropped(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from promptmend.tui.app import LateUpdate
+
+    # This reload's own update check is held, so only the stale one posted here can arrive:
+    # its own landing legitimately replaces the State object (seen on ubuntu 3.14, #317).
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        state = _state(app)
+        newer = dataclasses.replace(
+            state, update=update_check.UpdateStatus(update_check.LATEST, "1.0.0", "x")
+        )
+        app.post_message(LateUpdate(newer, app.generation - 1))
+        await pilot.pause()
+        assert app.state is state
+        # This reload's own check lands before the scenario ends: run_test() tears the screens
+        # down while the app still handles messages, so one landing then repaints a Home
+        # pane already emptied (NoMatches, ubuntu 3.14, #350). A real run stops handling
+        # messages before it closes the screens.
+        blocked.release.set()
+        assert (await landed(app, pilot)).update == blocked.answer
+
+    drive(scenario)
+
+
+# --- Two stages (#317) ----------------------------------------------------------------------
+
+# The default pool, and one of a single thread (see one_pool_thread()). Not on Windows: there
+# every Textual timer sleeps in that pool, so one thread is no pool a real run ever has.
+ONE_THREAD = pytest.param(
+    "one thread",
+    marks=pytest.mark.skipif(
+        sys.platform == "win32", reason="Textual's timers sleep in the pool on Windows"
+    ),
+)
+
+
+def threads_now(app: App[Any] | None = None) -> str:
+    """Every thread's stack (and the app's workers): what a wait that never ended was held by,
+    for a CI run no one can step through (the Windows 3.12 runs of #317)."""
+    import sys
+    import threading
+    import traceback
+
+    frames = sys._current_frames()
+    parts: list[str] = []
+    for thread in threading.enumerate():
+        frame = frames.get(thread.ident or -1)
+        stack = "".join(traceback.format_stack(frame)) if frame else "  (no frame)\n"
+        parts.append(f"--- thread {thread.name!r} daemon={thread.daemon}\n{stack}")
+    if app is not None:
+        workers = [f"{w.group}/{w.name}: {w.state.name}" for w in app.workers]
+        parts.append(f"--- workers {workers}")
+    return "\n".join(parts)
+
+
+async def until(
+    pilot: Pilot[int], done: Callable[[], bool], why: Callable[[], object] = lambda: ""
+) -> None:
+    """Pause (at most ~10 s of pauses) until ``done()``: for a scenario whose full load is
+    blocked, which settle() would wait for. ``why()`` says what was seen when it never is,
+    followed by every thread's stack."""
+    for _ in range(1000):
+        if done():
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"never happened: {why()}\n{threads_now(pilot.app)}")
+
+
+class BlockedLoad:
+    """gather(), held until released: the full stage of a slow doctor and plan."""
+
+    def __init__(self) -> None:
+        import threading
+
+        self.release = threading.Event()
+        self.calls = 0
+        self.firsts: list[State | None] = []
+
+    def __call__(self, group_by: str, first: State | None = None) -> State:
+        self.calls += 1
+        self.firsts.append(first)
+        assert self.release.wait(10), f"never released\n{threads_now()}"
+        return gather(group_by, first)
+
+
+def _home_text(app: ManageApp) -> str:
+    home = app.main.query_one("#home-pane", home_pane.HomePane)
+    return _rendered(home, "#home-headline") + _rendered(home, "#home-rows")
+
+
+def _disabled(app: ManageApp, tab: str, *ids: str) -> list[bool]:
+    return [pane(app, tab).query_one(f"#{id_}", Button).disabled for id_ in ids]
+
+
+WAITING_BUTTONS = {"triggers": ("show-diff", "deploy", "detach"), "history": ("prune", "reset")}
+
+
+def test_home_paints_the_quick_state_and_actions_wait_for_the_full_one(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#317: Home shows the settings rows before doctor and the plan are read, the rest say
+    `checking`; every pane has the same quick State; deploy, detach, the diff, prune and reset
+    wait (disabled, and refused when called anyway) until the full State replaces it."""
+    from promptmend.tui.home import CHECKING_HEADLINE
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        first = _state(app)
+        assert (first.stage, first.full, first.plan) == (QUICK, False, None)
+        assert first.report.checks == ()
+        shown = _home_text(app)
+        assert CHECKING_HEADLINE in shown
+        assert "Rewrites" in shown
+        assert "key set" in shown  # a quick row: from the settings alone
+        assert "checking the match files and Espanso" in shown
+        assert "checking every part" in shown
+        assert app.sub_title.startswith("checking · ")
+        for tab in ("triggers", "history", "diagnostics", "settings"):
+            await app.main.build(tab)
+        await pilot.pause()
+        for each in app.main.query(base.Pane):
+            assert each.state is first
+        for tab, ids in WAITING_BUTTONS.items():
+            assert all(_disabled(app, tab, *ids)), tab
+        assert "Checking the match files" in _rendered(pane(app, "triggers"), "#deploy-target")
+        assert "Reading the usage history" in _rendered(pane(app, "history"), "#stats-note")
+        assert "Checking every part" in _rendered(pane(app, "diagnostics"), "#all-checks")
+        rows = table_rows(app, "triggers", "#triggers")
+        assert rows["-i-"][4] == "checking"
+        # An action pressed now: the button does nothing, the call says it waits, no dialog.
+        triggers = pane(app, "triggers")
+        assert isinstance(triggers, triggers_pane.TriggersPane)
+        triggers.query_one("#deploy", Button).press()
+        await pilot.pause()
+        assert app.screen is app.main
+        for call in (triggers._deploy, triggers.ask_detach, triggers._diff):
+            call()
+            await pilot.pause()
+            assert app.screen is app.main
+            assert triggers.last_message == base.WAITING
+            assert not triggers.busy
+        history = pane(app, "history")
+        assert isinstance(history, history_pane.HistoryPane)
+        for call in (history.prune, history.reset):
+            call()
+            await pilot.pause()
+            assert app.screen is app.main
+            assert history.last_message == base.WAITING
+        assert app.session == []
+        assert espanso.calls == []  # the quick stage runs no command
+        # What needs only the settings does not wait: the Settings list is filled.
+        assert settings_rows(app)["PROMPT_HISTORY"].value == "on"
+        blocked.release.set()
+        await settle(pilot)
+        full = _state(app)
+        assert full.stage == FULL
+        assert full is not first
+        # The full read got this reload's quick State and reused its reads (one per reload).
+        assert blocked.firsts == [first]
+        assert full.layers is first.layers
+        assert full.triggers is first.triggers
+        assert full.profiles is first.profiles
+        for each in app.main.query(base.Pane):
+            assert each.state is full
+        shown = _home_text(app)
+        assert "checking" not in shown.replace("· checking", "")  # the Version row may wait
+        assert "Espanso running" in shown
+        for tab, ids in WAITING_BUTTONS.items():
+            assert not any(_disabled(app, tab, *ids)), tab
+        await press(app, pilot, "#deploy")
+        assert isinstance(app.screen, FormModal)
+
+    drive(scenario, settled=False, loader=blocked)
+    assert blocked.calls == 1
+
+
+def test_the_setup_offer_waits_for_the_full_state(saved: Path, espanso: FakeRunner) -> None:
+    """#317: the quick State has no plan, so a first run asks whether anything is set up only
+    once the full State is in; it opens the wizard then, once."""
+    from promptmend.tui.setup_wizard import SetupScreen
+
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        assert not _state(app).full
+        await pilot.pause()
+        assert app.screen is app.main
+        assert app.first_run
+        blocked.release.set()
+        await settle(pilot)
+        assert isinstance(app.screen, SetupScreen)
+        assert not app.first_run
+
+    drive(scenario, settled=False, loader=blocked, first_run=True)
+
+
+def test_a_failed_full_read_leaves_the_quick_state_not_checked(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#317: the quick State stays when the full read fails; its waiting rows say `not
+    checked` (never `checking` for ever), the header says so, and the actions that need the
+    full State still wait, saying r checks again."""
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+
+    def broken(group_by: str, first: State | None = None) -> State:
+        raise RuntimeError("boom")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        state = _state(app)
+        assert (state.stage, state.failed) == (QUICK, "RuntimeError: boom")
+        assert state.update.state == update_check.UNKNOWN
+        shown = _home_text(app)
+        assert "not checked" in shown
+        assert "checking" not in shown
+        assert "Almost ready: the checks could not run (RuntimeError: boom); r checks" in shown
+        assert "r: check again" in shown
+        assert "-> 4 Triggers" not in shown  # no tab fixes it
+        assert app.sub_title.startswith("not checked · ")
+        await open_tab(app, pilot, "triggers", "history", "diagnostics")
+        assert all(_disabled(app, "triggers", "show-diff", "deploy", "detach"))
+        triggers = pane(app, "triggers")
+        assert isinstance(triggers, triggers_pane.TriggersPane)
+        assert "Not compared with Espanso" in _rendered(triggers, "#deploy-target")
+        assert table_rows(app, "triggers", "#triggers")["-i-"][4] == "not checked"
+        triggers.ask_detach()
+        assert triggers.last_message == base.NOT_CHECKED
+        assert "Not read." in _rendered(pane(app, "history"), "#stats-note")
+        assert "Not checked" in _rendered(pane(app, "diagnostics"), "#all-checks")
+        app.open_setup()
+        await settle(pilot)
+        servers = str(app.screen.query_one("#setup-servers", Static).render())
+        assert servers.startswith("Not checked whether a local server answers")
+
+    drive(scenario, loader=broken)
+
+
+def test_a_reload_that_reads_nothing_leaves_no_state_checking(espanso: FakeRunner) -> None:
+    """Review of #317: a reload whose quick and full reads both fail, while an older reload's
+    quick State is on screen (its full State, read later, is dropped), shows that quick
+    State `not checked`, never `checking` for ever."""
+    import threading
+
+    release = threading.Event()
+    calls: list[str] = []
+
+    def quick_loader(group_by: str) -> State:
+        calls.append("quick")
+        if len(calls) > 1:
+            raise RuntimeError("no settings")
+        return quick(group_by)
+
+    def loader(group_by: str, first: State | None = None) -> State:
+        calls.append("full")
+        if first is None:
+            raise RuntimeError("boom")
+        assert release.wait(10), f"never released\n{threads_now()}"
+        return gather(group_by, first)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: calls == ["quick", "full"])
+        older = _state(app)
+        assert (older.stage, older.failed) == (QUICK, None)
+        app.reload()
+        await until(pilot, lambda: app.shown == 2, lambda: (calls, app.shown))
+        state = _state(app)
+        assert (state.stage, state.failed) == (QUICK, "RuntimeError: boom")
+        assert state.layers is older.layers
+        assert "checking" not in _home_text(app)
+        release.set()
+        await settle(pilot)
+        assert app.state is state  # the older reload's full State is dropped
+
+    drive(scenario, settled=False, loader=loader, quick_loader=quick_loader)
+
+
+def test_a_held_reload_key_runs_at_most_a_few_full_reads(espanso: FakeRunner) -> None:
+    """Review of #317: with every full read hanging (Espanso does not answer) and `r` pressed
+    again and again, at most FULL_READS of them run; each reload still shows its quick State,
+    and once the reads end the newest one's full State is shown."""
+    import threading
+
+    from promptmend.tui.app import FULL_READS
+
+    release = threading.Event()
+    entered: list[int] = []
+
+    def loader(group_by: str, first: State | None = None) -> State:
+        entered.append(1)
+        assert release.wait(10), f"never released\n{threads_now()}"
+        return gather(group_by, first)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        reloads = FULL_READS + 3
+        for number in range(1, reloads + 1):
+            if number > 1:
+                app.reload()
+            await until(pilot, lambda: app.shown == app.generation, lambda: (app.shown, entered))
+            if number <= FULL_READS:
+                await until(pilot, lambda: len(entered) == app.generation, lambda: entered)
+        for _ in range(10):
+            await pilot.pause()
+        assert len(entered) == FULL_READS
+        assert not _state(app).full
+        release.set()
+        await until(pilot, lambda: _state(app).full, lambda: (app.shown, entered))
+        assert app.shown == reloads
+        # The reloads cancelled while they waited for a slot never read.
+        assert len(entered) == FULL_READS + 1
+
+    drive(scenario, settled=False, loader=loader)
+
+
+@pytest.mark.parametrize(
+    ("platform", "version", "shortened"),
+    [
+        ("win32", (3, 12, 10), True),
+        ("win32", (3, 13, 0), False),
+        ("win32", (3, 14, 0), False),
+        ("darwin", (3, 12, 10), False),
+        ("linux", (3, 12, 10), False),
+    ],
+)
+def test_threads_get_their_turn_only_on_windows_before_3_13(
+    monkeypatch: pytest.MonkeyPatch, platform: str, version: tuple[int, ...], shortened: bool
+) -> None:
+    """#348: a shorter GIL switch interval only on Windows with Python 3.12, restored after,
+    even when the run ends with an error."""
+    import sys
+
+    from promptmend.tui import app as app_module
+
+    before = sys.getswitchinterval()
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(sys, "version_info", version)
+    with app_module.threads_get_their_turn():
+        inside = sys.getswitchinterval()
+    assert inside == (app_module.WINDOWS_312_SWITCH_INTERVAL if shortened else before)
+    assert sys.getswitchinterval() == before
+    with pytest.raises(RuntimeError), app_module.threads_get_their_turn():
+        raise RuntimeError("the app failed")
+    assert sys.getswitchinterval() == before
+
+
+def test_the_interface_runs_with_threads_getting_their_turn(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#348: the app's whole run (run_test here, run() for a person: both go through
+    _process_messages) is inside threads_get_their_turn()."""
+    import contextlib
+
+    from promptmend.tui import app as app_module
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def recorded() -> Iterator[None]:
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    monkeypatch.setattr(app_module, "threads_get_their_turn", recorded)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        assert events == ["enter"]
+
+    drive(scenario)
+    assert events == ["enter", "exit"]
+
+
+def test_the_full_stage_keeps_the_persons_place(espanso: FakeRunner) -> None:
+    """Review of #317: the full State repaints every pane, but the Profiles cursor stays on
+    its profile and the setup wizard keeps its step, its focused key field and what was typed
+    in it."""
+    from textual.widgets import DataTable
+
+    from promptmend.tui.setup_wizard import SetupScreen
+
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        await app.main.build("profiles")
+        await pilot.pause()
+        table = pane(app, "profiles").query_one("#profiles", DataTable)
+        table.move_cursor(row=2)
+        await pilot.pause()
+        key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+        app.open_setup()
+        await until(pilot, lambda: isinstance(app.screen, SetupScreen) and app.screen.is_mounted)
+        wizard = app.screen
+        assert isinstance(wizard, SetupScreen)
+        field = await focus_a_key_field(wizard, pilot)
+        blocked.release.set()
+        await settle(pilot)
+        assert _state(app).full
+        assert table.cursor_row == 2
+        assert table.coordinate_to_cell_key(table.cursor_coordinate).row_key == key
+        assert wizard.at == "keys"
+        assert app.screen is wizard
+        assert app.focused is field
+        assert field.value == "typed"
+
+    drive(scenario, settled=False, loader=blocked)
+
+
+def test_opening_setup_by_hand_uses_up_the_first_run_offer(
+    saved: Path, espanso: FakeRunner
+) -> None:
+    """Review of #317: setup opened during the quick stage is the offer; the full State never
+    opens a second wizard, nor again after that one is closed."""
+    from promptmend.tui.setup_wizard import SetupScreen
+
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        app.open_setup()
+        await pilot.pause()
+        assert not app.first_run
+        blocked.release.set()
+        await settle(pilot)
+        wizards = [s for s in app.screen_stack if isinstance(s, SetupScreen)]
+        assert len(wizards) == 1
+        wizards[0].dismiss()
+        app.reload()
+        await settle(pilot)
+        assert app.screen is app.main
+
+    drive(scenario, settled=False, loader=blocked, first_run=True)
+
+
+def test_a_wizard_already_open_uses_up_the_offer(saved: Path, espanso: FakeRunner) -> None:
+    """Review of #317: a wizard on screen when the full State lands, however it was opened,
+    is the offer: no second one, and none later."""
+    from promptmend.tui.setup_wizard import SetupScreen
+
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        app.push_screen(SetupScreen())  # not through open_setup()
+        await pilot.pause()
+        assert app.first_run
+        blocked.release.set()
+        await settle(pilot)
+        assert not app.first_run
+        assert len([s for s in app.screen_stack if isinstance(s, SetupScreen)]) == 1
+
+    drive(scenario, settled=False, loader=blocked, first_run=True)
+
+
+def test_the_first_run_offer_waits_while_about_is_open(saved: Path, espanso: FakeRunner) -> None:
+    """Review of #317: About over the tabs when the full State lands keeps the offer (the
+    wizard never opens over it); closing About makes it, with no reload. About also says the
+    install channel is being checked on the quick State, and fills it in."""
+    from promptmend.tui.intro import AboutScreen
+    from promptmend.tui.setup_wizard import SetupScreen
+
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        await pilot.press("a")
+        await until(pilot, lambda: isinstance(app.screen, AboutScreen))
+        about = app.screen
+        assert "Installed: checking" in _rendered(about, "#about-facts")
+        blocked.release.set()
+        await settle(pilot)
+        assert _state(app).full
+        assert app.screen is about
+        # Repainted by the full State: the channel doctor found.
+        assert "Installed: uv" in _rendered(about, "#about-facts")
+        assert app.first_run
+        generation = app.generation
+        await pilot.press("escape")
+        await settle(pilot)
+        assert isinstance(app.screen, SetupScreen)
+        assert not app.first_run
+        assert app.generation == generation  # no reload made it
+
+    drive(scenario, settled=False, loader=blocked, first_run=True)
+
+
+@pytest.mark.parametrize("pool", ["default", ONE_THREAD])
+def test_the_done_step_keeps_its_focus_across_stages(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, pool: str
+) -> None:
+    """Review of #317: on the last step, the full State (and the plan read with it) leaves the
+    focus where the person put it, instead of moving it back to Quit. With one pool thread the
+    wizard's own plan read still runs while the full read waits (it used to queue behind it)."""
+    from promptmend.tui.setup_wizard import SetupOptions, SetupScreen
+
+    if pool == "one thread":
+        one_pool_thread(monkeypatch)
+
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        # The wizard mounted, shown the quick State and read its plan: nothing of its start
+        # is still on its way (a focus moves after a refresh, so each step below waits for it).
+        def why() -> object:
+            screen = app.screen
+            return {
+                "state": app.state.stage if app.state else None,
+                "shown": app.shown,
+                "screen": type(screen).__name__,
+                "mounted": screen.is_mounted,
+                "at": getattr(screen, "at", None),
+                "plan": getattr(screen, "plan", None) is not None,
+                "plan_error": getattr(screen, "plan_error", None),
+                "focused": app.focused,
+            }
+
+        await until(pilot, lambda: app.state is not None, why)
+        await until(
+            pilot, lambda: isinstance(app.screen, SetupScreen) and app.screen.is_mounted, why
+        )
+        wizard = app.screen
+        assert isinstance(wizard, SetupScreen)
+        await until(pilot, lambda: wizard.plan is not None or wizard.plan_error is not None, why)
+        quit_ = wizard.query_one("#setup-quit", Button)
+        wizard.go("done")
+        await until(pilot, lambda: app.focused is quit_, why)
+        # The hidden Back and Next never take the focus here, not even one already on its
+        # way (Textual lets a button in a hidden row be focused; the Windows CI did, #317).
+        for hidden in ("#setup-next-step", "#setup-back"):
+            wizard.query_one(hidden, Button).focus()
+            await pilot.pause()
+            assert app.focused is quit_, hidden
+        opened = wizard.query_one("#setup-open", Button)
+        opened.focus()
+        await until(pilot, lambda: app.focused is opened, why)
+        blocked.release.set()
+        await settle(pilot)
+        assert _state(app).full
+        assert wizard.at == "done"
+        assert app.focused is opened
+
+    drive(scenario, settled=False, loader=blocked, setup=SetupOptions(standalone=True))
+
+
+def test_a_quick_state_keeps_the_update_answer_on_screen(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of #317: a reload's quick State shows the update answer the screen already has
+    (no flicker back to `checking`), says off at once when the settings turn the check off,
+    and the first load, with nothing known yet, says checking."""
+    from promptmend.tui.home import home_rows
+
+    latest = update_check.UpdateStatus(update_check.LATEST, "0.1.0", "x")
+    full = dataclasses.replace(gather().settled(), update=latest)
+    first = quick()
+    assert first.update.state == update_check.CHECKING
+    assert first.known_update(None) is first
+    carried = first.known_update(full)
+    assert carried.update == latest
+    assert carried.stage == QUICK
+    assert "latest" in home_rows(carried)[0].text
+    # Nothing to carry from a quick State, a check still running or one turned off.
+    assert first.known_update(first) is first
+    still = dataclasses.replace(full, update=update_check.UpdateStatus(update_check.CHECKING))
+    assert first.known_update(still) is first
+    was_off = dataclasses.replace(full, update=update_check.UpdateStatus(update_check.OFF))
+    assert first.known_update(was_off) is first
+    monkeypatch.setenv("PROMPT_UPDATE_CHECK", "false")
+    off = quick()
+    assert off.update.state == update_check.OFF
+    assert off.known_update(full) is off
+    assert home_rows(off)[0].text.endswith(" · check off")
+
+
+def test_the_checking_headline_names_only_what_is_checked(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of #317: with the usage history off, the History row says off and the headline
+    does not say it is being checked."""
+    from promptmend.tui.home import (
+        CHECKING_HEADLINE,
+        CHECKING_HEADLINE_NO_HISTORY,
+        headline,
+        home_rows,
+    )
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+    assert headline(home_rows(quick())) == (CHECKING_HEADLINE, None)
+    monkeypatch.setenv("PROMPT_HISTORY", "false")
+    rows = home_rows(quick())
+    assert next(r for r in rows if r.label == "History").text == "off"
+    assert headline(rows) == (CHECKING_HEADLINE_NO_HISTORY, None)
+
+
+def one_pool_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """asyncio's default thread pool down to one thread, as busy as the Windows CI's was: Textual
+    runs thread workers there, and on Windows each of its timers sleeps in it (#317)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    real = ManageApp.on_mount
+
+    def on_mount(self: ManageApp) -> None:
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(1))
+        real(self)
+
+    monkeypatch.setattr(ManageApp, "on_mount", on_mount)
+
+
+@pytest.mark.parametrize("pool", ["default", ONE_THREAD])
+def test_the_stages_of_an_older_reload_never_replace_a_newer_one(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, pool: str
+) -> None:
+    """#317 with #315's generation guard: within a reload the quick State comes before the
+    full one; a reload started while the first is still reading shows its own quick and full
+    States at once (the first one's slow read holds no thread a newer reload needs), and the
+    first one's full State, read after, is never shown. The update check is held, so its late
+    update (which legitimately replaces the State object) lands only at the end, and it is
+    the newer reload's."""
+    import threading
+
+    if pool == "one thread":
+        # A reload's reads never wait for that pool, nor hold it (the Windows CI's failure:
+        # reload 2 never showed even its quick State while reload 1's full read waited).
+        one_pool_thread(monkeypatch)
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+    release = threading.Event()
+    started = threading.Event()
+    finished = threading.Event()
+    loads: list[int] = []
+
+    def loader(group_by: str, first: State | None = None) -> State:
+        loads.append(1)
+        if len(loads) > 1:
+            return gather(group_by, first)
+        # The first reload's full read is the slow one.
+        started.set()
+        assert release.wait(10), f"never released\n{threads_now()}"
+        try:
+            return gather(group_by, first)
+        finally:
+            finished.set()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        seen: list[tuple[int, str]] = []
+        newer_full = threading.Event()
+        real = app._show
+
+        def show(state: State, generation: int) -> None:
+            seen.append((generation, state.stage))
+            real(state, generation)
+            if generation == 2 and state.full:
+                newer_full.set()
+
+        def why() -> object:
+            return {"seen": seen, "generation": app.generation, "shown": app.shown}
+
+        app._show = show  # type: ignore[method-assign]
+        await until(pilot, started.is_set, why)  # reload 1 is in its full read
+        assert app.state is not None  # its quick State was shown before (call_from_thread)
+        app.reload()
+        await until(pilot, newer_full.is_set, why)
+        newer = _state(app)
+        assert (app.shown, newer.full, newer.update.state) == (2, True, update_check.CHECKING)
+        release.set()
+        await until(pilot, finished.is_set, why)  # the first reload's full read ended
+        await settle(pilot)
+        assert app.state is newer  # the first reload's full State was never shown
+        # The first reload's quick State may have been shown before its show() was
+        # wrapped; what was seen is in order, each reload quick first.
+        assert (1, FULL) not in seen
+        assert seen[-2:] == [(2, QUICK), (2, FULL)]
+        # The held update check lands now: the newer reload's State with it filled in.
+        blocked.release.set()
+        landed_state = await landed(app, pilot)
+        assert app.shown == 2
+        assert landed_state.update == blocked.answer
+        assert landed_state.layers is newer.layers
+
+    drive(scenario, settled=False, loader=loader)
+    assert len(loads) == 2
+
+
+def test_a_late_answer_that_cannot_be_shown_is_unknown(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: the Version row never stays `checking`, even when the answer breaks the
+    version check."""
+    from concurrent.futures import Future
+
+    from promptmend import doctor
+
+    blocked = BlockedPypi()
+    monkeypatch.setattr(update_check, "check_configured", blocked)
+    blocked.release.set()
+    state = gather()
+    real = doctor.with_update
+
+    def broken(report: doctor.Report, update: update_check.UpdateStatus) -> doctor.Report:
+        if update.state == update_check.AVAILABLE:
+            raise RuntimeError("cannot show it")
+        return real(report, update)
+
+    monkeypatch.setattr(doctor, "with_update", broken)
+    done: Future[update_check.UpdateStatus] = Future()
+    done.set_result(blocked.answer)
+    assert state.landed(done).update.state == update_check.UNKNOWN
+    monkeypatch.setattr(doctor, "with_update", lambda *_: 1 / 0)
+    later = state.landed(done)
+    assert (later.update.state, later.pending) == (update_check.UNKNOWN, None)
+
+
 def pane(app: ManageApp, tab: str) -> base.Pane:
     return app.main.query_one(f"#{tab}-pane", base.Pane)
+
+
+async def open_tab(app: ManageApp, pilot: Pilot[int], *tabs: str) -> None:
+    """Build each tab's pane, as opening it does: only Home is built at start (#316)."""
+    for tab in tabs:
+        await app.main.build(tab)
+    await settle(pilot)
 
 
 def table_rows(app: ManageApp, tab: str, selector: str) -> dict[str, list[str]]:
@@ -275,6 +1339,50 @@ def test_digits_switch_tabs_and_t_toggles_contrast(espanso: FakeRunner) -> None:
     assert seen == [True] * 9
 
 
+def test_only_home_is_built_until_a_tab_opens(espanso: FakeRunner) -> None:
+    """#316: the other tabs are built the first time they open, by a digit, by the arrows on
+    the tab bar or by a click, and each shows the current State at once."""
+    built: list[list[str]] = []
+
+    def now(app: ManageApp) -> list[str]:
+        return [tab for tab in TABS if app.main.built(tab) is not None]
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        from textual.widgets import TabbedContent, Tabs
+
+        built.append(now(app))
+        await pilot.press("4")
+        await settle(pilot)
+        built.append(now(app))
+        triggers = pane(app, "triggers")
+        assert triggers.ready
+        assert table_rows(app, "triggers", "#triggers")
+        # The tab bar's arrows open the next tab, and build it.
+        app.main.query_one(Tabs).focus()
+        await pilot.press("right")
+        await settle(pilot)
+        assert app.main.query_one(TabbedContent).active == "history"
+        built.append(now(app))
+        await pilot.click("#--content-tab-diagnostics")
+        await settle(pilot)
+        assert app.main.query_one(TabbedContent).active == "diagnostics"
+        assert "version:" in str(pane(app, "diagnostics").query_one("#all-checks").render())
+        built.append(now(app))
+        # Opening a tab again builds nothing new.
+        await pilot.press("4", "1", "4")
+        await settle(pilot)
+        assert pane(app, "triggers") is triggers
+        assert len(app.main.query("#triggers-pane")) == 1
+
+    drive(scenario)
+    assert built == [
+        ["home"],
+        ["home", "triggers"],
+        ["home", "triggers", "history"],
+        ["home", "triggers", "history", "diagnostics"],
+    ]
+
+
 def test_header_shows_the_name_and_installed_version(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -283,7 +1391,7 @@ def test_header_shows_the_name_and_installed_version(
 
     from promptmend.tui import app as app_module
 
-    monkeypatch.setattr(app_module, "__version__", "9.8.7")
+    monkeypatch.setattr(app_module, "installed_version", lambda: "9.8.7")
     seen = []
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
@@ -301,7 +1409,7 @@ def test_header_shows_the_name_and_installed_version(
 
 
 def test_a_failing_load_is_shown_not_raised(espanso: FakeRunner) -> None:
-    def broken(group_by: str) -> State:
+    def broken(group_by: str, first: State | None = None) -> State:
         raise RuntimeError("boom")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
@@ -313,10 +1421,16 @@ def test_a_failing_load_is_shown_not_raised(espanso: FakeRunner) -> None:
         await press(app, pilot, "#edit-profile")
         assert "Select one of your profiles" in pane(app, "profiles").last_message
         await pilot.press("4")
-        await press(app, pilot, "#show-diff")
-        assert "No plan" in pane(app, "triggers").last_message
+        await settle(pilot)
+        triggers = pane(app, "triggers")
+        assert isinstance(triggers, triggers_pane.TriggersPane)
+        # Before any State the buttons that need the full one are disabled (#317); called
+        # anyway, the diff says what is missing.
+        assert all(_disabled(app, "triggers", "show-diff", "deploy", "detach"))
+        triggers._diff()
+        assert "No plan" in triggers.last_message
 
-    drive(scenario, loader=broken)
+    drive(scenario, loader=broken, quick_loader=broken)
 
 
 @pytest.mark.parametrize(
@@ -371,9 +1485,9 @@ def _rendered(widget: Widget, selector: str, width: int = 116) -> str:
 def test_home_shows_doctor_and_checks_again(espanso: FakeRunner) -> None:
     calls: list[str] = []
 
-    def loader(group_by: str) -> State:
+    def loader(group_by: str, first: State | None = None) -> State:
         calls.append(group_by)
-        return gather(group_by)
+        return gather(group_by, first)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         home = app.main.query_one("#home-pane", home_pane.HomePane)
@@ -416,6 +1530,7 @@ def test_home_warns_of_a_persona_matching_the_patterns(
     )
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "diagnostics")
         home = _rendered(pane(app, "home"), "#home-rows")
         home_tab = app.main.query_one("#home-pane", home_pane.HomePane)
         checks = {row.label: row for row in home_tab.rows}["Checks"]
@@ -433,6 +1548,7 @@ def test_home_warns_of_a_persona_matching_the_patterns(
 
 def test_settings_set_a_key_never_shows_it(saved: Path, espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
         assert settings_rows(app)["OPENROUTER_API_KEY"].value == "not set"
         # Space on a key's row does nothing; Enter opens the hidden Set key dialog.
         await on_row(app, pilot, "OPENROUTER_API_KEY", "space")
@@ -539,6 +1655,7 @@ def test_an_unexpected_error_is_shown_not_raised(
 
 def test_settings_space_toggles_history(saved: Path, espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
         row = settings_rows(app)["PROMPT_HISTORY"]
         assert (row.value, row.on, row.source) == ("on", True, "default")
         await on_row(app, pilot, "PROMPT_HISTORY", "space")
@@ -602,9 +1719,9 @@ def test_settings_r_reloads_and_never_resets(saved: Path, espanso: FakeRunner) -
     """#215: `r` is Reload on every tab, the Settings list too; reset is `u`."""
     calls: list[str] = []
 
-    def loader(group_by: str) -> State:
+    def loader(group_by: str, first: State | None = None) -> State:
         calls.append(group_by)
-        return gather(group_by)
+        return gather(group_by, first)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await pick(app, pilot, "PROMPT_OUTPUT", "clipboard")
@@ -628,10 +1745,10 @@ def test_settings_ignore_a_second_change_until_the_first_is_read_back(
     release = threading.Event()
     blocking = threading.Event()
 
-    def loader(group_by: str) -> State:
+    def loader(group_by: str, first: State | None = None) -> State:
         if blocking.is_set():
             release.wait(10)
-        return gather(group_by)
+        return gather(group_by, first)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await on_row(app, pilot, "PROMPT_HISTORY")
@@ -659,7 +1776,9 @@ def test_settings_ignore_a_second_change_until_the_first_is_read_back(
         assert app.session[-1].command == "promptmend config set PROMPT_HISTORY true"
         assert _state(app).settings.history
 
-    drive(scenario, loader=loader)
+    # One stage: the quick one reads the change back on the loop at once (#317, #348), so a
+    # slow read-back is the full read's.
+    drive(scenario, loader=loader, quick_loader=None)
 
 
 def test_settings_a_withheld_value_is_kept_by_an_empty_save(
@@ -672,6 +1791,7 @@ def test_settings_a_withheld_value_is_kept_by_an_empty_save(
     toml.write_text(f'OLLAMA_MODEL = "{KEY}"\n', encoding="utf-8")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
         assert KEY not in settings_rows(app)["OLLAMA_MODEL"].value
         await on_row(app, pilot, "OLLAMA_MODEL", "enter")
         screen = app.screen
@@ -750,6 +1870,7 @@ def test_settings_local_only_shows_in_the_diagnostics_routes(
     monkeypatch.setenv("PROMPT_PROFILE", "general")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "diagnostics")
         await on_row(app, pilot, "PROMPT_LOCAL_ONLY", "space")
         assert _state(app).settings.local_only
         routes = table_rows(app, "diagnostics", "#routes")
@@ -771,6 +1892,7 @@ def test_settings_never_show_the_persona(
     persona = "I am the head of a secret project"
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
         assert settings_rows(app)["PROMPT_PERSONA"].value == "(empty)"
         await edit_to(app, pilot, "PROMPT_PERSONA", persona)
         row = settings_rows(app)["PROMPT_PERSONA"]
@@ -793,6 +1915,7 @@ def test_settings_never_show_the_persona(
 
 def test_settings_filter(espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
         settings = settings_tab(app)
         count = settings.query_one("#settings-count", Static)
         assert str(count.render()) == f"{len(settings_model.SETTINGS)} settings"
@@ -832,9 +1955,9 @@ def test_settings_filter(espanso: FakeRunner) -> None:
 def test_settings_keys_act_only_on_their_tab(espanso: FakeRunner) -> None:
     calls: list[str] = []
 
-    def loader(group_by: str) -> State:
+    def loader(group_by: str, first: State | None = None) -> State:
         calls.append(group_by)
-        return gather(group_by)
+        return gather(group_by, first)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await on_row(app, pilot, "PROMPT_HISTORY")
@@ -1023,6 +2146,7 @@ def test_profiles_editor_unsupported_terminal(
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         from textual.widgets import DataTable
 
+        await open_tab(app, pilot, "profiles")
         table = pane(app, "profiles").query_one("#profiles", DataTable)
         table.move_cursor(row=table.get_row_index("user:mine"))
         await pilot.press("3")
@@ -1383,6 +2507,7 @@ def test_history_unreadable_store(espanso: FakeRunner, monkeypatch: pytest.Monke
     monkeypatch.setattr(HistoryStore, "stats", broken)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "history")
         note = str(pane(app, "history").query_one("#stats-note").render())
         assert note == "error: the database is damaged"
 
@@ -1651,13 +2776,13 @@ def test_an_older_slower_load_never_overwrites_a_newer_one(espanso: FakeRunner) 
     release, started = threading.Event(), threading.Event()
     loaded: list[int] = []
 
-    def loader(group_by: str) -> State:
+    def loader(group_by: str, first: State | None = None) -> State:
         n = len(loaded)
         loaded.append(n)
         if n == 1:  # the second load is slow and finishes last
             started.set()
             release.wait(10)
-        state = gather(group_by)
+        state = gather(group_by, first)
         object.__setattr__(state, "plan_error", f"load {n}")
         return state
 
@@ -1850,7 +2975,7 @@ def test_about_lists_version_runtime_and_folders(
     from promptmend.tui import brand
     from promptmend.tui.intro import AboutScreen
 
-    monkeypatch.setattr(app_module, "__version__", "9.8.7")
+    monkeypatch.setattr(app_module, "installed_version", lambda: "9.8.7")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await pilot.press("a")
@@ -1881,7 +3006,7 @@ def test_about_lists_version_runtime_and_folders(
 def test_about_before_the_state_is_read(espanso: FakeRunner) -> None:
     from promptmend.tui.intro import AboutScreen
 
-    def broken(group_by: str) -> State:
+    def broken(group_by: str, first: State | None = None) -> State:
         raise RuntimeError("boom")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
@@ -1915,7 +3040,7 @@ def test_brand_is_ascii() -> None:
 
 
 def test_about_says_whether_a_newer_release_exists(monkeypatch: pytest.MonkeyPatch) -> None:
-    from promptmend import update_check
+    from promptmend import doctor, update_check
     from promptmend.tui import brand
 
     monkeypatch.setattr(brand, "runtime", lambda: {"python": "3", "textual": "8"})
@@ -1925,7 +3050,9 @@ def test_about_says_whether_a_newer_release_exists(monkeypatch: pytest.MonkeyPat
         return next(f for f in brand.about_facts(install, "0.21.0", update) if "Update:" in f)
 
     newer = update_check.UpdateStatus(update_check.AVAILABLE, "0.22.0", "x")
-    assert update_line(newer) == f"Update:    0.22.0 available: {update_check._UV}"
+    hint = doctor.upgrade_hint({"channel": "uv", "editable": False})
+    assert hint.endswith(update_check._UV)
+    assert update_line(newer) == f"Update:    0.22.0 available: {hint}"
     assert update_line(None).endswith("unknown (pypi.org could not be asked)")
     assert update_line(update_check.UpdateStatus(update_check.OFF)).endswith(
         "not checked (PROMPT_UPDATE_CHECK=false)"
@@ -1943,6 +3070,7 @@ def test_every_button_has_its_command_as_tooltip(espanso: FakeRunner) -> None:
     seen: dict[str, object] = {}
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, *TABS)
         for screen in (app.main, app.screen):
             for button in screen.query(Button):
                 seen[button.id or ""] = button.tooltip

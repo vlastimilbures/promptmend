@@ -97,13 +97,20 @@ def test_contributing_tree_lists_every_module() -> None:
     assert missing == [], f"add {missing} to the project tree in CONTRIBUTING.md"
 
 
-_FENCE = re.compile(r"^```[^\n]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
+# A fenced code block, top level or indented under a list item (#362): ``` (no backtick in
+# its info string) or ~~~, closed by a fence of the same character at least as long, or left
+# open to the end of the page. The runs are possessive, so an opener never shrinks to fit.
+_FENCE = re.compile(
+    r"^[ \t]*(?:(?P<b>`{3,}+)[^`\n]*|(?P<t>~{3,}+)[^\n]*)\n(?P<body>.*?)"
+    r"(?:^[ \t]*(?(b)(?P=b)`*|(?P=t)~*)[ \t]*$|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
 _INVOCATION = re.compile(r"(?<![\w/\\-])promptmend(?![\w:=-])([^`\n#]*)")
 _FLAG = re.compile(r"(?<![\w-])(--?[a-zA-Z][\w-]*)")
 # `promptmend config get NAME` / `set NAME VALUE`: the later spans are siblings.
 _SIBLINGS = re.compile(r"`promptmend ([^`]+)`((?:\s*/\s*`[^`]+`)+)")
 # Options the docs name for other tools: uv, the bench, the retired installer option.
-_OTHER_TOOLS_FLAGS = {"--force", "--persona", "--suite", "--with-config"}
+_OTHER_TOOLS_FLAGS = {"--force", "--no-cache", "--persona", "--suite", "--with-config"}
 # A line or span that runs another tool on the package (`uv tool install promptmend -c …`,
 # `brew upgrade promptmend`) names no promptmend command.
 _OTHER_TOOL = re.compile(r"^\s*(?:uv|uvx|brew|winget|gh|pip)\s")
@@ -118,7 +125,7 @@ def _documented_invocations(text: str) -> list[str]:
     """What follows `promptmend` in each code block line and inline code span (a
     comment cut off), e.g. ` history export [--format json|csv] [-o FILE]`, plus each
     `/ x` sibling span after one, under the first span's parent command."""
-    lines = [line for b in _FENCE.findall(text) for line in b.splitlines()]
+    lines = [line for b in _FENCE.finditer(text) for line in b["body"].splitlines()]
     spans = [s for s in [*lines, *_spans(text)] if not _OTHER_TOOL.match(s)]
     found = [m for span in spans for m in _INVOCATION.findall(span)]
     for first, rest in _SIBLINGS.findall(_FENCE.sub("", text).replace("\n", " ")):
@@ -126,6 +133,40 @@ def _documented_invocations(text: str) -> list[str]:
         parent = " ".join(path[:-1])
         found += [f" {parent} {sibling}" for sibling in re.findall(r"`([^`]+)`", rest)]
     return found
+
+
+# A fence indented under a list item is code like a top-level one (#362): its lines are read
+# as invocations, and the prose after it keeps its own spans, so a plain-text "promptmend is
+# not changed" is never read as a command. A fence closes only on its own character, at least
+# as long, else at the end of the page; a line opening with ```promptmend …``` is a span.
+@pytest.mark.parametrize(
+    ("text", "invocations", "spans"),
+    [
+        (
+            "1. Run:\n\n   ```bash\n   promptmend doctor\n   ```\n\n"
+            "Then promptmend is not changed; run `promptmend ui`.\n",
+            [" doctor", " ui"],
+            ["promptmend ui"],
+        ),
+        (
+            "2. Or:\n\n    ~~~~\n    promptmend setup\n    ```\n    `promptmend persona`\n"
+            "    ~~~~~\n\nThen `promptmend ui`.\n",
+            [" setup", " persona", " ui"],
+            ["promptmend ui"],
+        ),
+        ("````md\n```\npromptmend history\n", [" history"], []),
+        (
+            "```promptmend stats``` prints the totals.\n\n```\npromptmend doctor\n```\n",
+            [" doctor", " stats"],
+            ["promptmend stats"],
+        ),
+    ],
+)
+def test_indented_fences_are_code_blocks(
+    text: str, invocations: list[str], spans: list[str]
+) -> None:
+    assert _documented_invocations(text) == invocations
+    assert _spans(text) == spans
 
 
 # The Unreleased notes plus the newest release's, so the check never runs on an empty or

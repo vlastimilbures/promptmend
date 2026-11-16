@@ -1,5 +1,6 @@
 import contextlib
 import csv
+import errno
 import io
 import json
 import os
@@ -698,6 +699,285 @@ def test_a_spool_that_cannot_be_written_counts_the_record_as_lost(
     assert not store.spool_path.exists()
 
 
+def _timeout(*args: Any, **kwargs: Any) -> None:
+    raise TimeoutError("history write budget spent")
+
+
+# #335: under contention on Windows the spool's lock was not free in the few ms the budget
+# leaves after a failed write, and the write was neither stored, spooled nor counted.
+def test_a_write_whose_spool_lock_is_busy_is_still_counted(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert store.record(_op())
+    real_lock = HistoryStore._sidecar_lock
+
+    def busy(self: HistoryStore, deadline: float) -> Any:
+        raise TimeoutError("history sidecar is locked")
+
+    monkeypatch.setattr(HistoryStore, "_write", _timeout)
+    monkeypatch.setattr(HistoryStore, "_sidecar_lock", busy)
+    assert store.record(_op()) is False
+    monkeypatch.setattr(HistoryStore, "_sidecar_lock", real_lock)
+    assert not store.spool_path.exists()
+    assert not store.lost_path.exists()
+    health = store.health()
+    assert (health.operations, health.spooled, health.lost_writes) == (1, 0, 1)
+    assert health.tracking_incomplete
+    # The drop file holds nothing and needs no lock; reset() removes it with the marker.
+    (drop,) = store._drop_files()
+    assert drop.read_bytes() == b""
+    store.reset()
+    assert store._drop_files() == []
+    assert store.health().lost_writes == 0
+
+
+def test_a_marker_that_cannot_be_written_counts_in_a_drop_file(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(self: HistoryStore, dropped: int) -> None:
+        raise PermissionError("in use by another process")
+
+    store.path.parent.mkdir(parents=True)
+    monkeypatch.setattr(HistoryStore, "_count_lost", fail)
+    assert store._mark_lost() is True
+    # The spool cannot be written, and neither can the marker (Windows: os.replace refused).
+    monkeypatch.setattr(HistoryStore, "_save_spool", fail)
+    monkeypatch.setattr(HistoryStore, "_write", _timeout)
+    assert store.record(_op()) is False
+    # An entry that is not valid, dropped when the spool is settled after a commit.
+    monkeypatch.undo()
+    monkeypatch.setattr(HistoryStore, "_count_lost", fail)
+    store.spool_path.write_text(json.dumps({"version": 1, "records": ["text"]}), "utf-8")
+    assert store.record(_op())
+    assert not store.spool_path.exists()
+    assert len(store._drop_files()) == 3
+    assert not store.lost_path.exists()
+    assert store.health().lost_writes == 3
+
+
+def test_health_combines_the_marker_and_the_drop_files(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    store.lost_path.write_text(
+        json.dumps({"lost_writes": 2, "last_lost_utc": "2026-10-01T09:00:00.000000Z"}), "utf-8"
+    )
+    assert store._count_dropped(2)
+    health = store.health()
+    assert health.lost_writes == 4
+    assert health.last_lost_utc is not None
+    assert health.last_lost_utc > "2026-10-01T09:00:00.000000Z"
+
+    def unlistable(self: HistoryStore) -> list[Path]:
+        raise PermissionError("cannot list the folder")
+
+    monkeypatch.setattr(HistoryStore, "_drop_files", unlistable)
+    health = store.health()
+    assert (health.lost_writes, health.tracking_incomplete) == (2, True)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_a_drop_file_is_owner_only(store: HistoryStore) -> None:
+    store.path.parent.mkdir(parents=True)
+    assert store._count_dropped(1)
+    (drop,) = store._drop_files()
+    assert stat.S_IMODE(drop.stat().st_mode) == 0o600
+
+
+def test_many_dropped_writes_take_one_drop_file(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(self: HistoryStore, dropped: int) -> None:
+        raise PermissionError("in use by another process")
+
+    # A spool of many entries that are not valid, settled while the marker cannot be written.
+    store.path.parent.mkdir(parents=True)
+    dropped = 250_000
+    store.spool_path.write_text(json.dumps({"version": 1, "records": [0] * dropped}), "utf-8")
+    monkeypatch.setattr(history, "_SPOOL_BYTES", 10 * 1024 * 1024)
+    monkeypatch.setattr(HistoryStore, "_count_lost", fail)
+    store._settle_spool(set(), (), time.monotonic() + 5)
+    (drop,) = store._drop_files()
+    assert drop.name.endswith(f".{dropped}.drop")
+    assert not store.spool_path.exists()
+    assert store.health().lost_writes == dropped
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "history.lost.x.drop",
+        f"history.lost.{'a' * 32}.0.drop",
+        f"history.lost.{'a' * 32}.01.drop",
+        f"history.lost.{'a' * 32}.-3.drop",
+        f"history.lost.{'a' * 32}.².drop",
+        f"history.lost.{'a' * 32}.drop",
+    ],
+)
+def test_a_drop_file_of_another_shape_counts_once_and_is_reported(
+    store: HistoryStore, name: str
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    (store.path.parent / name).touch()
+    health = store.health()
+    assert (health.lost_writes, health.tracking_incomplete) == (1, True)
+
+
+def test_a_drop_file_removed_while_health_reads_is_skipped(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert store.record(_op())
+    gone = store.lost_path.with_name(f"{history.LOST_NAME}.{'b' * 32}.4.drop")
+    monkeypatch.setattr(HistoryStore, "_drop_files", lambda self: [gone])
+    health = store.health()  # a concurrent reset() removed it between the listing and stat
+    assert (health.lost_writes, health.tracking_incomplete) == (0, False)
+
+
+# A garbage lock file (not ASCII) once made the release raise after the spool was written,
+# and the write was then counted as lost too.
+def test_a_garbage_lock_file_never_fails_the_work_done_under_it(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert store.record(_op())
+    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    real_save = HistoryStore._save_spool
+
+    def save(self: HistoryStore, records: list[object]) -> None:
+        real_save(self, records)
+        lock.write_bytes(b"\xff\xfe not ascii")
+
+    monkeypatch.setattr(HistoryStore, "_save_spool", save)
+    monkeypatch.setattr(HistoryStore, "_write", _timeout)
+    assert store.record(_op()) is False
+    lock.unlink()
+    health = store.health()
+    assert (health.spooled, health.lost_writes) == (1, 0)
+
+
+def test_a_spool_that_is_not_valid_is_replaced_and_counted_once(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    store.spool_path.write_text("{not json", "utf-8")
+    monkeypatch.setattr(HistoryStore, "_write", _timeout)
+    assert store.record(_op()) is False
+    assert len(_spool(store)["records"]) == 1
+    assert _lost(store) == 1
+    assert store._drop_files() == []
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs POSIX directory modes, which root ignores",
+)
+def test_a_folder_that_cannot_be_listed_never_hides_the_drop_files(store: HistoryStore) -> None:
+    store.path.parent.mkdir(parents=True)
+    for _ in range(3):
+        assert store._count_dropped(1)
+    # Write and search but no read (Windows: an ACL denying List Folder): Path.glob would
+    # return [] here and hide all three.
+    store.path.parent.chmod(0o300)
+    try:
+        health = store.health()
+        with pytest.raises(HistoryError, match="cannot clear"):
+            store.reset()
+    finally:
+        store.path.parent.chmod(stat.S_IRWXU)
+    assert health.tracking_incomplete
+    assert store.health().lost_writes == 3
+    store.reset()
+    assert store.health().lost_writes == 0
+
+
+def test_a_sidecar_lock_pending_deletion_on_windows_is_waited_for(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    real_open = os.open
+    refused: list[str] = []
+
+    def pending_once(path: Any, flags: int, *args: Any) -> int:
+        if str(path).endswith(".lock") and not refused:
+            refused.append(str(path))
+            raise PermissionError("delete pending")
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(os, "open", pending_once)
+    monkeypatch.setattr(history, "_WINDOWS", True)
+    with store._sidecar_lock(time.monotonic() + 1):
+        assert store.lost_path.with_name(f"{history.LOST_NAME}.lock").exists()
+    assert len(refused) == 1
+    # Elsewhere a PermissionError is a real denial: it is not retried.
+    refused.clear()
+    monkeypatch.setattr(history, "_WINDOWS", False)
+    with pytest.raises(PermissionError), store._sidecar_lock(time.monotonic() + 1):
+        pass
+
+
+def test_a_lock_whose_nonce_cannot_be_written_is_removed(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    real_fdopen = os.fdopen
+    opened: list[int] = []
+
+    def no_fdopen(fd: int, *args: Any, **kwargs: Any) -> Any:
+        opened.append(fd)
+        raise OSError("no handle")
+
+    monkeypatch.setattr(os, "fdopen", no_fdopen)
+    with pytest.raises(OSError, match="no handle"), store._sidecar_lock(time.monotonic() + 1):
+        pass
+    assert not lock.exists()
+    # Closed, not leaked: EBADF (Windows raises WinError 6, ERROR_INVALID_HANDLE, which
+    # CPython maps to EBADF; the winerror check keeps it platform-neutral either way).
+    with pytest.raises(OSError) as closed:  # noqa: PT011 (checked by errno below)
+        os.fstat(opened[0])
+    assert closed.value.errno == errno.EBADF or getattr(closed.value, "winerror", None) == 6
+
+    class FullDisk:
+        def __init__(self, fd: int) -> None:
+            self.handle = real_fdopen(fd, "w", encoding="ascii")
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self.handle.close()
+
+        def write(self, text: str) -> int:
+            raise OSError("disk full")
+
+    monkeypatch.setattr(os, "fdopen", lambda fd, *a, **k: FullDisk(fd))
+    with pytest.raises(OSError, match="disk full"), store._sidecar_lock(time.monotonic() + 1):
+        pass
+    assert not lock.exists()
+
+
+def test_a_drop_file_with_an_odd_time_is_still_counted(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    assert store._count_dropped(2)
+    assert store._count_dropped(3)
+
+    class OddTime(datetime):
+        @classmethod
+        def fromtimestamp(cls, t: float, tz: Any = None) -> Any:
+            raise OverflowError("timestamp out of range")
+
+    monkeypatch.setattr(history, "datetime", OddTime)
+    health = store.health()
+    assert (health.lost_writes, health.last_lost_utc) == (5, None)
+
+
+def test_a_drop_file_that_cannot_be_created_is_reported(tmp_path: Path) -> None:
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    assert HistoryStore(blocker / history.DB_NAME)._count_dropped(1) is False
+
+
 # #213: the first write on a slow machine (endpoint scanning) ran past its budget and was lost.
 def test_a_first_write_that_times_out_is_replayed_by_stats(
     store: HistoryStore, monkeypatch: pytest.MonkeyPatch
@@ -925,10 +1205,14 @@ def test_concurrent_writers_complete_or_drop_without_duplicates(
     assert len(keys) == len(set(keys)) == 2 * len(ids)
     # Each write is one transaction: no operation without its attempts.
     assert {op_id for op_id, _ in keys} == ids
-    # Most writes get through; the rest were spooled (and are stored now) or counted as lost.
+    # Most writes get through; the rest were spooled (and are stored now) or counted as lost,
+    # even one whose spool lock was not free in time (#335). An operation that is missing had
+    # both of its calls fail (any() gets a list, so both run) and neither spooled (a spooled
+    # record is stored by now), so each of the two was counted.
     assert len(stored) > count
-    if len(ids) < 4 * count:
-        assert store.health().lost_writes > 0
+    health = store.health()
+    files = sorted(p.name for p in store.path.parent.iterdir())
+    assert health.lost_writes >= 2 * (4 * count - len(ids)), (health, files)
 
 
 _MARKER = """
@@ -943,9 +1227,13 @@ print(sum(store._mark_lost() for _ in range(25)))
 def test_the_sidecar_marker_is_updated_atomically(store: HistoryStore, tmp_path: Path) -> None:
     store.path.parent.mkdir(parents=True)
     outputs = _run_workers(tmp_path, _MARKER, lambda worker: [str(store.path)])
-    # Every successful update is counted (no lost update), and the file is whole JSON.
-    assert _lost(store) == sum(outputs) > 0
-    assert sorted(p.name for p in store.path.parent.iterdir()) == [history.LOST_NAME]
+    # Every mark is counted (no lost update), in the marker or, when its lock was not free in
+    # time, in a drop file of its own; the marker is whole JSON and no temp file is left.
+    assert sum(outputs) == 4 * 25
+    drops = store._drop_files()
+    assert _lost(store) + len(drops) == store.health().lost_writes == 4 * 25
+    names = {p.name for p in store.path.parent.iterdir()} - {p.name for p in drops}
+    assert names == {history.LOST_NAME}
 
 
 # -- services ------------------------------------------------------------------------------
@@ -1268,9 +1556,12 @@ def test_a_stale_sidecar_lock_is_broken_and_a_held_one_times_out(
     assert store._mark_lost() is True  # left by a killed process
     lock.touch()
     _use_real_budget(monkeypatch)
-    assert store._mark_lost() is False  # held: give up within the lock budget
+    # Held: give up on the marker within the lock budget, but count it in a drop file (#335).
+    assert store._mark_lost() is True
     assert _lost(store) == 1
+    assert len(store._drop_files()) == 1
     lock.unlink()
+    assert store.health().lost_writes == 2
 
 
 def test_a_service_migrates_an_empty_database(store: HistoryStore) -> None:
@@ -1394,4 +1685,9 @@ def test_a_write_blocked_everywhere_gives_up(
         assert time.monotonic() - started < 5
         other.execute("ROLLBACK")
     lock.unlink()
+    # Neither stored nor spooled, so counted: in a drop file, as the marker's lock was held.
     assert not store.lost_path.exists()
+    health = store.health()
+    assert (health.operations, health.spooled, health.lost_writes) == (1, 0, 1)
+    assert health.tracking_incomplete
+    assert health.last_lost_utc is not None

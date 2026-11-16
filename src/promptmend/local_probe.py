@@ -1,4 +1,4 @@
-"""Whether a local model server answers (#220): one short GET to a loopback Ollama or LM
+"""Whether a local model server answers: one short GET to a loopback Ollama or LM
 Studio, for doctor and the interface only, never on the trigger path
 (tests/test_trigger_contract.py). Nothing is sent but the request line; any HTTP answer, an
 error status included, means the server is there."""
@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from .providers.base import is_loopback
 
-# Seconds per phase: a loopback server answers at once, and nothing listening refuses at once.
+# Seconds per phase. A loopback server answers at once. Where nothing listens, macOS and Linux
+# refuse at once, but Windows retries a refused connect for about 2 s, so there a probe of
+# 127.0.0.1 waits out this timeout and one of localhost (::1 first) twice (#365).
 TIMEOUT = 0.5
 
 

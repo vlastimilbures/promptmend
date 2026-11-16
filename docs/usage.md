@@ -93,6 +93,30 @@ A rewrite takes a few seconds on `-i-` and longer on `-ip-` (measured times are 
 [benchmark](benchmark.md#at-a-glance)), at most the call's time limit
 (`PROMPT_TIMEOUT_SECONDS`, `PROMPT_PRO_TIMEOUT_SECONDS` for the pro tier).
 
+That limit is a hard one. Whatever blocks a run before its result is printed (a name lookup or
+proxy discovery that never returns, a clipboard that does not answer, a server that sends its
+reply a byte at a time), it ends no later than the limit plus 2 seconds, counted from the
+moment the `promptmend` command starts its own code; Python's start-up before that is not
+counted. The result is then the
+`[promptmend: … timed out after …s]` marker, exit code 0, and nothing else. The provider's
+own timeout counts from its request, so it prints that marker first only when the run reached
+its request within 1.5 seconds; otherwise, or when something that timeout cannot see blocks,
+the watchdog prints it. If the rewrite came back but copying it to the clipboard
+([clipboard output](#output-paste-or-clipboard) or `--copy`) stalls, the marker says the
+clipboard did not answer and the rewrite is pasted instead.
+
+The watchdog is a thread that steps in at the limit plus 1.5 seconds. From then on no request
+is started, not even a retry; it writes the usage history for up to 0.4 seconds, then prints
+its marker and ends the process. A request the run had already begun (one still waiting for
+its name lookup, connection or TLS handshake) may still go out, during that wait or in the few
+milliseconds between the marker and the exit; its answer is ignored. A run whose output is
+already out but whose usage-history write is still going ends at once at the limit plus 1.5
+seconds, or at the limit plus 2 seconds if its output was still being printed then, or as
+soon as its output is flushed, if that is later, and that history row is lost. A run that is still printing its own result is never cut off or
+printed over, even past the limit plus 2 seconds (Espanso not reading its output, say). Being
+a thread, the watchdog can also be delayed by a long step that holds Python's lock (a regular
+expression running over a huge draft, say) until that step ends.
+
 Do not type or switch windows while it runs. Espanso pastes the result wherever the focus is
 when the answer arrives, and other triggers do not expand until it finishes. Writing the
 [usage history](privacy.md#usage-history) adds up to 0.25 s after the output (1 s once, for
@@ -101,6 +125,9 @@ the write that creates the file).
 [Clipboard output](#output-paste-or-clipboard) removes the misplaced paste: nothing is pasted
 on success, so switching windows during a long wait is safe. Espanso still erases the trigger
 where the focus is, so do not type.
+
+If the trigger stays and nothing is pasted, see [The trigger stays and nothing
+happens](troubleshooting.md#the-trigger-stays-and-nothing-happens) in Troubleshooting.
 
 ## Output: paste or clipboard
 
@@ -251,7 +278,8 @@ recognised as ours and updated. `detach` likewise removes only files whose conte
 what was written, and reports any you edited.
 
 The launcher written into the matches is the install channel's stable entry point (uv's tool
-bin, Homebrew's `bin/`), never a versioned path an upgrade would remove; `--launcher PATH`
+bin, Homebrew's `bin/`, WinGet's alias, or on Windows the exe the one-command install put in
+`%LOCALAPPDATA%\Programs\promptmend`), never a versioned path an upgrade would remove; `--launcher PATH`
 overrides it. A manifest entry for a file that no longer exists (its folder was deleted, or
 Espanso now uses another config folder) is forgotten by the next `deploy`; until then `doctor`
 mentions it but does not judge its launcher.

@@ -1,13 +1,13 @@
 """The setup wizard: `promptmend setup` in a terminal, and Home's "Setup…". One step at a time
 (Welcome, provider, profile, keys, Espanso, test, done), each picked from a
 list rather than typed, each change made through the same service as its headless command and
-logged as that command. What each step says comes from setup_guide.py (no Textual)."""
+logged as that command. What each step says comes from setup_guide.py, and what it decides and
+writes from setup_flow.py, shared with `setup --non-interactive` (neither imports Textual)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.text import Text
@@ -27,10 +27,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
-from .. import config, config_files, deploy, setup_guide, smoke
-from ..commands import common
-from ..commands import settings as settings_cmd
-from ..commands import setup as setup_cmd
+from .. import config, deploy, setup_flow, setup_guide, smoke
 from ..config import secret_names
 from . import teach
 from .base import error_message, plan_digest, result_text
@@ -45,7 +42,7 @@ class SetupOptions:
     """`setup`'s options the wizard honours; ``standalone`` when `setup` opened it (Done then
     quits), else it was opened from Home and closes back to it. ``provider`` and ``profile``
     preselect a choice, ``deploy`` True puts the focus on Install (still a press) and False
-    skips that step, as ``smoke_test`` False skips the test (#244)."""
+    skips that step, as ``smoke_test`` False skips the test."""
 
     espanso_dir: str | None = None
     launcher: str | None = None
@@ -60,19 +57,7 @@ class SetupOptions:
 def make_plan(options: SetupOptions) -> tuple[deploy.Plan, str | None]:
     """The deploy plan for ``options`` (as `setup --espanso-dir --launcher` makes it), and why
     the default Espanso folder was used when `espanso path config` gave none."""
-    fallback = None
-    if options.espanso_dir is not None:
-        common.no_key(options.espanso_dir, "--espanso-dir")
-        target = Path(options.espanso_dir).expanduser().resolve()
-    else:
-        found = deploy.locate_espanso_dir()
-        target, fallback = found.path.resolve(), found.fallback
-    if options.launcher is not None:
-        common.no_key(options.launcher, "--launcher")
-        launcher = options.launcher
-    else:
-        launcher = str(deploy.resolve_launcher().path)
-    return deploy.plan(target, deploy.launcher_text(launcher), deploy.Manifest.load()), fallback
+    return setup_flow.read_plan(options.espanso_dir, options.launcher)
 
 
 class SetupScreen(Screen[None]):
@@ -87,6 +72,7 @@ class SetupScreen(Screen[None]):
         self.at = "welcome"
         self.plan: deploy.Plan | None = None
         self.plan_error: str | None = None
+        self.plan_asked = False
         self.tested: bool | None = None
         self.working = False
         self.keys: list[setup_guide.KeyRow] = []
@@ -188,14 +174,12 @@ class SetupScreen(Screen[None]):
     def show(self, state: State) -> None:
         """Fill every step from a fresh State (the app calls this after each reload)."""
         notes = []
-        if common.legacy_env():
-            notes.append(
-                "PROMPTMEND_ENV is set, so your settings and keys stay in that file; this "
-                "setup cannot save them (edit that file instead)."
-            )
-        elif unread := setup_guide.unread_env_note(config.unread_env_files()):
-            notes.append(unread)
-        notes.append(_history_line(state))
+        where = setup_flow.storage()
+        if where.legacy:
+            notes.append(setup_guide.LEGACY_NOTE)
+        elif where.unread:
+            notes.append(where.unread)
+        notes.append(setup_guide.history_line(state.settings.history))
         self.query_one("#setup-welcome-notes", Static).update("\n".join(notes))
         self._fill(
             "#setup-providers",
@@ -208,7 +192,7 @@ class SetupScreen(Screen[None]):
             self.options.profile,
         )
         self.keys = setup_guide.key_rows(state.layers, state.settings, state.triggers)
-        legacy = common.legacy_env()
+        legacy = where.legacy
         self.query_one("#setup-keys-intro", Static).update(
             setup_guide.legacy_keys_intro(legacy) if legacy else setup_guide.KEYS_INTRO
         )
@@ -219,9 +203,30 @@ class SetupScreen(Screen[None]):
         for row in self.keys:
             self.query_one(f"#setup-line-{row.name}", Static).update(setup_guide.key_line(row))
         servers = next((c for c in state.report.checks if c.id == "local_servers"), None)
-        self.query_one("#setup-servers", Static).update(servers.message if servers else "")
-        self._refresh_plan()
-        self.go(self.at)
+        line = servers.message if servers else ""
+        if not state.full:  # a quick State
+            line = (
+                "Checking whether a local server answers…"
+                if state.failed is None
+                else "Not checked whether a local server answers: the checks could not run."
+            )
+        self.query_one("#setup-servers", Static).update(line)
+        # The Espanso step reads its own plan: once per reload (its full State), and at once
+        # the first time, so a quick State never asks Espanso twice.
+        if state.full or not self.plan_asked:
+            self.plan_asked = True
+            self._refresh_plan()
+        # Each stage of a reload comes here: the person's place (a typed key field, a
+        # button) keeps the focus; it moves only when nothing in this step has it.
+        self.go(self.at, refocus=not self._focus_in_step())
+
+    def _focus_in_step(self) -> bool:
+        """Whether the focus is in the current step or on its Back/Next row."""
+        focused = self.focused
+        if focused is None:
+            return False
+        holders = (self.query_one(f"#setup-{self.at}"), self.query_one("#setup-nav"))
+        return any(holder in focused.ancestors_with_self for holder in holders)
 
     def _fill(self, selector: str, choices: list[setup_guide.Choice], preset: str | None) -> None:
         options = self.query_one(selector, OptionList)
@@ -240,7 +245,7 @@ class SetupScreen(Screen[None]):
             except OptionDoesNotExist:
                 options.highlighted = 0
 
-    def go(self, step: str) -> None:
+    def go(self, step: str, *, refocus: bool = True) -> None:
         self.at = step
         self.query_one("#setup-steps", ContentSwitcher).current = f"setup-{step}"
         n = self.order.index(step) + 1 if step in self.order else 1
@@ -251,10 +256,18 @@ class SetupScreen(Screen[None]):
             mark = "▶ " if id_ == step else "✓ " if i < n - 1 else "  "
             rail.append(f"{mark}{setup_guide.STEPS[id_]}\n", style="bold" if id_ == step else "")
         self.query_one("#setup-rail", Static).update(rail)
-        self.query_one("#setup-back", Button).disabled = step == self.order[0]
-        self.query_one("#setup-nav").display = step != "done"
+        done = step == "done"
+        # Hidden on the last step, and disabled too: Textual can focus a button whose row is
+        # hidden (focusable ignores an ancestor's display), so a focus already on its way to
+        # Next, or Next's hiding moving the focus to its sibling Back, would leave the focus
+        # on a button nobody sees. Disabled, neither can take it.
+        self.query_one("#setup-back", Button).disabled = step == self.order[0] or done
+        self.query_one("#setup-next-step", Button).disabled = done
+        self.query_one("#setup-nav").display = not done
         if step == "done":
-            self._show_done()
+            # Its own focus (Quit): the hidden Next must not take it after.
+            self._show_done(focus=refocus)
+            return
         focus = {"provider": "#setup-providers", "profile": "#setup-profiles"}.get(step)
         if (
             step == "espanso"
@@ -262,6 +275,8 @@ class SetupScreen(Screen[None]):
             and not self.query_one("#setup-deploy", Button).disabled
         ):
             focus = "#setup-deploy"
+        if not refocus:
+            return
         if focus:
             self.call_after_refresh(self.query_one(focus).focus)
         else:
@@ -324,10 +339,10 @@ class SetupScreen(Screen[None]):
         if option is None or option.id is None:
             return True
         value = option.id
-        legacy = common.legacy_env()
+        legacy = setup_flow.storage().legacy
         if legacy:
             # Nothing can be saved (as headless setup's writable=False): say so and move on.
-            if setup_cmd.current_choice(name) != value:
+            if setup_flow.current_choice(name) != value:
                 self.app.notify(
                     f"{name} not saved: {config.ENV_FILE_VAR} is set, so settings stay in "
                     f"{legacy}; edit that file instead.",
@@ -336,9 +351,9 @@ class SetupScreen(Screen[None]):
                 )
             return True
         try:
-            message, argv = setup_cmd.save_choice(name, value)
+            message, argv = setup_flow.save_choice(name, value)
         except Exception as exc:
-            command = teach.equivalent("config", *setup_cmd.choice_command(name, value))
+            command = teach.equivalent("config", *setup_flow.choice_command(name, value))
             self.report(error_message(exc), error=True, command=command)
             return False
         if message:
@@ -353,18 +368,10 @@ class SetupScreen(Screen[None]):
             for name in secret_names()
             if (field := self.query_one(f"#setup-key-{name}", Input)).value.strip()
         ]
-        if not typed or common.legacy_env():
+        if not typed or setup_flow.storage().legacy:
             return True
-
-        def save() -> str:
-            saved = []
-            for name, value in typed:
-                settings_cmd.store_key(name, value)
-                saved.append("; ".join([f"{name} saved", *settings_cmd.after_save(name)]))
-            return "; ".join(saved)
-
         command = "; ".join(teach.for_setting("set-key", name) for name, _ in typed)
-        ok = self.attempt(save, command=command)
+        ok = self.attempt(lambda: setup_flow.save_keys(typed), command=command)
         if ok:
             for name, _ in typed:
                 self.query_one(f"#setup-key-{name}", Input).value = ""
@@ -406,9 +413,9 @@ class SetupScreen(Screen[None]):
         lines += [f"  {name:<{width}}  {words}" for name, words in setup_guide.file_rows(plan)]
         lines += ["", setup_guide.deploy_summary(plan)]
         self.query_one("#setup-files", Static).update("\n".join(lines))
-        button.disabled = plan.is_noop or plan.only_forgets
+        button.disabled = setup_flow.in_sync(plan)
         if self.at == "done":
-            self._show_done()
+            self._show_done(focus=not self._focus_in_step())
 
     @on(Button.Pressed, "#setup-deploy")
     def _deploy(self) -> None:
@@ -427,7 +434,7 @@ class SetupScreen(Screen[None]):
                     "the match files changed since they were read; nothing was written. "
                     "Look at the new list and install again"
                 )
-            outcome = deploy.apply(plan, {})  # an edited file is kept, never overwritten
+            outcome = setup_flow.install(plan)  # an edited file is kept, never overwritten
             lines = list(outcome.lines)
             if outcome.changed:
                 if options.no_restart:
@@ -476,19 +483,27 @@ class SetupScreen(Screen[None]):
 
     # The last step.
 
-    def _show_done(self) -> None:
+    def _show_done(self, *, focus: bool = True) -> None:
+        """The checklist; ``focus`` puts the focus on Quit (Close), off when a refresh comes
+        while the person is already somewhere in this step."""
         state = self.manage.state
         if state is None:
             return
         summary = Text()
         for row in setup_guide.done_rows(
-            state.settings, self.keys, self.plan, self.tested, common.legacy_env(), self.skipped
+            state.settings,
+            self.keys,
+            self.plan,
+            self.tested,
+            setup_flow.storage().legacy,
+            self.skipped,
         ):
             summary.append("✓ " if row.ok else "✗ ", style="green" if row.ok else "yellow")
             summary.append(f"{row.label}: ", style="bold")
             summary.append(f"{row.text}\n")
         self.query_one("#setup-summary", Static).update(summary)
-        self.call_after_refresh(self.query_one("#setup-quit").focus)
+        if focus:
+            self.call_after_refresh(self.query_one("#setup-quit").focus)
 
     @on(Button.Pressed, "#setup-open")
     def _open(self) -> None:
@@ -500,25 +515,3 @@ class SetupScreen(Screen[None]):
             self.app.exit(0)
         else:
             self.dismiss()
-
-
-def _history_line(state: State) -> str:
-    if not state.settings.history:
-        return "Usage history is off; nothing is recorded."
-    return (
-        "Usage history is on: metadata only (trigger, model, outcome, tokens, cost), never "
-        "your text or keys, kept on this device. Off: `promptmend config set PROMPT_HISTORY "
-        "false`."
-    )
-
-
-def needs_setup(state: State) -> bool:
-    """Nothing is set up yet: no config.toml, no key, and no match file installed. A bare
-    `promptmend` then opens the wizard by itself, once."""
-    if common.legacy_env() or state.plan is None:
-        return False
-    if config_files.is_file(config.settings_file()):
-        return False
-    if any(state.layers.entries[name].value for name in secret_names()):
-        return False
-    return all(step.state == deploy.MISSING for step in state.plan.steps)

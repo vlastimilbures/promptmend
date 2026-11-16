@@ -41,16 +41,51 @@ deployed trigger uses it.
 | `[Espanso]: An error occurred during rendering` | The CLI the matches call is gone or broken: the checkout of an editable install was moved or deleted, or the tool was uninstalled without `promptmend espanso detach`. Once a CLI runs again, `promptmend doctor` reports `launcher: the deployed matches call …, which is gone`. [Install](install.md) it again, then run `promptmend espanso deploy`, or `promptmend espanso detach` to remove the triggers. On Windows, match files deployed by 0.20.0 or earlier (#18) (or a trigger of your own copied from one) run the CLI through PowerShell, which fails on every trigger: run `promptmend espanso deploy`, and give your own triggers the `type: script` shape (see [Your own triggers](usage.md#your-own-triggers)). `espanso log` shows the underlying error |
 | `doctor` reports `launcher: the deployed matches call …, this install is …` | Launcher drift: the matches call another install of the CLI than the one you just ran (say, an old checkout after switching to a release). Run `promptmend espanso deploy` from the install you want the triggers to use |
 | `doctor` reports ``path_shadow: `promptmend` on PATH is …, not the installed launcher …`` | Your shell runs another, usually older, CLI with other settings than the one Espanso calls. Follow the hint at the end: `deactivate` an active virtual environment, remove a checkout's `.venv` folder from PATH, or uninstall the old CLI (or put the installed launcher's folder earlier on PATH) |
+| `doctor` reports a match file as `foreign` or `modified` | `foreign`: a file of that name that no PromptMend deploy wrote here (yours, or another tool's); `modified`: one PromptMend deployed that was edited since. `promptmend espanso status --diff` shows what a deploy would change, and `promptmend espanso deploy` keeps either unless you choose to replace it. A linked Espanso folder (say, `~/.config/espanso` linked from a dotfiles repository) is compared as the folder it points to, as a deploy records it; through such a link, 0.25.0 and earlier called a file you edited after a deploy `foreign` instead of `modified` |
 | `doctor` reports `prompts-template.yml: stale` (or another match file) | The deployed match files are from an older version, so `-p-` and the `-if-` lists differ from the CLI. Run `promptmend espanso deploy` |
 | A `base.yml.bak-…` file appeared in Espanso's `match` folder | Versions before 0.9 deployed `-p-` as `match/base.yml`, the file Espanso creates for your own snippets. The installer backed up that copy and replaced it with `prompts-template.yml`. Older installers overwrote `base.yml` without a backup, so snippets you kept there before first installing can only come from your own backups |
 | Windows: `doctor` reports `espanso was not found (PATH, …)` | PromptMend looks for `espansod.exe` in the running Espanso, on PATH, in `%LOCALAPPDATA%\Programs\Espanso` and in Espanso's uninstall entry. Not found there means Espanso is not installed, or installed elsewhere and not running: start it once from the Start menu (accept its PATH and autostart offer), then run `promptmend doctor` again |
 | Windows: triggers stopped working after closing the interface or the terminal | Releases before 0.23.0 restarted Espanso inside the terminal, so closing it stopped Espanso. Start Espanso from the Start menu once; since 0.23.0 a restart from PromptMend runs in a hidden console of its own |
 | Windows: a portable Espanso does not get the triggers | PromptMend uses a `.espanso` folder next to the running `espansod.exe` (a portable install) before `%APPDATA%\espanso`. Start the portable Espanso before `promptmend espanso deploy`, so it is the one found. See [Espanso on Windows](install.md#espanso-on-windows) |
 | Windows: `promptmend` or `espanso` is not recognized right after installing it | Windows Terminal gives a new tab or window the environment it started with, so it misses the PATH an install just changed. Close every Windows Terminal window (or sign out and in), then open a new one. For `espanso`, open Espanso once from the Start menu first and accept its PATH offer; see [Espanso on Windows](install.md#espanso-on-windows) |
+| Windows: installing with uv fails with `Failed to persist temporary file to …\uv\cache\…: Access is denied` | Another process, usually antivirus or endpoint protection scanning the file, holds a file in uv's cache while uv renames it. Turn uv's cache off for the install: in PowerShell, run `$env:UV_NO_CACHE = "1"` and then the `irm … \| iex` part of the [one-command install](install.md#one-command-with-uv) in that same window (`install_windows.ps1` from a checkout likewise), or add `--no-cache` to a manual `uv tool install`. The default exe channel of the one-command install does not install with uv, so it does not hit this. If it keeps happening, ask for an antivirus exclusion of uv's cache (`%LOCALAPPDATA%\uv\cache` by default; `uv cache dir` prints it), or, if you set `UV_TOOL_DIR` and `UV_PYTHON_INSTALL_DIR` to a [Dev Drive](https://learn.microsoft.com/windows/dev-drive/) (see the slow-start row below), `UV_CACHE_DIR` can point uv's cache there too |
 | Windows: two Espanso instances run, or the triggers work only some of the time, after installing Espanso next to a portable copy | Each starts from its own shortcut at sign-in and reads its own configuration folder. Keep one: delete the other's shortcut in `shell:startup`, then run `promptmend espanso status` to see which folder PromptMend deploys to. See [Espanso on Windows](install.md#espanso-on-windows) |
 | Expansion is slow | Use a faster model or endpoint (see the [benchmark](benchmark.md)); Espanso waits for the CLI. Or switch to [clipboard output](usage.md#output-paste-or-clipboard) |
-| Slow start on Windows: the first run after an install takes several seconds, and every later command or trigger more than a second | Windows antivirus and endpoint protection scan each Python file a process opens, and a file without its compiled bytecode is compiled on first use. The installers (`install.ps1`, `install_windows.ps1`) compile the bytecode at install since 0.23.0; after a manual install, run `uv tool install --force --compile-bytecode …` with the same arguments. If every start stays slow, ask for an antivirus exclusion of uv's folders, or put them on a [Dev Drive](https://learn.microsoft.com/windows/dev-drive/) (which scans less): set `UV_TOOL_DIR` and `UV_PYTHON_INSTALL_DIR` to folders there (by default under `%APPDATA%\uv`), then install again. Compare with `Measure-Command { promptmend --version }` |
+| The trigger stays and nothing happens: no rewrite, no marker | Espanso shows nothing while the CLI runs, up to the call's time limit, and a run still going blocks every later trigger. See [The trigger stays and nothing happens](#the-trigger-stays-and-nothing-happens) |
+| Slow start on Windows: the first run after an install takes several seconds, and every later command or trigger more than a second | Windows antivirus and endpoint protection scan each Python file a process opens, and a file without its compiled bytecode is compiled on first use. The fix that helps most is the exe: the one-command install puts it in place by default since 0.26.0 (`doctor` then reports the `installer` channel), one process with its Python modules in a single archive, which started about twice as fast on a scanned machine (see [The exe](install.md#the-exe); move a uv install over as [Switch from a uv install](install.md#switch-from-a-uv-install) says). With uv, the installers (`install.ps1`, `install_windows.ps1`) compile the bytecode at install since 0.23.0; after a manual install, run `uv tool install --force --compile-bytecode …` with the same arguments. If every start stays slow, ask for an antivirus exclusion of uv's folders, or put them on a [Dev Drive](https://learn.microsoft.com/windows/dev-drive/) (which scans less): set `UV_TOOL_DIR` and `UV_PYTHON_INSTALL_DIR` to folders there (by default under `%APPDATA%\uv`), then install again. To measure it, run `promptmend doctor --timing`: it times `--version`, `persona` and a stub `-i-` trigger through the launcher and through the interpreter, cold and warm, without calling a provider (see [Timing start-up](commands.md#timing-start-up)) |
+| Windows: an update of a uv install stopped with `failed to remove directory …\Scripts: Access is denied`, and since then `promptmend` and every trigger fail with `ModuleNotFoundError: No module named 'promptmend'` | A `promptmend` was still running (usually the open interface) while uv replaced it: uv had removed the old install already when it found `Scripts\python.exe` in use. Close the interface and every running `promptmend`, then run the same update again (see [Update](install.md#update)). The one-command install with `PROMPTMEND_CHANNEL=uv` and `.\scripts\install_windows.ps1` now stop before uv runs while one runs; the check is best effort and runs once, so a trigger started during the update can still cause this |
 | `[promptmend: Clipboard unavailable: Pyperclip could not find a copy/paste mechanism …]` on Linux | Install `xclip` or `xsel` (X11) or `wl-clipboard` (Wayland) |
+
+### The trigger stays and nothing happens
+
+Espanso shows nothing while the CLI runs, up to the call's time limit:
+`PROMPT_TIMEOUT_SECONDS`, `PROMPT_PRO_TIMEOUT_SECONDS` on the OpenRouter pro tier (`-ip-`),
+or the timeout picked in the [-if- form](usage.md#the--if--form). A run still going blocks
+every later trigger until it ends. Every run ends by its limit plus 2 s, plus Python's
+start-up, with a rewrite or a marker (see [While it runs](usage.md#while-it-runs)); nothing at
+all after that means the process never finished (still starting, say) or Espanso lost the
+paste. To tell the cases apart:
+
+- Find the run in `promptmend history export` (`--format csv` puts each attempt on its
+  operation's row) by its `occurred_at_utc` time, in UTC. `promptmend stats --by trigger
+  --verbose` shows each trigger's last use and its p50/p95 latency, not the last run's.
+  - Outcome `ok`, or any outcome but a timeout (`gate_blocked`, `validation_failed`,
+    `clipboard_failed`, …), with its `latency_ms`: the CLI printed its rewrite or marker and
+    Espanso did not paste it.
+  - Outcome `error_marker` with `latency_ms` near the limit and an attempt whose
+    `error_kind` is `timeout` (or no attempt, when it stalled before its request): the call
+    stalled, and its timed-out marker was not pasted either.
+  - No row usually means the process never finished. A row can also be lost (see
+    [Usage history](#usage-history) and `promptmend doctor`'s `history` line), and with
+    `PROMPT_HISTORY=false` nothing is recorded.
+- Run the trigger's own call in a terminal to see the time and the marker without Espanso;
+  for `-ip-`: `time promptmend improve --provider openrouter --tier pro --source argument --text "…"`
+  (in PowerShell: `Measure-Command { promptmend improve … | Out-Default }`). It adds a row of
+  its own, as a direct call.
+- `promptmend doctor --timing` measures the start-up alone (see
+  [Timing start-up](commands.md#timing-start-up)).
+- On a slow machine, `PROMPT_OUTPUT=clipboard` is the robust mode: the rewrite is on the
+  clipboard even when the paste is lost (see [clipboard output](usage.md#output-paste-or-clipboard)).
 
 ## Settings and keys
 
@@ -101,21 +136,22 @@ The text after each hint is the provider's own reason.
 | Symptom | Fix |
 |---------|-----|
 | `[promptmend: Ollama request failed: …]` | Start Ollama (`ollama serve`) and pull the model (`ollama pull qwen3:8b`) |
+| On Windows, every `-il-` or `-ilm-` call takes about 2 s longer than the model needs, and `promptmend doctor` says `may wait about 2 s for ::1 at localhost` | `OLLAMA_BASE_URL` / `LMSTUDIO_BASE_URL` names `localhost`, which Windows tries as `::1` first, while the server listens on `127.0.0.1` only. Use `127.0.0.1` where doctor says the setting comes from: for a saved setting the command it prints, such as `promptmend config set OLLAMA_BASE_URL http://127.0.0.1:11434`; else the environment or your `PROMPTMEND_ENV` file (see [Ollama](configuration.md#ollama)) |
 | Rewrites through Ollama ignore the template | The context window may be too small; see [Ollama context window](configuration.md#ollama-context-window) |
 
 For fully local use, pull a model (`ollama pull qwen3:8b`) or load one in LM Studio and enable
 its local server, then check it answers:
 
 ```bash
-curl http://localhost:11434/api/tags      # Ollama
-curl http://localhost:1234/v1/models      # LM Studio
+curl http://127.0.0.1:11434/api/tags      # Ollama
+curl http://127.0.0.1:1234/v1/models      # LM Studio
 ```
 
 ## Usage history
 
 | Symptom | Fix |
 |---------|-----|
-| doctor: `history: tracking incomplete: N write(s) lost` | The history write took longer than its time budget, often the first one (it creates the database) or on a machine whose antivirus or endpoint protection scans the data folder. Such a write now waits in `history.spool` and is stored by the next call; the count stays until `promptmend history reset`. See [Usage history](privacy.md#usage-history) |
+| doctor: `history: tracking incomplete: N write(s) lost` | The history write took longer than its time budget, often the first one (it creates the database) or on a machine whose antivirus or endpoint protection scans the data folder. Such a write now waits in `history.spool` and is stored by the next call; the count stays until `promptmend history reset`. Under heavy contention (many triggers at once) some lost writes are counted in `history.lost.*.drop` files in the data folder, which can pile up; `promptmend history reset` clears them too. See [Usage history](privacy.md#usage-history) |
 | doctor: `N record(s) waiting in history.spool` | The database was locked or unusable when doctor tried to store them. Run `promptmend stats`, which stores them; if doctor says the database is corrupt, `promptmend history reset` starts a new one (and deletes the spooled records) |
 | A call is missing from `promptmend stats` | Run `promptmend doctor` and check its `history` line. A call whose write took too long is stored by the next call or by `stats` itself |
 

@@ -101,7 +101,7 @@ uv run pytest -m live
 - **The Espanso contract.** The CLI prints the result with no trailing newline, and every failure
   as `[promptmend: …]` with exit code 0. Espanso cannot show stderr or exit codes, so a
   traceback or a blank line reaches the user as a silent failure. Print only through
-  `cli._emit()`, which strips control and invisible characters from whatever gets pasted.
+  `trigger._emit()`, which strips control and invisible characters from whatever gets pasted.
   `tests/test_trigger_contract.py` compares the whole stdout of `improve` and `persona` byte
   for byte; a change there is a change to what every trigger pastes. On Windows each newline
   in the output is printed as CRLF (Python's standard streams translate it there); the test
@@ -148,9 +148,10 @@ Releases are cut by `.github/workflows/release.yml`, never by hand-made tags.
    `gh workflow run release.yml --ref main -f dry-run=false`). It builds the sdist, the wheel and
    `constraints.txt` (`uv export --frozen --no-dev --no-emit-project --no-hashes`), installs the
    wheel with those constraints into a clean venv on macOS, Windows and Linux and runs
-   `scripts/check_wheel.py --constraints`, renders `install.ps1` with the version
-   (`scripts/render_installer.py`), builds `promptmend-X.Y.Z-windows-x64.zip` on Windows
-   (`scripts/build_windows.py build`, #185), then attests the files, creates the annotated tag
+   `scripts/check_wheel.py --constraints`, builds `promptmend-X.Y.Z-windows-x64.zip` on Windows
+   (`scripts/build_windows.py build`, #185) and, in the same job, renders `install.ps1` with the
+   version and that zip's SHA-256 (`scripts/render_installer.py --zip`; the release job checks
+   the hash again), then attests the files, creates the annotated tag
    `vX.Y.Z` and publishes the Release with that CHANGELOG section as its notes. *dry-run* is on by
    default and stops after the artifact tests; untick it to release. A dry run attests nothing,
    so it leaves no provenance record for files that were never released. The workflow releases
@@ -206,10 +207,14 @@ Releases are cut by `.github/workflows/release.yml`, never by hand-made tags.
 
    It writes `dist/winget/manifests/v/vlastimilbures/PromptMend/X.Y.Z/` (the version,
    installer and en-US locale manifests, with the Release asset's URL and SHA-256 and the
-   release date of the version's CHANGELOG heading), the layout of [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). CI's
-   `frozen-windows` job already ran `winget validate` and a `winget install --manifest` on
-   the same templates. Submitting them (a pull request to microsoft/winget-pkgs from the
-   owner's fork, or `wingetcreate submit`) is a manual step that only the owner approves;
+   release date of the version's CHANGELOG heading), the layout of
+   [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs), in manifest schema 1.28.0
+   (what winget-pkgs asks for since 2026-11; when its bot calls a version deprecated, update
+   the three templates, `SCHEMA` in `tests/test_winget_manifest.py` and, if the runner's
+   winget is too old for it, the winget-cli pin in `test.yml`). CI's `frozen-windows` job
+   already ran `winget validate` and a `winget install --manifest` on the same templates, with
+   a pinned winget-cli release. Submitting them (a pull request to microsoft/winget-pkgs from
+   the owner's fork, or `wingetcreate submit`) is a manual step that only the owner approves;
    Microsoft's validation and review take days. The exe is unsigned, so if their Defender
    scan flags it (a false positive is common for PyInstaller builds), submit the zip to
    [Microsoft's WDSI](https://www.microsoft.com/en-us/wdsi/filesubmission) as a software
@@ -240,9 +245,10 @@ gh release create v0.10.0 --verify-tag --latest=false --title v0.10.0 --notes-fi
 
 ## Trigger start-up budget
 
-Espanso starts a fresh `promptmend` process for every trigger, so everything `cli.py`
-imports is paid on each expansion. Measured on 2026-10-04 on an Apple M5 MacBook (macOS, load
-average about 14, so on the high side), CLI 0.15.0:
+Espanso starts a fresh `promptmend` process for every trigger, so everything `cli.py` (and
+the `trigger.py`, `pipeline.py` and `sanitize.py` it runs) imports is paid on each expansion.
+Measured on 2026-10-04 on an Apple M5 MacBook (macOS, load average about 14, so on the high
+side), CLI 0.15.0:
 
 | Measure | Python 3.12 | Python 3.14 |
 | --- | --- | --- |
@@ -255,8 +261,8 @@ The largest parts of the import are `importlib.metadata` (about 50 ms cumulative
 `-X importtime`, for `__version__` in `promptmend/__init__.py`), httpx (about 30 ms) and
 Typer (about 19 ms). The `importlib.metadata` figure overstates its real cost: the modules it
 pulls in (email, zipfile, csv) load anyway, so a literal `__version__` saves only about 2 ms of
-wall time per run (median of 30 in a clean wheel venv, 3.12 and 3.14, 2026-10-06, #132). CI runner numbers
-(Linux, Windows) are still to be recorded from a CI run.
+wall time per run (median of 30 in a clean wheel venv, 3.12 and 3.14, 2026-10-06, #132). The
+Windows CI runner numbers are below; Linux runner numbers are still to be recorded.
 
 Since #223 (2026-10-08, same machine, Python 3.12, load average about 10, medians of 25
 interleaved runs): `promptmend --version` is answered in `entry.main()` before the CLI is
@@ -267,6 +273,62 @@ about 41 ms cumulative (135 ms). `--version` adds 108 modules (221), 49 ms wall 
 `smoke`'s stub adds 288 modules (299) and its wall time is unchanged. `tests/test_trigger_contract.py`
 holds these as ceilings (`VERSION_CEILING`, `IMPROVE_CEILING`, up to the provider call) and
 forbids httpx, pyperclip and sqlite3 before it.
+
+Since #318 no module imports `__version__` at module scope (that is a first use, so it read
+the metadata on import); each calls `promptmend.installed_version()` where it shows or records
+the version. `import promptmend.history` adds 87 modules (127 before) and no
+`importlib.metadata` (macOS, Python 3.13, 2026-11-15); a trigger run loads it only to record
+the run. A test that fakes the version patches `<module>.installed_version`.
+
+Since #312 (2026-11-15, same machine, Python 3.13): on Windows every extension module outside
+`pythonXY.dll` is its own `.pyd` that a scanner inspects as it loads, so the trigger path
+loads none of its own before the provider call. The built-in profiles are plain files read on
+first use (`importlib.resources` brought zipfile, bz2 and lzma), and hashlib, ctypes (the
+clipboard probe), tempfile and unicodedata are imported in the functions that need them; the
+gate's `redaction._normalize()` returns an ASCII draft as is, which the full fold would
+leave unchanged too (`tests/test_redaction.py` checks every ASCII code point).
+`improve` up to its provider call and `persona` (history off) add 145 modules each (167
+before). On macOS these modules are linked into the interpreter, so the time saved here is
+small and noisy: a stubbed `improve` run with the history off went from about 38 to 32 ms of
+`-X importtime` self time and from 50 to 44 ms of wall time (median of 9, two interleaved
+rounds); the Windows gain, a scanned file per module, is #304's to measure.
+
+**Out of scope for #312:** the extension modules `import typer` loads itself still load on
+every trigger: `_bz2` and `_lzma` (shutil), `_uuid`, and by platform and Python version
+`select` (subprocess, POSIX), `_wmi` (platform, Windows 3.12+), `_zstd` (shutil, 3.14) and,
+on Windows, `_ctypes` (Typer's vendored click, for the console). They go only with a trigger
+entry that does not import Typer (#313). So the clipboard probe's lazy ctypes keeps `_ctypes`
+out of a trigger that reads no clipboard on macOS and Linux; on Windows Typer has already
+loaded it. `tests/test_trigger_contract.py` lists the Windows `.pyd` modules that matter to
+the trigger path (`WINDOWS_EXTENSIONS`),
+measures what `import typer` loads of them in a fresh interpreter (held to
+`TYPER_EXTENSIONS_ALLOWED`), allows only those before the call (local and cloud provider)
+and for `persona`, and checks with Typer imported first that the trigger path adds none;
+`PERSONA_CEILING` and `IMPROVE_CEILING` are 175.
+
+On Windows (#306), every CI run (each pull request and each push to `main`) times both
+channels on `windows-latest` with `promptmend doctor --timing` and writes the table to the job
+summary, with whether Defender's real-time protection was on as the runner reports it: the
+`install-script` job through uv's `promptmend.exe` shim after a real `uv tool` install (and
+through the interpreter, so the shim's own cost shows), the `frozen-windows` job through the
+unzipped exe, with the file count and size of its `_internal` folder. Each cell is the first
+(cold) run, then the median of 5 warm runs. CI asserts no time (runner noise would make it
+flaky); the module ceilings above stay the gate.
+
+The rows below come from the CI run of 2026-11-15
+([run 43705361645](https://github.com/vlastimilbures/promptmend/actions/runs/43705361645)).
+Defender real-time protection was **off** on both runners, so they are a Windows baseline with
+no scanning, not the endpoint-scanning case; for that, the owner's laptop numbers (#304) count.
+
+| Channel | `--version`, cold / warm ms | `persona`, cold / warm ms | `improve` (`-i-`), cold / warm ms | `_internal` |
+| --- | --- | --- | --- | --- |
+| uv tool install, through the shim | 64 / 63 | 99 / 100 | 262 / 257 | n/a |
+| uv tool install, through the interpreter | 106 / 106 | 94 / 93 | 260 / 252 | n/a |
+| Frozen exe (the Windows zip) | 121 / 120 | 179 / 178 | 477 / 476 | 108 files, 20.5 MB |
+
+On that runner the frozen exe is slower than the uv install (`improve` 477 against 262 ms), and
+the uv shim adds little over the interpreter. The uv job's `import promptmend.tui.app` took
+476 / 258 ms; the frozen exe skips it by design.
 
 Re-measure with:
 
@@ -291,6 +353,21 @@ them with the usage history on and off: on, the run is recorded after its output
 dependency belongs behind a lazy import in the command that needs it, never on the trigger
 path. Raise the ceiling only with new measurements here.
 
+## Interface start-up budget
+
+`promptmend ui` builds only Home before its first paint (#316): `tui/app.py` names the other
+panes (`_PANES`) and imports each pane's module when its tab first opens
+(`MainScreen.build()`), and the setup wizard when it opens. `tests/test_ui_startup.py` runs
+the app headless in a fresh interpreter with a stub loader and lists the modules loaded up to
+Textual's `Ready` event (the first frame): it forbids `http.server`, `sqlite3`, `httpx`,
+`promptmend.smoke`, the CLI, the other panes and the wizard there, and holds the count to
+`UI_CEILING` (525). Measured on 2026-11-16 (macOS, Python 3.13, load average about 7, median
+of 15 interleaved runs): 470 modules, from 507 (469 to 471 on 3.12 and 3.13, 480 on 3.14);
+`import promptmend.tui.app` 138 ms (217) and the first paint 219 ms (337). Windows is not
+measured locally: it loads its own event loop and console modules instead, so its count may be
+higher; the test's failure message names the count, the Python version and the platform. A test that reads a pane opens its tab first
+(`open_tab()` in `tests/test_tui.py`). Raise the ceiling only with new measurements here.
+
 ## Project layout
 
 ```text
@@ -301,11 +378,15 @@ promptmend/
 │   │   ├── prompts-core.yml      -risk-: static snippet
 │   │   └── prompts-template.yml  -p-: the empty golden template, opens with your persona
 ├── src/promptmend/               the promptmend CLI
-│   ├── cli.py                    improve and persona commands, the single output sink;
-│   │                             mounts the management commands lazily
+│   ├── cli.py                    the Typer app: improve and persona commands; mounts the
+│   │                             management commands lazily
+│   ├── trigger.py                improve's run: _emit() (the single output sink), the watchdog
+│   ├── pipeline.py               the rewrite's steps (input, rewrite(), markers, delivery),
+│   │                             Typer-free, shared with the interface's Try tab
 │   ├── entry.py                  console-script entry: empty stderr for a trigger
-│   ├── commands/                 setup, config, secrets, profiles, stats, history, doctor, ui:
-│   │                             thin Typer wrappers over the services (common.py: exit codes)
+│   ├── commands/                 espanso, setup, config, secrets, profiles, stats, history,
+│   │                             doctor, ui: thin Typer wrappers over the services
+│   │                             (common.py: exit codes)
 │   ├── tui/                      the full-screen Textual interface; only `ui` (commands/ui.py,
 │   │                             also a bare promptmend and `setup` on a terminal) loads it
 │   ├── doctor.py                 the doctor report (stable JSON, never a key or persona)
@@ -313,6 +394,7 @@ promptmend/
 │   ├── local_probe.py            asks a loopback Ollama or LM Studio whether it answers
 │   ├── smoke.py                  setup's smoke test: improve against a stub on 127.0.0.1
 │   ├── setup_guide.py            what setup says at each step (wizard and text flow), no Textual
+│   ├── setup_flow.py             what setup decides and writes, shared by the wizard and text flow
 │   ├── config.py                 Settings from the environment, config.toml or a named .env
 │   ├── config_files.py           reads config.toml/secrets.toml; atomic, private writes
 │   ├── config_store.py           saves settings and secrets
@@ -320,9 +402,11 @@ promptmend/
 │   ├── gate.py                   GatedProvider: scans every draft that can leave the machine
 │   ├── clipboard_guard.py        refuses password-manager (concealed) clipboard items
 │   ├── redaction.py              the gate's sensitive-content patterns
+│   ├── sanitize.py               clean(): strips control and invisible characters
 │   ├── history.py                local usage history (SQLite, metadata only, fail-open)
 │   ├── recorder.py               records each improve/persona run in the usage history
 │   ├── prompt_builder.py         loads built-in and user profiles, fills in the persona rule
+│   ├── wordings.py               the fixed wordings, parsed from prompts/default.md (#283)
 │   ├── assets.py                 the packaged Espanso match files (importlib.resources)
 │   ├── deploy.py                 espanso deploy/status/detach: manifest, states, stable launcher
 │   ├── espanso_windows.py        Espanso on Windows without reading its output (#209-#211)
@@ -341,11 +425,12 @@ promptmend/
 ├── scripts/
 │   ├── install_macos.sh          contributor install pinned to uv.lock, then espanso deploy
 │   ├── install_windows.ps1       the same for Windows
-│   ├── install.ps1               Windows user installer (uv + PyPI), a Release asset (#186)
-│   ├── render_installer.py       release: install.ps1 with the version filled in
+│   ├── install.ps1               Windows user installer (the exe, or uv), a Release asset (#186)
+│   ├── render_installer.py       release: install.ps1 with the version and zip hash filled in
 │   ├── build_windows.py          release: the frozen Windows zip (PyInstaller), trigger timing
 │   ├── check_tool_lock.py        the tool venv's packages match uv.lock (#34)
 │   ├── update_match_history.py   regenerate match_history.py from the release tags
+│   ├── render_prompt_template.py the -p- template's wording lines from prompts/default.md
 │   ├── bench_models.py           score models on template fidelity, latency, cost
 │   ├── check_wheel.py            CI: what an installed wheel really contains
 │   ├── brew_formula.py           release: the tap's Homebrew formula from uv.lock
@@ -480,9 +565,41 @@ literal lands in the repo. Patterns specific to one organisation belong in the u
 
 ### Change the default prompt
 
-Template wording is scored by `scripts/bench_models.py`, and `tests/test_bench.py` checks the
-scored phrases still exist in `prompts/default.md` and in the static `-p-` template
-(`espanso/match/prompts-template.yml`), so change all three together. A/B a change on both the
+The fixed wordings have one source, their definitions in `prompts/default.md`: the planning and
+review variants (`<variant id="a">`/`"b"`), the inputs and judgment steps (the line after
+`Always...:`) and the document OUTPUTS line (after `use exactly this line:`).
+`promptmend.wordings` parses them (#283). `default.md` also repeats them in its own few-shot
+`<rewrite>` examples and quotes the planning variant's opening in a formatting rule; those
+copies stay hand-written (they are prompt text the model reads), and `tests/test_wordings.py`
+checks them against the variants: each example's planning, inputs, review and judgment steps
+must be the variants word for word, the independent review with a concrete domain for
+`[domain]`. Every other place is generated or derived:
+
+- the static `-p-` template (`espanso/match/prompts-template.yml`) stays a checked-in match
+  file, but its wording lines (steps `1a/ 1b/ 2/ 4a/ 4b/ 5/` and the line after `<OUTPUTS>`)
+  are written by `scripts/render_prompt_template.py`, which turns `[domain]` into the
+  template's `[XXX]` and keeps every other line; `tests/test_wordings.py` fails while the
+  file is not what the script writes;
+- `scripts/bench_models.py` scores the opening words of each wording (`opening()`), and
+  `tests/bench_module.py`'s sample rewrite is built from them. `tests/test_bench.py` pins
+  today's needles as a tripwire: a needle change changes benchmark scores, so the owner
+  re-runs the benchmark.
+
+So to change a wording, edit its variant in `prompts/default.md` and the examples that use it
+(the test names any it left behind), then run:
+
+```bash
+uv run python scripts/render_prompt_template.py     # rewrites the -p- template's wording lines
+uv run python scripts/update_match_history.py       # the match file changed
+```
+
+Keep `default.md`'s layout (`parse()` fails loudly on a missing step, variant or rule rather
+than guessing). The template's own text (its CONTEXT, GOAL, step 3, CONSTRAINTS, INPUTS and the
+`[pick one …]` lines) is still edited in the YAML. The README's example output is a real
+rewrite of a named release and is not regenerated. The bench's needles always come from the
+shipped `prompts/default.md`, not from a `--system-prompt-file` candidate, so a candidate that
+changes a wording is scored against the old one until it replaces `default.md`. A/B a change on
+both the
 standard and pro defaults, on both suites, before proposing it, and include the before/after
 pass rates in the pull request (the report's split by kind, with its Wilson intervals:
 rates whose intervals overlap are not shown to differ), with each run's `meta.json` (commit, prompt hash, persona

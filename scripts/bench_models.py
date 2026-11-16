@@ -62,6 +62,7 @@ from promptmend.prompt_builder import (
 )
 from promptmend.providers.base import ProviderError, split_stop_note
 from promptmend.providers.usage import AttemptUsage
+from promptmend.wordings import default_wordings
 
 MODELS: list[str] = [
     # Standard tier (-i-). The first is the shipped default.
@@ -778,15 +779,30 @@ DRAFTS: dict[str, Draft] = {
 SUITES = ("core", "edge", "all", "holdout")
 
 TAGS = ["CONTEXT", "GOAL", "INSTRUCTIONS", "CONSTRAINTS", "INPUTS", "OUTPUTS"]
+
+
+def opening(wording: str, words: int) -> str:
+    """The first `words` words of a fixed wording, without a trailing comma or full stop."""
+    needle = " ".join(wording.split()[:words]).rstrip(".,;:")
+    # Words joined across a line break would never match a rewrite that copies the wording.
+    if not wording.startswith(needle) or "\n" in needle:
+        raise ValueError(f"the opening {needle!r} spans more than the wording's first line")
+    return needle
+
+
+# The fixed wordings come from prompts/default.md, their only source (promptmend.wordings,
+# #283), whatever --system-prompt-file a run scores. A check looks for the opening words of
+# each, so a rewrite that slips later in a wording still counts as having made that choice.
+WORDINGS = default_wordings()
 MANDATORY = {
-    "validate-inputs": "Load and validate all inputs",
-    "flag-judgment": "Flag material judgment calls",
+    "validate-inputs": opening(WORDINGS.inputs, 5),
+    "flag-judgment": opening(WORDINGS.judgment, 4),
 }
-PLAN_FIRST = "Plan the task thoroughly"
-EXECUTE_NOW = "Execute, but state assumptions up front"
-INDEPENDENT = "Use a separate agent with"
-SELF_REVIEW = "Review your own output against these checks"
-DEFAULT_OUTPUTS = "structured .md, well formatted with clear headings/subheadings"
+PLAN_FIRST = opening(WORDINGS.plan, 4)
+EXECUTE_NOW = opening(WORDINGS.execute, 6)
+INDEPENDENT = opening(WORDINGS.independent, 5)
+SELF_REVIEW = opening(WORDINGS.self_review, 7)
+DEFAULT_OUTPUTS = WORDINGS.outputs
 
 # Letters that only a rewrite left in the draft's language would contain.
 LANGUAGE_LETTERS = {"Czech": "ěščřžůťďňĚŠČŘŽŮŤĎŇ", "German": "äöüßÄÖÜ", "Spanish": "ñáéíóú¿¡"}

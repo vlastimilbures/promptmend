@@ -44,7 +44,10 @@ a = Analysis(  # noqa: F821
     runtime_hooks=[],
     excludes=["tkinter", "pytest", "mypy", "ruff", "coverage", "PyInstaller"],
     noarchive=False,
-    optimize=0,
+    # Bytecode as `python -O` (#185): no assert statements and __debug__ False, which nothing
+    # in promptmend relies on (src/ has no assert and no __debug__; tests/test_frozen.py
+    # checks). Never 2: that drops the docstrings Typer's --help is built from.
+    optimize=1,
 )
 pyz = PYZ(a.pure)  # noqa: F821
 

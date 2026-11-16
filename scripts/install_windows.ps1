@@ -29,6 +29,41 @@ function Assert-Exit([string]$What) {
     }
 }
 
+# Where uv keeps the tool and its launcher. Asked of uv rather than Get-Command, which would
+# pick up an activated project venv whose binary disappears if .venv is removed.
+$ToolBin = (uv tool dir --bin)
+Assert-Exit "uv tool dir --bin"
+$ToolDir = (uv tool dir)
+Assert-Exit "uv tool dir"
+$Cli = Join-Path $ToolBin.Trim() "promptmend.exe"
+$Tool = Join-Path $ToolDir.Trim() "promptmend"
+$ToolPython = Join-Path $Tool "Scripts\python.exe"
+
+# `uv tool install --force` removes the old tool before it deletes its folder, so a promptmend
+# still running from it (the interface holds Scripts\python.exe) would leave no promptmend at
+# all (#356): refused before uv touches anything, best effort and once. A path .Path cannot read
+# (an elevated process, a 32-bit shell) is asked of CIM; unreadable both ways, it is skipped.
+function Get-PathKey([string]$Path) {
+    return $Path.Trim().TrimEnd('\').ToLowerInvariant()
+}
+$Prefix = (Get-PathKey $Tool) + '\'
+$Running = @(Get-Process -Name python, pythonw, promptmend -ErrorAction SilentlyContinue | Where-Object {
+    $path = $null
+    try { $path = $_.Path } catch { $path = $null }
+    if (-not $path) {
+        try {
+            $path = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).ExecutablePath
+        } catch { $path = $null }
+    }
+    $path -and ((Get-PathKey $path).StartsWith($Prefix) -or (Get-PathKey $path) -eq (Get-PathKey $Cli))
+})
+if ($Running.Count -gt 0) {
+    $ids = ($Running | ForEach-Object { $_.Id }) -join ', '
+    Write-Error ("promptmend from $Tool or $Cli is running (process $ids): wait for it to " +
+        "finish or close it (the interface, a trigger), then run this again. promptmend was not changed.")
+    exit 1
+}
+
 # `uv tool install` ignores uv.lock, so pass the locked versions as constraints (#34). The
 # tool gets its own isolated environment; dev dependencies are not needed to deploy. Bytecode is
 # compiled now, where a wait is expected, not on the first run (#216).
@@ -42,14 +77,6 @@ try {
     Remove-Item $Constraints -ErrorAction SilentlyContinue
 }
 
-# Ask uv where it installed the tool rather than Get-Command, which would pick up an
-# activated project venv whose binary disappears if .venv is removed.
-$ToolBin = (uv tool dir --bin)
-Assert-Exit "uv tool dir --bin"
-$ToolDir = (uv tool dir)
-Assert-Exit "uv tool dir"
-$Cli = Join-Path $ToolBin.Trim() "promptmend.exe"
-$ToolPython = Join-Path $ToolDir.Trim() "promptmend\Scripts\python.exe"
 if (-not (Test-Path $Cli) -or -not (Test-Path $ToolPython)) {
     Write-Error "Could not locate promptmend. Check 'uv tool install' output."
     exit 1

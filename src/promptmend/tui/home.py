@@ -1,28 +1,41 @@
-"""What Home shows (#112, Mockup B): one row per thing that has to work for a trigger to
+"""What Home shows: one row per thing that has to work for a trigger to
 rewrite, each with a status word (never colour alone) and the tab that fixes it, and a
 headline naming the worst one. Worked out from the State alone, with no read of its own, so
-it is a pure function a test can call without the interface (and without Textual)."""
+it is a pure function a test can call without the interface (and without Textual).
+
+A quick State has no doctor report, plan or stats yet: the rows read from them say
+`checking` (status WAIT) until the full State replaces it, or `not checked` when its read
+failed."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .. import __version__, deploy, doctor, update_check
+from .. import deploy, doctor, installed_version, update_check
 from ..commands import common
 from ..config import has_pro_tier
 from ..factory import routes
 from .state import State
 
 OK, WARN, FAIL = doctor.OK, doctor.WARN, doctor.FAIL
-# A newer release (#197): highlighted, but no problem, so worst() and headline() count it as
+# A newer release: highlighted, but no problem, so worst() and headline() count it as
 # ok and an update never makes Home "Almost ready".
 NOTE = "note"
+# A row the full State fills in: no problem yet, so worst() counts it as ok, and the
+# headline says the checks are running instead of Ready.
+WAIT = "checking"
+CHECKING_HEADLINE = "Checking Espanso, the match files and the history…"
+# The same with PROMPT_HISTORY=false: the History row says off, it is not checked.
+CHECKING_HEADLINE_NO_HISTORY = "Checking Espanso and the match files…"
+# A not-checked row's pointer: r reads everything again; no tab fixes it.
+CHECK_AGAIN = "r: check again"
 # The Version row's pointer to the update command, which About (`a`) shows in full: every
 # channel's command is too long for the row at 70 columns.
 HOW_TO_UPDATE = "a: how to update"
 _RANK = {OK: 0, WARN: 1, FAIL: 2}
 
-# Tab id -> its label; the digit in each label is its key (app.TABS adds the panes).
+# Tab id -> its label; the digit in each label is its key (app.TABS adds each pane's module
+# and class, imported when its tab first opens).
 TAB_LABELS = {
     "home": "1 Home",
     "settings": "2 Settings",
@@ -33,17 +46,18 @@ TAB_LABELS = {
     "try": "7 Try",
 }
 READY = "Ready: type -i- in any text field."
-# PROMPT_OUTPUT (#134) value -> what Home says it does.
+# PROMPT_OUTPUT value -> what Home says it does.
 OUTPUTS = {"paste": "paste into the app", "clipboard": "copy to the clipboard"}
-# The Output row's pointer to the tab that switches it (#198).
+# The Output row's pointer to the tab that switches it.
 CHANGE_OUTPUT = f"change: {TAB_LABELS['settings']}"
 _NUMBERS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
 
 
 @dataclass(frozen=True)
 class HomeRow:
-    """``status`` is ok, warn, fail or note; ``detail`` is the short note on the right (key set);
-    ``jump`` the tab id that shows more; ``problem`` the headline's sentence when not ok."""
+    """``status`` is ok, warn, fail, note or checking (WAIT); ``detail`` is the short note on
+    the right (key set); ``jump`` the tab id that shows more; ``problem`` the headline's
+    sentence when not ok."""
 
     status: str
     label: str
@@ -77,8 +91,13 @@ def _version_row(state: State) -> HomeRow:
     update = state.update
     if update.state == update_check.AVAILABLE:
         return HomeRow(NOTE, "Version", f"{update.latest} available", HOW_TO_UPDATE)
-    words = {update_check.LATEST: " · latest", update_check.OFF: " · check off"}
-    return HomeRow(OK, "Version", f"{__version__}{words.get(update.state, '')}")
+    words = {
+        update_check.LATEST: " · latest",
+        update_check.OFF: " · check off",
+        # Filled in when pypi.org answers; the other rows never wait for it.
+        update_check.CHECKING: " · checking",
+    }
+    return HomeRow(OK, "Version", f"{installed_version()}{words.get(update.state, '')}")
 
 
 def _trigger_row(state: State, label: str, name: str) -> HomeRow:
@@ -117,7 +136,18 @@ def _espanso_words(check: doctor.Check | None) -> str:
     return "Espanso running" if running else "Espanso unknown"
 
 
+def _waiting(state: State, label: str, text: str, jump: str) -> HomeRow:
+    """A row the full State fills in: checking while it is read, not checked when it failed
+    (r reads it again)."""
+    if state.failed is None:
+        return HomeRow(WAIT, label, f"checking {text}", "", jump)
+    problem = f"the checks could not run ({state.failed}); r checks again"
+    return HomeRow(WARN, label, "not checked", CHECK_AGAIN, None, problem)
+
+
 def _triggers_row(state: State) -> HomeRow:
+    if not state.full:
+        return _waiting(state, "Triggers", "the match files and Espanso", "triggers")
     checks = _checks(state)
     espanso, match_files, launcher = (checks.get(i) for i in ("espanso", "match_files", "launcher"))
     words = _espanso_words(espanso)
@@ -148,6 +178,8 @@ def _history_row(state: State) -> HomeRow:
     check = _checks(state).get("history")
     if not state.settings.history:
         return HomeRow(OK, "History", "off", "", "history")
+    if not state.full:
+        return _waiting(state, "History", "the usage history", "history")
     if state.stats_error:
         return HomeRow(WARN, "History", "on · cannot read", "", "history", state.stats_error)
     if check is not None and _status(check.status) != OK:
@@ -161,6 +193,8 @@ def _history_row(state: State) -> HomeRow:
 
 
 def _checks_row(state: State) -> HomeRow:
+    if not state.full:
+        return _waiting(state, "Checks", "every part", "diagnostics")
     checks = state.report.checks
     counts = {s: sum(_status(c.status) == s for c in checks) for s in (OK, WARN, FAIL)}
     text = f"{counts[OK]} ok · {counts[WARN]} warn · {counts[FAIL]} fail"
@@ -171,8 +205,8 @@ def _checks_row(state: State) -> HomeRow:
 
 
 def home_rows(state: State) -> list[HomeRow]:
-    """Home's rows, in the order a person reads them: the version (#197), what rewrites, the
-    deployed triggers, the history, where the rewrite goes (PROMPT_OUTPUT, #134) and every
+    """Home's rows, in the order a person reads them: the version, what rewrites, the
+    deployed triggers, the history, where the rewrite goes (PROMPT_OUTPUT) and every
     check."""
     output = state.settings.output
     return [
@@ -181,7 +215,7 @@ def home_rows(state: State) -> list[HomeRow]:
         _trigger_row(state, "Pro (-ip-)", "-ip-"),
         _triggers_row(state),
         _history_row(state),
-        # Always names where to change it (#198), though it is never a problem.
+        # Always names where to change it, though it is never a problem.
         HomeRow(OK, "Output", OUTPUTS.get(output, output), CHANGE_OUTPUT, "settings"),
         _checks_row(state),
     ]
@@ -189,13 +223,20 @@ def home_rows(state: State) -> list[HomeRow]:
 
 def headline(rows: list[HomeRow]) -> tuple[str, str | None]:
     """The worst row's problem as one sentence, with the tab that fixes it; ``READY`` when
-    every row is ok. The first of equally bad rows wins, so the reading order decides."""
+    every row is ok, CHECKING_HEADLINE while one is still checking. The first of
+    equally bad rows wins, so the reading order decides."""
     status = worst(*(r.status for r in rows))
     if status == OK:
-        return READY, None
+        waiting = {r.label for r in rows if r.status == WAIT}
+        if not waiting:
+            return READY, None
+        if "History" in waiting:
+            return CHECKING_HEADLINE, None
+        return CHECKING_HEADLINE_NO_HISTORY, None
     row = next(r for r in rows if r.status == status)
     lead = "Not ready" if status == FAIL else "Almost ready"
-    # A doctor message marks a command with Markdown backticks, shown literally here (#174).
+    # A doctor message marks a command with Markdown backticks; stripped, since plain text
+    # would show them literally.
     problem = (row.problem or f"{row.label}: {row.text}").replace("`", "").rstrip(".")
     return f"{lead}: {problem}.", row.jump
 
@@ -207,3 +248,11 @@ def pill(report: doctor.Report) -> str:
     parts = [f"{fails} problem{'' if fails == 1 else 's'}"] if fails else []
     parts += [f"{warns} warning{'' if warns == 1 else 's'}"] if warns else []
     return ", ".join(parts) or "ok"
+
+
+def status_pill(state: State) -> str:
+    """The header's status for ``state``: pill() of its report, or `checking` (`not checked`
+    when its full read failed) for a quick State, whose report is not read yet."""
+    if not state.full:
+        return "checking" if state.failed is None else "not checked"
+    return pill(state.report)

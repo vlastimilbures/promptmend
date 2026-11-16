@@ -1,14 +1,14 @@
-"""The `doctor` service: one report of everything a broken trigger can come from (#25, #92).
+"""The `doctor` service: one report of everything a broken trigger can come from.
 
 Read-only: it runs only `espanso path config`, `espanso status` and the launcher lookup
-(`uv tool dir`, `brew --prefix`) through deploy.run_command, reads the settings in repair
-mode, asks PyPI for the newest release at most once a day (update_check, unless
-PROMPT_UPDATE_CHECK is false), asks a loopback Ollama or LM Studio whether it answers
-(local_probe), reads the deployed match files, and reads the clipboard only to report its
-length. The report never holds a key, the persona or clipboard text, since people paste it
-into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and keys are only ever added
-(the one exception: the previous_install check, removed with the migration code in #246;
-its PATH warning lives on as path_shadow).
+(uv's receipt, else `uv tool dir`; `brew --prefix`) through deploy.run_command, reads the
+settings in repair mode, asks PyPI for the newest release at most once a day (update_check,
+unless PROMPT_UPDATE_CHECK is false), asks a loopback Ollama and LM Studio at the same time
+whether they answer (local_probe), reads the deployed match files, and reads the clipboard
+only to report its length. The report never holds a key, the persona or clipboard text,
+since people paste it into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and
+keys are only ever added (the one exception: the previous_install check, removed by owner
+decision, #246; its PATH warning lives on as path_shadow).
 """
 
 from __future__ import annotations
@@ -17,12 +17,22 @@ import os
 import platform
 import shutil
 import sys
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import __version__, assets, config, config_files, deploy, factory, local_probe, update_check
+from . import (
+    assets,
+    config,
+    config_files,
+    deploy,
+    factory,
+    installed_version,
+    local_probe,
+    update_check,
+)
 from .config import ConfigLayers, secret_names
 from .providers.registry import PROVIDERS
 
@@ -90,7 +100,7 @@ DATA_KEYS = {
     "clipboard": ("read", "length", "concealed", "error"),
     "profiles": ("profile", "pro_profile", "user"),
     "folders": ("config_dir", "data_dir", "legacy", "conflicts"),
-    "local_servers": ("servers", "deployed"),
+    "local_servers": ("servers", "deployed", "slow_localhost"),
 }
 
 
@@ -113,7 +123,7 @@ class Report:
     def to_json(self) -> dict[str, Any]:
         return {
             "schema_version": SCHEMA_VERSION,
-            "version": __version__,
+            "version": installed_version(),
             "status": self.status,
             "checks": {
                 c.id: {
@@ -126,44 +136,63 @@ class Report:
         }
 
 
-def upgrade_hint(install: Mapping[str, Any]) -> str:
+# uv's `tool install --force` removes the old tool before it deletes its folder, so on
+# Windows a promptmend still running from it (the interface itself) leaves none (#356).
+CLOSE_FIRST = "close the interface and any running promptmend, then "
+_CLOSE_FIRST_CHANNELS = ("uv", "editable")
+
+
+def upgrade_hint(install: Mapping[str, Any], plat: str = sys.platform) -> str:
     """The update command for the install check's data: a checkout's own wins over the
-    launcher's channel, since an editable tool sits in uv's bin folder too."""
+    launcher's channel, since an editable tool sits in uv's bin folder too. On Windows a
+    uv-backed one starts with CLOSE_FIRST, ahead of the command, which stays whole."""
     channel = "editable" if install.get("editable") else str(install.get("channel") or "")
-    return update_check.upgrade_command(channel)
+    command = update_check.upgrade_command(channel, plat)
+    if plat == "win32" and channel in _CLOSE_FIRST_CHANNELS:
+        return CLOSE_FIRST + command
+    return command
 
 
 def _version_check(update: update_check.UpdateStatus, install: Check | None) -> Check:
-    """The installed version and whether PyPI has a newer one (#197): information only, never
+    """The installed version and whether PyPI has a newer one: information only, never
     a warning, with the update command for doctor's install channel (a checkout's own)."""
     available = update.state == update_check.AVAILABLE
     known = update.state in (update_check.AVAILABLE, update_check.LATEST)
     data = {
-        "version": __version__,
+        "version": installed_version(),
         "python": platform.python_version(),
         "platform": sys.platform,
         "latest": update.latest,
         "update_available": available if known else None,
         "checked_at": update.checked_at,
     }
-    message = f"promptmend {__version__}"
+    message = f"promptmend {installed_version()}"
     if available:
         message += f", {update.latest} available: {upgrade_hint(install.data if install else {})}"
     return Check("version", INFO, message, data)
+
+
+def with_update(report: Report, update: update_check.UpdateStatus) -> Report:
+    """``report`` with its version check made again for ``update``: the interface's update
+    check, when it lands after the rest."""
+    install = next((c for c in report.checks if c.id == "install"), None)
+    return Report(
+        tuple(_version_check(update, install) if c.id == "version" else c for c in report.checks)
+    )
 
 
 def _cli_check() -> Check:
     script = Path(sys.argv[0]) if sys.argv and sys.argv[0] else None
     if sys.platform == "win32" and script and not script.suffix:
         exe = script.with_name(script.name + ".exe")
-        # Windows starts the console script's launcher, but argv[0] drops its `.exe` (#222).
+        # Windows starts the console script's launcher, but argv[0] drops its `.exe`.
         if exe.is_file():
             script = exe
     frozen = bool(getattr(sys, "frozen", False))
     data = {
         "path": str(script) if script else None,
         "executable": sys.executable,
-        # The Windows zip's own exe (#185): no interpreter, no import check.
+        # The Windows zip's own exe: no interpreter, no import check.
         "frozen": frozen,
     }
     note = " (frozen build)" if frozen else ""
@@ -281,7 +310,7 @@ def _keys_check(
     triggers: list[assets.Trigger],
     deployed: bool,
 ) -> Check:
-    """Named by the triggers that need each missing key (#217): the deployed ones, else those a
+    """Named by the triggers that need each missing key: the deployed ones, else those a
     deploy would write. PROMPT_PROVIDER only counts for a bare `improve` and the Try tab."""
     keys = {}
     for name in secret_names():
@@ -320,19 +349,30 @@ def _keys_check(
 
 
 def _local_servers_check(
-    settings: config.Settings, triggers: list[assets.Trigger], deployed: bool
+    layers: ConfigLayers,
+    settings: config.Settings,
+    triggers: list[assets.Trigger],
+    deployed: bool,
+    plat: str = sys.platform,
 ) -> Check:
-    """Whether the Ollama and LM Studio the local triggers need answer (#220). The triggers
-    stay deployed either way; this says what typing one would need. Never fails or warns."""
+    """Whether the Ollama and LM Studio the local triggers need answer. The triggers
+    stay deployed either way; this says what typing one would need. Never fails or warns:
+    a ``localhost`` URL on Windows still works, so its note (#365) is only advice."""
     used = _rewrites(triggers, settings)
     servers: dict[str, dict[str, Any]] = {}
     notes = []
+    slow: list[str] = []
+    asked = {
+        provider: spec.url(settings).rstrip("/") + spec.probe_path
+        for provider, spec in PROVIDERS.items()
+        if spec.probe_path is not None and used.get(provider)
+    }
+    replies = _probe_all(asked)
     for provider, spec in PROVIDERS.items():
         names = used.get(provider)
-        if spec.probe_path is None or not names:
+        if provider not in asked or not names:
             continue
-        base_url = getattr(settings, f"{provider}_base_url")
-        answers = local_probe.answers(base_url.rstrip("/") + spec.probe_path)
+        answers = replies[provider]
         servers[provider] = {"answers": answers, "triggers": names}
         if answers is None:
             notes.append(f"{spec.label} ({', '.join(names)}) is not on this machine; not asked")
@@ -340,16 +380,94 @@ def _local_servers_check(
             notes.append(f"{spec.label} answers ({', '.join(names)})")
         else:
             notes.append(f"{', '.join(names)} needs {spec.label}: no answer at {spec.url_setting}")
-    data = {"servers": servers, "deployed": deployed}
+        if plat == "win32" and _on_localhost(spec.url(settings)):
+            slow.append(spec.url_setting)
+            entry = layers.entries[spec.url_setting]
+            notes.append(_localhost_note(spec.url_setting, entry.value, names, entry.source))
+    data = {"servers": servers, "deployed": deployed, "slow_localhost": slow}
     if not notes:
         probed = " or ".join(s.label for s in PROVIDERS.values() if s.probe_path)
         return Check("local_servers", INFO, f"no trigger uses {probed}", data)
     return Check("local_servers", INFO, "; ".join(notes), data)
 
 
+def _on_localhost(url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    return urlsplit(url).hostname == "localhost"
+
+
+def _localhost_note(setting: str, url: str, names: list[str], source: str) -> str:
+    """Windows tries ``localhost`` as ::1 first and retries a refused connect for about 2 s,
+    and Ollama and LM Studio listen on 127.0.0.1 only by default (#365).
+
+    The URL is quoted back only in the default's shape with another host and port: no user
+    name, password, query or fragment, the default's path, nothing that looks like a key.
+    ``source`` (the setting's layer) says where to change it: only a config.toml value gets
+    the `config set` command, which legacy mode refuses and the environment overrides."""
+    from urllib.parse import urlsplit
+
+    from .commands.common import looks_like_a_key
+
+    where = _set_where(source)
+    why = f"on Windows each {', '.join(names)} call may wait about 2 s for ::1 at localhost"
+    generic = f"{why}: use 127.0.0.1 for localhost in {setting}"
+    if where:
+        generic += f", set {where}"
+    parts = urlsplit(url)
+    default_path = urlsplit(_default(setting)).path
+    if (
+        "@" in parts.netloc
+        or parts.query
+        or parts.fragment
+        or parts.path.rstrip("/") != default_path.rstrip("/")
+        or looks_like_a_key(url)
+    ):
+        return generic
+    try:
+        port = parts.port
+    except ValueError:
+        return generic
+    fixed = parts._replace(netloc="127.0.0.1" + (f":{port}" if port else "")).geturl()
+    if where:
+        return f"{why}: set {setting} to {fixed} {where}"
+    return f"{why}: set {setting} to {fixed} (`promptmend config set {setting} {fixed}`)"
+
+
+def _set_where(source: str) -> str | None:
+    """Where a setting from ``source`` is changed when `config set` cannot: the real
+    environment, or the .env PROMPTMEND_ENV names (legacy mode). None for config.toml."""
+    if source == config.ENV_SOURCE:
+        return "in the environment"
+    path = source.removeprefix("file:")
+    if path != source and path != str(config.settings_file()):
+        return f"in {path}"
+    return None
+
+
+def _default(name: str) -> str:
+    """A setting's built-in default, as text."""
+    return next(
+        str(f.metadata["default"]) for f in config.setting_fields() if f.metadata["env"] == name
+    )
+
+
+def _probe_all(urls: Mapping[str, str]) -> dict[str, bool | None]:
+    """local_probe.answers() for each URL, at the same time: each one that answers
+    nothing waits out its own timeout, so asking in turn would add them up. Every probe runs to
+    its end; a probe that raised raises here, in ``urls`` order, as asking in turn would."""
+    if len(urls) < 2:
+        return {key: local_probe.answers(url) for key, url in urls.items()}
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=len(urls), thread_name_prefix="promptmend-probe") as pool:
+        futures = {key: pool.submit(local_probe.answers, url) for key, url in urls.items()}
+    return {key: future.result() for key, future in futures.items()}
+
+
 def persona_findings(settings: config.Settings) -> list[str]:
     """What the gate's scan finds in PROMPT_PERSONA: finding names only, never the text. The
-    gate scans the draft, but every call also sends the persona in the system prompt (#29), so
+    gate scans the draft, but every call also sends the persona in the system prompt, so
     `config validate`, this check and the interface scan it once instead: a match warns and
     never blocks a trigger, which never runs this. No ``bare_token``: that rule is for a
     whole draft that is one secret-like word (a password left on the clipboard); a persona is
@@ -432,7 +550,7 @@ def _espanso_check(runner: deploy.Runner, espanso_dir: Path | None) -> tuple[Che
     answer = runner(deploy.PATH_CONFIG)
     out, why = deploy.output(answer), deploy.failure(answer)
     located = Path(out.strip()) if out and out.strip() else None
-    # Found means on PATH: an installed Espanso that cannot answer is not a PATH problem (#115).
+    # Found means on PATH: an installed Espanso that cannot answer is not a PATH problem.
     found = why is None or why.found
     running = None
     if found:
@@ -463,15 +581,32 @@ def _espanso_check(runner: deploy.Runner, espanso_dir: Path | None) -> tuple[Che
     return Check("espanso", OK, f"running (config: {target})", data), target
 
 
-def _match_check(target: Path, launcher: str | None, manifest: deploy.Manifest | None) -> Check:
-    # "legacy" (the pre-0.9 base.yml, no longer looked for since #246) stays for the schema.
+def _match_check(
+    target: Path,
+    launcher: str | None,
+    manifest: deploy.Manifest | None,
+    planned: deploy.Plan | None = None,
+) -> Check:
+    # "legacy" (the pre-0.9 base.yml, not looked for, #246) stays False for schema_version 1.
     data: dict[str, Any] = {"espanso_dir": str(target), "files": [], "legacy": False}
     if launcher is None or manifest is None:
         why = "the deploy manifest cannot be read" if manifest is None else "no launcher found"
         return Check("match_files", WARN, f"cannot compare: {why} (pass --launcher)", data)
     if not (target / "match").is_dir():
         return Check("match_files", WARN, f"no Espanso match folder in {target}", data)
-    the_plan = deploy.plan(target, deploy.launcher_text(launcher), manifest)
+    text = deploy.launcher_text(launcher)
+    # Planned in the resolved folder, as a deploy keys its manifest entries (a linked
+    # ~/.config/espanso, or on Windows a case or mapped-drive spelling, would else miss them
+    # and report deployed files as foreign); the report keeps the folder as printed.
+    folder = deploy.resolved(target)
+    # The caller's plan when it is this very comparison (the interface's), else our own.
+    same = (
+        planned is not None
+        and planned.espanso_dir == folder
+        and planned.launcher == text
+        and planned.manifest is manifest
+    )
+    the_plan = planned if same and planned is not None else deploy.plan(folder, text, manifest)
     data["files"] = [{"name": s.name, "state": s.state} for s in the_plan.steps]
     broken = [s for s in the_plan.steps if s.state in (deploy.STALE, deploy.MISSING)]
     edited = [s for s in the_plan.steps if s.state in (deploy.MODIFIED, deploy.FOREIGN)]
@@ -484,7 +619,7 @@ def _match_check(target: Path, launcher: str | None, manifest: deploy.Manifest |
 
 
 def _same_launcher(deployed: str, current: str | None) -> bool:
-    """The same path however it is spelled: the match files hold Windows paths with `/` (#212),
+    """The same path however it is spelled: the match files hold Windows paths with `/`,
     and Windows paths ignore case. A launcher never holds a backslash elsewhere."""
     if current is None:
         return False
@@ -550,7 +685,10 @@ def _history_problem(health: Health) -> str:
     elif not health.writable:
         problem = "tracking incomplete: not writable; check the data folder's permissions"
     elif health.tracking_incomplete:
-        problem = "tracking incomplete: history.lost or history.spool cannot be read"
+        problem = (
+            "tracking incomplete: history.lost, history.spool or the history.lost.*.drop "
+            "files in the data folder cannot be read"
+        )
     else:
         problem = ""
     if health.error:
@@ -569,7 +707,7 @@ def _history_checks(settings: config.Settings) -> tuple[Check, Check]:
 
     store = HistoryStore.from_settings(settings)
     if settings.history:
-        # Stores the records a write that missed its time budget left in the spool (#213).
+        # Stores the records a write that missed its time budget left in the spool.
         store.replay()
     health = store.health()
     data = {"enabled": settings.history, **vars(health)}
@@ -659,8 +797,8 @@ def _profiles_check(settings: config.Settings) -> Check:
 
 
 def _folders_check() -> Check:
-    """The user folders. ``legacy`` and ``conflicts`` stay empty: the folders' old names are
-    no longer looked for (#275), and the keys stay for doctor --json schema_version 1."""
+    """The user folders. ``legacy`` and ``conflicts`` stay, always empty, for doctor --json
+    schema_version 1 (#275): the folders' old names are not looked for."""
     data = {
         "config_dir": str(config.user_config_dir()),
         "data_dir": str(config.user_data_dir()),
@@ -670,6 +808,43 @@ def _folders_check() -> Check:
     return Check(
         "folders", OK, f"settings in {data['config_dir']}, data in {data['data_dir']}", data
     )
+
+
+@dataclass(frozen=True)
+class Lookups:
+    """This install's launcher and the deploy manifest, each looked up once, so the interface's
+    plan and doctor share them. ``launcher`` is None with ``launcher_error`` saying why;
+    ``manifest`` is None when it cannot be read, with ``manifest_error``."""
+
+    launcher: deploy.Launcher | None
+    launcher_error: str | None
+    manifest: deploy.Manifest | None
+    manifest_error: str | None
+
+
+def lookups(
+    runner: deploy.Runner | None = None, durations: dict[str, float] | None = None
+) -> Lookups:
+    """resolve_launcher() and Manifest.load(), their failures kept. ``durations`` gets the
+    first's seconds as install and the second's as launcher (doctor --timing)."""
+    spent = durations if durations is not None else {}
+    started = time.perf_counter()
+    found: deploy.Launcher | None = None
+    launcher_error = None
+    try:
+        found = deploy.resolve_launcher(runner=runner or deploy.run_command)
+    except deploy.DeployError as exc:
+        launcher_error = str(exc)
+    spent["install"] = spent.get("install", 0.0) + time.perf_counter() - started
+    started = time.perf_counter()
+    manifest: deploy.Manifest | None = None
+    manifest_error = None
+    try:
+        manifest = deploy.Manifest.load()
+    except deploy.DeployError as exc:
+        manifest_error = str(exc)
+    spent["launcher"] = spent.get("launcher", 0.0) + time.perf_counter() - started
+    return Lookups(found, launcher_error, manifest, manifest_error)
 
 
 def _safely(check_id: str, build: Callable[[], Check]) -> Check:
@@ -687,31 +862,80 @@ def run(
     clipboard: bool = True,
     runner: deploy.Runner | None = None,
     update: update_check.UpdateStatus | None = None,
+    durations: dict[str, float] | None = None,
+    layers: ConfigLayers | None = None,
+    found: Lookups | None = None,
+    plan: deploy.Plan | None = None,
 ) -> Report:
     """Every check in CHECK_IDS. ``launcher`` and ``espanso_dir`` override the lookups;
-    ``update`` is an update check already made (the interface's)."""
+    ``update`` is an update check already made (the interface's). The interface also passes
+    what its reload already read: ``layers`` (repair mode, as load_layers() makes them),
+    ``found`` (lookups()) and its deploy ``plan``, used for match_files when it compares the
+    same folder, launcher and manifest. Without them doctor reads its own, with the same
+    report. ``durations``, when given, gets each check's seconds (`doctor --timing`),
+    the lookups a check reports counted in it: the update check in version, the launcher
+    lookup in install, both settings reads in config, the Espanso queries in espanso; history
+    and sqlite share one read (history)."""
+    spent = durations if durations is not None else {}
     run_command = runner or deploy.run_command
-    layers = ConfigLayers.resolve(strict=False)
+    # On Windows, `espanso path config` and `status` share one look at the processes.
+    from .espanso_windows import one_look
+
+    with one_look():
+        return _run(
+            espanso_dir=espanso_dir,
+            launcher=launcher,
+            clipboard=clipboard,
+            run_command=run_command,
+            update=update,
+            spent=spent,
+            layers=layers,
+            found=found,
+            plan=plan,
+        )
+
+
+def _run(
+    *,
+    espanso_dir: Path | None,
+    launcher: str | None,
+    clipboard: bool,
+    run_command: deploy.Runner,
+    update: update_check.UpdateStatus | None,
+    spent: dict[str, float],
+    layers: ConfigLayers | None,
+    found: Lookups | None,
+    plan: deploy.Plan | None,
+) -> Report:
+    def clock(check_id: str, started: float) -> None:
+        spent[check_id] = spent.get(check_id, 0.0) + time.perf_counter() - started
+
+    def timed(check_id: str, build: Callable[[], Check]) -> Check:
+        started = time.perf_counter()
+        check = _safely(check_id, build)
+        clock(check_id, started)
+        return check
+
+    started = time.perf_counter()
+    if layers is None:
+        layers = ConfigLayers.resolve(strict=False)
     settings = layers.settings()
+    clock("config", started)
     if update is None:
+        started = time.perf_counter()
         update = update_check.check_configured()
+        clock("version", started)
+    started = time.perf_counter()
     try:
         ConfigLayers.resolve().settings()
         strict_error = None
     except ValueError as exc:
         strict_error = str(exc)
+    clock("config", started)
 
-    found: deploy.Launcher | None = None
-    launcher_error = None
-    try:
-        found = deploy.resolve_launcher(runner=run_command)
-    except deploy.DeployError as exc:
-        launcher_error = str(exc)
-    current = launcher or (str(found.path) if found else None)
-    try:
-        manifest: deploy.Manifest | None = deploy.Manifest.load()
-    except deploy.DeployError:
-        manifest = None
+    looked = found or lookups(run_command, spent)
+    current = launcher or (str(looked.launcher.path) if looked.launcher else None)
+    manifest = looked.manifest
     compare = current
     if compare is None and manifest and manifest.entries:
         # Compare with what was deployed, so a missing launcher still shows each file's state;
@@ -721,39 +945,266 @@ def run(
 
     # The version check names the install channel's update command, so it is built after the
     # install check; the report keeps CHECK_IDS order.
-    install = _safely("install", lambda: _install_check(found, launcher_error))
+    install = timed("install", lambda: _install_check(looked.launcher, looked.launcher_error))
     checks: list[Check] = [
-        _safely("version", lambda: _version_check(update, install)),
-        _safely("cli", _cli_check),
+        timed("version", lambda: _version_check(update, install)),
+        timed("cli", _cli_check),
         install,
-        _safely("path_shadow", lambda: _path_shadow_check(found)),
-        _safely("config", lambda: _config_check(layers, strict_error)),
+        timed("path_shadow", lambda: _path_shadow_check(looked.launcher)),
+        timed("config", lambda: _config_check(layers, strict_error)),
     ]
+    started = time.perf_counter()
     try:
         espanso, target = _espanso_check(run_command, espanso_dir)
     except Exception as exc:
         espanso = Check("espanso", FAIL, f"check failed: {type(exc).__name__}")
         target = espanso_dir or deploy.default_espanso_dir()
+    clock("espanso", started)
+    started = time.perf_counter()
     try:
         triggers, deployed = deployed_triggers(target)
     except Exception:
         triggers, deployed = [], False
+    clock("keys", started)
     checks += [
-        _safely("keys", lambda: _keys_check(layers, settings, triggers, deployed)),
-        _safely("persona", lambda: _persona_check(settings, _persona_readable())),
+        timed("keys", lambda: _keys_check(layers, settings, triggers, deployed)),
+        timed("persona", lambda: _persona_check(settings, _persona_readable())),
         espanso,
     ]
-    checks.append(_safely("match_files", lambda: _match_check(target, compare, manifest)))
-    checks.append(_safely("launcher", lambda: _launcher_check(current, manifest)))
+    checks.append(timed("match_files", lambda: _match_check(target, compare, manifest, plan)))
+    checks.append(timed("launcher", lambda: _launcher_check(current, manifest)))
+    started = time.perf_counter()
     try:
         checks.extend(_history_checks(settings))
     except Exception as exc:
         checks.append(Check("history", FAIL, f"check failed: {type(exc).__name__}"))
         checks.append(Check("sqlite", WARN, "unknown"))
-    checks.append(_safely("clipboard", lambda: _clipboard_check(clipboard)))
-    checks.append(_safely("profiles", lambda: _profiles_check(settings)))
-    checks.append(_safely("folders", _folders_check))
+    clock("history", started)
+    checks.append(timed("clipboard", lambda: _clipboard_check(clipboard)))
+    checks.append(timed("profiles", lambda: _profiles_check(settings)))
+    checks.append(timed("folders", _folders_check))
     checks.append(
-        _safely("local_servers", lambda: _local_servers_check(settings, triggers, deployed))
+        timed("local_servers", lambda: _local_servers_check(layers, settings, triggers, deployed))
     )
     return Report(tuple(checks))
+
+
+# --- Timing --------------------------------------------------------------------------------
+
+# `doctor --timing --runs N`: the warm runs after each cold one; WARM_RUNS is the default,
+# equal to smoke.WARM_RUNS (tests/test_frozen.py), which commands/doctor.py does not import.
+RUNS_RANGE = (1, 50)
+WARM_RUNS = 5
+TIMED_OK, TIMED_FAILED, TIMED_SKIPPED = "ok", "failed", "skipped"
+LAUNCHER, INTERPRETER = "launcher", "interpreter"
+INTERFACE_IMPORT = "import promptmend.tui.app"
+
+
+@dataclass(frozen=True)
+class Timed:
+    """One command timed through one way of starting it: the cold run first, then the warm."""
+
+    command: str
+    via: str
+    status: str
+    seconds: tuple[float, ...] = ()
+    message: str | None = None
+
+    @property
+    def cold(self) -> float | None:
+        return self.seconds[0] if self.seconds else None
+
+    @property
+    def warm(self) -> float | None:
+        """The median of the warm runs; None without one (a failed or a single run)."""
+        import statistics
+
+        return statistics.median(self.seconds[1:]) if len(self.seconds) > 1 else None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "command": self.command,
+            "via": self.via,
+            "status": self.status,
+            "cold_ms": _ms(self.cold),
+            "warm_median_ms": _ms(self.warm),
+            "warm_runs": max(len(self.seconds) - 1, 0),
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class Timing:
+    """`doctor --timing`: each command through the launcher and the interpreter, the
+    interface's import, and each check's duration. ``launcher`` is None when it is not timed
+    (``launcher_note`` says why); ``drift_note`` says when the deployed matches call another
+    launcher than the one timed."""
+
+    warm_runs: int
+    launcher: str | None
+    launcher_note: str | None
+    interpreter: tuple[str, ...]
+    runs: tuple[Timed, ...]
+    checks: Mapping[str, float]
+    drift_note: str | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "warm_runs": self.warm_runs,
+            "launcher": self.launcher,
+            "launcher_note": self.launcher_note,
+            "drift_note": self.drift_note,
+            "interpreter": list(self.interpreter),
+            "runs": [r.to_json() for r in self.runs],
+            "checks_ms": {k: _ms(v) for k, v in self.checks.items()},
+        }
+
+
+def _ms(seconds: float | None) -> float | None:
+    return None if seconds is None else round(seconds * 1000, 1)
+
+
+def _timed_launcher(current: str | None, interpreter: list[str]) -> tuple[str | None, str | None]:
+    """The launcher to time, as an absolute path (this install's, or --launcher), or None and
+    why not."""
+    if not current:
+        return None, "no launcher found; timed through the interpreter only"
+    # Absolute (links kept, as Espanso runs the path it was given), so a relative --launcher
+    # names the same file in every child.
+    path = Path(os.path.abspath(Path(current).expanduser()))
+    if not path.is_file():
+        return None, f"{path} is not a file; timed through the interpreter only"
+    if len(interpreter) == 1:
+        try:
+            same = os.path.samefile(interpreter[0], path)
+        except OSError:
+            same = False
+        if same:
+            return None, f"the launcher is this executable ({path}); timed once"
+    return str(path), None
+
+
+def _drift_note(report: Report, launcher: str | None) -> str | None:
+    """When Espanso's deployed matches call another launcher than the one timed."""
+    data = _status_data(report, "launcher")
+    if not data.get("drift"):
+        return None
+    deployed = ", ".join(data.get("deployed") or [])
+    timed = launcher or "the interpreter"
+    return f"Espanso's deployed matches call {deployed}, not {timed}, which was timed"
+
+
+def timing_env(port: int, environ: Mapping[str, str]) -> dict[str, str]:
+    """The children's environment: smoke's stub env, with no persona (persona prints its
+    placeholder, never yours), paste output (the clipboard is never written), and neither
+    PROMPT_LOCAL_ONLY nor PROMPT_EXTRA_PATTERNS, which would refuse or block the -i- trigger's
+    OpenRouter call. Turning them off is safe here only because every provider's base URL is
+    the 127.0.0.1 stub and every key is smoke.PLACEHOLDER_KEY: nothing can leave the machine.
+    Checked, not assumed: RuntimeError if a base URL is not loopback or a key is not the
+    placeholder."""
+    from . import smoke
+    from .providers.base import is_loopback
+
+    env = {
+        **smoke.stub_env(port, environ),
+        "PROMPT_PERSONA": "",
+        "PROMPT_OUTPUT": config.PASTE,
+        "PROMPT_LOCAL_ONLY": "false",
+        "PROMPT_EXTRA_PATTERNS": "",
+    }
+    for spec in PROVIDERS.values():
+        if not is_loopback(env.get(spec.url_setting, "")):
+            raise RuntimeError(f"timing: {spec.url_setting} is not the loopback stub")
+        if spec.key and env.get(spec.key) != smoke.PLACEHOLDER_KEY:
+            raise RuntimeError(f"timing: {spec.key} is not the placeholder key")
+    return env
+
+
+def timing(
+    report: Report,
+    durations: Mapping[str, float],
+    runs: int = WARM_RUNS,
+    *,
+    timer: Callable[..., tuple[list[float], str | None]] | None = None,
+) -> Timing:
+    """Time `--version`, `persona` and the -i- trigger through the launcher and through
+    entry.self_command(), and the interface's import, as child processes against smoke's stub
+    in timing_env(): no provider is called and only the placeholder key is set. A run that
+    fails is reported, never raised. When the launcher's --version fails or prints another
+    version, it is another CLI (or none), so its persona and improve are not run."""
+    from . import smoke
+    from .cli import PERSONA_PLACEHOLDER
+    from .entry import self_command
+
+    time_runs = timer or smoke.time_runs
+    interpreter = self_command()
+    current = _status_data(report, "launcher").get("current")
+    launcher, note = _timed_launcher(current, interpreter)
+    starts = ([(LAUNCHER, [launcher])] if launcher else []) + [(INTERPRETER, interpreter)]
+    try:
+        trigger: list[str] | None = smoke.trigger_args()
+        trigger_problem = None
+    except (LookupError, OSError, ValueError) as exc:
+        trigger, trigger_problem = None, f"the {smoke.TRIGGER} args cannot be read: {exc}"
+    version = smoke.expect_output(installed_version(), strip=True, show=True)
+    commands: list[tuple[str, list[str] | None, smoke.Expect, str | None]] = [
+        ("--version", ["--version"], version, None),
+        ("persona", ["persona"], smoke.expect_output(PERSONA_PLACEHOLDER), None),
+        (f"improve ({smoke.TRIGGER})", trigger, smoke.expect_output(smoke.REPLY), trigger_problem),
+    ]
+    results: list[Timed] = []
+    with smoke.stub_server() as stub:
+        env = timing_env(stub.port, os.environ)
+
+        def one(command: str, via: str, argv: list[str], expect: smoke.Expect) -> Timed:
+            seconds, problem = time_runs(argv, env, runs, expect)
+            status = TIMED_FAILED if problem else TIMED_OK
+            return Timed(command, via, status, tuple(seconds), problem)
+
+        broken: set[str] = set()
+        for command, args, expect, problem in commands:
+            for via, prefix in starts:
+                if via in broken:
+                    why = "not run: --version through the launcher failed"
+                    results.append(Timed(command, via, TIMED_SKIPPED, message=why))
+                elif args is None:
+                    results.append(Timed(command, via, TIMED_FAILED, message=problem))
+                else:
+                    timed = one(command, via, [*prefix, *args], expect)
+                    results.append(timed)
+                    if via == LAUNCHER and expect is version and timed.status != TIMED_OK:
+                        broken.add(via)
+        if getattr(sys, "frozen", False):
+            results.append(
+                Timed(
+                    INTERFACE_IMPORT,
+                    INTERPRETER,
+                    TIMED_SKIPPED,
+                    message="a frozen build has no interpreter to import it with",
+                )
+            )
+        else:
+            importer = [sys.executable, "-P", "-c", INTERFACE_IMPORT]
+            results.append(one(INTERFACE_IMPORT, INTERPRETER, importer, _exits_zero))
+    checks = {i: durations[i] for i in CHECK_IDS if i in durations}
+    return Timing(
+        runs,
+        launcher,
+        note,
+        tuple(interpreter),
+        tuple(results),
+        checks,
+        _drift_note(report, launcher),
+    )
+
+
+def _exits_zero(code: int, out: bytes, err: bytes) -> str | None:
+    """The interface's import: only the exit code counts (no trigger, so stderr may warn)."""
+    return None if code == 0 else f"exit code {code}"
+
+
+def _status_data(report: Report, check_id: str) -> Mapping[str, Any]:
+    for check in report.checks:
+        if check.id == check_id:
+            return check.data
+    return {}

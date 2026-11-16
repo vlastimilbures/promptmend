@@ -5,18 +5,26 @@ a paid call or a key leaving the machine.
 A child process runs `python -m promptmend.cli improve --provider <name> ...` (the same
 code a trigger runs) with every provider base URL pointed at the stub and a placeholder key
 in place of the real one, set as environment variables, which outrank every settings file.
-The usage history is switched off the same way: a health check is not usage (#116).
+The usage history is switched off the same way: a health check is not usage.
 
-The interface's Try tab (#111) runs its stub rewrites against the same stub, in process:
+The interface's Try tab runs its stub rewrites against the same stub, in process:
 stub_server() starts it and stub_settings() points a Settings at it as stub_env() does.
+stub_server(delay=..., trickle=...) makes it slow, or never answer, for the tests of improve's
+hard time limit.
+
+The timing helpers run a command through a launcher against the stub, a cold first run
+and then warm ones: `doctor --timing` (which CI's Windows jobs run) and `scripts/build_windows.py
+time` use them. They time start-up and the trigger's own work, never a provider's.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -37,6 +45,13 @@ TIMEOUT = 60
 # The token counts every stub reply reports, so a stub run shows a usage line.
 INPUT_TOKENS = 42
 OUTPUT_TOKENS = 7
+
+# The trigger timed by default, and how many warm runs follow the cold one.
+TRIGGER = "-i-"
+WARM_RUNS = 5  # doctor.WARM_RUNS, kept equal by tests/test_frozen.py
+# time_trigger()'s limit per run (the local `scripts/build_windows.py time`, on a cold Windows
+# machine).
+TRIGGER_TIMEOUT = 120
 
 # Runs argv with env; returns (exit code, stdout). Tests may replace it.
 Runner = Callable[[Sequence[str], Mapping[str, str]], tuple[int, bytes]]
@@ -78,18 +93,48 @@ class _Handler(BaseHTTPRequestHandler):
         self.rfile.read(length)  # never kept: only the path is recorded
         self.server.paths.append(self.path)
         body = json.dumps(_reply(self.path)).encode("utf-8")
+        server = self.server
+        # The wait ends early when the stub stops, so a held reply never outlives it.
+        if server.delay and server.stopping.wait(
+            None if math.isinf(server.delay) else server.delay
+        ):
+            return
+        if server.trickle:
+            self._trickle(body)
+            return
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    def _trickle(self, body: bytes) -> None:
+        """The whole reply, status line and headers included, one byte at a time."""
+        self.close_connection = True
+        head = (
+            f"{self.protocol_version} 200 OK\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+        )
+        try:
+            for byte in head.encode("ascii") + body:
+                if self.server.stopping.wait(self.server.trickle):
+                    return
+                self.wfile.write(bytes([byte]))
+                self.wfile.flush()
+        except OSError:  # the client gave up (the CLI ended)
+            return
+
     def log_message(self, format: str, *args: Any) -> None:
         return
 
 
 class _StubServer(ThreadingHTTPServer):
+    # Room for many near-simultaneous connects (the slow-trigger test), above TCPServer's 5.
+    request_queue_size = 64
     paths: list[str]
+    delay: float
+    trickle: float
+    stopping: threading.Event
 
 
 @dataclass(frozen=True)
@@ -105,15 +150,28 @@ class Stub:
 
 
 @contextmanager
-def stub_server() -> Iterator[Stub]:
-    """Run the stub on 127.0.0.1 (a free port) while the block runs, then stop it."""
+def stub_server(delay: float = 0.0, *, trickle: float = 0.0) -> Iterator[Stub]:
+    """Run the stub on 127.0.0.1 (a free port) while the block runs, then stop it.
+
+    By default each request is answered at once. ``delay`` waits that many seconds before
+    answering; ``math.inf`` accepts the request and never answers, holding the connection
+    open until the stub stops. ``trickle`` sends the reply, status line and headers included,
+    one byte every ``trickle`` seconds, so each read gets a byte well within any read timeout
+    while the whole reply takes far longer. A request is recorded in ``paths`` when it
+    arrives, before any wait."""
+    if delay < 0 or trickle < 0 or math.isnan(delay) or not math.isfinite(trickle):
+        raise ValueError("delay and trickle must be non-negative seconds (delay may be inf)")
     server = _StubServer(("127.0.0.1", 0), _Handler)
     server.paths = []
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server.delay, server.trickle = delay, trickle
+    server.stopping = threading.Event()
+    # A short poll so stopping takes ~0.05 s, not serve_forever's default 0.5 s per stub.
+    thread = threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True)
     thread.start()
     try:
         yield Stub(int(server.server_address[1]), server.paths)
     finally:
+        server.stopping.set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
@@ -151,8 +209,9 @@ def stub_env(port: int, environ: Mapping[str, str]) -> dict[str, str]:
 def stub_settings(cfg: Settings, port: int) -> Settings:
     """``cfg`` pointed at the stub as stub_env() points the environment: every provider's
     base URL, placeholder keys and no history."""
-    changes: dict[str, Any] = {f"{name}_base_url": url for name, url in _stub_urls(port).items()}
-    changes |= {f"{name}_api_key": PLACEHOLDER_KEY for name, spec in PROVIDERS.items() if spec.key}
+    urls = _stub_urls(port)
+    changes: dict[str, Any] = {spec.url_field: urls[name] for name, spec in PROVIDERS.items()}
+    changes |= {spec.key_field: PLACEHOLDER_KEY for spec in PROVIDERS.values() if spec.key_field}
     return replace(cfg, **changes, history=False)
 
 
@@ -183,3 +242,125 @@ def run(provider: str, *, runner: Runner | None = None) -> SmokeResult:
             True, output, stub.requests, "improve reached the stub and printed its reply"
         )
     return SmokeResult(False, output, stub.requests, output or f"exit code {code}, no output")
+
+
+# --- Timing --------------------------------------------------------------------------------
+
+# Judges one run from (exit code, stdout, stderr): None when it is as expected, else why not.
+Expect = Callable[[int, bytes, bytes], str | None]
+
+
+def expect_output(text: str, *, strip: bool = False, show: bool = False) -> Expect:
+    """A run that exits 0, writes nothing to stderr (Espanso fails an expansion on either) and
+    prints exactly ``text`` (``strip``: give or take surrounding whitespace, for a line).
+    ``show``: a mismatch quotes what was printed, for an output that holds nothing private
+    (the version); otherwise only a marker is quoted."""
+
+    def check(code: int, out: bytes, err: bytes) -> str | None:
+        if code != 0:
+            return f"exit code {code}"
+        if err:
+            return "wrote to stderr"
+        printed = out.decode("utf-8", "replace")
+        if (printed.strip() if strip else printed) == text:
+            return None
+        if printed.startswith("[promptmend:"):
+            # A marker quotes no draft or key (it goes through redaction), so it may be shown.
+            return f"printed {printed.strip()[:200]}"
+        if show:
+            return f"printed {printed.strip()[:80]!r}, expected {text!r}"
+        return f"printed something else ({len(printed)} characters)"
+
+    return check
+
+
+def time_runs(
+    argv: Sequence[str],
+    env: Mapping[str, str],
+    runs: int,
+    expect: Expect,
+    *,
+    timeout: float = TIMEOUT,
+) -> tuple[list[float], str | None]:
+    """Seconds per run of ``argv``, the first one cold, then ``runs`` warm ones; and None, or
+    why a run went wrong (it is the last one timed: the rest are not run)."""
+    seconds: list[float] = []
+    for _ in range(runs + 1):
+        started = time.perf_counter()
+        try:
+            proc = subprocess.run(  # noqa: S603 - this CLI or its interpreter, an argv list
+                list(argv),
+                env=dict(env),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            seconds.append(time.perf_counter() - started)
+            return seconds, f"timed out after {timeout:g} s"
+        except OSError as exc:
+            return seconds, f"could not run: {type(exc).__name__}: {exc}"
+        seconds.append(time.perf_counter() - started)
+        if problem := expect(proc.returncode, proc.stdout, proc.stderr):
+            return seconds, problem
+    return seconds, None
+
+
+def trigger_args(trigger: str = TRIGGER) -> list[str]:
+    """The trigger's args after the launcher, as a match file lists them, with the draft
+    passed as an argument instead of the clipboard."""
+    from . import assets
+
+    for name in assets.match_names():
+        current = None
+        for line in assets.read_match(name).splitlines():
+            if head := assets.TRIGGER_LINE.match(line):
+                current = head.group(2)
+            elif current == trigger and line.strip().startswith("args: ["):
+                args = [str(a) for a in json.loads(line.split("args:", 1)[1])]
+                source = args.index("--source")
+                args[source : source + 2] = ["--source", "argument", "--text", "draft"]
+                return args[1:]
+    raise LookupError(f"no script var runs the CLI for {trigger}")
+
+
+def time_trigger(launcher: Sequence[str], runs: int = WARM_RUNS) -> list[float]:
+    """Seconds per run of the trigger through ``launcher`` against the stub, the first one
+    cold. Raises if a run fails as Espanso would see it (exit code, stderr, output), with the
+    tail of what it printed, for CI's log."""
+    args = trigger_args()
+    expect = expect_output(REPLY)
+    last: list[bytes] = [b"", b""]
+
+    def judged(code: int, out: bytes, err: bytes) -> str | None:
+        last[:] = [out, err]
+        return expect(code, out, err)
+
+    with stub_server() as stub:
+        seconds, problem = time_runs(
+            [*launcher, *args],
+            stub_env(stub.port, os.environ),
+            runs,
+            judged,
+            timeout=TRIGGER_TIMEOUT,
+        )
+    if problem:
+        out, err = last
+        raise RuntimeError(
+            f"the trigger failed: {problem}; stdout ends {out[-500:]!r}; stderr ends {err[-500:]!r}"
+        )
+    return seconds
+
+
+def summary(seconds: Sequence[float], launcher: str, trigger: str = TRIGGER) -> str:
+    import statistics
+
+    cold, warm = seconds[0], seconds[1:]
+    return (
+        f"### Trigger latency ({trigger} against the local stub)\n\n"
+        f"Launcher: `{launcher}`\n\n"
+        "| Run | ms |\n|-----|----|\n"
+        f"| first (cold) | {cold * 1000:.0f} |\n"
+        f"| warm, median of {len(warm)} | {statistics.median(warm) * 1000:.0f} |\n"
+    )

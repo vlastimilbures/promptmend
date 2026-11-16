@@ -1,4 +1,4 @@
-"""`ui`: the full-screen interface (#93), also what a bare `promptmend` opens on a
+"""`ui`: the full-screen interface, also what a bare `promptmend` opens on a
 terminal (D-UI-1). Textual is imported here only once the interface opens, so --help, the
 triggers and every other command never load it."""
 
@@ -24,7 +24,7 @@ def on_a_terminal() -> bool:
 
 @app.command("ui", short_help="Open the full-screen interface to set up and manage (a terminal).")
 def ui(
-    # The intro is gone (#245); the option stays accepted, hidden, so old scripts still run.
+    # The option opens no intro; it stays accepted, hidden, so old scripts still run.
     no_intro: bool = typer.Option(False, "--no-intro", hidden=True),
 ) -> None:
     """Open the full-screen interface: status, settings and keys, profiles, triggers, usage

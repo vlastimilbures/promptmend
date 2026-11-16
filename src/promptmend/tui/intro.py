@@ -1,5 +1,5 @@
-"""The About screen on `a` (#112): static text in a Textual border. (The intro screen that
-used to open the interface was removed in #245.)"""
+"""The About screen on `a`: static text in a Textual border. (The module is named for the
+intro screen it no longer holds.)"""
 
 from __future__ import annotations
 
@@ -38,6 +38,11 @@ class AboutScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         self.query_one("#about-close", Button).focus()
+
+    def show_facts(self, facts: list[str]) -> None:
+        """New facts while open: the update check landed."""
+        self.facts = facts
+        self.query_one("#about-facts", Static).update("\n".join(facts))
 
     def action_close(self) -> None:
         self.dismiss(None)

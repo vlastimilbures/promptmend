@@ -4,16 +4,17 @@ A trigger sends whatever is on the clipboard, so a vault password copied a minut
 go to the model if the user forgot to copy the draft. Password managers mark such items: on
 macOS with the nspasteboard.org types, on Windows with the clipboard formats Microsoft defines
 for clipboard history and monitors. Each probe asks only which formats are present, never for
-the content, through ctypes, so nothing is added to the package or its start-up.
+the content, through ctypes, so nothing is added to the package; ctypes (a native module on
+Windows) is imported only when a probe runs, so a trigger that reads no clipboard never
+loads it.
 
 is_concealed() returns None when it cannot tell (another OS, or a probe error), and the caller
-then reads the clipboard as before: the check adds protection, never a new way to fail. Browser
+then reads the clipboard anyway: the check adds protection, never a new way to fail. Browser
 extensions copy through the web clipboard API and set no marker, so they are not covered.
 """
 
 from __future__ import annotations
 
-import ctypes
 import sys
 import time
 from collections.abc import Callable
@@ -50,6 +51,8 @@ class _MacRuntime:
     function type per call, as arm64 requires exact argument types."""
 
     def __init__(self) -> None:
+        import ctypes
+
         self._objc = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
         ctypes.CDLL("/System/Library/Frameworks/AppKit.framework/AppKit")  # defines NSPasteboard
         self._objc.objc_getClass.restype = ctypes.c_void_p
@@ -61,14 +64,20 @@ class _MacRuntime:
         return self._objc.objc_getClass(name.encode())
 
     def _send(self, restype: Any, obj: object, selector: str, *args: int) -> Any:
+        import ctypes
+
         argtypes = [ctypes.c_void_p, ctypes.c_void_p] + [ctypes.c_ulong] * len(args)
         send = ctypes.CFUNCTYPE(restype, *argtypes)(("objc_msgSend", self._objc))
         return send(obj, self._objc.sel_registerName(selector.encode()), *args)
 
     def call(self, obj: object, selector: str, *args: int) -> Any:
+        import ctypes
+
         return self._send(ctypes.c_void_p, obj, selector, *args)
 
     def string(self, obj: object) -> str:
+        import ctypes
+
         return bytes(self._send(ctypes.c_char_p, obj, "UTF8String") or b"").decode()
 
 
@@ -76,6 +85,8 @@ class _WinClipboard:
     """The user32/kernel32 clipboard calls the Windows probe needs."""
 
     def __init__(self) -> None:
+        import ctypes
+
         win_dll = getattr(ctypes, "WinDLL")  # noqa: B009 - absent from ctypes off Windows
         self._user32 = win_dll("user32")
         self._kernel32 = win_dll("kernel32")
@@ -108,6 +119,8 @@ class _WinClipboard:
         return False
 
     def read_dword(self, name: str) -> int | None:
+        import ctypes
+
         if not self._open():
             return None
         try:

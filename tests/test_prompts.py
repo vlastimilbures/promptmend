@@ -29,11 +29,40 @@ def test_default_profile_emits_golden_template() -> None:
 # default profile's system prompt describes both the plan-first/execute-now and
 # independent-review/self-review instruction branches for the model to choose between.
 def test_default_profile_offers_both_branches() -> None:
+    from promptmend.wordings import DOMAIN, default_wordings
+
     text = system_prompt("default")
-    assert "Plan the task thoroughly" in text
-    assert "Execute, but state assumptions up front." in text
-    assert "Use a separate agent with [domain] domain knowledge if you can run one" in text
-    assert "Review your own output against these checks" in text
+    wordings = default_wordings()
+    for variant in (wordings.plan, wordings.execute, wordings.independent, wordings.self_review):
+        assert f">{variant}</variant>" in text
+    assert DOMAIN in wordings.independent
+
+
+# The built-in profiles are real files next to the module (the wheel and the frozen build both
+# ship them so), read on first use, once, in name order (#312).
+def test_builtin_profiles_load_on_first_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend import prompt_builder
+
+    folder = Path(prompt_builder.__file__).parent / "prompts"
+    assert folder == prompt_builder._PROMPT_DIR
+    expected = {p.stem: p.read_text(encoding="utf-8").strip() for p in folder.glob("*.md")}
+    reads: list[int] = []
+    real = prompt_builder._load_profiles
+
+    def load() -> dict[str, str]:
+        reads.append(1)
+        return real()
+
+    monkeypatch.setattr(prompt_builder, "_load_profiles", load)
+    profiles = prompt_builder._BuiltinProfiles()
+    assert reads == []
+    assert dict(profiles) == expected
+    assert list(profiles) == sorted(expected)
+    assert len(profiles) == len(expected)
+    assert ("default" in profiles, profiles.get("nope")) == (True, None)
+    assert repr(profiles) == repr(dict(profiles))
+    assert reads == [1]
+    assert dict(PROFILES) == expected
 
 
 # The retired default-pro profile (an old .env's PROMPT_PRO_PROFILE) renders default.

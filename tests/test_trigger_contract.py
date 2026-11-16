@@ -19,6 +19,7 @@ from promptmend.cli import app
 from promptmend.config import env_names
 from promptmend.providers.base import ProviderError
 from promptmend.providers.openai_compatible import OpenAICompatibleProvider
+from promptmend.smoke import PLACEHOLDER_KEY
 
 if TYPE_CHECKING:
     from conftest import FakeHttp, StubProvider
@@ -27,11 +28,11 @@ runner = CliRunner()
 
 PLACEHOLDER = b"I am working as [role] in [company]."
 
-# What a newline in the output becomes on this platform. _emit() writes text to sys.stdout,
-# which on Windows translates "\n" to "\r\n" (CPython opens the standard streams with
-# newline=None there, and _main()'s reconfigure() keeps that), so a multi-line rewrite and the
-# "sent despite" note reach Espanso with CRLF on Windows and LF elsewhere. CliRunner's stdout
-# wrapper translates the same way. Frozen as it is, so a change either way fails here.
+# What a newline in the output becomes on this platform. trigger._emit() writes text to
+# sys.stdout, which on Windows translates "\n" to "\r\n" (CPython opens the standard streams
+# with newline=None there, and _main()'s reconfigure() keeps that), so a multi-line rewrite and
+# the "sent despite" note reach Espanso with CRLF on Windows and LF elsewhere. CliRunner's
+# stdout wrapper translates the same way. Frozen as it is, so a change either way fails here.
 EOL = os.linesep.encode()
 
 
@@ -172,6 +173,7 @@ import httpx
 import pyperclip
 
 import promptmend.cli as cli
+import promptmend.pipeline as pipeline
 from promptmend.providers import base
 
 real_client = httpx.Client
@@ -194,10 +196,23 @@ def client(*args, **kwargs):
 
 httpx.Client = client
 base._sleep = lambda seconds: None
-cli.is_concealed = lambda: None
+pipeline.is_concealed = lambda: None
 pyperclip.paste = lambda: "rewrite this draft"
 copied = []
 pyperclip.copy = copied.append
+
+# Whether the version was read by the time each output was printed (#318).
+import promptmend.trigger as trigger
+
+real_emit, at_output = trigger._emit, []
+
+
+def emit(*args, **kwargs):
+    real_emit(*args, **kwargs)
+    at_output.append("importlib.metadata" in sys.modules)
+
+
+trigger._emit = cli._emit = emit
 
 local = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
 cloud = ["improve", "--provider", "openrouter", "--source", "clipboard"]
@@ -225,6 +240,7 @@ for argv, env, code in scenarios:
 result = {
     "codes": codes,
     "copied": copied,
+    "at_output": at_output,
     "added": sorted(set(sys.modules) - started),
     "loaded": sorted(sys.modules),
 }
@@ -249,6 +265,7 @@ FORBIDDEN = (
     "promptmend.config_store",
     "promptmend.update_check",
     "promptmend.local_probe",
+    "promptmend.wordings",
 )
 # The usage history (#89) writes each run after its output, so sqlite3 loads on the trigger
 # path when tracking is on (PROMPT_HISTORY, the default), and never when it is off.
@@ -256,8 +273,8 @@ HISTORY_MODULES = ("promptmend.history", "sqlite3", "_sqlite3")
 
 # Modules the trigger scenarios add to a bare interpreter, macOS: 307 on Python 3.12 and 306 on
 # 3.14 with the usage history on, 296 on both with it off (see "Trigger start-up budget" in
-# CONTRIBUTING.md). A coarse ceiling, not a timing: a new dependency tree on the trigger path
-# crosses it; ordinary growth does not.
+# CONTRIBUTING.md), +3 since #281 (sanitize, pipeline, trigger). A coarse ceiling, not a
+# timing: a new dependency tree on the trigger path crosses it; ordinary growth does not.
 MODULE_CEILING = 400
 
 # Variables that would make the child load modules before the script runs (coverage's .pth
@@ -392,13 +409,65 @@ Path(out).write_text(json.dumps({"code": code, "added": seen[0]}), encoding="utf
 # Never loaded by `--version`, nor by `improve` before its provider call. `--version` reads
 # the installed metadata; `improve` does not need it.
 STARTUP_FORBIDDEN = ("httpx", "pyperclip", "sqlite3", "textual", *FORBIDDEN)
-VERSION_FORBIDDEN = (*STARTUP_FORBIDDEN, "typer", "click", "rich", "promptmend.cli")
+VERSION_FORBIDDEN = (
+    *STARTUP_FORBIDDEN,
+    "typer",
+    "click",
+    "rich",
+    "promptmend.cli",
+    "promptmend.trigger",
+    "promptmend.pipeline",
+)
 IMPROVE_FORBIDDEN = (*STARTUP_FORBIDDEN, "importlib.metadata")
 # Modules each run adds to a bare interpreter, macOS, Python 3.12, 2026-10-08: `--version`
 # 108 (importlib.metadata is most of them), `improve` up to the provider call 149; both were
-# 221 before #223. Coarse, like MODULE_CEILING: a new import tree crosses them.
+# 221 before #223; `improve` +3 since #281 (sanitize, pipeline, trigger). Python 3.13,
+# 2026-11-15 (#312): `improve` up to the provider call and `persona` (history off) 145 each,
+# from 167 before the built-in profiles stopped going through importlib.resources and
+# hashlib, ctypes, tempfile and unicodedata moved into the functions that use them. Coarse,
+# like MODULE_CEILING: a new import tree crosses them.
 VERSION_CEILING = 150
-IMPROVE_CEILING = 200
+IMPROVE_CEILING = 175
+PERSONA_CEILING = 175
+
+# The extension modules a Windows CPython ships as their own .pyd in DLLs/ that matter to the
+# trigger path (not every one shipped: the test modules and the like are left out; the rest
+# is built into pythonXY.dll). An endpoint scanner inspects each as it loads (#312),
+# so none loads before the provider call (or, for persona, at all) unless the call needs it:
+# the clipboard probe's _ctypes only when the clipboard is read, the HTTP client's _socket
+# and _ssl only for the call, the usage history's _sqlite3 and _decimal only after the output.
+WINDOWS_EXTENSIONS = (
+    "_asyncio",
+    "_bz2",
+    "_ctypes",
+    "_decimal",
+    "_elementtree",
+    "_hashlib",
+    "_lzma",
+    "_multiprocessing",
+    "_overlapped",
+    "_queue",
+    "_socket",
+    "_sqlite3",
+    "_ssl",
+    "_uuid",
+    "_wmi",
+    "_zoneinfo",
+    "_zstd",
+    "pyexpat",
+    "select",
+    "unicodedata",
+    "winsound",
+)
+# What `import typer` itself may load of them: typer.main imports shutil (which tries bz2,
+# lzma and, from 3.14, compression.zstd), subprocess (select, on POSIX only), uuid and
+# platform (_wmi, on Windows from 3.12); on Windows its vendored click also imports ctypes
+# for the console (typer._click._compat -> _winconsole), so _ctypes is Typer's there too.
+# Which ones load depends on the OS and the Python version, so the typer_extensions fixture
+# measures them in a fresh interpreter, held to this ceiling. They stay until a trigger entry
+# runs without Typer (#313). Because Typer has already loaded _ctypes on Windows, "the
+# clipboard probe's _ctypes only when the clipboard is read" is effectively checked on POSIX.
+TYPER_EXTENSIONS_ALLOWED = ("_bz2", "_ctypes", "_lzma", "select", "_uuid", "_wmi", "_zstd")
 
 
 def _isolated_env(tmp: Path) -> dict[str, str]:
@@ -415,13 +484,16 @@ def _isolated_env(tmp: Path) -> dict[str, str]:
     return env
 
 
-def _startup(script: str, tmp: Path) -> tuple[bytes, dict[str, Any]]:
+def _startup(
+    script: str, tmp: Path, settings: dict[str, str] | None = None
+) -> tuple[bytes, dict[str, Any]]:
+    """Run ``script`` in a fresh interpreter in _isolated_env(), plus ``settings``."""
     out = tmp / "modules.json"
     proc = subprocess.run(
         [sys.executable, "-c", script, str(out)],
         capture_output=True,
         stdin=subprocess.DEVNULL,
-        env=_isolated_env(tmp),
+        env={**_isolated_env(tmp), **(settings or {})},
         cwd=tmp,
         timeout=60,
         check=False,
@@ -443,11 +515,188 @@ def test_version_startup_budget(tmp_path: Path) -> None:
     assert len(data["added"]) <= VERSION_CEILING, f"--version added {len(data['added'])}"
 
 
-def test_improve_startup_budget(tmp_path: Path) -> None:
+_TYPER_RUN = """
+import sys
+out = sys.argv[1]
+started = set(sys.modules)
+import typer
+import json
+from pathlib import Path
+Path(out).write_text(json.dumps({"added": sorted(set(sys.modules) - started)}), encoding="utf-8")
+"""
+
+
+@pytest.fixture(scope="module")
+def typer_extensions(tmp_path_factory: pytest.TempPathFactory) -> set[str]:
+    """The WINDOWS_EXTENSIONS that `import typer` loads in a fresh interpreter, on this OS and
+    Python: the only ones a trigger may load before its provider call."""
+    _, data = _startup(_TYPER_RUN, tmp_path_factory.mktemp("typer"))
+    return set(_loaded(data["added"], WINDOWS_EXTENSIONS))
+
+
+def test_typer_loads_only_the_allowed_extensions(typer_extensions: set[str]) -> None:
+    assert typer_extensions <= set(TYPER_EXTENSIONS_ALLOWED)
+
+
+def test_improve_startup_budget(tmp_path: Path, typer_extensions: set[str]) -> None:
     stdout, data = _startup(_IMPROVE_RUN, tmp_path)
     assert (stdout, data["code"]) == (b"done", 0)
     assert _loaded(data["added"], IMPROVE_FORBIDDEN) == []
     assert len(data["added"]) <= IMPROVE_CEILING, f"improve added {len(data['added'])}"
+    assert set(_loaded(data["added"], WINDOWS_EXTENSIONS)) <= typer_extensions
+
+
+# The same through a gated cloud provider (OpenRouter, a placeholder key): the gate scans the
+# draft before the call, and an ASCII draft needs no unicodedata for that (#312). The single
+# HTTP function is stubbed both where the provider calls it and at its source, and every
+# proxy points at a closed loopback port, so a stray call cannot leave the machine.
+_CLOUD_RUN = (
+    _IMPROVE_RUN.replace('"ollama"', '"openrouter"')
+    .replace("import ollama", "import base, openai_compatible")
+    .replace(
+        "ollama.post_json = post_json",
+        "openai_compatible.post_json = post_json\nbase.post_json = post_json",
+    )
+    .replace(
+        '{"message": {"content": "done"}, "done_reason": "stop"}',
+        '{"choices": [{"message": {"content": "done"}, "finish_reason": "stop"}]}',
+    )
+)
+_DEAD_PROXY = "http://127.0.0.1:9"
+CLOUD_KEY = {
+    "OPENROUTER_API_KEY": PLACEHOLDER_KEY,
+    **dict.fromkeys(("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"), _DEAD_PROXY),
+    "NO_PROXY": "",
+}
+
+
+def test_cloud_improve_startup_budget(tmp_path: Path, typer_extensions: set[str]) -> None:
+    assert "ollama" not in _CLOUD_RUN
+    assert "base.post_json = post_json" in _CLOUD_RUN
+    stdout, data = _startup(_CLOUD_RUN, tmp_path, CLOUD_KEY)
+    assert (stdout, data["code"]) == (b"done", 0)
+    assert "promptmend.gate" in data["added"]
+    assert _loaded(data["added"], IMPROVE_FORBIDDEN) == []
+    assert len(data["added"]) <= IMPROVE_CEILING, f"improve added {len(data['added'])}"
+    assert set(_loaded(data["added"], WINDOWS_EXTENSIONS)) <= typer_extensions
+
+
+# The whole persona run (the -p- snippet), with the usage history off: with it on, the
+# history row loads sqlite3 after the output, as for improve (HISTORY_MODULES).
+NO_HISTORY = {"PROMPT_HISTORY": "false"}
+_PERSONA_RUN = """
+import sys
+out = sys.argv[1]
+started = set(sys.modules)
+sys.argv = ["promptmend", "persona"]
+from promptmend.entry import main
+try:
+    main()
+except SystemExit as exc:
+    if exc.code:
+        raise
+added = sorted(set(sys.modules) - started)
+import json
+from pathlib import Path
+Path(out).write_text(json.dumps({"added": added}), encoding="utf-8")
+"""
+
+
+def test_persona_startup_budget(tmp_path: Path, typer_extensions: set[str]) -> None:
+    stdout, data = _startup(_PERSONA_RUN, tmp_path, NO_HISTORY)
+    assert stdout == PLACEHOLDER
+    assert _loaded(data["added"], IMPROVE_FORBIDDEN) == []
+    assert len(data["added"]) <= PERSONA_CEILING, f"persona added {len(data['added'])}"
+    assert set(_loaded(data["added"], WINDOWS_EXTENSIONS)) <= typer_extensions
+
+
+# With Typer imported before the count starts, the trigger path itself adds no Windows
+# extension module: the ones it loads are Typer's, not a module of ours hiding behind it.
+# Its own clipboard probe stays out too: a --text draft reads no clipboard.
+@pytest.mark.parametrize(
+    "script", [_IMPROVE_RUN, _CLOUD_RUN, _PERSONA_RUN], ids=["improve", "cloud", "persona"]
+)
+def test_trigger_path_adds_no_windows_extension_of_its_own(tmp_path: Path, script: str) -> None:
+    after_typer = script.replace(
+        "started = set(sys.modules)", "import typer\nstarted = set(sys.modules)", 1
+    )
+    assert after_typer != script
+    _, data = _startup(after_typer, tmp_path, {**NO_HISTORY, **CLOUD_KEY})
+    assert "typer" not in data["added"]
+    assert _loaded(data["added"], WINDOWS_EXTENSIONS) == []
+
+
+# The boundary of the #281 split: pipeline.py (the rewrite's steps) imports neither Typer nor
+# the CLI nor the trigger run, so a Typer-free trigger entry (#299) can build on it, and the
+# interface's Try tab reaches the pipeline without importing cli.py. Each in a fresh interpreter.
+_IMPORT_RUN = """
+import sys
+out, module = sys.argv[1], sys.argv[2]
+import importlib
+importlib.import_module(module)
+import json
+from pathlib import Path
+Path(out).write_text(json.dumps({"loaded": sorted(sys.modules)}), encoding="utf-8")
+"""
+
+
+def _imports(module: str, tmp: Path) -> list[str]:
+    out = tmp / "modules.json"
+    proc = subprocess.run(
+        [sys.executable, "-c", _IMPORT_RUN, str(out), module],
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        env=_isolated_env(tmp),
+        cwd=tmp,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    loaded: list[str] = json.loads(out.read_text(encoding="utf-8"))["loaded"]
+    return loaded
+
+
+def test_pipeline_imports_no_typer_or_cli(tmp_path: Path) -> None:
+    loaded = _imports("promptmend.pipeline", tmp_path)
+    assert "promptmend.pipeline" in loaded
+    assert _loaded(loaded, ("typer", "click", "promptmend.cli", "promptmend.trigger")) == []
+
+
+# The built-in profiles are read as plain files, on first use: importlib.resources would bring
+# zipfile, and with it bz2 and lzma (#312).
+def test_prompt_builder_imports_no_resources_or_zipfile(tmp_path: Path) -> None:
+    loaded = _imports("promptmend.prompt_builder", tmp_path)
+    assert "promptmend.prompt_builder" in loaded
+    assert _loaded(loaded, ("importlib.resources", "zipfile", "bz2", "lzma")) == []
+
+
+def test_try_pane_does_not_import_cli(tmp_path: Path) -> None:
+    loaded = _imports("promptmend.tui.try_pane", tmp_path)
+    assert "promptmend.pipeline" in loaded
+    assert _loaded(loaded, ("promptmend.cli", "promptmend.trigger")) == []
+
+
+# The version is read where it is used, never at import (#318): importing the usage history
+# does not load importlib.metadata, and a trigger run reads the installed metadata only to
+# record the run (its app_version), after the output is printed: not yet loaded when the first
+# output is printed, and never with tracking off (which also catches a dependency that starts
+# importing importlib.metadata eagerly). Later outputs in the same process follow the first
+# run's record, so only the first is checked in the tracking-on run.
+def test_history_import_does_not_read_the_version(tmp_path: Path) -> None:
+    loaded = _imports("promptmend.history", tmp_path)
+    assert "promptmend.history" in loaded
+    assert _loaded(loaded, ("importlib.metadata",)) == []
+
+
+def test_trigger_run_reads_the_version_only_after_output_to_record(
+    trigger_run: tuple[list[bytes], dict[str, Any]],
+) -> None:
+    _, data = trigger_run
+    assert len(data["at_output"]) == 7  # one output per scenario
+    assert data["at_output"][0] is False
+    if not data["tracking"]:
+        assert not any(data["at_output"])
+    assert ("importlib.metadata" in data["loaded"]) is data["tracking"]
 
 
 # The headless management commands, --help and the bare command without a terminal never load

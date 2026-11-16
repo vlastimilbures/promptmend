@@ -1,8 +1,8 @@
-"""The Try tab (#111): rewrite a draft typed here, the way a trigger would, and read the
+"""The Try tab: rewrite a draft typed here, the way a trigger would, and read the
 result before any trigger pastes one.
 
 The draft is typed into the tab; the clipboard is never read or written. The rewrite runs in
-process, in a worker thread, through cli.rewrite() (so the draft never appears in a command
+process, in a worker thread, through pipeline.rewrite() (so the draft never appears in a command
 line or the process list), and with it through factory.make_provider() and its
 data-protection gate. By default it runs against the set-up smoke test's stub on 127.0.0.1
 with a placeholder key: no provider is called and nothing is recorded. A real provider call
@@ -25,7 +25,7 @@ from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, Select, Static, TextArea
 
-from .. import cli, recorder, smoke
+from .. import pipeline, recorder, sanitize, smoke
 from ..commands import common
 from ..config import TIERS, ConfigLayers, Settings, check_provider_options, has_pro_tier
 from ..factory import PROVIDER_NAMES, check_base_url, leaves_machine
@@ -191,7 +191,7 @@ class TryPane(Pane):
             cfg = layers.settings().for_call(tier, provider=provider)
             check_provider_options(provider, tier, None)
         except Exception as exc:
-            self._finish(Outcome(cli.clean(cli.marker(exc)), True, "", None), None)
+            self._finish(Outcome(sanitize.clean(pipeline.marker(exc)), True, "", None), None)
             return
         if target == STUB:
             self._start(draft, provider, profile, cfg, None)
@@ -260,7 +260,7 @@ class TryPane(Pane):
         """In the worker: one rewrite, through make_provider() and its gate. ``command`` is
         None for a stub run, which records nothing; a real run is recorded as improve."""
         attempts: list[AttemptUsage] = []
-        ran = cli.Rewrite()
+        ran = pipeline.Rewrite()
         rec: recorder.Recorder | None = None
         if command is not None:
             rec = recorder.Recorder("improve")
@@ -289,7 +289,7 @@ class TryPane(Pane):
         cfg: Settings,
         command: str | None,
         attempts: list[AttemptUsage],
-        ran: cli.Rewrite,
+        ran: pipeline.Rewrite,
         rec: recorder.Recorder | None,
     ) -> None:
         """The call itself (timed alone) and the hand-off of its outcome to the screen."""
@@ -307,7 +307,7 @@ class TryPane(Pane):
                     stub_cfg = smoke.stub_settings(cfg, stub.port)
                     started = time.monotonic()
                     try:
-                        text = cli.rewrite(
+                        text = pipeline.rewrite(
                             draft,
                             provider,
                             stub_cfg,
@@ -323,17 +323,19 @@ class TryPane(Pane):
             else:
                 started = time.monotonic()
                 try:
-                    text = cli.rewrite(draft, provider, cfg, profile, ran, observer=attempts.append)
+                    text = pipeline.rewrite(
+                        draft, provider, cfg, profile, ran, observer=attempts.append
+                    )
                 finally:
                     latency = (time.monotonic() - started) * 1000
                 requests = len(attempts)
         except Exception as exc:
             error = True
-            text = cli.marker(exc)
+            text = pipeline.marker(exc)
             if rec is not None:
-                rec.outcome = cli.failure_outcome(exc, rec)
-        # Cleaned as improve's output is (_emit()), the sent-despite note included.
-        shown = cli.clean(cli.sent_despite_note(ran.built) + text)
+                rec.outcome = pipeline.failure_outcome(exc, rec)
+        # Cleaned as improve's output is (trigger._emit()), the sent-despite note included.
+        shown = sanitize.clean(pipeline.sent_despite_note(ran.built) + text)
         outcome = Outcome(
             shown, error, usage_line(attempts, latency, stub=command is None), requests
         )

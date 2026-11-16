@@ -282,9 +282,9 @@ def test_clipboard_read_failure(
 def test_concealed_refused_outcome(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, history_rows: HistoryRows
 ) -> None:
-    import promptmend.cli as cli
+    import promptmend.pipeline as pipeline
 
-    monkeypatch.setattr(cli, "is_concealed", lambda: True)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
     monkeypatch.setattr(pyperclip, "copy", lambda text: None)
     _run(["improve", "--provider", "ollama"])
     assert _outcome(history_rows) == "concealed_refused"
@@ -321,7 +321,8 @@ def test_history_off_records_nothing(
     _run(args)
     assert not history.history_path().parent.exists()
     if args == LOCAL:
-        assert stub_provider.options[0]["observer"] is None
+        # Still given, for the watchdog's stop (#307); finish() writes nothing.
+        assert stub_provider.options[0]["observer"] is not None
 
 
 # A history that cannot be written changes neither the paste nor the exit code, and never

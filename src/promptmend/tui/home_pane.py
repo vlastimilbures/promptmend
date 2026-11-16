@@ -1,4 +1,4 @@
-"""The Home tab (Mockup B, #112): the headline, one row per part and the session log. The
+"""The Home tab: the headline, one row per part and the session log. The
 rows come from home.py; nothing here calls a provider."""
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from .. import doctor
 from ..commands import doctor as doctor_cmd
 from . import teach
 from .base import Pane, button_row
-from .home import NOTE, TAB_LABELS, HomeRow, headline, home_rows
+from .home import NOTE, TAB_LABELS, WAIT, HomeRow, headline, home_rows
 from .state import State
 
 
@@ -23,9 +23,12 @@ def _jump(tab: str | None) -> str:
     return f"-> {TAB_LABELS[tab]}" if tab else ""
 
 
-# Home's word and colour for a newer release (#197): its own, apart from doctor's four, so the
+# Home's word and colour for a newer release: its own, apart from doctor's four, so the
 # word says it in either theme and without colour.
 _NOTE_LABEL = ("new", "bold magenta")
+# A row still being checked: muted; its text says `checking`.
+_WAIT_LABEL = ("…", "dim")
+_OWN_LABELS = {NOTE: _NOTE_LABEL, WAIT: _WAIT_LABEL}
 
 
 def home_table(rows: Sequence[HomeRow]) -> Table:
@@ -38,9 +41,9 @@ def home_table(rows: Sequence[HomeRow]) -> Table:
     grid.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
     grid.add_column(no_wrap=True, justify="right")
     for row in rows:
-        label, color = _NOTE_LABEL if row.status == NOTE else doctor_cmd.LABEL[row.status]
+        label, color = _OWN_LABELS.get(row.status) or doctor_cmd.LABEL[row.status]
         side = [row.detail] if row.detail else []
-        if row.status not in (doctor.OK, NOTE):
+        if row.status not in (doctor.OK, NOTE, WAIT):
             side.append(_jump(row.jump))
         grid.add_row(
             Text(label, style=color),
@@ -65,7 +68,7 @@ SESSION_LINES = 6
 
 
 def session_text(entries: Sequence[teach.Entry]) -> Text:
-    """Home's read-only session log (#111): what each action of this session was in a
+    """Home's read-only session log: what each action of this session was in a
     terminal, newest last, with the first line of its result. Before any, a few recipes."""
     if not entries:
         text = Text(no_wrap=True, overflow="ellipsis")
@@ -86,8 +89,8 @@ def session_text(entries: Sequence[teach.Entry]) -> Text:
 
 
 class HomePane(Pane):
-    """This install at a glance: a headline naming the worst problem, then one row per part
-    (Mockup B, #112). The Diagnostics tab has every check; nothing here calls a provider."""
+    """This install at a glance: a headline naming the worst problem, then one row per part.
+    The Diagnostics tab has every check; nothing here calls a provider."""
 
     rows: tuple[HomeRow, ...] = ()
 
@@ -106,6 +109,10 @@ class HomePane(Pane):
         self.rows = tuple(home_rows(state))
         self.query_one("#home-headline", Static).update(home_headline(self.rows))
         self.query_one("#home-rows", Static).update(home_table(self.rows))
+
+    def show_update(self, state: State) -> None:
+        # Home is two Statics, nothing to keep: its Version row and headline are redrawn.
+        self.show(state)
 
     def setup(self) -> None:
         self.query_one("#home-copy", Button).disabled = not self.manage.session

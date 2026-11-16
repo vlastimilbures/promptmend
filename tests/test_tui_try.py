@@ -15,12 +15,12 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pyperclip
 import pytest
-from test_tui_snapshots import fixed_state
+from test_tui_snapshots import fixed_state, quick_fixed_state
 from textual.pilot import Pilot
 from textual.widgets import Button, Select, Static, TabbedContent, TextArea
 
-from promptmend import cli, clipboard_guard, prompt_builder, smoke
-from promptmend.cli import MAX_DRAFT_CHARS
+from promptmend import clipboard_guard, pipeline, prompt_builder, smoke
+from promptmend.pipeline import MAX_DRAFT_CHARS
 from promptmend.providers.usage import AttemptUsage
 from promptmend.tui import teach, try_pane
 from promptmend.tui.app import ManageApp
@@ -55,7 +55,7 @@ def no_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pyperclip, "paste", touched)
     monkeypatch.setattr(pyperclip, "copy", touched)
     monkeypatch.setattr(clipboard_guard, "is_concealed", touched)
-    monkeypatch.setattr(cli, "is_concealed", touched)
+    monkeypatch.setattr(pipeline, "is_concealed", touched)
 
 
 @pytest.fixture
@@ -102,7 +102,7 @@ class Seen:
 
 def drive(scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]]) -> Seen:
     # A fixed State: the tab reads the (per-test) settings itself when it runs.
-    app = ManageApp(loader=fixed_state)
+    app = ManageApp(loader=lambda g, _first: fixed_state(g), quick_loader=quick_fixed_state)
     seen: list[Seen] = []
 
     async def main() -> None:
@@ -330,7 +330,7 @@ def test_one_run_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
         release.wait(10)
         return "done"
 
-    monkeypatch.setattr(cli, "rewrite", slow)
+    monkeypatch.setattr(pipeline, "rewrite", slow)
     during: list[bool] = []
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
@@ -612,17 +612,26 @@ def test_a_local_stub_run_stays_ungated(
 
 
 def test_stub_latency_times_the_call_alone(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The stub's shutdown (up to half a second) is not in the usage line's time."""
+    """The stub's shutdown is not in the usage line's time.
+
+    Timed against the stub's own block, not a fixed bound: the call runs inside it, so its
+    time is at most the block's (a slow runner makes both longer alike, #355). Counting the
+    0.6 s stop would put it at least 600 ms over."""
     import contextlib
     import time
 
     real_server = smoke.stub_server
+    block: list[float] = []
 
     @contextlib.contextmanager
     def slow_stop() -> Any:
         with real_server() as stub:
-            yield stub
-        time.sleep(0.6)
+            block.append(time.monotonic())  # before the call starts
+            try:
+                yield stub
+            finally:
+                block.append(time.monotonic())  # the stop starts
+            time.sleep(0.6)
 
     monkeypatch.setattr(smoke, "stub_server", slow_stop)
 
@@ -630,7 +639,9 @@ def test_stub_latency_times_the_call_alone(monkeypatch: pytest.MonkeyPatch) -> N
         await run(app, pilot, DRAFT)
 
     seen = drive(scenario)
-    assert int(seen.usage.split(" ms")[0]) < 600
+    entered, stopping = block
+    # Both clocks are monotonic, so the reading order holds; +1 for the usage line's rounding.
+    assert int(seen.usage.split(" ms")[0]) <= (stopping - entered) * 1000 + 1
 
 
 @pytest.mark.parametrize(

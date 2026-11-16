@@ -5,13 +5,18 @@ profile. Then runs each trigger's args as a real process, as Espanso does (#18).
 
 from __future__ import annotations
 
+import contextlib
 import itertools
+import math
 import os
 import re
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -22,6 +27,9 @@ from promptmend.cli import PERSONA_PLACEHOLDER, app
 from promptmend.config import Settings
 from promptmend.deploy import launcher_text
 from promptmend.prompt_builder import PROFILES, system_prompt
+from promptmend.providers.base import timed_out_message
+from promptmend.providers.registry import PROVIDERS
+from promptmend.trigger import WATCHDOG_MARGIN
 
 if TYPE_CHECKING:
     from conftest import HistoryRows, StubProvider
@@ -338,19 +346,32 @@ def test_every_cli_trigger_has_a_script_var() -> None:
 _LOUD = {"PYTHONWARNINGS": "always", "PYTHONDEVMODE": "1"}
 
 
-@pytest.mark.parametrize("trigger", sorted(SCRIPT_VARS))
-def test_trigger_args_run_as_a_process(trigger: str) -> None:
+def _process_argv(trigger: str) -> list[str]:
+    """The trigger's process argv as Espanso starts it: the launcher, then its args (form
+    fields at their defaults, the draft as an argument instead of the clipboard)."""
     args = list(SCRIPT_VARS[trigger])
-    improve = args[1] == "improve"
     if trigger in COMMANDS:
         args = ["__PROMPT_WORKFLOW__", *_argv(trigger)]
-    elif improve:  # -ic- and -io-, commented out: no form, the same draft swap
+    elif args[1] == "improve":  # -ic- and -io-, commented out: no form, the same draft swap
         source = args.index("--source")
         args[source : source + 2] = ["--source", "argument", "--text", "draft"]
+    return [*_launcher(), *args[1:]]
+
+
+def _process_env(port: int, **extra: str) -> dict[str, str]:
+    return {**smoke.stub_env(port, os.environ), "PROMPT_HISTORY": "true", **_LOUD, **extra}
+
+
+@pytest.mark.parametrize("trigger", sorted(SCRIPT_VARS))
+def test_trigger_args_run_as_a_process(trigger: str) -> None:
+    improve = SCRIPT_VARS[trigger][1] == "improve"
     with smoke.stub_server() as stub:
-        env = {**smoke.stub_env(stub.port, os.environ), "PROMPT_HISTORY": "true", **_LOUD}
         proc = subprocess.run(
-            [*_launcher(), *args[1:]], env=env, capture_output=True, timeout=60, check=False
+            _process_argv(trigger),
+            env=_process_env(stub.port),
+            capture_output=True,
+            timeout=60,
+            check=False,
         )
     assert (proc.returncode, proc.stderr) == (0, b"")
     if improve:
@@ -359,3 +380,71 @@ def test_trigger_args_run_as_a_process(trigger: str) -> None:
     else:
         assert proc.stdout.decode("utf-8") == PERSONA_PLACEHOLDER
         assert stub.paths == []
+
+
+# --- Each trigger as a process against a slow stub (#309) -------------------------------------
+
+# Every trigger that calls a provider (-p- only prints its placeholder and calls none).
+SLOW_TRIGGERS = sorted(t for t, args in SCRIPT_VARS.items() if args[1] == "improve")
+# A 1 s limit through the environment for both tiers. Only -if- passes --timeout, and its
+# form default `default` keeps the setting (test_slow_triggers_keep_the_env_limit).
+LIMIT = 1.0
+LIMIT_ENV = {"PROMPT_TIMEOUT_SECONDS": str(LIMIT), "PROMPT_PRO_TIMEOUT_SECONDS": str(LIMIT)}
+# Process start-up on a loaded CI runner (windows-latest above all), with every slow run at
+# once, on top of the limit plus trigger.WATCHDOG_MARGIN.
+SLACK = 20.0
+
+
+def _provider(trigger: str) -> str:
+    args = SCRIPT_VARS[trigger]
+    return args[args.index("--provider") + 1]
+
+
+def _timed_run(
+    argv: list[str], env: dict[str, str]
+) -> tuple[subprocess.CompletedProcess[bytes], float]:
+    started = time.monotonic()
+    proc = subprocess.run(
+        argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=90, check=False
+    )
+    return proc, time.monotonic() - started
+
+
+def test_slow_triggers_keep_the_env_limit() -> None:
+    for trigger in SLOW_TRIGGERS:
+        argv = _process_argv(trigger)
+        if "--timeout" in argv:
+            assert argv[argv.index("--timeout") + 1] == "default", trigger
+
+
+# What Espanso sees from every trigger's real argv, all run at once to keep the suite fast,
+# each against its own stub: a reply after about 3 s within the default limits is pasted as
+# is and is that trigger's one request, to its provider's path; a stub that never answers,
+# under the 1 s limit, gives the timed-out marker. Either way exit 0 and empty stderr. The
+# name matches the frozen Windows job's `-k process`, so it also runs through the exe.
+def test_trigger_processes_against_a_slow_stub() -> None:
+    with contextlib.ExitStack() as stack:
+        slow = {t: stack.enter_context(smoke.stub_server(3.0)) for t in SLOW_TRIGGERS}
+        late = {t: stack.enter_context(smoke.stub_server(math.inf)) for t in SLOW_TRIGGERS}
+        pool = stack.enter_context(ThreadPoolExecutor(max_workers=2 * len(SLOW_TRIGGERS)))
+        envs = {t: _process_env(slow[t].port) for t in SLOW_TRIGGERS}
+        replies = {t: pool.submit(_timed_run, _process_argv(t), envs[t]) for t in SLOW_TRIGGERS}
+        markers = {
+            t: pool.submit(_timed_run, _process_argv(t), _process_env(late[t].port, **LIMIT_ENV))
+            for t in SLOW_TRIGGERS
+        }
+        for trigger, future in replies.items():
+            proc, _ = future.result()
+            assert (proc.returncode, proc.stderr) == (0, b""), trigger
+            assert proc.stdout.decode("utf-8") == smoke.REPLY, trigger
+            base = urlsplit(envs[trigger][PROVIDERS[_provider(trigger)].url_setting]).path
+            (path,) = slow[trigger].paths
+            assert path.startswith(f"{base}/"), trigger
+        for trigger, future in markers.items():
+            proc, seconds = future.result()
+            label = PROVIDERS[_provider(trigger)].label
+            assert (proc.returncode, proc.stderr) == (0, b""), trigger
+            assert proc.stdout.decode("utf-8") == f"[promptmend: {timed_out_message(label, LIMIT)}]"
+            assert seconds <= LIMIT + WATCHDOG_MARGIN + SLACK, trigger
+            # The watchdog may end a run on a slow runner before its request goes out.
+            assert late[trigger].requests <= 1, trigger

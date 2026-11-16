@@ -83,6 +83,14 @@ def test_winget_upgrade_command() -> None:
     )
 
 
+def test_installer_upgrade_command_is_the_one_liner() -> None:
+    command = update_check.upgrade_command("installer")
+    assert command == update_check.INSTALL_PS1
+    assert "releases/latest/download/install.ps1 | iex" in command
+    assert command in (REPO / "README.md").read_text("utf-8")
+    assert doctor.upgrade_hint({"channel": "installer", "editable": False}) == command
+
+
 # --- The WinGet launcher ---------------------------------------------------------------------
 
 
@@ -196,6 +204,27 @@ def test_a_frozen_exe_elsewhere_is_a_script(tmp_path: Path) -> None:
         _resolve(tmp_path / "gone.exe", {})
 
 
+# install.ps1's default channel (#185): the exe in %LOCALAPPDATA%\Programs\promptmend.
+def test_install_ps1_folder_is_the_installer_channel(tmp_path: Path) -> None:
+    local = tmp_path / "Local"
+    environ = {"LOCALAPPDATA": str(local)}
+    exe = _file(local / "Programs" / "promptmend" / "promptmend.exe")
+    assert _resolve(exe, environ) == deploy.Launcher(exe, "installer")
+    # Case is ignored, as on Windows.
+    spelled = local.parent / "local"
+    other_case = spelled / "PROGRAMS" / "PromptMend" / "promptmend.exe"
+    found = deploy._installer_launcher(other_case, {"LOCALAPPDATA": str(spelled)})
+    assert found == deploy.Launcher(other_case, "installer")
+    check = doctor._install_check(_resolve(exe, environ), None)
+    assert check.data["channel"] == "installer"
+    assert check.message == f"installer: {exe}"
+    # Another folder under Programs, or the same folder off Windows, is a plain script.
+    other = _file(local / "Programs" / "promptmend-ci" / "promptmend" / "promptmend.exe")
+    assert _resolve(other, environ) == deploy.Launcher(other, "script")
+    assert _resolve(exe, environ, windows=False) == deploy.Launcher(exe, "script")
+    assert _resolve(exe, {}) == deploy.Launcher(exe, "script")
+
+
 @pytest.mark.usefixtures("frozen")
 def test_resolve_launcher_reads_sys_frozen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     environ, _, exe = _winget(tmp_path)
@@ -208,6 +237,20 @@ def test_resolve_launcher_reads_sys_frozen(tmp_path: Path, monkeypatch: pytest.M
 
 
 # --- scripts/build_windows.py --------------------------------------------------------------
+
+
+# The spec compiles with optimize=1 (asserts and `if __debug__:` blocks dropped), never 2
+# (docstrings, which Typer's help reads): so no runtime check in promptmend may be an assert.
+def test_frozen_build_may_drop_asserts() -> None:
+    import ast
+
+    assert "    optimize=1,\n" in bw.SPEC.read_text("utf-8")
+    for path in sorted((REPO / "src" / "promptmend").rglob("*.py")):
+        tree = ast.parse(path.read_text("utf-8"), str(path))
+        for node in ast.walk(tree):
+            assert not isinstance(node, ast.Assert), f"{path}:{node.lineno}: assert"
+            if isinstance(node, ast.Name):
+                assert node.id != "__debug__", f"{path}:{node.lineno}: __debug__"
 
 
 def test_zip_name_and_version() -> None:
@@ -235,6 +278,7 @@ def test_make_zip_nests_the_onedir_folder(tmp_path: Path) -> None:
         "promptmend/_internal/promptmend/espanso/match/prompts-llm.yml",
         "promptmend/_internal/promptmend/espanso/match/prompts-template.yml",
         "promptmend/_internal/promptmend/prompts/default.md",
+        "promptmend/_internal/promptmend/prompts/general.md",
         "promptmend/promptmend.exe",
     ]
     with zipfile.ZipFile(out) as archive:
@@ -278,11 +322,11 @@ def test_build_runs_pyinstaller_then_zips(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_trigger_args_are_the_i_trigger_with_the_draft_as_argument() -> None:
-    args = bw.trigger_args()
+    args = smoke.trigger_args()
     assert args[:3] == ["improve", "--trigger-id", "i"]
     assert args[-4:] == ["--source", "argument", "--text", "draft"]
     with pytest.raises(LookupError):
-        bw.trigger_args("-nope-")
+        smoke.trigger_args("-nope-")
 
 
 def test_time_and_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -296,11 +340,63 @@ def test_time_and_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_a_failed_trigger_run_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(RuntimeError, match="the trigger failed"):
-        bw.time_trigger([sys.executable, "-c", "import sys; sys.exit(3)"], runs=1)
+    code = "import sys; print('partial'); print('boom', file=sys.stderr); sys.exit(3)"
+    with pytest.raises(RuntimeError, match="the trigger failed: exit code 3") as caught:
+        smoke.time_trigger([sys.executable, "-c", code], runs=1)
+    # The tails, for CI's log.
+    assert "stdout ends b'partial" in str(caught.value)
+    assert "stderr ends b'boom" in str(caught.value)
 
 
 def test_main_build(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(bw, "build", lambda: Path("dist/x.zip"))
     bw.main(["build"])
     assert capsys.readouterr().out.strip() == str(Path("dist/x.zip"))
+
+
+# --- smoke's timing helpers (#305), shared with doctor --timing ----------------------------
+
+
+def test_expect_output_judges_a_run_as_espanso_would() -> None:
+    expect = smoke.expect_output("hello")
+    assert expect(0, b"hello", b"") is None
+    assert expect(1, b"hello", b"") == "exit code 1"
+    assert expect(0, b"hello", b"warning") == "wrote to stderr"
+    assert expect(0, b"hello\n", b"") == "printed something else (6 characters)"
+    assert expect(0, b"[promptmend: no key]\n", b"") == "printed [promptmend: no key]"
+    version = smoke.expect_output("1.2.3", strip=True, show=True)
+    assert version(0, b"1.2.3\r\n", b"") is None
+    assert version(0, b"0.9.0\n", b"") == "printed '0.9.0', expected '1.2.3'"
+
+
+def test_time_runs_gives_the_children_no_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[dict[str, object]] = []
+
+    def fake(argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        seen.append(kwargs)
+        return subprocess.CompletedProcess(list(argv), 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    seconds, problem = smoke.time_runs(["x"], {}, 2, smoke.expect_output(""))
+    assert (len(seconds), problem) == (3, None)
+    assert {kw["stdin"] for kw in seen} == {subprocess.DEVNULL}
+
+
+def test_time_runs_stops_at_a_timeout_or_a_missing_program(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def timeout(argv: Sequence[str], **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(list(argv), 1)
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    seconds, problem = smoke.time_runs(["x"], {}, 3, smoke.expect_output(""), timeout=1)
+    assert (len(seconds), problem) == (1, "timed out after 1 s")
+
+    def missing(argv: Sequence[str], **kwargs: object) -> None:
+        raise FileNotFoundError(2, "No such file")
+
+    monkeypatch.setattr(subprocess, "run", missing)
+    seconds, problem = smoke.time_runs(["x"], {}, 3, smoke.expect_output(""))
+    assert seconds == []
+    assert problem
+    assert problem.startswith("could not run: FileNotFoundError")

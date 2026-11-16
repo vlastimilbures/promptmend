@@ -1,4 +1,4 @@
-"""Whether a newer release exists (#197), for `doctor` and the interface's Home, never for a
+"""Whether a newer release exists, for `doctor` and the interface's Home, never for a
 trigger (tests/test_trigger_contract.py).
 
 One GET of PyPI's JSON for promptmend, at most once a day: the answer is cached in
@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import __version__, config, config_files
+from . import config, config_files, installed_version
 
 URL = "https://pypi.org/pypi/promptmend/json"
 SETTING = "PROMPT_UPDATE_CHECK"
@@ -29,6 +29,9 @@ MAX_AGE = timedelta(hours=24)
 RETRY_AFTER = timedelta(hours=1)
 CACHE_FILE = "update-check.json"
 LATEST, AVAILABLE, UNKNOWN, OFF = "latest", "available", "unknown", "off"
+# Only the interface's, while the check still runs beside the rest of a reload: doctor
+# and check() never answer it.
+CHECKING = "checking"
 # A final release only: X.Y.Z, no pre, dev, rc, post or local suffix.
 _RELEASE = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 # What makes an installed X.Y.Z older than the final X.Y.Z (PEP 440 pre and dev releases).
@@ -37,14 +40,22 @@ _UV = (
     "uv tool install --force promptmend -c "
     "https://github.com/vlastimilbures/promptmend/releases/latest/download/constraints.txt"
 )
+# The Windows one-command install (docs/install.md, README); its default channel installs the
+# frozen exe, and running it again updates it in place.
+INSTALL_PS1 = (
+    'powershell -ExecutionPolicy ByPass -c "irm '
+    'https://github.com/vlastimilbures/promptmend/releases/latest/download/install.ps1 | iex"'
+)
 # Install channel (doctor's install check) -> the command that updates it (docs/install.md,
 # "Update"). uv's own `uv tool upgrade` keeps the old constraints and a Release wheel's URL.
 # The `script` channel is any other console script (pipx, pip, a venv): no one command.
 UPGRADE_COMMANDS = {
     "uv": _UV,
     "homebrew": "brew update && brew upgrade promptmend",
-    # The frozen Windows build (#185), installed as a portable WinGet package.
+    # The frozen Windows build, installed as a portable WinGet package.
     "winget": "winget upgrade vlastimilbures.PromptMend",
+    # The frozen Windows build in install.ps1's folder: the install command again.
+    "installer": INSTALL_PS1,
 }
 # A checkout (CONTRIBUTING.md, "Set up"): its install script syncs the tool with uv.lock.
 _CHECKOUT = {
@@ -59,8 +70,9 @@ _last: tuple[str | None, str] | None = None
 
 @dataclass(frozen=True)
 class UpdateStatus:
-    """``state`` is latest, available, unknown or off; ``latest`` the newest release PyPI
-    lists and ``checked_at`` when it was asked (ISO-8601 UTC), when known."""
+    """``state`` is latest, available, unknown or off (checking only in the interface);
+    ``latest`` the newest release PyPI lists and ``checked_at`` when it was asked (ISO-8601
+    UTC), when known."""
 
     state: str = UNKNOWN
     latest: str | None = None
@@ -85,7 +97,7 @@ def _release(text: object) -> tuple[int, int, int] | None:
 def _installed() -> tuple[int, int, int, int] | None:
     """The running version as numbers: its leading X.Y.Z, then 0 for a pre or dev release
     (older than the final X.Y.Z) and 1 otherwise (a post release or a local build)."""
-    match = re.match(r"(\d+)\.(\d+)\.(\d+)(.*)", __version__)
+    match = re.match(r"(\d+)\.(\d+)\.(\d+)(.*)", installed_version())
     if match is None:
         return None
     major, minor, patch = (int(part) for part in match.groups()[:3])
@@ -110,7 +122,7 @@ def _fetch() -> str:
     test reaches pypi.org."""
     import httpx
 
-    headers = {"User-Agent": f"promptmend/{__version__}"}
+    headers = {"User-Agent": f"promptmend/{installed_version()}"}
     # Per phase (connect, read, ...); _within() bounds the whole call.
     with httpx.Client(timeout=httpx.Timeout(TIMEOUT)) as client:
         response = client.get(URL, headers=headers)

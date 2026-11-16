@@ -16,7 +16,8 @@ from promptmend.commands import common
 from promptmend.commands import setup as setup_cmd
 from promptmend.commands import ui as ui_cmd
 from promptmend.tui.app import ManageApp
-from promptmend.tui.setup_wizard import SetupOptions, SetupScreen, needs_setup
+from promptmend.tui.setup_wizard import SetupOptions, SetupScreen
+from promptmend.tui.state import needs_setup
 
 
 @pytest.fixture

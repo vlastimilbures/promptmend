@@ -9,8 +9,12 @@ Writes (HistoryStore.record) are fail-open: a locked, read-only, full or corrupt
 never raises to the caller, and a write gives up within a fixed time budget (a little more for
 the one write that creates the database). A write that misses its budget is kept in a small
 spool file of the same allowlisted columns, which the next record(), stats(), export() or
-replay() stores (#213). A record that is truly dropped (the spool is full or cannot be
-written) bumps a small sidecar marker, which health() reports, so lost tracking stays visible.
+replay() stores. A record that is truly dropped (the spool is full or cannot be written,
+or its lock is not free in time) is counted: in a small sidecar marker or, when the marker's
+lock is not free in time or the marker cannot be written, in a new empty drop file of its own,
+which needs no lock. health() reports both, so lost tracking stays visible. A data folder that
+takes no new file at all (a full disk, missing permissions) loses the count; health() reports
+such a folder when it can see that it is not writable.
 
 sqlite3, tomllib, csv and decimal are imported inside the functions that use them, so
 importing this module (for the paths) costs nothing on the trigger path.
@@ -31,7 +35,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal
 
-from . import __version__
+from . import installed_version
 from .config import MAX_RETENTION_DAYS, user_config_dir, user_data_dir
 from .redaction import compile_extra, is_bare_token, scan
 
@@ -44,6 +48,10 @@ if TYPE_CHECKING:
 DB_NAME = "history.sqlite3"
 # Sidecar marker of dropped writes, next to the database (JSON: count and last time).
 LOST_NAME = "history.lost"
+# An empty `history.lost.<random>.<n>.drop` file counts n writes dropped while the marker could
+# not be updated (its lock not free in time): created with O_EXCL, so it needs no lock.
+_DROP_SUFFIX = ".drop"
+_WINDOWS = os.name == "nt"
 # Records whose write missed its budget, next to the database, until a later write stores them
 # (JSON: {"version": 1, "records": [{"operation": {column: value}, "attempts": [...]}]}).
 SPOOL_NAME = "history.spool"
@@ -64,15 +72,17 @@ PRICES_NAME = "prices.toml"
 # sidecar marker. The trigger waits for it while the user waits for the paste, so it stays at
 # what a person barely notices even under contention; a write that would take longer is
 # dropped and counted as lost. A file-system call the OS itself blocks (a stalled network
-# drive) cannot be interrupted, and neither can the interpreter's own pauses; those are the
-# only things outside it.
+# drive) cannot be interrupted, and neither can the interpreter's own pauses; those, and the
+# first read of the version (record() does it before the clock starts), are the only
+# things outside it.
 _BUDGET = 0.25
 # The database's share of _BUDGET (its busy timeout), the rest is for the sidecar marker.
 # SQLite's own lock retries overshoot the busy timeout by up to ~0.06 s (measured in WAL mode
 # on a write blocked by an exclusive lock), so the share leaves room for that: a write blocked
 # on both the database and the sidecar lock returned after 0.23-0.24 s.
 _WRITE_BUDGET = 0.15
-# Kept back from _BUDGET for writing the sidecar once its lock is taken.
+# Kept back from _BUDGET for writing the sidecar once its lock is taken, or a drop file when
+# the lock is not free in time.
 _MARGIN = 0.02
 # Added to both budgets for a write that has to create the database (once per device, and
 # after a reset): creating the file, setting its journal mode and running the migrations costs
@@ -214,6 +224,8 @@ _VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,39}")
 _OUTCOME = re.compile(r"[a-z][a-z0-9_]{0,39}")
 _OPERATION_ID = re.compile(r"[0-9a-f]{32}")
 _TIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+# A drop file of _count_dropped(): a random id and the positive number of writes it counts.
+_DROP_NAME = re.compile(re.escape(LOST_NAME) + r"\.[0-9a-f]{32}\.([1-9][0-9]{0,9})\.drop")
 # The error kinds providers/base.py records (see AttemptUsage); tests/test_history.py checks
 # that the two lists match.
 ERROR_KINDS = (
@@ -378,7 +390,8 @@ def _operation_row(
         _ident(op.get("profile_id"), _PROFILE, extra),
         outcome,
         _float(op.get("latency_ms")),
-        _ident(op.get("app_version", __version__), _VERSION, extra) or "unknown",
+        _ident(op["app_version"] if "app_version" in op else installed_version(), _VERSION, extra)
+        or "unknown",
     )
 
 
@@ -590,8 +603,8 @@ class HistoryStore:
         records waiting in the spool. True when stored (or already stored: a retried write is
         keyed by (operation_id, seq) and never duplicates a row) or when history is off; False
         when not stored now: a write that missed its budget is kept in the spool for a later
-        write, and an invalid record (or one the full or unwritable spool cannot take) bumps
-        the lost-write marker. Never raises.
+        write, and an invalid record (or one the full or unwritable spool, or its busy lock,
+        cannot take) is counted as lost (see _mark_lost()). Never raises.
 
         ``prune`` then also deletes up to _PRUNE_BATCH operations older than the retention, in
         a second short transaction after the record committed and only while the budget
@@ -600,6 +613,11 @@ class HistoryStore:
         there is nothing to delete."""
         if not self.enabled:
             return True
+        # Read the version (for app_version) before the clock starts: the first read loads
+        # importlib.metadata, which is not the write's cost. _operation_row() then
+        # finds it cached.
+        with contextlib.suppress(Exception):
+            installed_version()
         start = time.monotonic()
         extra_time = _CREATE_EXTRA
         with contextlib.suppress(Exception):
@@ -741,15 +759,51 @@ class HistoryStore:
     def _mark_lost(self, deadline: float | None = None) -> bool:
         """Count one dropped write in the sidecar marker: read, then replace it atomically
         (temp file + os.replace) under a short lock file, so concurrent writers never lose a
-        count or leave half a file. A marker that is not valid is counted from 0 again. Gives
-        up when the lock is not free by ``deadline``; False when that or anything else fails.
-        Never raises."""
+        count or leave half a file. A marker that is not valid is counted from 0 again. When
+        the lock is not free by ``deadline``, or the marker cannot be written, the write is
+        counted in a drop file instead. False only when neither can be written. Never
+        raises."""
         try:
             with self._sidecar_lock(deadline or time.monotonic() + _BUDGET - _WRITE_BUDGET):
-                self._count_lost(1)
+                return self._note_lost(1)
+        except Exception:
+            return self._count_dropped(1)
+
+    def _note_lost(self, dropped: int) -> bool:
+        """Count ``dropped`` writes in the marker, or in drop files when it cannot be
+        written; the caller holds the sidecar lock. False only when neither can be written.
+        Never raises."""
+        try:
+            self._count_lost(dropped)
+        except Exception:
+            return self._count_dropped(dropped)
+        return True
+
+    def _count_dropped(self, dropped: int) -> bool:
+        """Count ``dropped`` writes without the sidecar lock: one new empty, owner-only drop
+        file, ``history.lost.<random>.<dropped>.drop``, created exclusively under a random
+        name, so it never waits for or blocks another writer, and one file whatever the count.
+        health() adds them to the marker's count; reset() removes them. False when it cannot
+        be created. Never raises."""
+        try:
+            name = f"{LOST_NAME}.{uuid.uuid4().hex}.{dropped}{_DROP_SUFFIX}"
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            os.close(os.open(self.lost_path.with_name(name), flags, 0o600))
         except Exception:
             return False
         return True
+
+    def _drop_files(self) -> list[Path]:
+        """The files of the writes _count_dropped() counted, [] with no folder; OSError when
+        the folder cannot be listed (os.listdir, not Path.glob, which hides that error and
+        would hide every drop file with it)."""
+        folder = self.lost_path.parent
+        try:
+            names = os.listdir(folder)
+        except FileNotFoundError:
+            return []
+        prefix = f"{LOST_NAME}."
+        return [folder / n for n in names if n.startswith(prefix) and n.endswith(_DROP_SUFFIX)]
 
     def _count_lost(self, dropped: int) -> None:
         """Add ``dropped`` to the marker; the caller holds the sidecar lock."""
@@ -832,7 +886,7 @@ class HistoryStore:
         """The valid spooled records (at most _SPOOL_LIMIT), and whether the spool has
         anything to settle (a record, an invalid entry, or a file that is not a spool). The
         spool is read under the sidecar lock (an unlocked reader would make another
-        process's os.replace fail on Windows, #241); with no spool the lock is not taken. An
+        process's os.replace fail on Windows); with no spool the lock is not taken. An
         unreadable spool, or a lock not had by ``deadline``, is left for later. Never
         raises."""
         if not self.spool_path.exists():
@@ -877,22 +931,23 @@ class HistoryStore:
             self._save_spool(kept[:_SPOOL_LIMIT])
             dropped += max(0, len(kept) - _SPOOL_LIMIT)
             if dropped:
-                self._count_lost(dropped)
+                self._note_lost(dropped)
 
     def _spool_or_mark(
         self, op: tuple[object, ...], rows: list[tuple[object, ...]], deadline: float
     ) -> bool:
         """Keep a record whose write failed in the spool, for a later write to store: only
         the allowlisted columns of the rows record() already validated. When the spool is full
-        or cannot be written, count it as lost instead. A spool that is not valid is replaced
-        (and counted once). Gives up at ``deadline``. True when spooled; never raises."""
+        or cannot be written, or its lock is not free by ``deadline``, count it as lost
+        instead (in a drop file when the marker cannot be updated either). A spool that is not
+        valid is replaced (and counted once). True when spooled; never raises."""
         try:
             with self._sidecar_lock(deadline):
                 try:
                     try:
                         entries = self._load_spool()
                     except ValueError:
-                        self._count_lost(1)
+                        self._note_lost(1)
                         entries = []
                     if len(entries) >= _SPOOL_LIMIT:
                         raise ValueError("history spool is full")
@@ -903,9 +958,12 @@ class HistoryStore:
                     }
                     self._save_spool([*entries, entry])
                 except Exception:
-                    self._count_lost(1)
+                    self._note_lost(1)
                     return False
         except Exception:
+            # The lock was not had in time: nothing was spooled, and the marker cannot be
+            # updated without it (#335).
+            self._count_dropped(1)
             return False
         return True
 
@@ -920,20 +978,37 @@ class HistoryStore:
         while True:
             try:
                 fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
+            except (FileExistsError, PermissionError) as exc:
+                # Windows refuses to create a file whose deletion is still pending (another
+                # holder just released the lock) with PermissionError: busy, not denied.
+                if isinstance(exc, PermissionError) and not _WINDOWS:
+                    raise
                 if _break_stale(lock):
                     continue
                 if time.monotonic() >= deadline:
                     raise TimeoutError("history sidecar is locked") from None
                 time.sleep(min(0.002, max(0.0, deadline - time.monotonic())))
                 continue
-            with os.fdopen(fd, "w", encoding="ascii") as handle:
-                handle.write(nonce)
+            try:
+                with os.fdopen(fd, "w", encoding="ascii") as handle:
+                    fd = -1  # the handle owns it now and closes it
+                    handle.write(nonce)
+            except BaseException:
+                # Never leave an empty lock behind (it would block every writer until it is
+                # stale) or an open descriptor.
+                if fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+                with contextlib.suppress(OSError):
+                    lock.unlink(missing_ok=True)
+                raise
             break
         try:
             yield
         finally:
-            with contextlib.suppress(OSError):
+            # Any error (a garbage lock file is not ASCII): the work under the lock is done,
+            # and raising here would count it as failed.
+            with contextlib.suppress(Exception):
                 if lock.read_text(encoding="ascii") == nonce:
                     lock.unlink()
 
@@ -975,12 +1050,12 @@ class HistoryStore:
     # -- services --------------------------------------------------------------------------
 
     def health(self) -> Health:
-        """Path, schema version, row counts, the lost-write marker, the spooled records,
-        whether a write could
-        succeed, the SQLite library version and the database's journal mode (WAL had a rare
-        reset bug before 3.51.3, so older libraries use the rollback journal).
-        ``tracking_incomplete`` is set when writes were lost, the marker cannot be read or the
-        files cannot be written, so a store whose database and sidecar both fail still shows.
+        """Path, schema version, row counts, the lost writes (the marker's count plus the drop
+        files), the spooled records, whether a write could succeed, the SQLite library version
+        and the database's journal mode (WAL had a rare reset bug before 3.51.3, so older
+        libraries use the rollback journal). ``tracking_incomplete`` is set when writes were
+        lost, the marker or the drop files cannot be read or the files cannot be written, so a
+        store whose database and sidecar both fail still shows.
         Spooled records are not lost: they show in ``spooled``.
         Never raises; never creates the database."""
         info: dict[str, Any] = {
@@ -1002,7 +1077,7 @@ class HistoryStore:
         except Exception:
             info["error"] = "no sqlite3"
         try:
-            # Read under the lock, like a write (#241); with neither file there is nothing to lock.
+            # Read under the lock, like a write; with neither file there is nothing to lock.
             sidecar = self.lost_path.exists() or self.spool_path.exists()
             with (
                 self._sidecar_lock(time.monotonic() + 1.0) if sidecar else contextlib.nullcontext()
@@ -1010,6 +1085,24 @@ class HistoryStore:
                 info["lost_writes"], info["last_lost_utc"] = self._read_lost()
                 info["spooled"] = len(self._load_spool())
             sidecar_ok = True
+        except Exception:
+            sidecar_ok = False
+        try:
+            # Drop files need no lock: each is written once, empty, and never changed.
+            for drop in self._drop_files():
+                try:
+                    mtime = drop.stat().st_mtime
+                except FileNotFoundError:
+                    continue  # a concurrent reset() removed it, and its count with it
+                count = _drop_count(drop.name)
+                if count is None:
+                    count, sidecar_ok = 1, False
+                info["lost_writes"] += count
+                try:
+                    when = datetime.fromtimestamp(mtime, UTC).strftime(_TIME_FORMAT)
+                except (OverflowError, OSError, ValueError):
+                    continue  # an odd mtime: counted, without a time
+                info["last_lost_utc"] = max(info["last_lost_utc"] or when, when)
         except Exception:
             sidecar_ok = False
         info["writable"] = self._writable()
@@ -1153,9 +1246,8 @@ class HistoryStore:
 
     def reset(self) -> None:
         """Delete every record (spooled ones too), compact the file and clear the lost-write
-        marker. Rows are
-        deleted rather than the file, so a writer holding it open (or Windows, which cannot
-        delete an open file) does not stop it."""
+        marker and the drop files. Rows are deleted rather than the file, so a writer holding
+        it open (or Windows, which cannot delete an open file) does not stop it."""
         if self.path.is_file():
             try:
                 with self._service() as conn:
@@ -1177,6 +1269,8 @@ class HistoryStore:
             with self._sidecar_lock(time.monotonic() + _SERVICE_TIMEOUT):
                 self.spool_path.unlink(missing_ok=True)
                 self.lost_path.unlink(missing_ok=True)
+                for drop in self._drop_files():
+                    drop.unlink(missing_ok=True)
         except (OSError, TimeoutError) as exc:
             raise HistoryError(f"cannot clear {self.spool_path} or {self.lost_path}") from exc
 
@@ -1219,6 +1313,13 @@ class HistoryStore:
                 for row in conn.execute(sql + " ORDER BY operation_id, seq")
             ]
         return ops, attempts
+
+
+def _drop_count(name: str) -> int | None:
+    """The count in a drop file's name (``history.lost.<32 hex>.<n>.drop``, n > 0), None
+    when the name is not of that shape."""
+    match = _DROP_NAME.fullmatch(name)
+    return int(match[1]) if match else None
 
 
 def _break_stale(lock: Path) -> bool:

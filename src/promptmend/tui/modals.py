@@ -125,7 +125,7 @@ class PickModal(_Dialog[str | None]):
         super().__init__(title, preview, None)
         # (label, value) pairs; a label is plain text, never markup.
         self.choices = choices
-        # The choice highlighted as it opens (a setting's current value, #199).
+        # The choice highlighted as it opens (a setting's current value).
         self.selected = selected
 
     def compose(self) -> ComposeResult:
@@ -154,7 +154,7 @@ class PickModal(_Dialog[str | None]):
 
 
 class EditModal(_Dialog[str | None]):
-    """One value to type, prefilled (a setting, #199); returns it, or None when cancelled.
+    """One value to type, prefilled (a setting); returns it, or None when cancelled.
     ``check`` reads it as the CLI would: its message (a parser error) stays in the dialog, in
     the error colour, and nothing is returned until the value passes. The field has the focus:
     Enter there saves, Escape cancels."""

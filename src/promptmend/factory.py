@@ -10,7 +10,7 @@ from .providers.anthropic import AnthropicProvider
 from .providers.base import Provider, ProviderError, is_loopback
 from .providers.ollama import OllamaProvider
 from .providers.openai_compatible import OpenAICompatibleProvider
-from .providers.registry import PROVIDERS
+from .providers.registry import PROVIDERS, ProviderSpec
 from .providers.usage import UsageObserver, openai_usage, openrouter_usage
 from .redaction import compile_extra, safe_repr
 
@@ -72,7 +72,7 @@ def check_base_url(name: str, cfg: Settings) -> None:
     spec = PROVIDERS.get(name)
     if spec is None or not spec.cloud:
         return
-    url = getattr(cfg, f"{name}_base_url")
+    url = spec.url(cfg)
     scheme = urlsplit(url).scheme
     if not (scheme == "https" or (scheme == "http" and is_loopback(url))):
         raise GateBlocked(f"{spec.url_setting} must be an https:// URL")
@@ -100,9 +100,9 @@ def leaves_machine(name: str, cfg: Settings) -> bool:
         return False
     if spec.cloud:
         return True
-    if not is_loopback(getattr(cfg, f"{name}_base_url")):
+    if not is_loopback(spec.url(cfg)):
         return True
-    return spec.protocol == "ollama" and _is_ollama_cloud(getattr(cfg, f"{name}_model"))
+    return spec.protocol == "ollama" and _is_ollama_cloud(spec.model(cfg))
 
 
 # The key setting each provider needs; the local ones need none.
@@ -205,14 +205,40 @@ def make_provider(
     spec = PROVIDERS.get(name)
     if spec is None:
         raise ProviderError(f"Unknown provider {safe_repr(name)}. Use {', '.join(PROVIDER_NAMES)}.")
-    base_url = getattr(cfg, f"{name}_base_url")
-    model = getattr(cfg, f"{name}_model")
-    api_key = _require(getattr(cfg, f"{name}_api_key"), spec.key) if spec.key else None
-    max_tokens = getattr(cfg, spec.cap or "call_max_tokens")
-    temperature = getattr(cfg, spec.temperature or "temperature")
-    provider: Provider
+    provider = _build(
+        spec,
+        cfg,
+        remote=remote,
+        extra_body=extra_body,
+        on_response=on_response,
+        title=title,
+        observer=observer,
+    )
+    if remote or cfg.gate_local:
+        return _gate(provider, cfg, allow_flagged, name, remote=remote)
+    return provider
+
+
+def _build(
+    spec: ProviderSpec,
+    cfg: Settings,
+    *,
+    remote: bool,
+    extra_body: dict[str, object] | None,
+    on_response: Callable[[dict[str, object]], None] | None,
+    title: str,
+    observer: UsageObserver | None,
+) -> Provider:
+    """The bare provider ``spec`` names, from settings. Only make_provider() calls it, after
+    PROMPT_LOCAL_ONLY and the https rule, and it gates what this returns. A missing or garbled
+    key raises ProviderError here."""
+    base_url = spec.url(cfg)
+    model = spec.model(cfg)
+    api_key = _require(spec.api_key(cfg), spec.key) if spec.key else None
+    max_tokens = spec.max_tokens(cfg)
+    temperature = spec.request_temperature(cfg)
     if spec.protocol == "ollama":
-        provider = OllamaProvider(
+        return OllamaProvider(
             base_url=base_url,
             model=model,
             timeout=cfg.timeout,
@@ -222,9 +248,15 @@ def make_provider(
             num_ctx=cfg.ollama_num_ctx,
             observer=observer,
             local=not remote,
+            name=spec.name,
+            label=spec.label,
         )
-    elif spec.protocol == "anthropic":
-        provider = AnthropicProvider(
+    if spec.protocol == "anthropic":
+        # The Messages API requires max_tokens; an anthropic spec sets cap
+        # (tests/test_registry.py), so this is never None.
+        if max_tokens is None:
+            raise ProviderError(f"{spec.label} has no output cap setting")
+        return AnthropicProvider(
             base_url=base_url,
             model=model,
             api_key=api_key or "",  # an anthropic spec sets key: _require() raised
@@ -232,29 +264,27 @@ def make_provider(
             max_tokens=max_tokens,
             temperature=temperature,
             observer=observer,
-        )
-    else:
-        # OpenRouter alone takes the app title, routing and nested reasoning fields, the bench
-        # hooks and reports a cost; another spec's effort is a top-level field.
-        router = spec.router
-        provider = OpenAICompatibleProvider(
-            base_url=base_url,
-            model=model,
-            api_key=api_key,
-            timeout=cfg.timeout,
-            max_tokens=max_tokens,
-            cap_field=spec.cap_field,
-            temperature=temperature,
-            reasoning_effort=getattr(cfg, spec.effort) if spec.effort and not router else "",
-            extra_headers={"X-Title": title} if router else {},
+            name=spec.name,
             label=spec.label,
-            extra_body={**openrouter_body(cfg), **(extra_body or {})} if router else {},
-            on_response=on_response if router else None,
-            observer=observer,
-            name=name,
-            usage=openrouter_usage if router else openai_usage,
-            local=not remote,
         )
-    if remote or cfg.gate_local:
-        return _gate(provider, cfg, allow_flagged, name, remote=remote)
-    return provider
+    # OpenRouter alone takes the app title, routing and nested reasoning fields, the bench
+    # hooks and reports a cost; another spec's effort is a top-level field.
+    router = spec.router
+    return OpenAICompatibleProvider(
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        timeout=cfg.timeout,
+        max_tokens=max_tokens,
+        cap_field=spec.cap_field,
+        temperature=temperature,
+        reasoning_effort="" if router else spec.reasoning_effort(cfg),
+        extra_headers={"X-Title": title} if router else {},
+        label=spec.label,
+        extra_body={**openrouter_body(cfg), **(extra_body or {})} if router else {},
+        on_response=on_response if router else None,
+        observer=observer,
+        name=spec.name,
+        usage=openrouter_usage if router else openai_usage,
+        local=not remote,
+    )

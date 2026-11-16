@@ -31,7 +31,7 @@ from promptmend.tui import app as app_module
 from promptmend.tui import brand, home
 from promptmend.tui.app import HIGH_CONTRAST, ManageApp
 from promptmend.tui.setup_wizard import SetupOptions, SetupScreen
-from promptmend.tui.state import State
+from promptmend.tui.state import CHECKING, QUICK, State
 
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32", reason="snapshots are kept for Linux and macOS only (#93)"
@@ -181,12 +181,32 @@ def fixed_state(
     )
 
 
+def quick_of(state: State) -> State:
+    """``state``'s first stage (#317), as state.quick() reads it: the settings, profiles and
+    triggers, nothing of doctor, the plan or the stats."""
+    return dataclasses.replace(
+        state,
+        report=doctor.Report(()),
+        plan=None,
+        plan_error=None,
+        stats=[],
+        stats_error=None,
+        update=CHECKING,
+        pending=None,
+        stage=QUICK,
+    )
+
+
+def quick_fixed_state(group_by: str = "trigger") -> State:
+    return quick_of(fixed_state(group_by))
+
+
 @pytest.fixture(autouse=True)
 def fixed_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     """The paths a pane reads itself (the history file, the profile folder) are fixed too,
     and so is the version in the header."""
-    monkeypatch.setattr(app_module, "__version__", VERSION)
-    monkeypatch.setattr(home, "__version__", VERSION)
+    monkeypatch.setattr(app_module, "installed_version", lambda: VERSION)
+    monkeypatch.setattr(home, "installed_version", lambda: VERSION)
     # About's runtime line (#112) differs by CI runner.
     monkeypatch.setattr(brand, "runtime", lambda: {"python": "3.14.0", "textual": "8.2.8"})
     monkeypatch.delenv("PROMPTMEND_ENV")
@@ -223,7 +243,12 @@ def _shoot(
 ) -> str:
     # With ``setup``, the setup wizard as `setup` opens it, moved on that many steps.
     options = SetupOptions(standalone=True) if setup is not None else None
-    app = ManageApp(loader=loader, setup=options)
+    # The first stage is the same fixed State's (#317), never a read of this machine.
+    app = ManageApp(
+        loader=lambda g, _first: loader(g),
+        quick_loader=lambda g: quick_of(loader(g)),
+        setup=options,
+    )
     # The active tab's underline slides into place; a snapshot must not catch it midway.
     app.animation_level = "none"
     shots: list[str] = []
@@ -329,3 +354,11 @@ def test_snapshot_home_update_available(name: str, size: tuple[int, int]) -> Non
 
 def test_snapshot_about_update_available() -> None:
     _check("about-available", _shoot("a", loader=available_state))
+
+
+# The first stage (#317): Home and the Triggers tab while the checks still run, from a loader
+# whose full State is the quick one, so the shot never races a second stage. The slow rows say
+# `checking`, and Show diff, Deploy and Detach wait (disabled).
+@pytest.mark.parametrize(("name", "key"), [("home-quick", "1"), ("triggers-quick", "4")])
+def test_snapshot_quick_stage(name: str, key: str) -> None:
+    _check(name, _shoot(key, loader=quick_fixed_state))

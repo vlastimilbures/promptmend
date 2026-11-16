@@ -49,6 +49,29 @@ def test_install_reports_the_channel(tmp_path: Path) -> None:
     assert (check.status, check.data["channel"], check.data["launcher"]) == ("ok", "uv", str(exe))
 
 
+def test_a_uv_install_is_recognised_without_uv_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#315: the tool's own uv receipt names the launcher, so the install check says uv even
+    when `uv` is not on PATH (every command answers not found here). Before, it fell back
+    to the running console script."""
+    prefix = tmp_path / "uv" / "tools" / "promptmend"
+    prefix.mkdir(parents=True)
+    exe = tmp_path / "bin" / f"promptmend{EXE}"
+    exe.parent.mkdir()
+    exe.write_text("", "utf-8")
+    (prefix / deploy.UV_RECEIPT).write_text(
+        f"[tool]\nentrypoints = [{{ name = 'promptmend', install-path = '{exe}' }}]\n", "utf-8"
+    )
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    monkeypatch.setattr(sys, "argv", [str(exe)])
+    espanso = tmp_path / "espanso"
+    (espanso / "match").mkdir(parents=True)
+    report = doctor.run(espanso_dir=espanso, clipboard=False, runner=lambda argv: None)
+    install = _status("install", report)
+    assert (install.data["channel"], install.data["launcher"]) == ("uv", str(exe))
+
+
 def test_install_without_a_launcher_guesses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -136,7 +159,7 @@ def _install(channel: str, editable: bool = False) -> doctor.Check:
 
 
 def test_version_with_a_newer_release(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(doctor, "__version__", "0.21.0")
+    monkeypatch.setattr(doctor, "installed_version", lambda: "0.21.0")
     update = update_check.UpdateStatus(update_check.AVAILABLE, "0.22.0", "2026-10-07T12:00:00Z")
     check = doctor._version_check(update, _install("homebrew"))
     assert check.status == doctor.INFO
@@ -151,8 +174,24 @@ def test_version_with_a_newer_release(monkeypatch: pytest.MonkeyPatch) -> None:
     assert set(check.data) == set(doctor.DATA_KEYS["version"])
     # A checkout's own update wins over its uv launcher.
     editable = doctor._version_check(update, _install("uv", editable=True))
-    assert editable.message.endswith(f"available: {update_check.upgrade_command('editable')}")
+    assert editable.message.endswith(f"available: {doctor.upgrade_hint({'editable': True})}")
     assert doctor._version_check(update, None).message.endswith("see docs/install.md")
+
+
+# On Windows, uv cannot update a tool a running promptmend holds and leaves none (#356): a
+# uv-backed hint says to close it first, ahead of the command, which stays whole.
+@pytest.mark.parametrize("channel", ["uv", "editable"])
+def test_a_windows_uv_hint_says_close_first(channel: str) -> None:
+    install = {"channel": "uv", "editable": channel == "editable"}
+    command = update_check.upgrade_command(channel, "win32")
+    assert doctor.upgrade_hint(install, "win32") == doctor.CLOSE_FIRST + command
+    assert doctor.upgrade_hint(install, "darwin") == update_check.upgrade_command(channel, "darwin")
+
+
+@pytest.mark.parametrize("channel", ["homebrew", "installer", "winget", "script"])
+def test_other_hints_are_the_command(channel: str) -> None:
+    install = {"channel": channel, "editable": False}
+    assert doctor.upgrade_hint(install, "win32") == update_check.upgrade_command(channel)
 
 
 @pytest.mark.parametrize(
@@ -162,7 +201,7 @@ def test_version_with_a_newer_release(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_version_without_a_newer_release(
     monkeypatch: pytest.MonkeyPatch, state: str, available: bool | None
 ) -> None:
-    monkeypatch.setattr(doctor, "__version__", "0.21.0")
+    monkeypatch.setattr(doctor, "installed_version", lambda: "0.21.0")
     check = doctor._version_check(update_check.UpdateStatus(state), _install("uv"))
     assert (check.status, check.message) == (doctor.INFO, "promptmend 0.21.0")
     assert check.data["update_available"] is available
@@ -339,9 +378,11 @@ def _servers(monkeypatch: pytest.MonkeyPatch, answering: set[str]) -> doctor.Che
             raise OSError("refused")
 
     monkeypatch.setattr(local_probe, "_get", get)
-    settings = ConfigLayers.resolve(strict=False).settings()
-    check = doctor._local_servers_check(settings, assets.triggers(), True)
-    assert asked == ["http://localhost:11434/api/tags", "http://localhost:1234/v1/models"]
+    layers = ConfigLayers.resolve(strict=False)
+    settings = layers.settings()
+    check = doctor._local_servers_check(layers, settings, assets.triggers(), True)
+    # Asked at the same time (#315), so in either order.
+    assert sorted(asked) == ["http://127.0.0.1:11434/api/tags", "http://127.0.0.1:1234/v1/models"]
     return check
 
 
@@ -357,18 +398,221 @@ def test_local_servers_say_what_a_local_trigger_needs(monkeypatch: pytest.Monkey
     assert check.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
 
 
+def test_local_servers_are_asked_at_the_same_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#315: neither probe waits for the other. Each waits at a barrier both must reach, so
+    asking in turn would break it (the timeout only guards against a hang)."""
+    import threading
+
+    from promptmend import local_probe
+
+    barrier = threading.Barrier(2, timeout=10)
+
+    def get(url: str) -> None:
+        barrier.wait()
+
+    monkeypatch.setattr(local_probe, "_get", get)
+    layers = ConfigLayers.resolve(strict=False)
+    settings = layers.settings()
+    check = doctor._local_servers_check(layers, settings, assets.triggers(), True)
+    assert check.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
+
+
+def test_a_probe_that_raises_never_stops_the_other(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both run to their end; the check then fails as one raising probe always made it."""
+    from promptmend import local_probe
+
+    asked: list[str] = []
+
+    def answers(url: str) -> bool:
+        asked.append(url)
+        if "11434" in url:
+            raise RuntimeError("probe bug")
+        return True
+
+    monkeypatch.setattr(local_probe, "answers", answers)
+    layers = ConfigLayers.resolve(strict=False)
+    settings = layers.settings()
+    check = doctor._safely(
+        "local_servers",
+        lambda: doctor._local_servers_check(layers, settings, assets.triggers(), True),
+    )
+    assert (check.status, check.message) == ("fail", "check failed: RuntimeError: probe bug")
+    assert len(asked) == 2
+
+
+def test_with_update_remakes_only_the_version_check(tmp_path: Path) -> None:
+    """The interface's late update check (#315): the version check as doctor makes it for
+    that answer, every other check the same."""
+    espanso = tmp_path / "espanso"
+    (espanso / "match").mkdir(parents=True)
+    newer = update_check.UpdateStatus(update_check.AVAILABLE, "99.0.0", "2026-11-15T09:00:00+00:00")
+    checking = update_check.UpdateStatus(update_check.CHECKING)
+    kwargs: dict[str, Any] = {"espanso_dir": espanso, "launcher": LAUNCHER, "clipboard": False}
+    early = doctor.run(runner=_runner(), update=checking, **kwargs)
+    assert _status("version", early).data["update_available"] is None
+    late = doctor.with_update(early, newer)
+    direct = doctor.run(runner=_runner(), update=newer, **kwargs)
+    assert late.to_json() == direct.to_json()
+    assert [c for c in late.checks if c.id != "version"] == [
+        c for c in early.checks if c.id != "version"
+    ]
+
+
+def test_a_given_plan_counts_only_for_the_same_comparison(tmp_path: Path) -> None:
+    """#315: doctor takes the interface's plan only when it compares the same folder,
+    launcher and manifest; otherwise it makes its own. The same folder once resolved
+    (#339): a linked one shares the interface's plan of the folder it points to."""
+    espanso = tmp_path / "espanso"
+    (espanso / "match").mkdir(parents=True)
+    manifest = deploy.Manifest(tmp_path / "manifest.json")
+    found = doctor.Lookups(deploy.Launcher(Path(LAUNCHER), "uv"), None, manifest, None)
+    text = deploy.launcher_text(LAUNCHER)
+
+    def files(plan: deploy.Plan, where: Path = espanso) -> list[str]:
+        report = doctor.run(
+            espanso_dir=where, clipboard=False, runner=_runner(), found=found, plan=plan
+        )
+        return [f["state"] for f in _status("match_files", report).data["files"]]
+
+    for planned in (deploy.plan(espanso, text, manifest), deploy.plan(tmp_path, text, manifest)):
+        planned.steps[0].state = "marked"
+        assert ("marked" in files(planned)) == (planned.espanso_dir == espanso)
+    # A linked folder: the interface's plan is of the resolved one, so it is shared.
+    link = tmp_path / "linked-espanso"
+    try:
+        link.symlink_to(espanso, target_is_directory=True)
+    except OSError:
+        pytest.skip("no symlinks here (Windows without the privilege)")
+    planned = deploy.plan(deploy.resolved(link), text, manifest)
+    planned.steps[0].state = "marked"
+    assert "marked" in files(planned, link)
+    # ...but not a plan of another folder the link does not point to.
+    other = deploy.plan(tmp_path, text, manifest)
+    other.steps[0].state = "marked"
+    assert "marked" not in files(other, link)
+
+
 def test_local_servers_never_ask_another_host(monkeypatch: pytest.MonkeyPatch) -> None:
     from promptmend import local_probe
 
     monkeypatch.setenv("OLLAMA_BASE_URL", "https://ollama.example.com")
     monkeypatch.setattr(local_probe, "_get", lambda url: pytest.fail(f"asked {url}"))
-    settings = ConfigLayers.resolve(strict=False).settings()
+    layers = ConfigLayers.resolve(strict=False)
+    settings = layers.settings()
     only = [t for t in assets.triggers() if t.trigger == "-il-"]
-    check = doctor._local_servers_check(settings, only, True)
+    check = doctor._local_servers_check(layers, settings, only, True)
     assert check.message == "Ollama (-il-) is not on this machine; not asked"
     assert check.data["servers"]["ollama"]["answers"] is None
-    none = doctor._local_servers_check(settings, [], False)
+    none = doctor._local_servers_check(layers, settings, [], False)
     assert none.message == "no trigger uses Ollama or LM Studio"
+
+
+def test_local_servers_on_localhost_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#365: Windows tries localhost as ::1 first, about 2 s per call to a server on 127.0.0.1
+    only; the check says so, and how to set the URL, without warning."""
+    from promptmend import local_probe
+
+    monkeypatch.setattr(local_probe, "_get", lambda url: None)
+    triggers = assets.triggers()
+
+    def check(plat: str = "win32") -> doctor.Check:
+        layers = ConfigLayers.resolve(strict=False)
+        return doctor._local_servers_check(layers, layers.settings(), triggers, True, plat)
+
+    quiet = check()
+    assert quiet.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
+    assert quiet.data["slow_localhost"] == []
+    # Set in the real environment: `config set` would not override it.
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434/")
+    monkeypatch.setenv("LMSTUDIO_BASE_URL", "http://user:pw@LOCALHOST:1234/v1")
+    slow = check()
+    assert slow.status == doctor.INFO
+    assert slow.message == (
+        "Ollama answers (-il-); on Windows each -il- call may wait about 2 s for ::1 at "
+        "localhost: set OLLAMA_BASE_URL to http://127.0.0.1:11434/ in the environment; "
+        "LM Studio answers (-ilm-); on Windows each -ilm- call may wait about 2 s for ::1 at "
+        "localhost: use 127.0.0.1 for localhost in LMSTUDIO_BASE_URL, set in the environment"
+    )
+    assert "pw" not in slow.message
+    assert slow.data["slow_localhost"] == ["OLLAMA_BASE_URL", "LMSTUDIO_BASE_URL"]
+    assert doctor.Report((slow,)).to_json()["checks"]["local_servers"]["data"][
+        "slow_localhost"
+    ] == ["OLLAMA_BASE_URL", "LMSTUDIO_BASE_URL"]
+    # Elsewhere localhost costs nothing.
+    other = check("darwin")
+    assert other.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
+    assert other.data["slow_localhost"] == []
+
+
+def test_localhost_note_says_where_to_change_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy mode's .env is edited (`config set` refuses there); only a config.toml value
+    gets the `config set` command."""
+    from promptmend import local_probe
+
+    monkeypatch.setattr(local_probe, "_get", lambda url: None)
+    only = [t for t in assets.triggers() if t.trigger == "-il-"]
+
+    def message() -> str:
+        layers = ConfigLayers.resolve(strict=False)
+        return doctor._local_servers_check(layers, layers.settings(), only, True, "win32").message
+
+    legacy = Path(os.environ["PROMPTMEND_ENV"])
+    legacy.write_text("OLLAMA_BASE_URL=http://localhost:11434\n", "utf-8")
+    assert message().endswith(
+        f"set OLLAMA_BASE_URL to http://127.0.0.1:11434 in {legacy.expanduser()}"
+    )
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    config.settings_file().parent.mkdir(parents=True, exist_ok=True)
+    config.settings_file().write_text(
+        'config_version = 1\nOLLAMA_BASE_URL = "http://localhost:11434"\n', "utf-8"
+    )
+    assert message().endswith(
+        "set OLLAMA_BASE_URL to http://127.0.0.1:11434 "
+        "(`promptmend config set OLLAMA_BASE_URL http://127.0.0.1:11434`)"
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:99999",
+        "http://localhost:11434/?k=v",
+        "http://localhost:11434/#frag",
+        "http://localhost:11434/api",
+        # #365 review: a token in the path is never quoted back.
+        "http://localhost:11434/sk-or-v1-0123456789abcdef0123456789abcdef",
+    ],
+)
+def test_localhost_note_quotes_no_odd_url(url: str) -> None:
+    note = doctor._localhost_note("OLLAMA_BASE_URL", url, ["-il-"], "file:x.toml")
+    assert note.endswith(": use 127.0.0.1 for localhost in OLLAMA_BASE_URL, set in x.toml")
+    assert "sk-or" not in note
+
+
+def test_localhost_note_quotes_the_default_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    toml = f"file:{config.settings_file()}"
+    ollama = doctor._localhost_note("OLLAMA_BASE_URL", "http://localhost", ["-il-"], toml)
+    assert ollama.endswith(
+        "set OLLAMA_BASE_URL to http://127.0.0.1 "
+        "(`promptmend config set OLLAMA_BASE_URL http://127.0.0.1`)"
+    )
+    lmstudio = doctor._localhost_note(
+        "LMSTUDIO_BASE_URL", "http://localhost:4321/v1/", ["-ilm-"], toml
+    )
+    assert lmstudio.endswith(
+        "set LMSTUDIO_BASE_URL to http://127.0.0.1:4321/v1/ (`promptmend "
+        "config set LMSTUDIO_BASE_URL http://127.0.0.1:4321/v1/`)"
+    )
+    # A URL the gate would call a key (a user pattern, say) is never quoted, whatever its shape.
+    from promptmend.commands import common
+
+    monkeypatch.setattr(common, "looks_like_a_key", lambda value: True)
+    keyish = doctor._localhost_note(
+        "LMSTUDIO_BASE_URL", "http://localhost:1234/v1", ["-ilm-"], toml
+    )
+    assert keyish.endswith(": use 127.0.0.1 for localhost in LMSTUDIO_BASE_URL")
 
 
 def test_cli_path_names_the_windows_exe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -414,6 +658,48 @@ def test_match_files_in_sync_edited_and_unknown(espanso: Path) -> None:
     assert {"name": "prompts-core.yml", "state": "modified"} in check.data["files"]
     assert "no launcher" in doctor._match_check(espanso, None, deploy.Manifest.load()).message
     assert "manifest" in doctor._match_check(espanso, LAUNCHER, None).message
+
+
+def test_match_files_through_a_linked_espanso_folder(
+    tmp_path: Path, espanso: Path, no_clipboard: None
+) -> None:
+    """#339: a deploy keys its manifest by the resolved folder, and doctor given the linked
+    folder (as `espanso path config` prints it) keeps the folder as printed. The edited
+    file is the regression check: before, doctor missed its manifest entry and called it
+    `foreign`, not `modified` (unedited files were `in sync` either way)."""
+    link = tmp_path / "linked-espanso"
+    try:
+        link.symlink_to(espanso, target_is_directory=True)
+    except OSError:
+        pytest.skip("no symlinks here (Windows without the privilege)")
+    deploy.apply(deploy.plan(deploy.resolved(link), LAUNCHER, deploy.Manifest.load()))
+    report = doctor.run(espanso_dir=link, launcher=LAUNCHER, runner=_runner())
+    check = _status("match_files", report)
+    assert check.status == "ok"
+    assert check.data["espanso_dir"] == str(link)
+    assert {f["state"] for f in check.data["files"]} == {deploy.IN_SYNC}
+    target = link / "match" / "prompts-core.yml"
+    target.write_text(target.read_text("utf-8") + "# mine\n", "utf-8")
+    report = doctor.run(espanso_dir=link, launcher=LAUNCHER, runner=_runner())
+    states = {f["name"]: f["state"] for f in _status("match_files", report).data["files"]}
+    assert states.pop("prompts-core.yml") == deploy.MODIFIED
+    assert set(states.values()) == {deploy.IN_SYNC}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows paths ignore case")
+def test_match_files_through_another_spelling_on_windows(espanso: Path, no_clipboard: None) -> None:
+    """#339: the Espanso folder spelled in another case still finds the manifest entries a
+    deploy keyed by the resolved folder, so an edited file is `modified`, not `foreign`."""
+    deploy.apply(deploy.plan(espanso, LAUNCHER, deploy.Manifest.load()))
+    target = espanso / "match" / "prompts-core.yml"
+    target.write_text(target.read_text("utf-8") + "# mine\n", "utf-8")
+    spelled = Path(str(espanso).upper())
+    report = doctor.run(espanso_dir=spelled, launcher=LAUNCHER, runner=_runner())
+    check = _status("match_files", report)
+    assert check.data["espanso_dir"] == str(spelled)
+    states = {f["name"]: f["state"] for f in check.data["files"]}
+    assert states.pop("prompts-core.yml") == deploy.MODIFIED
+    assert set(states.values()) == {deploy.IN_SYNC}
 
 
 def test_launcher_checks(tmp_path: Path, espanso: Path) -> None:
@@ -760,3 +1046,299 @@ def test_overrides_hint_keeps_the_names_already_listed() -> None:
     assert hint is not None
     assert hint.startswith("Your general.md replaces")
     assert hint.endswith("`promptmend config set PROMPT_PROFILE_OVERRIDES default,general`.")
+
+
+# --- --timing (#305) -------------------------------------------------------------------------
+
+
+def test_run_measures_each_check_only_into_the_given_dict(
+    espanso: Path, no_clipboard: None
+) -> None:
+    durations: dict[str, float] = {}
+    report = doctor.run(
+        espanso_dir=espanso, launcher=LAUNCHER, runner=_runner(), durations=durations
+    )
+    # sqlite comes from the same read as history, so it has no entry of its own.
+    assert set(durations) == set(doctor.CHECK_IDS) - {"sqlite"}
+    assert all(seconds >= 0 for seconds in durations.values())
+    plain = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner())
+    keys = {"schema_version", "version", "status", "checks"}
+    assert set(report.to_json()) == set(plain.to_json()) == keys
+
+
+class FakeTimer:
+    """Stands in for smoke.time_runs: records each argv and env, answers 0.1 s a run, and
+    fails the argv that contains ``fail``."""
+
+    def __init__(self, fail: str | None = None, fail_argv: list[str] | None = None) -> None:
+        self.fail = fail
+        self.fail_argv = fail_argv
+        self.calls: list[list[str]] = []
+        self.envs: list[dict[str, str]] = []
+
+    def __call__(
+        self, argv: Sequence[str], env: dict[str, str], runs: int, expect: Any
+    ) -> tuple[list[float], str | None]:
+        self.calls.append(list(argv))
+        self.envs.append(dict(env))
+        if (self.fail and self.fail in argv) or list(argv) == self.fail_argv:
+            return [0.2], "exit code 3"
+        return [0.2] + [0.1] * runs, None
+
+
+def _report(current: str | None, **data: Any) -> doctor.Report:
+    return doctor.Report((doctor.Check("launcher", doctor.OK, "", {"current": current, **data}),))
+
+
+def test_timing_runs_each_command_through_the_launcher_and_the_interpreter(
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "promptmend"
+    launcher.write_text("#!/bin/sh\n", "utf-8")
+    timer = FakeTimer()
+    timed = doctor.timing(_report(str(launcher)), {"version": 0.01, "cli": 0.002}, 3, timer=timer)
+    data = timed.to_json()
+    assert data["launcher"] == str(launcher)
+    assert data["launcher_note"] is None
+    assert data["warm_runs"] == 3
+    interpreter = [sys.executable, "-P", "-m", "promptmend.cli"]
+    assert data["interpreter"] == interpreter
+    assert [(r["command"], r["via"]) for r in data["runs"]] == [
+        ("--version", "launcher"),
+        ("--version", "interpreter"),
+        ("persona", "launcher"),
+        ("persona", "interpreter"),
+        ("improve (-i-)", "launcher"),
+        ("improve (-i-)", "interpreter"),
+        ("import promptmend.tui.app", "interpreter"),
+    ]
+    first = data["runs"][0]
+    assert first == {
+        "command": "--version",
+        "via": "launcher",
+        "status": "ok",
+        "cold_ms": 200.0,
+        "warm_median_ms": 100.0,
+        "warm_runs": 3,
+        "message": None,
+    }
+    assert data["checks_ms"] == {"version": 10.0, "cli": 2.0}
+    assert timer.calls[0] == [str(launcher), "--version"]
+    assert timer.calls[1] == [*interpreter, "--version"]
+    assert timer.calls[4][:4] == [str(launcher), "improve", "--trigger-id", "i"]
+    assert timer.calls[-1] == [sys.executable, "-P", "-c", "import promptmend.tui.app"]
+    # Every child gets the stub, the placeholder key, no history, no persona, paste output.
+    from promptmend import smoke
+
+    env = timer.envs[0]
+    assert env["OPENROUTER_API_KEY"] == smoke.PLACEHOLDER_KEY
+    assert env["OPENROUTER_BASE_URL"].startswith("http://127.0.0.1:")
+    assert (env["PROMPT_HISTORY"], env["PROMPT_PERSONA"], env["PROMPT_OUTPUT"]) == (
+        "false",
+        "",
+        "paste",
+    )
+
+
+@pytest.mark.parametrize("current", [None, "/nowhere/promptmend"])
+def test_timing_without_a_launcher_times_the_interpreter_only(current: str | None) -> None:
+    timer = FakeTimer()
+    timed = doctor.timing(_report(current), {}, 1, timer=timer)
+    assert timed.launcher is None
+    assert timed.launcher_note
+    assert "interpreter only" in timed.launcher_note
+    assert {r.via for r in timed.runs} == {"interpreter"}
+    assert len(timer.calls) == 4
+
+
+def test_timing_a_frozen_exe_that_is_its_own_launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exe = tmp_path / "promptmend.exe"
+    exe.write_bytes(b"MZ")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe))
+    timer = FakeTimer()
+    timed = doctor.timing(_report(str(exe)), {}, 1, timer=timer)
+    assert timed.launcher is None
+    assert timed.launcher_note == f"the launcher is this executable ({exe}); timed once"
+    assert timer.calls[0] == [str(exe), "--version"]
+    interface = timed.runs[-1]
+    assert (interface.status, interface.cold, interface.warm) == ("skipped", None, None)
+    assert len(timer.calls) == 3  # no interpreter to import the interface with
+
+
+def test_a_failing_run_is_reported_not_raised() -> None:
+    timed = doctor.timing(_report(None), {}, 2, timer=FakeTimer(fail="persona"))
+    persona = next(r for r in timed.runs if r.command == "persona")
+    assert persona.to_json() == {
+        "command": "persona",
+        "via": "interpreter",
+        "status": "failed",
+        "cold_ms": 200.0,
+        "warm_median_ms": None,
+        "warm_runs": 0,
+        "message": "exit code 3",
+    }
+    assert {r.status for r in timed.runs if r.command != "persona"} == {"ok"}
+
+
+def test_unreadable_trigger_args_are_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend import smoke
+
+    def missing() -> list[str]:
+        raise LookupError("no script var runs the CLI for -i-")
+
+    monkeypatch.setattr(smoke, "trigger_args", missing)
+    timer = FakeTimer()
+    timed = doctor.timing(_report(None), {}, 1, timer=timer)
+    improve = next(r for r in timed.runs if r.command.startswith("improve"))
+    assert improve.status == "failed"
+    assert improve.message
+    assert "cannot be read" in improve.message
+    assert not any("improve" in call for call in timer.calls)
+
+
+def test_timing_against_the_real_cli() -> None:
+    """The expected outputs hold for the real children (the interpreter, one warm run)."""
+    timed = doctor.timing(_report(None), {}, 1)
+    assert [(r.command, r.status, r.message) for r in timed.runs] == [
+        ("--version", "ok", None),
+        ("persona", "ok", None),
+        ("improve (-i-)", "ok", None),
+        ("import promptmend.tui.app", "ok", None),
+    ]
+    assert all(r.cold and r.warm for r in timed.runs)
+
+
+def test_doctor_and_smoke_agree_on_the_default_runs() -> None:
+    from promptmend import smoke
+
+    assert doctor.WARM_RUNS == smoke.WARM_RUNS
+
+
+def test_timing_without_a_launcher_check_times_the_interpreter_only() -> None:
+    timed = doctor.timing(doctor.Report(()), {}, 1, timer=FakeTimer())
+    assert timed.launcher is None
+    assert timed.launcher_note == "no launcher found; timed through the interpreter only"
+
+
+def test_a_relative_launcher_is_timed_by_its_absolute_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "promptmend").write_text("#!/bin/sh\n", "utf-8")
+    monkeypatch.chdir(tmp_path)
+    timer = FakeTimer()
+    timed = doctor.timing(_report("promptmend"), {}, 1, timer=timer)
+    assert timed.launcher == str(tmp_path / "promptmend")
+    assert timer.calls[0] == [str(tmp_path / "promptmend"), "--version"]
+
+
+def _frozen_exe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    exe = tmp_path / "Programs" / "promptmend.exe"
+    exe.parent.mkdir()
+    exe.write_bytes(b"MZ")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe))
+    return exe
+
+
+def test_a_frozen_exe_with_another_launcher_times_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exe = _frozen_exe(tmp_path, monkeypatch)
+    alias = tmp_path / "Links" / "promptmend.exe"
+    alias.parent.mkdir()
+    alias.write_bytes(b"MZ")  # another file, as WinGet's alias can be
+    timer = FakeTimer()
+    timed = doctor.timing(_report(str(alias)), {}, 1, timer=timer)
+    assert timed.launcher == str(alias)
+    assert timer.calls[:2] == [[str(alias), "--version"], [str(exe), "--version"]]
+    assert [r.via for r in timed.runs[:6]] == ["launcher", "interpreter"] * 3
+
+
+def test_a_launcher_samefile_cannot_compare_is_timed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exe = _frozen_exe(tmp_path, monkeypatch)
+
+    def unreadable(a: object, b: object) -> bool:
+        raise OSError("cannot stat")
+
+    monkeypatch.setattr(os.path, "samefile", unreadable)
+    timed = doctor.timing(_report(str(exe)), {}, 1, timer=FakeTimer())
+    assert timed.launcher == str(exe)
+    assert timed.launcher_note is None
+
+
+def test_a_launcher_whose_version_fails_runs_nothing_else(tmp_path: Path) -> None:
+    launcher = tmp_path / "promptmend"
+    launcher.write_text("#!/bin/sh\n", "utf-8")
+    timer = FakeTimer(fail_argv=[str(launcher), "--version"])
+    timed = doctor.timing(_report(str(launcher)), {}, 1, timer=timer)
+    rows = {(r.command, r.via): r for r in timed.runs}
+    assert rows[("--version", "launcher")].status == "failed"
+    for command in ("persona", "improve (-i-)"):
+        skipped = rows[(command, "launcher")]
+        assert (skipped.status, skipped.message) == (
+            "skipped",
+            "not run: --version through the launcher failed",
+        )
+        assert rows[(command, "interpreter")].status == "ok"
+    assert [c for c in timer.calls if c[0] == str(launcher)] == [[str(launcher), "--version"]]
+
+
+def test_timing_names_a_drift_from_the_deployed_launcher(tmp_path: Path) -> None:
+    timed = doctor.timing(
+        _report(None, drift=True, deployed=["/old/promptmend"]), {}, 1, timer=FakeTimer()
+    )
+    assert timed.drift_note == (
+        "Espanso's deployed matches call /old/promptmend, not the interpreter, which was timed"
+    )
+    assert timed.to_json()["drift_note"] == timed.drift_note
+    assert doctor.timing(_report(None), {}, 1, timer=FakeTimer()).drift_note is None
+
+
+def test_the_real_environment_never_reaches_a_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = "sk-or-v1-" + "cd34" * 16  # built at runtime: no key-shaped literal (gitleaks)
+    monkeypatch.setenv("OPENROUTER_API_KEY", real)
+    monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("PROMPT_PERSONA", "I am the sentinel persona of Example Corp.")
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
+    monkeypatch.setenv("PROMPT_EXTRA_PATTERNS", "draft")
+    monkeypatch.setenv("PROMPT_OUTPUT", "clipboard")
+    timer = FakeTimer()
+    doctor.timing(_report(None), {}, 1, timer=timer)
+    from promptmend import smoke
+
+    for env in timer.envs:
+        assert real not in env.values()
+        assert env["OPENROUTER_API_KEY"] == smoke.PLACEHOLDER_KEY
+        assert env["OPENROUTER_BASE_URL"].startswith("http://127.0.0.1:")
+        assert env["PROMPT_PERSONA"] == ""
+        assert env["PROMPT_LOCAL_ONLY"] == "false"
+        assert env["PROMPT_EXTRA_PATTERNS"] == ""
+        assert env["PROMPT_OUTPUT"] == "paste"
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "match"),
+    [
+        ("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1", "not the loopback stub"),
+        ("OPENROUTER_API_KEY", "a-real-key", "not the placeholder key"),
+    ],
+)
+def test_timing_env_refuses_anything_but_the_stub(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str, match: str
+) -> None:
+    from promptmend import smoke
+
+    stub_env = smoke.stub_env
+    monkeypatch.setattr(
+        smoke, "stub_env", lambda port, environ: {**stub_env(port, environ), name: value}
+    )
+    with pytest.raises(RuntimeError, match=match):
+        doctor.timing_env(8080, {})
+    # The unpatched stub env passes.
+    monkeypatch.setattr(smoke, "stub_env", stub_env)
+    assert doctor.timing_env(8080, {})["OPENROUTER_BASE_URL"].startswith("http://127.0.0.1:8080")

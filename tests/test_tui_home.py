@@ -75,7 +75,7 @@ def _update(state: State, status: str, latest: str | None = "0.22.0") -> State:
 
 
 def test_version_row_latest(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(home, "__version__", "0.21.0")
+    monkeypatch.setattr(home, "installed_version", lambda: "0.21.0")
     row = _rows(_update(ready(), update_check.LATEST, "0.21.0"))["Version"]
     assert (row.status, row.text, row.detail) == (doctor.OK, "0.21.0 · latest", "")
 
@@ -87,13 +87,13 @@ def test_version_row_latest(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_version_row_without_an_answer(
     monkeypatch: pytest.MonkeyPatch, status: str, text: str
 ) -> None:
-    monkeypatch.setattr(home, "__version__", "0.21.0")
+    monkeypatch.setattr(home, "installed_version", lambda: "0.21.0")
     row = _rows(_update(ready(), status, None))["Version"]
     assert (row.status, row.text) == (doctor.OK, text)
 
 
 def test_a_newer_release_is_a_note_with_its_command(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(home, "__version__", "0.21.0")
+    monkeypatch.setattr(home, "installed_version", lambda: "0.21.0")
     state = _update(ready(), update_check.AVAILABLE)
     row = _rows(state)["Version"]
     # The header shows the installed version; About (a) the update command.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -51,9 +51,9 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(config, "_PROJECT_ROOT", tmp_path / "project")
     # Never probe the developer's real clipboard: a concealed item there would fail tests.
-    import promptmend.cli as cli
+    import promptmend.pipeline as pipeline
 
-    monkeypatch.setattr(cli, "is_concealed", lambda: None)
+    monkeypatch.setattr(pipeline, "is_concealed", lambda: None)
     # ...nor run the real espanso, uv or brew: a deploy test passes or patches in its own.
     import promptmend.deploy as deploy
 
@@ -95,6 +95,50 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor, "_path_shadow_check", functools.partial(doctor._path_shadow_check, environ={})
     )
+
+
+# Every background thread a test can leave behind: the update checks (#315) and the interface's
+# reload reads (#317, state._beside()).
+BACKGROUND_THREADS = (
+    "promptmend-reload",
+    "promptmend-reload-update-check",
+    "promptmend-update-check",
+)
+
+
+@pytest.fixture(autouse=True)
+def background_threads_end_with_the_test(isolated_env: None) -> Iterator[None]:
+    """The update check (#315) and the interface's reload reads (#317) run in daemon threads:
+    each one a test started must end inside the test, while its fakes (no pypi.org, no
+    Espanso, the temp HOME) still hold, so a reload a newer one cancelled cannot run gather()
+    after them. Torn down before isolated_env's patches are undone; a thread still running
+    after the wait fails the test rather than reach the real network or folders later."""
+    import threading
+
+    before = {t for t in threading.enumerate() if t.name in BACKGROUND_THREADS}
+    yield
+    for thread in threading.enumerate():
+        if thread.name in BACKGROUND_THREADS and thread not in before:
+            thread.join(10)
+            if thread.is_alive():
+                pytest.fail(f"{thread.name} outlived the test")
+
+
+@pytest.fixture(autouse=True)
+def no_hard_exit(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """improve's watchdog (#307) ends the process with os._exit: in a test that would end
+    pytest itself with exit code 0, skipping the rest and fail_under. Every test gets a
+    stand-in that fails it instead; a test of the watchdog patches its own over this one
+    (test_watchdog.py's ``exits``). The start time entry.main() leaves for the watchdog is
+    dropped too, so no run counts its limit from an earlier test's."""
+    import promptmend.trigger as trigger
+    from promptmend import entry
+
+    calls: list[int] = []
+    monkeypatch.setattr(trigger, "_hard_exit", calls.append)
+    monkeypatch.setattr(entry, "_started", None)
+    yield
+    assert not calls, "improve's watchdog fired and would have ended pytest (trigger._hard_exit)"
 
 
 # Headers httpx adds to every request on its own; calls[i]["headers"] leaves them out so a
@@ -192,7 +236,7 @@ def fake_http(monkeypatch: pytest.MonkeyPatch) -> FakeHttp:
 
 
 class StubProvider:
-    """Stands in for cli.make_provider and the provider it builds: records each build
+    """Stands in for pipeline.make_provider and the provider it builds: records each build
     and generate() call, and returns ``result`` or raises ``exc``."""
 
     def __init__(self) -> None:
@@ -216,11 +260,11 @@ class StubProvider:
 
 @pytest.fixture
 def stub_provider(monkeypatch: pytest.MonkeyPatch) -> StubProvider:
-    """Replace the CLI's make_provider, so CLI tests never build a real provider."""
-    import promptmend.cli as cli
+    """Replace the make_provider rewrite() calls, so CLI tests never build a real provider."""
+    import promptmend.pipeline as pipeline
 
     stub = StubProvider()
-    monkeypatch.setattr(cli, "make_provider", stub)
+    monkeypatch.setattr(pipeline, "make_provider", stub)
     return stub
 
 

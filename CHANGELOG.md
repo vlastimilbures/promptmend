@@ -6,11 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Changed
+- Ollama and LM Studio: the default `OLLAMA_BASE_URL` is now `http://127.0.0.1:11434` and
+  `LMSTUDIO_BASE_URL` `http://127.0.0.1:1234/v1`, not `localhost` (#365). Windows tries
+  `localhost` as `::1` first, where these servers do not listen by default, and waits about
+  2 s for that refused connect on every `-il-`/`-ilm-` call. A saved `localhost` URL keeps
+  working, and on Windows `promptmend doctor` (`local_servers`) now names it and where to
+  change it (the `promptmend config set` command for a saved setting, else the environment or
+  the `PROMPTMEND_ENV` file; `doctor --json` adds `slow_localhost`). A
+  server that listens on `::1` only now needs its URL set explicitly (`http://[::1]:<port>`).
+- Packaging: the WinGet manifests (#185) now use manifest schema 1.28.0
+  (`ManifestVersion: 1.28.0` and the matching `$schema` headers), because winget-pkgs
+  deprecated 1.10.0 and its bot refuses it. No field changed: 1.28.0 only adds optional ones.
+  CI's `frozen-windows` job now installs a pinned winget-cli (v1.29.380, SHA-256 checked)
+  before `winget validate`, since the runner's v1.11 knows schemas only up to 1.10.0.
+
+## 0.26.0 - 2026-11-16
+
 ### Security
 - certifi is now 2026.10.19 (#291), replacing a CA bundle with roots whose intermediate keys
   were compromised (PYSEC-2026-4320, GHSA-6q48-6c7w-9gw2). Constrained installs (the install
   scripts, which use the release's `constraints.txt`, Homebrew, and the WinGet/portable zip)
-  get it with the next release; a plain `pip install promptmend` or `uv tool install
+  get it with this release; a plain `pip install promptmend` or `uv tool install
   promptmend` already resolves the new certifi.
 
 ### Added
@@ -23,14 +40,111 @@ All notable changes to this project are documented here. The format follows
   data-protection gate always runs and `PROMPT_LOCAL_ONLY=true` refuses it. Its usage records
   hold its token counts; OpenAI reports no cost, so the cost is unknown.
 - A `-io-` trigger for OpenAI, shipped commented out like `-ic-`; it uses `PROMPT_PROFILE`.
+- `promptmend doctor --timing [--runs N]` (#305) measures how fast this install starts the way
+  Espanso runs it: `--version`, `persona` and a stub `-i-` trigger, each through the launcher
+  and through the interpreter, the first run and the median of N warm ones (default 5), plus
+  the interface's import time and each check's duration. The children run against the smoke
+  test's local stub with a placeholder key, so no provider is called and its time is left out.
+  `--json` adds a `timing` key (`schema_version` stays 1); plain `doctor` is unchanged.
 
 ### Changed
+- Windows: the one-command install (`install.ps1`) now installs the frozen
+  `promptmend.exe` by default (#185), which started 1.7 to 2.2 times faster than the uv
+  install on a machine with endpoint scanning (#304). **Rerunning install.ps1 to update now
+  installs the exe, next to an existing uv install; set `PROMPTMEND_CHANNEL=uv` to keep
+  updating a uv install.** It then warns that both are installed and the triggers still call
+  the uv one, and names the switch steps by the exe's full path. It downloads
+  `promptmend-<version>-windows-x64.zip` from the same Release and refuses it, changing
+  nothing, unless its SHA-256 is the one the release workflow wrote into that `install.ps1`
+  (the release now renders the installer from the zip it built and checks the hash again
+  before attaching both). The hash catches a corrupted or swapped download; it ships in the
+  same release, so `gh attestation verify` remains the check of where the files came from.
+  It unpacks the zip next to `%LOCALAPPDATA%\Programs\promptmend` and checks that every file
+  arrived and the new exe starts, then swaps the folders (the old one renamed away and put
+  back if the swap fails; interrupted, it is put back when possible, otherwise the next run
+  keeps the `promptmend.old-…` folder and says so; renames retry while a scanner holds a
+  file, and folders an interrupted run left are swept once an hour old); while a `promptmend.exe` from that folder runs,
+  it stops and changes nothing. It adds the folder to the user PATH once (an unexpanded
+  `%VARIABLE%` there stays one) and runs the exe's `promptmend doctor --no-clipboard`. It
+  still never runs setup or a deploy. `PROMPTMEND_CHANNEL=uv` keeps the previous uv install (`PROMPTMEND_WHEEL` implies
+  it), any other channel is refused, and `PROMPTMEND_ZIP` installs a local zip. The exe is
+  not signed yet. `doctor` reports such an exe as the `installer` channel and names the
+  one-command install as its update (`doctor --json` keeps `schema_version` 1). The frozen
+  build is now compiled with `optimize=1`. docs/install.md: the exe is the recommended Windows
+  channel ("The exe", no longer a preview), with uv as the alternative and the update,
+  uninstall and switch-from-uv steps.
+- The interface paints Home at once (#317): the rows that need only the settings (what `-i-`
+  and `-ip-` run, the output mode) appear first, and the match files and Espanso, the usage
+  history and the checks say `checking` until `doctor` and the deploy plan are read, then the
+  whole screen fills in together (after every change and `r` too). Show diff, Deploy and
+  Detach (Triggers) and Prune and Reset (History) are greyed out until then, and a first run
+  offers the setup only once it knows nothing is installed. When the checks cannot run, their
+  rows say `not checked` instead of the screen staying empty. With a slow Espanso the first
+  rows appear in about 60 ms instead of after the whole check (1.5 s in a test with a slow
+  doctor and plan). Holding `r` while Espanso hangs runs at most three checks at once.
+  On Windows with Python 3.12 the interface now gives its background reads their turn
+  (#348); the effect is still to be measured on a real machine.
 - `--effort` is accepted with `--provider openai` too (it sets `OPENAI_REASONING_EFFORT` for
   the call); `--tier pro` stays OpenRouter only. The refusal names which providers take each
   option.
 - The interface screenshots in the README and docs show version 0.25.0 and today's screens
   (no intro, no command line, no Previous install), and docs/interface.md no longer calls
   `setup` a question-and-answer alternative.
+- `cli.py` is split into `sanitize.py` (the sanitiser), `pipeline.py` (the rewrite's
+  steps, which the interface's Try tab now uses), `trigger.py` (the single output sink and
+  improve's watchdog) and `commands/espanso.py` (#281). No command, option or output changes.
+- Contributors: the prompt's fixed wordings now have one source, their variants in
+  `prompts/default.md` (#283). `scripts/render_prompt_template.py` writes them into the `-p-`
+  template, a test fails when the template is stale or when one of `default.md`'s own examples
+  disagrees with the variants, and the benchmark reads them from the profile instead of
+  keeping copies (see CONTRIBUTING "Change the default prompt"). No wording, snippet or score
+  changes.
+- The version is read from the installed metadata only where it is shown or recorded (#318),
+  so importing the usage history, doctor, deploy, the update check or the interface no longer
+  loads `importlib.metadata`; a trigger that records its run reads it only when it writes the
+  row, after its output. The version shown is unchanged.
+- The interface's Home no longer waits for pypi.org (#315). The update check runs beside the
+  rest of a reload: until it answers, the Version row says `checking` (About: `checking
+  pypi.org…`), then fills in on every tab at once; a proxy that blocks pypi.org (up to 3 s)
+  no longer delays any other row, and quitting never waits for it. Ollama and LM Studio are
+  asked at the same time, in the interface and in `doctor` (one probe timeout instead of
+  two). A reload resolves the settings, looks up the launcher and reads the deploy manifest
+  once, shared with doctor's checks, and builds the deploy plan once when Espanso's folder
+  path is already resolved (a linked folder gets a second plan, so the interface reports
+  exactly what `doctor` does). A uv install's launcher is read
+  from uv's `uv-receipt.toml`, so neither the interface nor `doctor` runs `uv tool dir`
+  (still the fallback when the receipt is missing or does not name an existing launcher).
+  On Windows the Espanso queries of one reload or `doctor` run enumerate the processes
+  once, and the uninstall registry is read only when Espanso is not found elsewhere.
+  `doctor` and `doctor --json` output is unchanged, except that a uv tool install is now
+  recognised (channel `uv`) even when `uv` is not on PATH.
+- The triggers start faster and load fewer native modules, each a file an endpoint scanner
+  inspects on Windows (#312): the built-in profiles are read as plain files on first use (no
+  longer through `importlib.resources`, which pulled in zipfile, bz2 and lzma), and hashlib,
+  ctypes, tempfile and unicodedata load only in the functions that need them (the
+  data-protection gate skips unicodedata for an ASCII draft, with the same findings).
+  `persona` and `improve` up to its provider call, with a local or a cloud provider, now load
+  no extension module of their own: `_hashlib` and `unicodedata` are gone, and on macOS and
+  Linux so is `_ctypes`, which the clipboard probe now loads only when the clipboard is read.
+  Not fixed yet: the ones `import typer` loads itself (`_bz2`, `_lzma`, `_uuid`, and
+  depending on the platform and Python version `select`, `_zstd`, or on Windows `_wmi` and
+  `_ctypes`, for its console support) stay until a trigger entry runs without Typer (#313);
+  on Windows Typer has therefore loaded `_ctypes` before the probe needs it. On macOS, Python
+  3.13, `improve` adds 145 modules up to the provider call (167 before). No output changes.
+
+- The interface opens faster (#316): only Home is built at start; every other tab, and the
+  code behind it, is built the first time you open it (by its digit, the tab bar's arrows or
+  a click), and the setup wizard the first time it opens, so the Try tab's stub server and the
+  wizard no longer load before the first screen. A tab opened later shows the same moment as
+  the others at once. On macOS, Python 3.13, the first paint loads 470 modules instead of 507
+  (median of 15: `import promptmend.tui.app` 138 instead of 217 ms, first paint 219 instead
+  of 337 ms). No screen, key or command changes.
+
+- Contributors: setup's decisions and writes (where settings go, saving the provider, profile
+  and keys, reading and installing the match files) live in one module, `setup_flow.py`
+  (#282), and both the wizard and `setup --non-interactive`/`--plain` are presentation over
+  it. It imports neither Typer nor Textual itself and never loads Textual; Typer still comes
+  in through `commands.common`. No prompt, message, exit code, write or wizard screen changes.
 
 ### Removed
 - **Breaking:** the transition paths from earlier releases (#275), ahead of 1.0.0. This breaks
@@ -59,11 +173,63 @@ All notable changes to this project are documented here. The format follows
   (`git show v0.25.0:docs/prompt-candidates/PLAN.md`).
 
 ### Fixed
+- Windows: the one-command install with `PROMPTMEND_CHANNEL=uv` and
+  `scripts/install_windows.ps1` no longer break a uv install while a `promptmend` runs
+  (#356): the open interface holds the tool's `Scripts\python.exe`, so uv uninstalled the old
+  version, then stopped with `failed to remove directory …\Scripts: Access is denied`, and
+  `promptmend` and every trigger failed with `ModuleNotFoundError` until the update was run
+  again. Both now refuse before uv runs, leaving promptmend unchanged, while a process from
+  uv's promptmend tool folder or uv's `promptmend.exe` launcher runs, as the exe channel does
+  (best effort: checked once, before uv starts). A manual `uv tool install --force` still
+  needs the interface and every running `promptmend` closed first. On Windows, `doctor` and the interface's About screen put "close the interface and
+  any running promptmend, then" before a uv or checkout update command. docs/install.md
+  ("Update") and docs/troubleshooting.md say how to recover.
+- `promptmend doctor` now reports a match file you edited after a deploy as `modified`, not
+  `foreign`, when Espanso's folder is reached through a link (#339), such as a
+  `~/.config/espanso` linked from a dotfiles repository (or, on Windows, a folder spelled in
+  another case). Unedited files were already `in sync`. doctor now compares the folder the
+  link points to, as a deploy records it, as the interface's Triggers tab does; it still
+  prints the folder as Espanso gives it.
+- An `improve` trigger can no longer outlive its time limit (#307). A watchdog ends the run by
+  the limit plus 2 seconds, counted from the start of the `promptmend` command's own code (not
+  Python's start-up before it), with the usual `[promptmend: … timed out after …s]` marker,
+  exit code 0 and empty stderr, even when a name lookup, proxy discovery, the clipboard or a
+  server trickling its reply blocks; before, such a run could leave the trigger typed with
+  nothing happening for as long as it hung, and other triggers would not expand meanwhile.
+  Exactly one result is ever printed, no request is started once the watchdog steps in (one
+  already connecting may still go out), and the usage history records such a run as
+  `error_marker`, with the attempt in flight as a `timeout`. A run already printing its own result is never cut off. When the rewrite came
+  back but its clipboard copy (clipboard output, `--copy`) stalls, the marker says the
+  clipboard did not answer, the rewrite is pasted instead, and the run is recorded as
+  `clipboard_failed`.
 - Anthropic calls no longer send `PROMPT_TEMPERATURE` (default 0.2). Current Claude models
   (Opus 4.7, Sonnet 5 and later) reject a temperature with HTTP 400, so the default Anthropic
   setup and `-ic-` failed (#273). Anthropic has its own `ANTHROPIC_TEMPERATURE`, empty by
   default (no temperature is sent); `PROMPT_TEMPERATURE` still applies to OpenRouter, Ollama
   and LM Studio.
+- A usage-history write that could be neither stored nor kept in `history.spool` is now always
+  counted as lost (#335). When several triggers wrote at once, the lock of `history.spool` and
+  `history.lost` could stay busy past the write's time budget, and such a write vanished
+  without being counted, so `promptmend doctor` did not report it. It is now counted in an
+  empty `history.lost.<random>.<n>.drop` file of its own, which needs no lock; doctor adds
+  these to the count, and `promptmend history reset` deletes them. A data folder that takes
+  no new file at all (a full disk, missing permissions) still loses the count; doctor reports
+  such a folder when it can see that it is not writable.
+
+### Documentation
+- Troubleshooting: "The trigger stays and nothing happens" (#308), telling the cases apart
+  with `promptmend history export` and `promptmend stats --by trigger --verbose` (`ok` or any
+  outcome but a timeout: the CLI printed and Espanso did not paste; `error_marker` near the
+  limit with a `timeout` attempt or none: the call stalled; no row: usually the process never
+  finished), a run still going that blocks later triggers, the trigger's own call in a
+  terminal, `promptmend doctor --timing` and `PROMPT_OUTPUT=clipboard` on a slow machine.
+  README's "Never a blank paste" adds that Espanso shows nothing while the CLI runs, and
+  docs/usage.md "While it runs" links the new entry.
+- Troubleshooting: uv's `Failed to persist temporary file … Access is denied` on Windows, when
+  a scanner holds a file in uv's cache (#357): set `$env:UV_NO_CACHE = "1"` before the
+  one-command install with `PROMPTMEND_CHANNEL=uv` (or `install_windows.ps1`), or pass
+  `--no-cache` to a manual `uv tool install`; the default exe channel does not install with uv.
+  docs/install.md "One command with uv" links the entry.
 
 ## 0.25.0 - 2026-10-14
 

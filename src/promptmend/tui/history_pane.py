@@ -33,6 +33,12 @@ def _cost(row: history.StatsRow) -> str:
 
 
 class HistoryPane(Pane):
+    # Gated on purpose: they delete what the stats table shows, and on a quick State
+    # those stats are stand-ins (empty), so the person would decide on nothing. Prune and Reset
+    # read the store themselves, but stay disabled until the real stats are on screen. Export
+    # writes a new file from the store and deletes nothing, so it never waits.
+    FULL_ONLY = ("prune", "reset")
+
     def compose(self) -> ComposeResult:
         yield Static(
             " ".join(usage.CAVEATS),
@@ -87,7 +93,9 @@ class HistoryPane(Pane):
                 _cost(row),
             )
         note = state.stats_error and f"error: {state.stats_error}"
-        if not note and not state.stats:
+        if not state.full:  # a quick State: the stats are not read yet
+            note = "Reading the usage history…" if state.failed is None else "Not read."
+        elif not note and not state.stats:
             note = "No usage recorded yet."
         self.query_one("#stats-note", Static).update(note or "")
 
@@ -140,6 +148,8 @@ class HistoryPane(Pane):
 
     def prune(self) -> None:
         """Ask how old (the retention filled in), then confirm (`history prune`)."""
+        if self.waits():
+            return
         days = str(self.state.settings.history_retention_days) if self.state else ""
         fields = [Field("days", "Delete the records older than this many days", value=days)]
         self.app.push_screen(
@@ -182,6 +192,8 @@ class HistoryPane(Pane):
 
     def reset(self) -> None:
         """Confirm, then delete every usage record (`history reset`)."""
+        if self.waits():
+            return
         target = self._store()
 
         def reset() -> str:

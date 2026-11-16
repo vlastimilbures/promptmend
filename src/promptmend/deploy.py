@@ -1,10 +1,10 @@
 """Managed Espanso deployment: plan, apply and reverse what promptmend writes into
-Espanso's `match/` folder (#86).
+Espanso's `match/` folder.
 
 Each packaged match file (assets.py) is rendered with the launcher path and a version stamp,
 compared with the manifest of what we deployed before and with what is on disk, and written
 only after the caller confirms. A file the user edited is never overwritten silently, only
-files we own are removed, and nothing is ever written to Espanso's `config/` (#37).
+files we own are removed, and nothing is ever written to Espanso's `config/`.
 
 Imported lazily by the `espanso` commands, never on the trigger path.
 """
@@ -26,13 +26,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import __version__, assets
+from . import assets, installed_version
 from .config import user_data_dir
 from .match_history import KNOWN_SOURCES
 
 PLACEHOLDER = "__PROMPT_WORKFLOW__"
 STAMP = "# promptmend {version} (managed; edit at your own risk)\n"
-# 0.18.0 and earlier stamped `# prompt-workflow <version> ...` (#169): both are ours.
+# Files deployed by 0.18.0 and earlier carry `# prompt-workflow <version> ...`: both are ours.
 _STAMP_LINE = re.compile(
     r"# (?:promptmend|prompt-workflow) \S+ \(managed; edit at your own risk\)\n"
 )
@@ -51,7 +51,7 @@ MISSING, IN_SYNC, STALE, MODIFIED, FOREIGN = "missing", "in sync", "stale", "mod
 KEEP, OURS, SIDE = "keep", "ours", "side"
 CHOICES = (KEEP, OURS, SIDE)
 
-# The launcher is the first item of a script var's args (#18), a double-quoted YAML string
+# The launcher is the first item of a script var's args, a double-quoted YAML string
 # that Espanso hands to the OS as the program, with no shell. Refuse what YAML would read as
 # an escape or the string's end (a quote, a backslash), any character YAML cannot hold
 # (control characters, lone surrogates, U+FFFE/U+FFFF), `{{`, which Espanso fills from its
@@ -61,9 +61,9 @@ CHOICES = (KEEP, OURS, SIDE)
 _UNSAFE = re.compile(
     r'["\\\x00-\x1f\x7f-\x9f\ud800-\udfff\ufffe\uffff]|\{\{|%(?:HOME|CONFIG|PACKAGES)%'
 )
-# The launcher as the match files hold it: the first script arg, `args: ["<path>", ...`
-# (since #18), or the quoted path in a shell cmd line as every earlier release wrote it,
-# `cmd: "\"<path>\" improve`.
+# The launcher as the match files hold it: the first script arg, `args: ["<path>", ...`,
+# or the quoted path in a shell cmd line, as files deployed by older releases still hold
+# it, `cmd: "\"<path>\" improve`.
 _SCRIPT_LAUNCHER = re.compile(r'args: \["([^"\\]+)"')
 _QUOTED_LAUNCHER = re.compile(r'\\"([^"\\]+)\\"')
 # A path component that names a release (0.15.0, 0.15.0_1): gone after the next upgrade.
@@ -77,7 +77,7 @@ class DeployError(Exception):
 @dataclass(frozen=True)
 class CommandFailure:
     """Why a command gave no output: not found, timed out, or its exit code and the first
-    stderr line that says something (#115)."""
+    stderr line that says something."""
 
     found: bool = False
     path: str | None = None
@@ -129,7 +129,7 @@ def _error_line(stderr: str) -> str | None:
 
 
 # On Windows Espanso's output never reaches a pipe and a daemon it starts would share our
-# console and pipes: espanso_windows answers those calls without reading it (#209-#211).
+# console and pipes: espanso_windows answers those calls without reading it.
 WINDOWS_ESPANSO = sys.platform == "win32"
 
 
@@ -140,7 +140,7 @@ def run_command(argv: Sequence[str]) -> str | CommandFailure:
         answer: str | CommandFailure = espanso_windows.run(argv)
         return answer
     # Resolved through PATH (and PATHEXT) first: on Windows `espanso` is `espanso.cmd`, which
-    # CreateProcess alone never finds, so an installed Espanso looked missing (#115).
+    # CreateProcess alone never finds, so an installed Espanso would look missing.
     exe = shutil.which(argv[0])
     if exe is None:
         return CommandFailure()
@@ -214,7 +214,7 @@ def _digest(text: str) -> str:
 @dataclass(frozen=True)
 class Launcher:
     path: Path
-    channel: str  # uv, homebrew, scoop, winget, script or explicit
+    channel: str  # uv, homebrew, scoop, winget, installer, script or explicit
 
 
 def launcher_text(path: Path | str, *, windows: bool = os.name == "nt") -> str:
@@ -247,7 +247,7 @@ def inside(path: Path, parent: Path) -> bool:
     return resolved(path).is_relative_to(resolved(parent))
 
 
-# WinGet's package id (#185) and where it puts a portable package: the zip unpacked under
+# WinGet's package id and where it puts a portable package: the zip unpacked under
 # `Packages\<id>_<source>\`, the command alias in `Links\`. Neither path holds the version,
 # so the match files survive `winget upgrade`.
 WINGET_ID = "vlastimilbures.PromptMend"
@@ -291,6 +291,24 @@ def _winget_roots(environ: Mapping[str, str]) -> list[Path]:
     return roots
 
 
+# Where scripts/install.ps1's default channel puts the frozen exe (#185), under
+# %LOCALAPPDATA%: rerunning install.ps1 replaces that folder, at the same path.
+INSTALLER_DIR = ("Programs", "promptmend")
+
+
+def _installer_launcher(executable: Path, environ: Mapping[str, str]) -> Launcher | None:
+    r"""The running frozen exe when it is install.ps1's
+    `%LOCALAPPDATA%\Programs\promptmend\promptmend.exe` (compared case-insensitively, as
+    Windows does)."""
+    local = environ.get("LOCALAPPDATA")
+    if not local:
+        return None
+    expected = Path(local).joinpath(*INSTALLER_DIR, "promptmend.exe")
+    if str(resolved(executable)).lower() == str(resolved(expected)).lower():
+        return Launcher(executable, "installer")
+    return None
+
+
 def _winget_launcher(executable: Path, environ: Mapping[str, str]) -> Launcher | None:
     """The WinGet install of the running frozen exe: its `Links` alias when that resolves to
     this exe, else the exe itself inside WinGet's package folder for our id."""
@@ -312,6 +330,102 @@ def _winget_launcher(executable: Path, environ: Mapping[str, str]) -> Launcher |
     return None
 
 
+# uv's record of a tool install, in the tool's environment (`<uv tool dir>/<name>/`, which is
+# sys.prefix for the running tool). The part read here, as uv 0.13 writes it (older receipts
+# may have no `from`):
+#
+#     [tool]
+#     requirements = [{ name = "promptmend" }]
+#     entrypoints = [
+#         { name = "promptmend", install-path = "/u/.local/bin/promptmend", from = "promptmend" },
+#     ]
+#
+# On Windows `name` stays `promptmend` and `install-path` is the `.exe`, a TOML string with
+# escaped backslashes: `"C:\\Users\\me\\.local\\bin\\promptmend.exe"` (not seen on a
+# real Windows install yet: anything else falls back to `uv tool dir`).
+UV_RECEIPT = "uv-receipt.toml"
+
+
+def _receipt_entry_point(text: str, exe: str, *, windows: bool) -> str | None:
+    """promptmend's `install-path` in a uv receipt's text, or None when the text does not parse
+    or lists no entry point named promptmend (from the promptmend package) whose file is
+    ``exe``. Not checked against the disk."""
+    import tomllib
+    from pathlib import PurePosixPath, PureWindowsPath
+
+    try:
+        tool = tomllib.loads(text).get("tool")
+    except (tomllib.TOMLDecodeError, ValueError):
+        return None
+    points = tool.get("entrypoints") if isinstance(tool, dict) else None
+    if not isinstance(points, list):
+        return None
+    pure = PureWindowsPath if windows else PurePosixPath
+    for point in points:
+        if not isinstance(point, dict):
+            continue
+        name, where, source = point.get("name"), point.get("install-path"), point.get("from")
+        if name != "promptmend" or source not in (None, "promptmend"):
+            continue
+        if not isinstance(where, str) or not where:
+            continue
+        found = pure(where).name
+        if (found.lower() if windows else found) == exe:
+            return where
+    return None
+
+
+# A Windows path uv writes for a tool's bin dir: a drive letter, then the rest (`C:\\...`).
+_DRIVE = re.compile(r"[A-Za-z]:")
+
+
+def _receipt_launcher_path(where: str, exe: str, *, windows: bool) -> Path | None:
+    """The launcher an entry point's ``install-path`` names, spelled as the `uv tool dir
+    --bin` lookup spells it: its folder joined with ``exe``. On Windows only a plain drive
+    path (`C:\\Users\\...`): a verbatim (`\\\\?\\`), device (`\\\\.\\`) or UNC
+    (`\\\\server\\share`) path is None, so the match files never get one. On POSIX an
+    absolute path, as written."""
+    if windows:
+        import ntpath
+        from pathlib import PureWindowsPath
+
+        if where.startswith(("\\\\", "//", "\\/", "/\\")):
+            return None
+        # Already normal (no `.` or `..`, no doubled or forward slash), no `:` past the drive
+        # (an alternate data stream), and no folder ending in a dot or space, which Windows
+        # drops: one spelling only, the one uv writes.
+        if ntpath.normpath(where) != where or ":" in where[2:]:
+            return None
+        pure = PureWindowsPath(where)
+        if not _DRIVE.fullmatch(pure.drive) or not pure.is_absolute():
+            return None
+        if any(part.endswith((".", " ")) for part in pure.parts[1:]):
+            return None
+        return Path(str(pure.parent / exe))
+    path = Path(where)
+    return path if path.is_absolute() else None
+
+
+def _uv_receipt_launcher(prefix: Path, exe: str, *, windows: bool) -> Path | None:
+    """This tool's launcher from the uv receipt in ``prefix``, without running `uv`:
+    only when the receipt is a readable file, names promptmend's entry point, and that entry
+    point is an absolute path (on Windows a plain drive path) to an existing file. Anything
+    else is None: then `uv tool dir` decides."""
+    receipt = prefix / UV_RECEIPT
+    try:
+        if receipt.is_symlink() or not receipt.is_file():
+            return None
+        text = receipt.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    where = _receipt_entry_point(text, exe, windows=windows)
+    path = None if where is None else _receipt_launcher_path(where, exe, windows=windows)
+    try:
+        return path if path is not None and path.is_file() else None
+    except OSError:
+        return None
+
+
 def resolve_launcher(
     *,
     runner: Runner | None = None,
@@ -323,25 +437,33 @@ def resolve_launcher(
     environ: Mapping[str, str] | None = None,
 ) -> Launcher:
     """The stable entry point of the install that is running now: the channel's own bin
-    (uv tool's bin dir, Homebrew's `<prefix>/bin`, Scoop's shim, WinGet's alias), never a
-    versioned path such as a Homebrew Cellar, else the running console script when that path
-    is stable. A frozen build (the Windows zip, #185) is its own exe: WinGet's, else itself."""
+    (uv tool's bin dir, from its receipt, else `uv tool dir`; Homebrew's `<prefix>/bin`,
+    Scoop's shim, WinGet's alias), never a versioned path such as a Homebrew Cellar, else the
+    running console script when that path is stable. A frozen build (the Windows zip) is
+    its own exe: WinGet's, else itself (the installer channel in install.ps1's folder)."""
     if getattr(sys, "frozen", False) if frozen is None else frozen:
         exe_path = Path(sys.executable) if executable is None else executable
+        env = os.environ if environ is None else environ
         if windows:
-            found = _winget_launcher(exe_path, os.environ if environ is None else environ)
+            found = _winget_launcher(exe_path, env)
             if found is not None:
                 return found
         if not (exe_path.is_absolute() and exe_path.is_file()):
             raise DeployError(f"The running promptmend.exe was not found ({exe_path})")
         if not _frozen_stable(exe_path):
             raise DeployError(FROZEN_UNSTABLE.format(path=exe_path))
+        if windows and (found := _installer_launcher(exe_path, env)) is not None:
+            return found
         return Launcher(exe_path, "script")
     runner = runner or run_command
     prefix = Path(sys.prefix) if prefix is None else prefix
     script = Path(sys.argv[0]) if script is None else script
     exe = "promptmend.exe" if windows else "promptmend"
 
+    # A uv tool names its launcher in its own receipt: no `uv` process.
+    from_receipt = _uv_receipt_launcher(prefix, exe, windows=windows)
+    if from_receipt is not None:
+        return Launcher(from_receipt, "uv")
     tool_dir = output(runner(["uv", "tool", "dir"]))
     if tool_dir and inside(prefix, Path(tool_dir.strip())):
         bin_dir = output(runner(["uv", "tool", "dir", "--bin"]))
@@ -516,7 +638,7 @@ def is_gone(entry: Entry) -> bool:
     return False
 
 
-# Not config_files.write_atomic(): that one writes through a symlink (#236), this must replace it.
+# Not config_files.write_atomic(): that one writes through a symlink, this must replace it.
 def _write(path: Path, text: str) -> None:
     """Write UTF-8 with the text's own newlines, through a new temp file in the same folder
     and an atomic rename. mkstemp creates the temp file exclusively, so a planted link there
@@ -545,9 +667,11 @@ def _read(path: Path) -> str | None:
 
 
 def render(source: str, launcher: str, version: str | None = None) -> str:
-    """A deployed match file: the version stamp (#25), then the shipped file with the
+    """A deployed match file: the version stamp, then the shipped file with the
     launcher in place of the placeholder (literally, so no character in it is special)."""
-    return STAMP.format(version=version or __version__) + source.replace(PLACEHOLDER, launcher)
+    return STAMP.format(version=version or installed_version()) + source.replace(
+        PLACEHOLDER, launcher
+    )
 
 
 @dataclass
@@ -566,7 +690,7 @@ class FileStep:
             (self.current or "").splitlines(keepends=True),
             self.rendered.splitlines(keepends=True),
             fromfile=f"{self.target} ({'missing' if self.current is None else 'on disk'})",
-            tofile=f"{self.target} (promptmend {__version__})",
+            tofile=f"{self.target} (promptmend {installed_version()})",
         )
         return "".join(line if line.endswith("\n") else line + "\n" for line in lines)
 
@@ -580,7 +704,7 @@ class Plan:
     # Manifest entries outside this plan whose file is gone: apply forgets them.
     orphans: list[str] = field(default_factory=list)
     # The other match files in the folder (Espanso's base.yml, the user's overlays): listed
-    # by status only (#38); deploy and detach never touch them.
+    # by status only; deploy and detach never touch them.
     yours: list[Path] = field(default_factory=list)
 
     @property
@@ -607,8 +731,8 @@ class Plan:
 
 def launchers_in(text: str) -> set[str]:
     """The launcher paths a match file calls: each script var's first arg, or the quoted
-    path of a shell cmd line (every release before #18 quoted it the same way). Windows
-    paths have forward slashes."""
+    path of a shell cmd line (every release before the script vars quoted it the same way).
+    Windows paths have forward slashes."""
     return {*_SCRIPT_LAUNCHER.findall(text), *_QUOTED_LAUNCHER.findall(text)}
 
 
@@ -776,7 +900,7 @@ def apply(the_plan: Plan, choices: Mapping[str, str] | None = None) -> Outcome:
     match_dir = the_plan.espanso_dir / "match"
 
     for step in the_plan.steps:
-        # Every write lands in Espanso's match/ folder; config/ is never touched (#37).
+        # Every write lands in Espanso's match/ folder; config/ is never touched.
         if step.target.parent != match_dir:
             raise DeployError(f"Refusing to write outside {match_dir}: {step.target}")
         backups = list(step.entry.backups) if step.entry else []
@@ -807,7 +931,7 @@ def apply(the_plan: Plan, choices: Mapping[str, str] | None = None) -> Outcome:
             _write(step.target, step.rendered)
         manifest.entries[str(step.target)] = Entry(
             target=str(step.target),
-            asset_version=__version__,
+            asset_version=installed_version(),
             digest=_digest(step.rendered),
             launcher=the_plan.launcher,
             calls_cli=step.calls_cli,

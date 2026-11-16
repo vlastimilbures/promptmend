@@ -71,6 +71,12 @@ class ProfilesPane(Pane):
             f"Your profiles: {user_profiles_dir()}"
         )
         table = self.query_one("#profiles", DataTable)
+        # Each stage of a reload refills the table: the cursor stays on its profile.
+        kept = (
+            table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+            if table.row_count
+            else None
+        )
         table.clear()
         for name in PROFILES:
             add_row(table, name, "built in", "default" if name == cfg.profile else "", key=name)
@@ -78,6 +84,8 @@ class ProfilesPane(Pane):
             add_row(table, alias, "built in", f"retired; means {target}", key=alias)
         for profile in state.profiles:
             add_row(table, profile.name, "yours", profile.status, key=f"user:{profile.name}")
+        if kept is not None and kept in table.rows:
+            table.move_cursor(row=table.get_row_index(kept), animate=False)
 
     @on(Button.Pressed, "#set-profile")
     def _set_profile(self) -> None:

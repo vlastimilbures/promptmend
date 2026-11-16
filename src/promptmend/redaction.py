@@ -4,7 +4,6 @@ import base64
 import binascii
 import bisect
 import re
-import unicodedata
 from collections.abc import Callable
 
 # Patterns that suggest content should not leave the device for a cloud model.
@@ -336,7 +335,7 @@ def compile_extra(spec: str) -> tuple[re.Pattern[str], ...]:
 # that render as nothing, assigned or not. Format characters (Cf) are only part of it; it also
 # holds the combining grapheme joiner, Hangul fillers, Mongolian and other variation
 # selectors, and unassigned blocks such as U+E0080-E0FFF. A character class body, shared
-# with cli.clean().
+# with sanitize.clean().
 DEFAULT_IGNORABLE = (
     "\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e"
     "\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8"
@@ -350,7 +349,18 @@ def _normalize(text: str) -> str:
     """Fold look-alike characters so they cannot split a pattern: NFKC turns no-break and
     thin spaces into spaces and fullwidth digits/letters into ASCII, and invisible characters
     (zero-width space/joiner, soft hyphen, variation selectors, Hangul fillers, any other
-    format character) are dropped."""
+    format character) are dropped. ASCII text is returned as is, without unicodedata (a
+    native module on Windows): NFKC maps every ASCII character to itself, and none is
+    in _INVISIBLE or of category Cf (tests/test_redaction.py checks all 128)."""
+    if text.isascii():
+        return text
+    return _fold(text)
+
+
+def _fold(text: str) -> str:
+    """_normalize() for any text, ASCII or not."""
+    import unicodedata
+
     folded = _INVISIBLE.sub("", unicodedata.normalize("NFKC", text))
     return "".join(ch for ch in folded if unicodedata.category(ch) != "Cf")
 

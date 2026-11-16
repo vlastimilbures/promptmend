@@ -24,6 +24,10 @@ class OllamaProvider:
     # model runs on this machine (loopback, not a cloud model), so it has no cost to report.
     observer: UsageObserver | None = field(default=None, repr=False, compare=False)
     local: bool = False
+    # The provider in each usage record and how messages name it; make_provider() passes
+    # its registry spec's name and label.
+    name: str = "ollama"
+    label: str = "Ollama"
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
@@ -45,19 +49,19 @@ class OllamaProvider:
         if options:
             payload["options"] = options
         meter = (
-            Meter(self.observer, "ollama", self.model, ollama_usage, self.local)
+            Meter(self.observer, self.name, self.model, ollama_usage, self.local)
             if self.observer is not None
             else None
         )
         data = post_json(
-            "Ollama", f"{self.base_url}/api/chat", self.timeout, json=payload, meter=meter
+            self.label, f"{self.base_url}/api/chat", self.timeout, json=payload, meter=meter
         )
 
         try:
             content = data["message"]["content"]  # type: ignore[index]
         except (KeyError, TypeError) as exc:
-            raise ProviderError("Ollama response was malformed") from exc
+            raise ProviderError(f"{self.label} response was malformed") from exc
 
         return finalize_content(
-            content, "Ollama", stop_reason=data.get("done_reason"), capped=bool(self.max_tokens)
+            content, self.label, stop_reason=data.get("done_reason"), capped=bool(self.max_tokens)
         )

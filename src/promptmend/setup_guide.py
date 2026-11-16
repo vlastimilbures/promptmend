@@ -56,6 +56,25 @@ KEYS_INTRO = (
 )
 
 
+# The Welcome step's note while PROMPTMEND_ENV is set.
+LEGACY_NOTE = (
+    "PROMPTMEND_ENV is set, so your settings and keys stay in that file; this setup cannot "
+    "save them (edit that file instead)."
+)
+
+
+def history_line(on: bool) -> str:
+    """The Welcome step's word on the usage history (D-HIST-0; `setup --non-interactive`
+    prints usage.disclosure() in full)."""
+    if not on:
+        return "Usage history is off; nothing is recorded."
+    return (
+        "Usage history is on: metadata only (trigger, model, outcome, tokens, cost), never "
+        "your text or keys, kept on this device. Off: `promptmend config set PROMPT_HISTORY "
+        "false`."
+    )
+
+
 def legacy_keys_intro(env_file: str) -> str:
     """KEYS_INTRO while PROMPTMEND_ENV names ``env_file``: that file alone is read, so a key
     goes there and the step has nothing to save."""
@@ -66,8 +85,9 @@ def legacy_keys_intro(env_file: str) -> str:
 
 
 def unread_env_note(env_files: Sequence[Path]) -> str | None:
-    """What setup says about ``env_files`` (config.unread_env_files()): .env files no release
-    reads any more (#275), whose settings this setup saves again; None without one."""
+    """What setup says about ``env_files`` (config.unread_env_files()): .env files earlier
+    releases read and this one does not, whose settings this setup saves again; None without
+    one."""
     if not env_files:
         return None
     files = ", ".join(map(str, env_files))

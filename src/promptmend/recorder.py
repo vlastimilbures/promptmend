@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import sys
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 # as the trigger itself (`i` -> `-i-`), the shape history.py keeps.
 TRIGGER_IDS = ("i", "iok", "ip", "if", "il", "ilm", "ic", "io", "p")
 # Stored for a real call from the interface's Try tab (a direct call, no match), so stats can
-# tell it from a bare `promptmend improve` (#222). Never a --trigger-id value.
+# tell it from a bare `promptmend improve`. Never a --trigger-id value.
 TRY_TAB = "-try-"
 
 # Outcomes of a run, as stored. Each failure prints a marker; the outcome says which kind.
@@ -58,6 +59,47 @@ def attribution(trigger_id: str | None) -> tuple[str, str | None]:
     return "espanso_managed", None
 
 
+class _Collector:
+    """The usage observer of a recorded run: keeps each attempt as it ends, and the one that
+    has started and not ended yet (Meter.begin()), for close(). The provider calls it on the
+    main thread while improve's watchdog may close it from its own, hence the lock."""
+
+    def __init__(self, attempts: list[AttemptUsage]) -> None:
+        self.attempts = attempts
+        self._pending: tuple[AttemptUsage, float] | None = None
+        self._closed = False
+        self._lock = threading.Lock()
+        # Whether the run is recorded (Recorder.track()); when not, Meter.record() skips
+        # parsing usage bodies, since nothing would store them.
+        self.recording = False
+
+    def __call__(self, usage: AttemptUsage, /) -> None:
+        with self._lock:
+            if not self._closed:
+                self._pending = None
+                self.attempts.append(usage)
+
+    def begin(self, usage: AttemptUsage, /) -> None:
+        """An attempt is starting; once closed, it must not (RunEnded)."""
+        with self._lock:
+            if self._closed:
+                from .providers.usage import RunEnded
+
+                raise RunEnded("improve's watchdog ended the run")
+            self._pending = (usage, time.monotonic())
+
+    def close(self) -> None:
+        """Keep the attempt in flight, if any, as the timeout it became, lasting until now,
+        and ignore every attempt reported after this, so none is counted twice."""
+        with self._lock:
+            self._closed = True
+            pending, self._pending = self._pending, None
+            if pending is not None:
+                usage, started = pending
+                latency = round((time.monotonic() - started) * 1000, 1)
+                self.attempts.append(dataclasses.replace(usage, latency_ms=latency))
+
+
 class Recorder:
     """One CLI run's record. Never raises out of any method."""
 
@@ -70,17 +112,22 @@ class Recorder:
         self.outcome = OK
         self.latency_ms: float | None = None
         self.attempts: list[AttemptUsage] = []
+        self._collector = _Collector(self.attempts)
         self._settings: Settings | None = None
         self._done = False
 
     def track(self, cfg: Settings) -> None:
         """The settings loaded: record this run unless PROMPT_HISTORY is off."""
         self._settings = cfg if cfg.history else None
+        self._collector.recording = self._settings is not None
 
     @property
     def observer(self) -> UsageObserver | None:
-        """For make_provider(observer=...): collects each attempt; None when not recording."""
-        return self.attempts.append if self._settings is not None else None
+        """For make_provider(observer=...): collects each attempt, and stops any attempt from
+        starting once improve's watchdog has ended the run (timed_out()). Given even when the
+        run is not recorded (finish() then writes nothing, and no usage body is parsed), so
+        that stop always holds."""
+        return self._collector
 
     @property
     def answered(self) -> bool:
@@ -94,6 +141,14 @@ class Recorder:
     def emitted(self) -> None:
         """The output was printed: latency runs from the start of the run to here."""
         self.latency_ms = round((time.monotonic() - self._started) * 1000, 1)
+
+    def timed_out(self) -> None:
+        """improve's watchdog ended the run: outcome error_marker, and the attempt
+        still in flight, if one is, kept as the timeout it became, lasting until now. An
+        attempt that ends after this is not recorded: the run is over."""
+        self.outcome = ERROR_MARKER
+        with contextlib.suppress(Exception):
+            self._collector.close()
 
     def finish(self) -> None:
         """Flush stdout, then write the operation and its attempts (once; history's own time
