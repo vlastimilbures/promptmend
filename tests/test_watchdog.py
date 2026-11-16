@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -502,18 +503,24 @@ def test_no_request_after_marker_while_building(
 
 
 # Claiming the output of an armed run starts a timer at the hard deadline (limit + margin).
+# trigger's clock is held still: each timer turns its deadline into a wait when it starts, so
+# on a real clock the time between arm() and claim() would come off the final timer's wait.
 def test_claim_starts_the_final_timer(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend import entry
+
     monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
     monkeypatch.setattr(_Watchdog, "_final_exit", lambda self: None)
+    monkeypatch.setattr(entry, "_started", None)
+    monkeypatch.setattr(trigger, "time", SimpleNamespace(monotonic=lambda: 1000.0))
     watch, _ = _watchdog()
     watch.arm(Settings(timeout=30), "ollama")
     try:
         watch.claim()
         assert watch._final is not None
         assert watch._timer is not None
-        assert watch._final.interval - watch._timer.interval == pytest.approx(
-            trigger._WATCHDOG_HISTORY, abs=0.1
-        )
+        deadline = 30 + trigger.WATCHDOG_MARGIN
+        assert watch._timer.interval == pytest.approx(deadline - trigger._WATCHDOG_HISTORY)
+        assert watch._final.interval == pytest.approx(deadline)
     finally:
         watch.cancel()
     assert watch._final.finished.is_set()

@@ -138,7 +138,7 @@ def _plan(found: doctor.Lookups, runner: deploy.Runner | None) -> deploy.Plan:
     DeployError (or OSError, ValueError) when it cannot be made."""
     if found.launcher is None:
         raise deploy.DeployError(found.launcher_error or "no launcher found")
-    target = deploy.espanso_dir(runner).resolve()
+    target = deploy.resolved(deploy.espanso_dir(runner))
     text = deploy.launcher_text(found.launcher.path)
     if found.manifest is None:
         raise deploy.DeployError(found.manifest_error or "the deploy manifest cannot be read")
