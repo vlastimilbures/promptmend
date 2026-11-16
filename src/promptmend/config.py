@@ -256,24 +256,17 @@ def _merged_line_error(key: str) -> str:
 # Settings whose rejected value is never quoted, not even through safe_repr: a user regex may
 # describe the very data it guards (a project code name), and errors are pasted into the
 # focused app. The parser's message names the position instead. A base URL may carry a user
-# name and password (http://user:pw@host), so a rejected one is not quoted either.
-_UNQUOTED = frozenset(
-    {
-        "PROMPT_EXTRA_PATTERNS",
-        "OLLAMA_BASE_URL",
-        "OPENROUTER_BASE_URL",
-        "LMSTUDIO_BASE_URL",
-        "ANTHROPIC_BASE_URL",
-        "OPENAI_BASE_URL",
-    }
-)
+# name and password (http://user:pw@host), so no rejected *_BASE_URL is quoted either.
+_UNQUOTED = frozenset({"PROMPT_EXTRA_PATTERNS"})
+_UNQUOTED_SUFFIX = "_BASE_URL"
 
 
 def parse_setting(name: str, parse: Callable[[str], Any], raw: str) -> Any:
     try:
         return parse(raw)
     except ValueError as exc:
-        got = "" if name in _UNQUOTED else f", got {safe_repr(raw)}"
+        unquoted = name in _UNQUOTED or name.endswith(_UNQUOTED_SUFFIX)
+        got = "" if unquoted else f", got {safe_repr(raw)}"
         raise ValueError(f"{name} must be {exc}{got}") from None
 
 

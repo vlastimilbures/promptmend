@@ -26,9 +26,11 @@ All notable changes to this project are documented here. The format follows
   `OPENROUTER_BASE_URL`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) is now refused when the
   settings load (#368): one that is not `http://` or `https://`, has no host, an unclosed
   `[` (`http://[::1`) or a bad port (`:99999`, `:abc`). Before, it was accepted and
-  `promptmend doctor` (`local_servers`) crashed with a traceback on it. The error names the
-  setting but never quotes the URL. doctor also names, without asking, a malformed URL that
-  reaches it some other way.
+  `promptmend doctor` (`local_servers`) crashed with a traceback on it. Such a value now
+  stops every rewrite trigger with a marker until it is fixed, even one for a provider you
+  do not use (`-p-` still pastes the persona), and `promptmend config validate` names it;
+  the error names the setting but never quotes the URL. doctor's `local_servers` says the
+  URL is not used and does not probe it (nor the default repair mode puts in its place).
 
 ## 0.26.0 - 2026-11-16
 

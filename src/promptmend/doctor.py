@@ -357,8 +357,9 @@ def _local_servers_check(
 ) -> Check:
     """Whether the Ollama and LM Studio the local triggers need answer. The triggers
     stay deployed either way; this says what typing one would need. Never fails or warns:
-    a ``localhost`` URL on Windows still works, so its note (#365) is only advice. A URL
-    Settings would refuse (#368) is not asked: it is named, never quoted."""
+    a ``localhost`` URL on Windows still works, so its note (#365) is only advice. A base
+    URL Settings refused (#368) is named, never quoted, and not asked: repair mode has
+    already put the default in its place, which the triggers would not use (they stop)."""
     used = _rewrites(triggers, settings)
     servers: dict[str, dict[str, Any]] = {}
     notes = []
@@ -371,7 +372,7 @@ def _local_servers_check(
     asked = {
         provider: spec.url(settings).rstrip("/") + (spec.probe_path or "")
         for provider, spec in wanted.items()
-        if config.is_valid_url(spec.url(settings))
+        if config.is_valid_url(spec.url(settings)) and not _refused(layers, spec.url_setting)
     }
     replies = _probe_all(asked)
     for provider, spec in wanted.items():
@@ -380,7 +381,7 @@ def _local_servers_check(
             servers[provider] = {"answers": None, "triggers": names}
             notes.append(
                 f"{', '.join(names)} needs {spec.label}, but {spec.url_setting} is not a "
-                "valid URL; not asked"
+                "valid URL, so it is not used and not probed"
             )
             continue
         answers = replies[provider]
@@ -400,6 +401,13 @@ def _local_servers_check(
         probed = " or ".join(s.label for s in PROVIDERS.values() if s.probe_path)
         return Check("local_servers", INFO, f"no trigger uses {probed}", data)
     return Check("local_servers", INFO, "; ".join(notes), data)
+
+
+def _refused(layers: ConfigLayers, name: str) -> bool:
+    """Whether repair mode refused a value of setting ``name`` (``Entry.rejected``) and
+    fell back to a lower layer, which strict mode (the triggers) would not do."""
+    entry = layers.entries.get(name)
+    return entry is not None and bool(entry.rejected)
 
 
 def _on_localhost(url: str) -> bool:
