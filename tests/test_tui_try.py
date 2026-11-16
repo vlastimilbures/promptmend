@@ -612,17 +612,26 @@ def test_a_local_stub_run_stays_ungated(
 
 
 def test_stub_latency_times_the_call_alone(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The stub's shutdown (up to half a second) is not in the usage line's time."""
+    """The stub's shutdown is not in the usage line's time.
+
+    Timed against the stub's own block, not a fixed bound: the call runs inside it, so its
+    time is at most the block's (a slow runner makes both longer alike, #355). Counting the
+    0.6 s stop would put it at least 600 ms over."""
     import contextlib
     import time
 
     real_server = smoke.stub_server
+    block: list[float] = []
 
     @contextlib.contextmanager
     def slow_stop() -> Any:
         with real_server() as stub:
-            yield stub
-        time.sleep(0.6)
+            block.append(time.monotonic())  # before the call starts
+            try:
+                yield stub
+            finally:
+                block.append(time.monotonic())  # the stop starts
+            time.sleep(0.6)
 
     monkeypatch.setattr(smoke, "stub_server", slow_stop)
 
@@ -630,7 +639,9 @@ def test_stub_latency_times_the_call_alone(monkeypatch: pytest.MonkeyPatch) -> N
         await run(app, pilot, DRAFT)
 
     seen = drive(scenario)
-    assert int(seen.usage.split(" ms")[0]) < 600
+    entered, stopping = block
+    # Both clocks are monotonic, so the reading order holds; +1 for the usage line's rounding.
+    assert int(seen.usage.split(" ms")[0]) <= (stopping - entered) * 1000 + 1
 
 
 @pytest.mark.parametrize(
