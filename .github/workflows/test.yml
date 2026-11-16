@@ -558,12 +558,12 @@ jobs:
           $dir = "$env:RUNNER_TEMP\winget-cli"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           foreach ($name in $files.Keys) {
-            Invoke-WebRequest -UseBasicParsing -Uri "$base/$name" -OutFile "$dir\$name"
+            Invoke-WebRequest -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 5 -Uri "$base/$name" -OutFile "$dir\$name"
             $hash = (Get-FileHash -LiteralPath "$dir\$name" -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($hash -ne $files[$name]) { throw "$name has SHA-256 $hash, expected $($files[$name])" }
           }
           Expand-Archive -LiteralPath "$dir\DesktopAppInstaller_Dependencies.zip" -DestinationPath "$dir\deps" -Force
-          $deps = @(Get-ChildItem "$dir\deps" -Recurse -Filter *.appx | Where-Object { $_.Directory.Name -eq 'x64' -or $_.Name -match '_x64' })
+          $deps = @(Get-ChildItem "$dir\deps\x64" -Filter *.appx)
           if ($deps.Count -eq 0) { throw "no x64 dependency packages in the zip" }
           Add-AppxPackage -Path "$dir\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" -DependencyPath $deps.FullName -ForceApplicationShutdown
           $have = (winget --version).Trim()

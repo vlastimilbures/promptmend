@@ -88,7 +88,9 @@ def test_locale_keeps_the_schema_limits() -> None:
 
 
 # The "required" lists of the 1.28.0 schemas (winget-cli schemas/JSON/manifests/v1.28.0),
-# copied here so the test stays offline; the CI frozen-windows job runs `winget validate`.
+# copied here so the test stays offline, without ManifestType and ManifestVersion (the test
+# adds those). They equal 1.10.0's, so this catches a required field dropped from a template,
+# not a schema change; the CI frozen-windows job runs `winget validate` for the rest.
 REQUIRED = {
     "version": {"PackageIdentifier", "PackageVersion", "DefaultLocale"},
     "installer": {"PackageIdentifier", "PackageVersion", "Installers"},
