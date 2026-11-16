@@ -899,3 +899,66 @@ def test_output_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.with_overrides().output == "clipboard"
     with pytest.raises(ValueError, match=r"^--output must be paste or clipboard or default"):
         settings.with_overrides(output="copy")
+
+
+_URL_SETTINGS = [n for n in env_names() if n.endswith("_BASE_URL")]
+
+
+def test_every_base_url_setting_is_checked() -> None:
+    assert _URL_SETTINGS == [
+        "OLLAMA_BASE_URL",
+        "OPENROUTER_BASE_URL",
+        "LMSTUDIO_BASE_URL",
+        "ANTHROPIC_BASE_URL",
+        "OPENAI_BASE_URL",
+    ]
+
+
+# #368: urlsplit() or .port raises on these, which surfaced later as a doctor traceback. A URL
+# may carry a password, so the error names the setting and never quotes the value.
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "http://[::1",
+        "http://[::1:11434/v1",
+        "http://user:hunter2@[::1",
+        "http://[not-an-ip]:1234",
+        "http://host:99999",
+        "http://host:abc",
+        "http://[::1]:x",
+        "",
+        "127.0.0.1:11434",
+        "ftp://host/v1",
+        "http://",
+        "http://:1234/v1",
+    ],
+)
+@pytest.mark.parametrize("name", _URL_SETTINGS)
+def test_malformed_base_url_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, name: str, raw: str
+) -> None:
+    monkeypatch.setenv(name, raw)
+    with pytest.raises(
+        ValueError, match=f"^{name} must be an http:// or https:// URL with a valid host and port$"
+    ):
+        Settings()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["http://[::1]:11434", "http://127.0.0.1:1234/v1", "https://relay.example", "HTTP://h:1/"],
+)
+@pytest.mark.parametrize("name", _URL_SETTINGS)
+def test_base_url_is_accepted(monkeypatch: pytest.MonkeyPatch, name: str, raw: str) -> None:
+    monkeypatch.setenv(name, raw)
+    settings = Settings()
+    assert getattr(settings, name.lower()) == raw
+
+
+def test_malformed_base_url_is_a_repair_finding(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("OLLAMA_BASE_URL=http://user:hunter2@[::1\n")
+    layers = ConfigLayers.resolve(strict=False)
+    messages = [f.message for f in layers.findings]
+    assert any("OLLAMA_BASE_URL must be" in m for m in messages)
+    assert not any("hunter2" in m for m in messages)
+    assert layers.settings().ollama_base_url == "http://127.0.0.1:11434"

@@ -516,9 +516,11 @@ def test_cloud_base_url_requires_https(
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setenv("OPENAI_API_KEY", "k")
-    monkeypatch.setenv(var, url)
+    # Settings refuses ftp:// and a bare host (#368); make_provider() refuses them anyway.
+    changes: dict[str, Any] = {var.lower(): url}
+    cfg = replace(Settings(), **changes)
     with pytest.raises(ProviderError, match=f"{var} must be an https:// URL"):
-        make_provider(name, Settings())
+        make_provider(name, cfg)
 
 
 # Plain http is allowed to a loopback host, e.g. a local debugging proxy.
@@ -740,3 +742,12 @@ def test_check_base_url_matches_make_provider() -> None:
             make_provider(spec.name, plain)
     factory.check_base_url("ollama", replace(plain, ollama_base_url="http://relay.example"))
     factory.check_base_url("openrouter", Settings())
+
+
+# #368: a malformed URL that bypassed Settings parsing is refused, not a traceback.
+def test_check_base_url_refuses_a_malformed_url() -> None:
+    for spec in (s for s in PROVIDERS.values() if s.cloud):
+        changes: dict[str, Any] = {f"{spec.name}_base_url": "http://[::1"}
+        bad = replace(Settings(), **changes)
+        with pytest.raises(GateBlocked, match=f"{spec.url_setting} must be an https:// URL"):
+            factory.check_base_url(spec.name, bad)
