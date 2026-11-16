@@ -101,7 +101,12 @@ async def settle(pilot: Pilot[int]) -> None:
         # A newer state load cancels an older one (exclusive group "load"), as a deploy's
         # early reload and _done()'s do on a slow runner (#215): that one never completes.
         waits = [worker.wait() for worker in pilot.app.workers]
-        for result in await asyncio.gather(*waits, return_exceptions=True):
+        # Bounded (#375): a worker that never ends fails here with every thread's stack.
+        try:
+            results = await asyncio.wait_for(asyncio.gather(*waits, return_exceptions=True), 30)
+        except TimeoutError:
+            raise AssertionError(f"a worker never ended\n{threads_now(pilot.app)}") from None
+        for result in results:
             if isinstance(result, BaseException) and not isinstance(result, WorkerCancelled):
                 raise result
     await pilot.pause()
