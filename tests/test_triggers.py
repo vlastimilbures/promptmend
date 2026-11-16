@@ -29,7 +29,7 @@ from promptmend.deploy import launcher_text
 from promptmend.prompt_builder import PROFILES, system_prompt
 from promptmend.providers.base import timed_out_message
 from promptmend.providers.registry import PROVIDERS
-from promptmend.trigger import WATCHDOG_MARGIN
+from promptmend.trigger import WATCHDOG_MARGIN, _past
 
 if TYPE_CHECKING:
     from conftest import HistoryRows, StubProvider
@@ -410,6 +410,38 @@ def _timed_run(
     return proc, time.monotonic() - started
 
 
+def _used_the_limit(limit: float) -> str:
+    """A regex for the markers of a run whose start-up (and settings load) already used up
+    ``limit`` before its call (trigger._Watchdog.arm_loading() and arm()): it sent nothing."""
+    past = re.escape(_past(limit))
+    return (
+        rf"\[promptmend: (?:starting up took \d+\.\ds, {past}"
+        rf"|the settings took \d+\.\ds to load, \d+\.\ds in all, {past})\]"
+    )
+
+
+# The regex follows the watchdog's real wording: each used-the-limit marker it makes matches,
+# the timed-out marker does not.
+@pytest.mark.parametrize(("startup", "load"), [(5.0, 0.0), (0.0, 5.0)], ids=["start", "load"])
+def test_used_the_limit_matches_the_watchdog(
+    monkeypatch: pytest.MonkeyPatch, startup: float, load: float
+) -> None:
+    from promptmend import recorder
+    from promptmend.pipeline import Rewrite
+    from promptmend.trigger import _Watchdog
+
+    monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
+    watch = _Watchdog(recorder.Recorder("improve", "i"), Rewrite())
+    now = time.monotonic()
+    watch._started, watch._load_started = now - startup - load, now - load
+    marker = watch.arm(Settings(timeout=LIMIT), "openrouter")
+    watch.cancel()
+    assert marker is not None
+    assert re.fullmatch(_used_the_limit(LIMIT), marker)
+    timed_out = f"[promptmend: {timed_out_message('OpenRouter', LIMIT)}]"
+    assert not re.fullmatch(_used_the_limit(LIMIT), timed_out)
+
+
 def test_slow_triggers_keep_the_env_limit() -> None:
     for trigger in SLOW_TRIGGERS:
         argv = _process_argv(trigger)
@@ -420,8 +452,10 @@ def test_slow_triggers_keep_the_env_limit() -> None:
 # What Espanso sees from every trigger's real argv, all run at once to keep the suite fast,
 # each against its own stub: a reply after about 3 s within the default limits is pasted as
 # is and is that trigger's one request, to its provider's path; a stub that never answers,
-# under the 1 s limit, gives the timed-out marker. Either way exit 0 and empty stderr. The
-# name matches the frozen Windows job's `-k process`, so it also runs through the exe.
+# under the 1 s limit, gives the timed-out marker, or, when a loaded runner's start-up alone
+# took that second, the marker saying so, with no request sent (#331). Either way exit 0 and
+# empty stderr, within the limit plus the margin. The name matches the frozen Windows job's
+# `-k process`, so it also runs through the exe.
 def test_trigger_processes_against_a_slow_stub() -> None:
     with contextlib.ExitStack() as stack:
         slow = {t: stack.enter_context(smoke.stub_server(3.0)) for t in SLOW_TRIGGERS}
@@ -444,7 +478,11 @@ def test_trigger_processes_against_a_slow_stub() -> None:
             proc, seconds = future.result()
             label = PROVIDERS[_provider(trigger)].label
             assert (proc.returncode, proc.stderr) == (0, b""), trigger
-            assert proc.stdout.decode("utf-8") == f"[promptmend: {timed_out_message(label, LIMIT)}]"
+            out = proc.stdout.decode("utf-8")
             assert seconds <= LIMIT + WATCHDOG_MARGIN + SLACK, trigger
-            # The watchdog may end a run on a slow runner before its request goes out.
-            assert late[trigger].requests <= 1, trigger
+            if out == f"[promptmend: {timed_out_message(label, LIMIT)}]":
+                # The watchdog may end a run on a slow runner before its request goes out.
+                assert late[trigger].requests <= 1, trigger
+            else:
+                assert re.fullmatch(_used_the_limit(LIMIT), out), (trigger, out)
+                assert late[trigger].requests == 0, trigger

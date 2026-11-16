@@ -30,7 +30,7 @@ from .config import (
 from .factory import PROVIDER_NAMES
 from .pipeline import Rewrite
 from .redaction import redact_words
-from .trigger import _emit, _improve, _Watchdog
+from .trigger import _emit, _flushed, _improve, _Watchdog
 
 if TYPE_CHECKING:
     from typer._click import Command, Context
@@ -235,19 +235,26 @@ def _persona_alone() -> str:
 @app.command()
 def persona(trigger_id: str | None = _TRIGGER_ID) -> None:
     """Print PROMPT_PERSONA for the -p- snippet, or a fill-in placeholder when unset."""
-    # No watchdog: persona makes no network call and reads no clipboard; it only
-    # loads the settings, as improve does before its watchdog is armed.
+    # persona makes no network call and reads no clipboard, but loading the settings can
+    # stall on a file system: the same provisional watchdog as improve's load bounds it (#331).
     rec = recorder.Recorder("persona", trigger_id)
+    watch = _Watchdog(rec, Rewrite())
     try:
-        cfg = Settings.load()
-        rec.track(cfg)
-        text = cfg.persona or PERSONA_PLACEHOLDER
-    except Exception:
-        # Same contract as improve: never a traceback or blank expansion in Espanso.
-        text = _persona_alone() or PERSONA_PLACEHOLDER
-    _emit(text)
-    rec.emitted()
-    rec.finish()
+        try:
+            # Inside the try: a timer that cannot start still leaves the persona printed.
+            watch.arm_loading(None)
+            cfg = Settings.load()
+            rec.track(cfg)
+            text = cfg.persona or PERSONA_PLACEHOLDER
+        except Exception:
+            # Same contract as improve: never a traceback or blank expansion in Espanso.
+            text = _persona_alone() or PERSONA_PLACEHOLDER
+        _emit(text, watch)
+        rec.emitted()
+        _flushed(watch)
+        rec.finish()
+    finally:
+        watch.cancel()
 
 
 if __name__ == "__main__":
