@@ -325,8 +325,12 @@ database, in the same [data folder](configuration.md#files-and-folders). It hold
 columns above, nothing else, and each record is checked again before it is stored. The next
 recorded run, `promptmend stats`, `promptmend history export` and `promptmend doctor` move its
 records into the database. It holds at most 100 records; a record that does not fit (or a
-spool that cannot be written) is dropped, and a small `history.lost` file counts the dropped
-writes. `promptmend history reset` deletes the spool too. Only a disk the operating system
+spool that cannot be written, or one still busy with another write when the time is up) is
+dropped, and a small `history.lost` file counts the dropped writes. A write dropped while that
+file is busy too is counted in an empty `history.lost.<random>.drop` file of its own; doctor
+adds them up. Only a data folder that takes no new file at all loses the count, and doctor
+then reports it as not writable. `promptmend history reset` deletes the spool and these files
+too. Only a disk the operating system
 itself stalls (a hung network drive) can hold a write up longer.
 
 Costs are kept only as the provider reported them; an unknown cost is shown as unknown, never

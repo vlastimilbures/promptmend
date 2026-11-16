@@ -698,6 +698,89 @@ def test_a_spool_that_cannot_be_written_counts_the_record_as_lost(
     assert not store.spool_path.exists()
 
 
+def _timeout(*args: Any, **kwargs: Any) -> None:
+    raise TimeoutError("history write budget spent")
+
+
+# #335: under contention on Windows the spool's lock was not free in the few ms the budget
+# leaves after a failed write, and the write was neither stored, spooled nor counted.
+def test_a_write_whose_spool_lock_is_busy_is_still_counted(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert store.record(_op())
+    real_lock = HistoryStore._sidecar_lock
+
+    def busy(self: HistoryStore, deadline: float) -> Any:
+        raise TimeoutError("history sidecar is locked")
+
+    monkeypatch.setattr(HistoryStore, "_write", _timeout)
+    monkeypatch.setattr(HistoryStore, "_sidecar_lock", busy)
+    assert store.record(_op()) is False
+    monkeypatch.setattr(HistoryStore, "_sidecar_lock", real_lock)
+    assert not store.spool_path.exists()
+    assert not store.lost_path.exists()
+    health = store.health()
+    assert (health.operations, health.spooled, health.lost_writes) == (1, 0, 1)
+    assert health.tracking_incomplete
+    # The drop file holds nothing and needs no lock; reset() removes it with the marker.
+    (drop,) = store._drop_files()
+    assert drop.read_bytes() == b""
+    store.reset()
+    assert store._drop_files() == []
+    assert store.health().lost_writes == 0
+
+
+def test_a_marker_that_cannot_be_written_counts_in_a_drop_file(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(self: HistoryStore, dropped: int) -> None:
+        raise PermissionError("in use by another process")
+
+    store.path.parent.mkdir(parents=True)
+    monkeypatch.setattr(HistoryStore, "_count_lost", fail)
+    assert store._mark_lost() is True
+    # The spool cannot be written, and neither can the marker (Windows: os.replace refused).
+    monkeypatch.setattr(HistoryStore, "_save_spool", fail)
+    monkeypatch.setattr(HistoryStore, "_write", _timeout)
+    assert store.record(_op()) is False
+    # An entry that is not valid, dropped when the spool is settled after a commit.
+    monkeypatch.undo()
+    monkeypatch.setattr(HistoryStore, "_count_lost", fail)
+    store.spool_path.write_text(json.dumps({"version": 1, "records": ["text"]}), "utf-8")
+    assert store.record(_op())
+    assert not store.spool_path.exists()
+    assert len(store._drop_files()) == 3
+    assert not store.lost_path.exists()
+    assert store.health().lost_writes == 3
+
+
+def test_health_combines_the_marker_and_the_drop_files(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.path.parent.mkdir(parents=True)
+    store.lost_path.write_text(
+        json.dumps({"lost_writes": 2, "last_lost_utc": "2026-10-01T09:00:00.000000Z"}), "utf-8"
+    )
+    assert store._count_dropped(2)
+    health = store.health()
+    assert health.lost_writes == 4
+    assert health.last_lost_utc is not None
+    assert health.last_lost_utc > "2026-10-01T09:00:00.000000Z"
+
+    def unlistable(self: HistoryStore) -> list[Path]:
+        raise PermissionError("cannot list the folder")
+
+    monkeypatch.setattr(HistoryStore, "_drop_files", unlistable)
+    health = store.health()
+    assert (health.lost_writes, health.tracking_incomplete) == (2, True)
+
+
+def test_a_drop_file_that_cannot_be_created_is_reported(tmp_path: Path) -> None:
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    assert HistoryStore(blocker / history.DB_NAME)._count_dropped(1) is False
+
+
 # #213: the first write on a slow machine (endpoint scanning) ran past its budget and was lost.
 def test_a_first_write_that_times_out_is_replayed_by_stats(
     store: HistoryStore, monkeypatch: pytest.MonkeyPatch
@@ -925,10 +1008,12 @@ def test_concurrent_writers_complete_or_drop_without_duplicates(
     assert len(keys) == len(set(keys)) == 2 * len(ids)
     # Each write is one transaction: no operation without its attempts.
     assert {op_id for op_id, _ in keys} == ids
-    # Most writes get through; the rest were spooled (and are stored now) or counted as lost.
+    # Most writes get through; the rest were spooled (and are stored now) or counted as lost,
+    # even one whose spool lock was not free in time (#335).
     assert len(stored) > count
-    if len(ids) < 4 * count:
-        assert store.health().lost_writes > 0
+    health = store.health()
+    files = sorted(p.name for p in store.path.parent.iterdir())
+    assert health.lost_writes >= 4 * count - len(ids), (health, files)
 
 
 _MARKER = """
@@ -943,9 +1028,13 @@ print(sum(store._mark_lost() for _ in range(25)))
 def test_the_sidecar_marker_is_updated_atomically(store: HistoryStore, tmp_path: Path) -> None:
     store.path.parent.mkdir(parents=True)
     outputs = _run_workers(tmp_path, _MARKER, lambda worker: [str(store.path)])
-    # Every successful update is counted (no lost update), and the file is whole JSON.
-    assert _lost(store) == sum(outputs) > 0
-    assert sorted(p.name for p in store.path.parent.iterdir()) == [history.LOST_NAME]
+    # Every mark is counted (no lost update), in the marker or, when its lock was not free in
+    # time, in a drop file of its own; the marker is whole JSON and no temp file is left.
+    assert sum(outputs) == 4 * 25
+    drops = store._drop_files()
+    assert _lost(store) + len(drops) == store.health().lost_writes == 4 * 25
+    names = {p.name for p in store.path.parent.iterdir()} - {p.name for p in drops}
+    assert names == {history.LOST_NAME}
 
 
 # -- services ------------------------------------------------------------------------------
@@ -1268,9 +1357,12 @@ def test_a_stale_sidecar_lock_is_broken_and_a_held_one_times_out(
     assert store._mark_lost() is True  # left by a killed process
     lock.touch()
     _use_real_budget(monkeypatch)
-    assert store._mark_lost() is False  # held: give up within the lock budget
+    # Held: give up on the marker within the lock budget, but count it in a drop file (#335).
+    assert store._mark_lost() is True
     assert _lost(store) == 1
+    assert len(store._drop_files()) == 1
     lock.unlink()
+    assert store.health().lost_writes == 2
 
 
 def test_a_service_migrates_an_empty_database(store: HistoryStore) -> None:
@@ -1394,4 +1486,9 @@ def test_a_write_blocked_everywhere_gives_up(
         assert time.monotonic() - started < 5
         other.execute("ROLLBACK")
     lock.unlink()
+    # Neither stored nor spooled, so counted: in a drop file, as the marker's lock was held.
     assert not store.lost_path.exists()
+    health = store.health()
+    assert (health.operations, health.spooled, health.lost_writes) == (1, 0, 1)
+    assert health.tracking_incomplete
+    assert health.last_lost_utc is not None

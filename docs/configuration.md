@@ -48,7 +48,7 @@ other project cannot change its endpoint or switch off the gate. Only the settin
 | `secrets.toml` | config folder, mode 600 | config folder, readable by your account alone |
 | `profiles/<name>.md` | config folder | config folder |
 | `prices.toml` (optional) | config folder | config folder |
-| `history.sqlite3`, `history.lost` | data folder | data folder |
+| `history.sqlite3`, `history.lost`, `history.lost.*.drop` | data folder | data folder |
 | `espanso-manifest.json` | data folder | data folder |
 | `update-check.json` | data folder (the [update check](privacy.md#update-check)'s last answer) | data folder |
 
