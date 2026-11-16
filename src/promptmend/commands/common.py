@@ -172,7 +172,7 @@ def show_findings(layers: ConfigLayers) -> None:
 
 def legacy_env() -> str | None:
     """The .env PROMPTMEND_ENV names: then it alone is read, never config.toml
-    or the secret store, so a command that would write them refuses."""
+    or the secrets file, so a command that would write them refuses."""
     return config.env_file_override()
 
 
@@ -232,8 +232,8 @@ def looks_like_a_key(value: str, *, user_patterns: bool = True) -> bool:
     """A value the gate would block as a credential (an API key, a token, a password), or
     one the user's PROMPT_EXTRA_PATTERNS match (from the settings loaded last, see
     redaction.set_user_patterns; ``user_patterns`` false skips them, for the value of
-    PROMPT_EXTRA_PATTERNS itself, which may match its own text): it belongs in the secret
-    store, so it is never saved in config.toml or printed."""
+    PROMPT_EXTRA_PATTERNS itself, which may match its own text): it belongs in the secrets
+    file, so it is never saved in config.toml or printed."""
     from .. import redaction
 
     extra = redaction._user_patterns if user_patterns else ()

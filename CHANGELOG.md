@@ -41,6 +41,18 @@ All notable changes to this project are documented here. The format follows
   OpenRouter's pro tier unless `PROMPT_PRO_PROVIDER` says otherwise. Home, the Triggers tab,
   `promptmend doctor` (`keys`) and setup name the pro trigger's provider the same way, and
   doctor's `keys` message now reads `-ip- uses OpenAI` for a single trigger (not `use`).
+- The API keys' file is now called "the secrets file" wherever PromptMend shows it (the
+  `secrets` command's help and messages, `setup`, doctor and `config validate` findings, the
+  interface), no longer "the secret store" (#284). It is `secrets.toml`, as before; the docs
+  now say plainly that it is a plaintext file protected by its file permissions (mode 600, or
+  an access list for your account alone on Windows), not by encryption.
+- Windows: `promptmend doctor` and `config validate` now notice a `secrets.toml` whose access
+  list was widened after it was written (#284): an entry or an owner other than your account,
+  SYSTEM and Administrators (a symlinked file is checked where it points). The finding says
+  to save a key again with `promptmend secrets set`, which rewrites the file private to your
+  account; an access list that cannot be read is reported as not checked. Until now the
+  access list was set and checked only when the file was written. macOS and Linux keep their
+  mode check, whose hint now names `chmod 600`.
 - https calls (the cloud providers and the daily update check) now check the server's
   certificate against the operating system's trust store (the macOS keychain, the Windows
   certificate store, the system CA bundle on Linux) through the new `truststore` dependency,

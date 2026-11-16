@@ -28,7 +28,10 @@ with work material.
 - Items a password manager marks as concealed are refused, and invisible characters are
   removed from what is sent and what is pasted.
 - The usage history is metadata only and stays on this device. Your settings files and keys
-  never leave it, except a key as the authentication header of its own provider.
+  never leave it, except a key as the authentication header of its own provider. Keys are
+  kept in the secrets file, a plaintext file protected by its file permissions (mode 600, or
+  an access list for your account alone on Windows), not by encryption: see
+  [API keys](configuration.md#api-keys).
 - `doctor` and the interface ask pypi.org once a day whether a newer release exists
   (`PROMPT_UPDATE_CHECK=false` turns that off).
 

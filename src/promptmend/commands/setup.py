@@ -40,13 +40,13 @@ class _Steps:
 
 
 def _settings_writable(steps: _Steps) -> bool:
-    """Whether setup may write config.toml and the secret store: not in legacy mode, where
+    """Whether setup may write config.toml and the secrets file: not in legacy mode, where
     neither is read."""
     where = setup_flow.storage()
     if not where.writable:
         steps.later(
             f"{config.ENV_FILE_VAR} is set, so settings and keys stay in that file; setup "
-            "does not write config.toml or the secret store"
+            "does not write config.toml or the secrets file"
         )
         return False
     if where.unread:
@@ -103,7 +103,7 @@ def _one_key(steps: _Steps, name: str, *, writable: bool, from_stdin: bool) -> N
     except setup_flow.KEY_ERRORS as exc:
         steps.fail("key", str(exc))
         return
-    typer.echo(f"  {name} saved in the secret store.")
+    typer.echo(f"  {name} saved in the secrets file.")
 
 
 def _deploy_step(

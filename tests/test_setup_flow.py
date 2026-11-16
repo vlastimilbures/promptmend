@@ -21,7 +21,7 @@ KEY = "sk-or-v1-" + "ab12" * 16
 
 @pytest.fixture
 def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Saved mode: config.toml and the secret store are read (conftest's per-test dir)."""
+    """Saved mode: config.toml and the secrets file are read (conftest's per-test dir)."""
     monkeypatch.delenv("PROMPTMEND_ENV")
     return config.user_config_dir()
 

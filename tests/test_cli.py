@@ -685,7 +685,7 @@ def test_fence_strip_edge_cases(stub_provider: StubProvider, reply: str, pasted:
     assert result.stdout == pasted
 
 
-# An error in another setting, or in the secret store, never hides a configured persona from
+# An error in another setting, or in the secrets file, never hides a configured persona from
 # the -p- snippet (#32); improve still reports the error.
 def test_persona_survives_an_unrelated_setting_error(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text('PROMPT_PERSONA="I am a tester."\nPROMPT_TIMEOUT_SECONDS=abc\n')

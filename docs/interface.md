@@ -150,8 +150,8 @@ The list has the focus when the tab opens. Its keys:
 | `u` | Back to the default (`config unset`). On a key's row, the Remove key dialog. Only while the list has the focus |
 | `/` | Filter by name or group; Escape clears it and goes back to the list |
 
-Every change is saved in `config.toml` as `promptmend config set` saves it (keys in the secret
-store), and shows and logs its command (`$ promptmend config set PROMPT_OUTPUT clipboard`,
+Every change is saved in `config.toml` as `promptmend config set` saves it (keys in the secrets
+file), and shows and logs its command (`$ promptmend config set PROMPT_OUTPUT clipboard`,
 the persona as `<value withheld>`). An environment variable of the same name still wins, and
 the result says so.
 

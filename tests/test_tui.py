@@ -89,7 +89,7 @@ def espanso(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRunner:
 
 @pytest.fixture
 def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Saved mode: config.toml and the secret store are read and written (per-test dirs)."""
+    """Saved mode: config.toml and the secrets file are read and written (per-test dirs)."""
     monkeypatch.delenv("PROMPTMEND_ENV")
     return config.user_config_dir()
 
@@ -1614,7 +1614,7 @@ def test_settings_remove_a_key_after_confirming(saved: Path, espanso: FakeRunner
         await pilot.press("y")
         await settle(pilot)
         assert pane(app, "settings").last_message == (
-            "ANTHROPIC_API_KEY removed from the secret store."
+            "ANTHROPIC_API_KEY removed from the secrets file."
         )
         assert app.session[-1].command == "promptmend secrets remove ANTHROPIC_API_KEY"
         assert settings_rows(app)["ANTHROPIC_API_KEY"].value == "not set"
