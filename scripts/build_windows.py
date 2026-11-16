@@ -76,8 +76,23 @@ def make_zip(folder: Path, out: Path) -> list[str]:
     return names
 
 
+# The zip brings the Python it was built with. On Windows 3.12 the interface's background
+# threads starve while it runs (#348), so the release builds on 3.14 and nothing older than
+# this is accepted.
+MIN_PYTHON = (3, 13)
+
+
+def check_python(version: tuple[int, ...]) -> None:
+    """Refuse to build with a Python older than MIN_PYTHON."""
+    if version[:2] < MIN_PYTHON:
+        found = ".".join(map(str, version[:2]))
+        wanted = ".".join(map(str, MIN_PYTHON))
+        raise SystemExit(f"the Windows zip needs Python {wanted} or later, not {found} (#348)")
+
+
 def build(out_dir: Path = REPO / "dist", work: Path = REPO / "build" / "pyinstaller") -> Path:
     """Run PyInstaller on the spec, then zip its onedir output into ``out_dir``."""
+    check_python((sys.version_info.major, sys.version_info.minor))
     dist = work / "dist"
     subprocess.run(  # noqa: S603 - this interpreter's PyInstaller, a fixed argv
         [

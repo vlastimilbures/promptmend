@@ -312,10 +312,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+      # The Python release.yml's build-windows builds the zip with (#348).
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           enable-cache: true
       - name: Build the zip
         run: |
@@ -351,6 +352,7 @@ jobs:
           $report.checks.install | ConvertTo-Json -Depth 5
           if ($report.checks.cli.data.frozen -ne $true) { throw "doctor does not see a frozen build" }
           if ($report.checks.version.data.version -ne $version) { throw "doctor reports another version" }
+          if (-not "$($report.checks.version.data.python)".StartsWith("3.14.")) { throw "the exe runs Python $($report.checks.version.data.python), not 3.14 (#348)" }
           if ($report.checks.install.data.channel -ne "script") { throw "an unzipped exe is not the script channel" }
           "FROZEN_EXE=$exe" >> $env:GITHUB_ENV
           exit 0  # not doctor's 4

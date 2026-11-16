@@ -126,10 +126,12 @@ jobs:
         with:
           persist-credentials: false
       # No cache in a workflow that publishes: a poisoned cache could reach the artifacts.
+      # Python 3.14, as test.yml's frozen-windows job: on Windows 3.12 background threads
+      # starve while the interface runs (#348); build_windows.py refuses anything below 3.13.
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           enable-cache: false
       - name: Build the zip
         run: |

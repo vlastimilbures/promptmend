@@ -208,6 +208,15 @@ Then close every Windows Terminal window and open a new one, so it finds `prompt
 `Failed to persist temporary file … Access is denied`, add `--no-cache` (see
 [Troubleshooting, "Triggers and Espanso"](troubleshooting.md#triggers-and-espanso)).
 
+Use Python 3.13 or later for a uv install on Windows: run
+`uv tool install --python 3.13 …` (or 3.14) with the arguments above, and uv downloads that
+Python if it is missing. On Windows with Python 3.12
+the interface's background work (its checks, the update check, the setup plan) runs far
+slower while it is open (#348); the interface works around it, but 3.13 does not have the
+problem. `promptmend doctor --json` shows the Python an install uses
+(`checks.version.data.python`). The exe brings its own Python 3.14, so this does not apply
+to it.
+
 ### The exe
 
 From the release after 0.21.0 on, each GitHub Release also carries

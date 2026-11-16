@@ -149,7 +149,8 @@ Releases are cut by `.github/workflows/release.yml`, never by hand-made tags.
    `constraints.txt` (`uv export --frozen --no-dev --no-emit-project --no-hashes`), installs the
    wheel with those constraints into a clean venv on macOS, Windows and Linux and runs
    `scripts/check_wheel.py --constraints`, builds `promptmend-X.Y.Z-windows-x64.zip` on Windows
-   (`scripts/build_windows.py build`, #185) and, in the same job, renders `install.ps1` with the
+   (`scripts/build_windows.py build`, #185, on Python 3.14 as CI's `frozen-windows` job; the
+   script refuses anything below 3.13, #348) and, in the same job, renders `install.ps1` with the
    version and that zip's SHA-256 (`scripts/render_installer.py --zip`; the release job checks
    the hash again), then attests the files, creates the annotated tag
    `vX.Y.Z` and publishes the Release with that CHANGELOG section as its notes. *dry-run* is on by
