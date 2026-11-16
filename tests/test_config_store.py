@@ -1,4 +1,4 @@
-"""Saved settings: config.toml and the secret store (#84).
+"""Saved settings: config.toml and the secrets file (#84).
 
 Every file lives under tmp_path: conftest points HOME, XDG_CONFIG_HOME, APPDATA and the
 editable-install root there, and these tests unset PROMPTMEND_ENV only through
@@ -78,7 +78,7 @@ def _tree(*roots: Path, skip: Path) -> dict[str, bytes]:
 # --- reading config.toml and secrets.toml --------------------------------------------------
 
 
-# Precedence: default < config.toml < secret store < real environment.
+# Precedence: default < config.toml < secrets file < real environment.
 def test_saved_layers_precedence(saved_mode: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write(
         saved_mode / "config.toml",
@@ -223,7 +223,7 @@ def test_retired_settings_are_ignored(
     assert "PROMPT_UI_INTRO" not in env_names()
 
 
-# The secret store only contributes secrets; anything else in it is ignored.
+# The secrets file only contributes secrets; anything else in it is ignored.
 def test_secret_store_holds_only_secrets(saved_mode: Path) -> None:
     _write(
         saved_mode / "secrets.toml",
@@ -263,7 +263,7 @@ def test_invalid_config_fails_closed_in_cli(saved_mode: Path, stub_provider: Stu
     assert runner.invoke(app, ["persona"]).stdout == PERSONA_PLACEHOLDER
 
 
-# A secret store that fails (a future keyring) fails the call: the marker, no provider and no
+# A secrets backend that fails (a future keyring) fails the call: the marker, no provider and no
 # fallback to a plaintext file.
 def test_store_error_never_falls_back(
     saved_mode: Path, monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
@@ -521,7 +521,7 @@ def test_save_settings_refusals(saved_mode: Path) -> None:
         config_store.save_settings(config_store.read_settings(), {"OLLAMA_MODEL": "m"})
 
 
-# --- the secret store ----------------------------------------------------------------------
+# --- the secrets file ----------------------------------------------------------------------
 
 
 def test_save_and_delete_secret(saved_mode: Path) -> None:
@@ -708,6 +708,165 @@ def test_restrict_to_user_refuses_leftovers(
 
     monkeypatch.setattr(config_files, "_read_dacl", lambda path: f"D:P(A;;FA;;;{SID})")
     config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
+    assert Settings.load().openrouter_api_key == OPENROUTER_VALUE
+
+
+# On read, the secrets file counts as exposed on Windows when its owner or an allow entry is
+# anyone but the user (SID or alias), SYSTEM or Administrators (#284). Deny and inherit-only
+# entries grant nothing; a null DACL or an unreadable descriptor counts as open.
+@pytest.mark.parametrize(
+    ("sddl", "open_"),
+    [
+        (f"O:{SID}D:P(A;;FA;;;{SID})", False),
+        ("O:LAD:P(A;;FA;;;LA)", False),
+        (f"D:P(A;;FA;;;{SID})", False),
+        (f"O:BAD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;{SID})", False),
+        ("O:S-1-5-18D:(A;;FA;;;S-1-5-18)(A;;FA;;;S-1-5-32-544)", False),
+        (f"O:{SID}D:P(A;;FA;;;{SID})(A;;FA;;;OW)", False),
+        (f"O:{SID}D:P(A;;FA;;;{SID})(D;;FA;;;WD)", False),
+        (f"O:{SID}D:P(A;;FA;;;{SID})(A;OICIIO;FA;;;CO)", False),
+        (f"O:{SID}D:P", False),
+        (f"O:{SID}D:P(A;;FA;;;{SID})(A;;FR;;;BU)", True),
+        (f"O:{SID}D:P(A;;FA;;;{SID})(A;;0x1200a9;;;WD)", True),
+        (f"O:{SID}D:P(A;;FA;;;{SID})(A;ID;FR;;;AU)", True),
+        (f"O:{SID}D:P(A;;FA;;;{SID})(A;;FA;;;S-1-5-21-9-9-9-1002)", True),
+        (f'O:{SID}D:P(A;;FA;;;{SID})(XA;;FR;;;{SID};(WIN://SYSAPPID Contains "x"))', True),
+        (f"O:S-1-5-21-9-9-9-1002D:P(A;;FA;;;{SID})", True),
+        (f"D:P(A;;FA;;;{SID})(A;;FA;;;OW)", True),
+        (f"O:{SID}D:NO_ACCESS_CONTROL", True),
+        (f"O:{SID}D:P(A;;FA)", True),
+        ("", True),
+    ],
+    ids=[
+        "user",
+        "alias",
+        "no-owner-part",
+        "profile-default",
+        "system-and-admins-by-sid",
+        "owner-rights",
+        "deny-everyone",
+        "inherit-only",
+        "empty-dacl",
+        "users-group",
+        "everyone-read",
+        "inherited-authenticated-users",
+        "another-account",
+        "conditional-ace-fails-closed",
+        "another-owner",
+        "owner-rights-unknown-owner",
+        "null-dacl",
+        "short-ace",
+        "unparsable",
+    ],
+)
+def test_opens_to_others(sddl: str, open_: bool) -> None:
+    assert config_files.opens_to_others(sddl, (SID, "LA")) is open_
+
+
+_FIX = (
+    "save a key again with `promptmend secrets set <NAME>`, which rewrites it private to "
+    "your account"
+)
+_WINDOWS_OPEN = f"the secrets file's access list or owner is not private to your account; {_FIX}"
+_WINDOWS_UNKNOWN = f"could not check the secrets file's access list; {_FIX}"
+
+
+# exposed() on Windows reads the owner and DACL of the file a symlink points to (Windows API
+# mocked, so this runs on every OS); repair mode (doctor, config validate) then reports it
+# with the Windows fix, strict mode (the triggers) never asks. A descriptor that cannot be
+# read, whatever the error, is reported as not checked and never breaks the settings.
+@pytest.mark.parametrize(
+    ("descriptor", "exposed", "finding"),
+    [
+        (f"O:{SID}D:P(A;;FA;;;{SID})(A;;FR;;;BU)", True, _WINDOWS_OPEN),
+        (f"O:S-1-5-21-9-9-9-1002D:P(A;;FA;;;{SID})", True, _WINDOWS_OPEN),
+        (f"O:{SID}D:P(A;;FA;;;{SID})", False, None),
+        (OSError(5, "denied"), False, _WINDOWS_UNKNOWN),
+        (RuntimeError("ctypes"), False, _WINDOWS_UNKNOWN),
+    ],
+    ids=["widened", "foreign-owner", "private", "os-error", "other-error"],
+)
+def test_windows_exposed_secrets_file_is_reported(
+    saved_mode: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    descriptor: str | Exception,
+    exposed: bool,
+    finding: str | None,
+) -> None:
+    path = _write(saved_mode / "secrets.toml", f'OPENROUTER_API_KEY = "{OPENROUTER_VALUE}"\n')
+    asked: list[tuple[Path, int]] = []
+
+    def read_security(target: Path, info: int) -> str:
+        asked.append((target, info))
+        if isinstance(descriptor, Exception):
+            raise descriptor
+        return descriptor
+
+    monkeypatch.setattr(config_files, "_WINDOWS", True)
+    monkeypatch.setattr(config_files, "current_user_sid", lambda: SID)
+    monkeypatch.setattr(config_files, "_canonical_dacl", lambda sddl: sddl)
+    monkeypatch.setattr(config_files, "_read_security", read_security)
+    assert FileSecretStore(path).exposed() is exposed
+    assert asked == [(Path(os.path.realpath(path)), 0x1 | 0x4)]
+    assert ConfigLayers.resolve().findings == ()
+    messages = [f.message for f in ConfigLayers.resolve(strict=False).findings]
+    assert messages == ([finding] if finding else [])
+
+
+# No file: nothing to check, nothing reported. A SID lookup that fails counts as not checked.
+def test_windows_exposed_without_a_file_or_a_sid(
+    saved_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config_files, "_WINDOWS", True)
+    missing = FileSecretStore(saved_mode / "secrets.toml")
+    assert (missing.exposed(), missing.exposure()) == (False, None)
+    path = _write(saved_mode / "secrets.toml", f'OPENROUTER_API_KEY = "{OPENROUTER_VALUE}"\n')
+    monkeypatch.setattr(config_files, "current_user_sid", lambda: "")
+    assert (FileSecretStore(path).exposed(), FileSecretStore(path).exposure()) == (
+        False,
+        _WINDOWS_UNKNOWN,
+    )
+
+
+# POSIX: a mode that cannot be read is reported as not checked, not as private.
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_posix_mode_that_cannot_be_checked(
+    saved_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config_files, "is_file", lambda path: True)
+    store = FileSecretStore(saved_mode / "missing.toml")
+    assert (store.exposed(), store.exposure()) == (
+        False,
+        "could not check the secrets file's permissions",
+    )
+
+
+def _widen(path: Path, sddl: str) -> None:
+    """Windows: give ``path`` the DACL in ``sddl``, as another tool (icacls, Explorer) could;
+    the CLI's own ctypes helper, so no external command runs."""
+    config_files._set_dacl(path, sddl)
+
+
+# The real Windows API: a file saved by secrets set is not exposed; widened to the Users group
+# it is, and repair mode (doctor's config check) names it; saving a key again makes it
+# private again.
+@pytest.mark.skipif(os.name != "nt", reason="native Windows ACL check")
+def test_widened_secrets_file_is_exposed_on_windows(saved_mode: Path) -> None:
+    config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
+    path = saved_mode / "secrets.toml"
+    store = FileSecretStore(path)
+    assert store.exposed() is False
+    sid = config_files.current_user_sid()
+    _widen(path, f"D:P(A;;FA;;;{sid})(A;;FR;;;BU)")
+    assert store.exposed() is True
+    findings = [f.message for f in ConfigLayers.resolve(strict=False).findings]
+    assert _WINDOWS_OPEN in findings, findings
+    _widen(path, f"D:P(A;;FA;;;{sid})(A;;FA;;;SY)(A;;FA;;;BA)")
+    assert store.exposed() is False
+    _widen(path, f"D:P(A;;FA;;;{sid})(A;;FR;;;WD)")
+    assert store.exposed() is True
+    config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
+    assert store.exposed() is False
     assert Settings.load().openrouter_api_key == OPENROUTER_VALUE
 
 

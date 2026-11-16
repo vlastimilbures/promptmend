@@ -1,4 +1,4 @@
-"""Saving configuration: validated, atomic writes to config.toml and the secret store.
+"""Saving configuration: validated, atomic writes to config.toml and the secrets file.
 
 These are the services behind the management commands. Nothing here runs on a trigger,
 and nothing here prints: errors are ConfigStoreError or ValueError, whose messages name
@@ -114,7 +114,7 @@ def save_settings(snapshot: SavedSettings, changes: Mapping[str, str | None]) ->
     """Write ``changes`` (env var name to raw value; None removes the setting, so its
     default applies) into the config.toml that ``snapshot`` read, and return it read again.
 
-    Every value is validated first. A secret is refused: it belongs in the secret store, and
+    Every value is validated first. A secret is refused: it belongs in the secrets file, and
     no secret is ever written to config.toml. Refused too: a file with a newer
     config_version (ReadOnlyConfigError), and a file that changed since ``snapshot`` was
     read (StaleEditError, naming the settings that differ). Settings this version does not
@@ -131,7 +131,7 @@ def save_settings(snapshot: SavedSettings, changes: Mapping[str, str | None]) ->
         if name not in known:
             raise ValueError(f"{safe_repr(name)} is not a setting")
         if name in secrets:
-            raise ValueError(f"{name} is a secret; save it in the secret store, not config.toml")
+            raise ValueError(f"{name} is a secret; save it in the secrets file, not config.toml")
         updates[name] = None if raw is None else _toml_value(name, raw)
     held = [k for k in snapshot.table if k in secrets]
     if held:
@@ -164,7 +164,7 @@ def _secret_name(name: str) -> str:
 
 
 def save_secret(name: str, value: str, environ: Mapping[str, str] | None = None) -> None:
-    """Save an API key in the secret store (never config.toml). Raises SecretStoreError when
+    """Save an API key in the secrets file (never config.toml). Raises SecretStoreError when
     the store fails; nothing is then written anywhere else."""
     cleaned = value.strip()
     if not cleaned or any(c.isspace() or not c.isprintable() for c in cleaned):

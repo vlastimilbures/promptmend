@@ -222,7 +222,7 @@ PERSONA_PLACEHOLDER = "I am working as [role] in [company]."
 
 def _persona_alone() -> str:
     """PROMPT_PERSONA when the full settings fail to load: another setting's bad value or a
-    failing secret store must not hide it from the -p- snippet. Empty when the persona itself
+    failing secrets file must not hide it from the -p- snippet. Empty when the persona itself
     cannot be read (a broken config.toml or .env, a persona line run into the next one)."""
     try:
         return ConfigLayers.resolve(only="PROMPT_PERSONA").entries["PROMPT_PERSONA"].value

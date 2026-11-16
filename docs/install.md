@@ -454,7 +454,7 @@ names is read.
 
 Before you upgrade, while 0.25.0 is still installed:
 
-1. Its `config migrate` moves the `.env` in use into `config.toml` and the secret store,
+1. Its `config migrate` moves the `.env` in use into `config.toml` and the secrets file,
    after a preview.
 2. From a checkout install (one made with the install scripts), `profiles migrate --checkout
    PATH` copies the profiles you added or edited there into your profile folder.

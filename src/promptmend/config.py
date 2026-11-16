@@ -59,7 +59,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # The user folders' name.
 APP_DIR = "promptmend"
-# The .env that replaces config.toml and the secret store (legacy mode), when set (non-empty).
+# The .env that replaces config.toml and the secrets file (legacy mode), when set (non-empty).
 ENV_FILE_VAR = "PROMPTMEND_ENV"
 
 
@@ -70,7 +70,7 @@ def env_file_override(environ: Mapping[str, str] = os.environ) -> str | None:
 
 
 def user_config_dir(environ: Mapping[str, str] = os.environ) -> Path:
-    """The settings, the secret store and the prices: %APPDATA% on Windows, $XDG_CONFIG_HOME
+    """The settings, the secrets file and the prices: %APPDATA% on Windows, $XDG_CONFIG_HOME
     or ~/.config elsewhere."""
     if os.name == "nt":
         base = Path(environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
@@ -205,7 +205,7 @@ def _saved_layer(
             fail(source, f"{key} in {name} must be text, a number or true/false", (key,))
             continue
         if key in secrets:
-            note(source, f"{key} is a secret; move it from {name} to the secret store")
+            note(source, f"{key} is a secret; move it from {name} to the secrets file")
         values[key] = text
     return Layer(source, values)
 
@@ -216,7 +216,7 @@ def _secrets_layer(
     fail: Callable[[str, str], None],
     note: Callable[[str, str], None],
 ) -> Layer | None:
-    """The API keys in the secret store, or None when it holds none. A store that fails
+    """The API keys in the secrets file, or None when it holds none. A store that fails
     fails the settings: there is no fallback to another store."""
     store = config_files.secret_store(directory)
     try:
@@ -233,8 +233,8 @@ def _secrets_layer(
     for key in values:
         if key not in secrets:
             note(store.source, f"{safe_repr(key)} is not a secret setting; it was ignored")
-    if not strict and store.exposed():
-        note(store.source, "the secrets file can be read by other users; make it private (600)")
+    if not strict and (exposure := store.exposure()):
+        note(store.source, exposure)
     return Layer(store.source, {k: v for k, v in values.items() if k in secrets})
 
 
@@ -302,7 +302,7 @@ def env_names() -> tuple[str, ...]:
 
 
 def secret_names() -> tuple[str, ...]:
-    """The settings that hold a secret (API keys): saved only in the secret store, never in
+    """The settings that hold a secret (API keys): saved only in the secrets file, never in
     config.toml, and kept out of repr()."""
     return tuple(f.metadata["env"] for f in setting_fields() if f.metadata["secret"])
 
@@ -667,7 +667,7 @@ class Settings:
 
     @classmethod
     def load(cls) -> Settings:
-        """Settings from ConfigLayers.resolve(): default < config.toml or .env < secret store
+        """Settings from ConfigLayers.resolve(): default < config.toml or .env < secrets file
         < real environment. Each call reads the files again, and os.environ is never
         written."""
         return ConfigLayers.resolve().settings()
@@ -810,12 +810,12 @@ class ConfigLayers:
         strict: bool = True,
         only: str | None = None,
     ) -> ConfigLayers:
-        """Merge default < saved settings < secret store < ``environ`` (os.environ by default).
+        """Merge default < saved settings < secrets file < ``environ`` (os.environ by default).
 
         The saved settings are the .env named by PROMPTMEND_ENV (legacy mode: that file alone,
-        no config.toml or secret store), else config.toml in the user config dir. No other
+        no config.toml or secrets file), else config.toml in the user config dir. No other
         .env is ever read: repair mode reports one left in the user config dir. The
-        secret store (secrets.toml) is read outside legacy mode.
+        secrets file (secrets.toml) is read outside legacy mode.
 
         Only env_names() keys are taken from either source: any other key (HTTP_PROXY,
         SSL_CERT_FILE, ...) would change how httpx connects, which is not what a settings
@@ -827,7 +827,7 @@ class ConfigLayers:
 
         With ``only`` (a setting name), strict mode raises only the problems that can change
         that setting: an unreadable settings file, or its own value. Another setting's bad
-        value or a failing secret store (``only`` not a secret) is recorded as a finding and
+        value or a failing secrets file (``only`` not a secret) is recorded as a finding and
         falls back as in repair mode, so ``persona`` still finds PROMPT_PERSONA when an
         unrelated setting is broken; a file problem is tolerated too when ``only`` is set in
         ``environ``. Only ``entries[only]`` is meant to be read then.
