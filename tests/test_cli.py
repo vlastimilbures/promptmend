@@ -871,7 +871,10 @@ def test_provider_options_refused(
     monkeypatch.setenv("OPENAI_API_KEY", "-".join(("test", "key")))
     result = improve("--provider", provider, *args, "--source", "argument", "--text", "d")
     assert result.exit_code == 0
-    assert result.stdout == f"[promptmend: {refusal}, not '{provider}']"
+    hint = (
+        "; set ANTHROPIC_EFFORT instead" if provider == "anthropic" and "--effort" in args else ""
+    )
+    assert result.stdout == f"[promptmend: {refusal}, not '{provider}'{hint}]"
     assert fake_http.requests == []
 
 
@@ -890,7 +893,9 @@ def test_provider_options_use_configured_provider(
     assert result.stdout == f"[promptmend: {_EFFORT}, not 'ollama']"
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", "anthropic")
     result = improve("--tier", "pro", "--effort", "low", "--source", "argument", "--text", "d")
-    assert result.stdout == f"[promptmend: {_EFFORT}, not 'anthropic']"
+    assert (
+        result.stdout == f"[promptmend: {_EFFORT}, not 'anthropic'; set ANTHROPIC_EFFORT instead]"
+    )
     assert fake_http.requests == []
 
 
@@ -1006,8 +1011,9 @@ def test_anthropic_sends_no_temperature_by_default(
     }
     fake_http.requests.clear()
     assert _cloud_body(monkeypatch, fake_http, "anthropic") == {
-        "model": "claude-sonnet-5",
-        "max_tokens": 2400,
+        "model": "claude-sonnet-5-5",
+        "max_tokens": 8000,
+        "output_config": {"effort": "low"},
     }
 
 
@@ -1123,7 +1129,7 @@ def test_pro_max_tokens_leaves_other_providers(
     fake_http.reply({"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"})
     result = improve("--provider", "anthropic", "--source", "argument", "--text", "d")
     assert (result.exit_code, result.stdout) == (0, "ok")
-    assert fake_http.calls[-1]["json"]["max_tokens"] == 2400
+    assert fake_http.calls[-1]["json"]["max_tokens"] == 8000
     fake_http.requests.clear()
     assert "num_predict" not in _local_body(fake_http, "ollama")["options"]
     fake_http.requests.clear()

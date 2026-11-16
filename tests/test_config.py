@@ -45,9 +45,10 @@ def test_defaults() -> None:
     assert settings.lmstudio_base_url == "http://127.0.0.1:1234/v1"
     assert settings.lmstudio_model == "local-model"
     assert settings.anthropic_base_url == "https://api.anthropic.com"
-    assert settings.anthropic_model == "claude-sonnet-5"
+    assert settings.anthropic_model == "claude-sonnet-5-5"
     assert settings.anthropic_api_key == ""
-    assert settings.anthropic_max_tokens == 2400
+    assert settings.anthropic_max_tokens == 8000
+    assert settings.anthropic_effort == "low"
     assert settings.allow_cloud_override is False
 
 
@@ -240,6 +241,12 @@ def test_provider_options() -> None:
         ValueError, match=r"^--effort applies only to OpenRouter and OpenAI, not 'x y'$"
     ):
         config.check_provider_options("x y", "standard", "none")
+    with pytest.raises(
+        ValueError,
+        match=r"^--effort applies only to OpenRouter and OpenAI, not 'anthropic'; "
+        r"set ANTHROPIC_EFFORT instead$",
+    ):
+        config.check_provider_options("anthropic", "standard", "low")
 
 
 # The setting that names the model a call runs: OPENROUTER_PRO_MODEL only on OpenRouter's pro
@@ -283,7 +290,7 @@ def test_pro_max_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.for_call("pro", model="x/m@auto").openrouter_max_tokens == 4000
     for provider in ("ollama", "lmstudio", "anthropic"):
         call = settings.for_call("pro", provider=provider)
-        assert (call.openrouter_max_tokens, call.anthropic_max_tokens) == (1000, 2400)
+        assert (call.openrouter_max_tokens, call.anthropic_max_tokens) == (1000, 8000)
         assert call.call_max_tokens is None
 
 
@@ -375,10 +382,10 @@ def test_with_overrides() -> None:
     settings = Settings()
     assert settings.with_overrides() is settings
     assert settings.with_overrides(effort="default", max_tokens="default") is settings
-    custom = settings.with_overrides(effort="high", max_tokens="8000", timeout="120")
+    custom = settings.with_overrides(effort="high", max_tokens="9000", timeout="120")
     assert custom.openrouter_provider == settings.openrouter_provider
     assert custom.openrouter_reasoning_effort == "high"
-    assert (custom.openrouter_max_tokens, custom.anthropic_max_tokens) == (8000, 8000)
+    assert (custom.openrouter_max_tokens, custom.anthropic_max_tokens) == (9000, 9000)
     assert custom.timeout == 120.0
     assert custom.openrouter_model == settings.openrouter_model
 
@@ -611,6 +618,27 @@ def test_effort_typo_is_rejected(monkeypatch: pytest.MonkeyPatch, env_name: str)
     with pytest.raises(
         ValueError,
         match=f"^{env_name} must be empty or one of none, minimal, low, medium, high, got 'hihg'$",
+    ):
+        Settings()
+
+
+# ANTHROPIC_EFFORT takes Anthropic's own levels (#277): xhigh and max too, none or minimal
+# never, since the Messages API rejects them; empty omits the field.
+@pytest.mark.parametrize(
+    ("raw", "expected"), [("", ""), ("low", "low"), ("XHIGH", "xhigh"), ("max", "max")]
+)
+def test_anthropic_effort_parsing(monkeypatch: pytest.MonkeyPatch, raw: str, expected: str) -> None:
+    monkeypatch.setenv("ANTHROPIC_EFFORT", raw)
+    assert Settings().anthropic_effort == expected
+
+
+@pytest.mark.parametrize("raw", ["none", "minimal", "hihg"])
+def test_anthropic_effort_rejects_others(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    monkeypatch.setenv("ANTHROPIC_EFFORT", raw)
+    with pytest.raises(
+        ValueError,
+        match="^ANTHROPIC_EFFORT must be empty or one of low, medium, high, xhigh, max, "
+        f"got '{raw}'$",
     ):
         Settings()
 

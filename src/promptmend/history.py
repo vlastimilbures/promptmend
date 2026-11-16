@@ -471,11 +471,11 @@ def load_price_table(path: Path) -> PriceTable | None:
 
         version = "2026-10-01"
         unit = "USD"            # or "credits"
-        [models."claude-sonnet-5"]
-        input_uncached = 3.00   # per million tokens
-        cache_read = 0.30
-        cache_write = 3.75
-        output = 15.00
+        [models."claude-sonnet-5-5"]
+        input_uncached = 2.00   # per million tokens
+        cache_read = 0.10
+        cache_write = 2.50
+        output = 10.00
     """
     import tomllib
     from decimal import Decimal

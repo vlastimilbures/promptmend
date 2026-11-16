@@ -377,11 +377,11 @@ as 0. For an estimate where a provider reports no cost (Anthropic, OpenAI), crea
 ```toml
 version = "2026-10-01"
 unit = "USD"
-[models."claude-sonnet-5"]
-input_uncached = 3.00
-cache_read = 0.30
-cache_write = 3.75
-output = 15.00
+[models."claude-sonnet-5-5"]
+input_uncached = 2.00
+cache_read = 0.10
+cache_write = 2.50
+output = 10.00
 ```
 
 An estimate is stored with the table's `version` and always shown apart from reported costs.
