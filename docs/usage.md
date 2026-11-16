@@ -186,7 +186,8 @@ Three things to know:
 Every list starts with, and defaults to, `default`, which keeps the pro-tier setting:
 `OPENROUTER_PRO_MODEL` with its `OPENROUTER_PRO_PROVIDER` pin, `OPENROUTER_PRO_REASONING_EFFORT`,
 `OPENROUTER_PRO_MAX_TOKENS` (or `OPENROUTER_MAX_TOKENS` while that is empty, as it is by
-default) and `PROMPT_PRO_TIMEOUT_SECONDS`.
+default) and `PROMPT_PRO_TIMEOUT_SECONDS`. High effort with a large output cap may need `60`
+or `120` rather than `default` (45 seconds unless you changed it).
 
 The four picks reach the CLI as `--model`, `--effort`, `--max-tokens` and `--timeout`, each
 one whole argument, on top of `--tier pro`. In `--model`, the part before `@` is the model and
