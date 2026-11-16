@@ -11,8 +11,9 @@ All notable changes to this project are documented here. The format follows
   `LMSTUDIO_BASE_URL` `http://127.0.0.1:1234/v1`, not `localhost` (#365). Windows tries
   `localhost` as `::1` first, where these servers do not listen by default, and waits about
   2 s for that refused connect on every `-il-`/`-ilm-` call. A saved `localhost` URL keeps
-  working, and on Windows `promptmend doctor` (`local_servers`) now names it with the
-  `promptmend config set` command that fixes it (`doctor --json` adds `slow_localhost`). A
+  working, and on Windows `promptmend doctor` (`local_servers`) now names it and where to
+  change it (the `promptmend config set` command for a saved setting, else the environment or
+  the `PROMPTMEND_ENV` file; `doctor --json` adds `slow_localhost`). A
   server that listens on `::1` only now needs its URL set explicitly (`http://[::1]:<port>`).
 - Packaging: the WinGet manifests (#185) now use manifest schema 1.28.0
   (`ManifestVersion: 1.28.0` and the matching `$schema` headers), because winget-pkgs

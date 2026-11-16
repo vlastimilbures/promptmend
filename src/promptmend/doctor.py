@@ -349,6 +349,7 @@ def _keys_check(
 
 
 def _local_servers_check(
+    layers: ConfigLayers,
     settings: config.Settings,
     triggers: list[assets.Trigger],
     deployed: bool,
@@ -381,7 +382,8 @@ def _local_servers_check(
             notes.append(f"{', '.join(names)} needs {spec.label}: no answer at {spec.url_setting}")
         if plat == "win32" and _on_localhost(spec.url(settings)):
             slow.append(spec.url_setting)
-            notes.append(_localhost_note(spec.url_setting, spec.url(settings), names))
+            entry = layers.entries[spec.url_setting]
+            notes.append(_localhost_note(spec.url_setting, entry.value, names, entry.source))
     data = {"servers": servers, "deployed": deployed, "slow_localhost": slow}
     if not notes:
         probed = " or ".join(s.label for s in PROVIDERS.values() if s.probe_path)
@@ -395,23 +397,59 @@ def _on_localhost(url: str) -> bool:
     return urlsplit(url).hostname == "localhost"
 
 
-def _localhost_note(setting: str, url: str, names: list[str]) -> str:
+def _localhost_note(setting: str, url: str, names: list[str], source: str) -> str:
     """Windows tries ``localhost`` as ::1 first and retries a refused connect for about 2 s,
-    and Ollama and LM Studio listen on 127.0.0.1 only by default (#365). A URL with a user
-    name, password, query or fragment is not quoted back."""
+    and Ollama and LM Studio listen on 127.0.0.1 only by default (#365).
+
+    The URL is quoted back only in the default's shape with another host and port: no user
+    name, password, query or fragment, the default's path, nothing that looks like a key.
+    ``source`` (the setting's layer) says where to change it: only a config.toml value gets
+    the `config set` command, which legacy mode refuses and the environment overrides."""
     from urllib.parse import urlsplit
 
-    parts = urlsplit(url)
+    from .commands.common import looks_like_a_key
+
+    where = _set_where(source)
     why = f"on Windows each {', '.join(names)} call may wait about 2 s for ::1 at localhost"
     generic = f"{why}: use 127.0.0.1 for localhost in {setting}"
-    if "@" in parts.netloc or parts.query or parts.fragment:
+    if where:
+        generic += f", set {where}"
+    parts = urlsplit(url)
+    default_path = urlsplit(_default(setting)).path
+    if (
+        "@" in parts.netloc
+        or parts.query
+        or parts.fragment
+        or parts.path.rstrip("/") != default_path.rstrip("/")
+        or looks_like_a_key(url)
+    ):
         return generic
     try:
         port = parts.port
     except ValueError:
         return generic
     fixed = parts._replace(netloc="127.0.0.1" + (f":{port}" if port else "")).geturl()
+    if where:
+        return f"{why}: set {setting} to {fixed} {where}"
     return f"{why}: set {setting} to {fixed} (`promptmend config set {setting} {fixed}`)"
+
+
+def _set_where(source: str) -> str | None:
+    """Where a setting from ``source`` is changed when `config set` cannot: the real
+    environment, or the .env PROMPTMEND_ENV names (legacy mode). None for config.toml."""
+    if source == config.ENV_SOURCE:
+        return "in the environment"
+    path = source.removeprefix("file:")
+    if path != source and path != str(config.settings_file()):
+        return f"in {path}"
+    return None
+
+
+def _default(name: str) -> str:
+    """A setting's built-in default, as text."""
+    return next(
+        str(f.metadata["default"]) for f in config.setting_fields() if f.metadata["env"] == name
+    )
 
 
 def _probe_all(urls: Mapping[str, str]) -> dict[str, bool | None]:
@@ -946,7 +984,7 @@ def _run(
     checks.append(timed("profiles", lambda: _profiles_check(settings)))
     checks.append(timed("folders", _folders_check))
     checks.append(
-        timed("local_servers", lambda: _local_servers_check(settings, triggers, deployed))
+        timed("local_servers", lambda: _local_servers_check(layers, settings, triggers, deployed))
     )
     return Report(tuple(checks))
 

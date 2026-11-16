@@ -218,8 +218,9 @@ OpenAI's own API, called directly (the commented-out `-io-` trigger, `--provider
 Both defaults name `127.0.0.1`, the address Ollama and LM Studio listen on by default.
 `localhost` works too, but Windows tries it as `::1` first and waits about 2 s for that
 refused connect on every call, so on Windows `promptmend doctor` (`local_servers`) names a
-`localhost` URL with the command that fixes it, such as
-`promptmend config set OLLAMA_BASE_URL http://127.0.0.1:11434`. A server that listens on `::1`
+`localhost` URL and where to change it: for a saved setting the command, such as
+`promptmend config set OLLAMA_BASE_URL http://127.0.0.1:11434`; for one set in the environment
+or in the `.env` that `PROMPTMEND_ENV` names, that place. A server that listens on `::1`
 only needs its URL set to `http://[::1]:<port>`.
 
 ### Privacy and gate

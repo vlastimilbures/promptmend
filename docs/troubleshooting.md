@@ -136,7 +136,7 @@ The text after each hint is the provider's own reason.
 | Symptom | Fix |
 |---------|-----|
 | `[promptmend: Ollama request failed: …]` | Start Ollama (`ollama serve`) and pull the model (`ollama pull qwen3:8b`) |
-| On Windows, every `-il-` or `-ilm-` call takes about 2 s longer than the model needs, and `promptmend doctor` says `may wait about 2 s for ::1 at localhost` | `OLLAMA_BASE_URL` / `LMSTUDIO_BASE_URL` names `localhost`, which Windows tries as `::1` first, while the server listens on `127.0.0.1` only. Set it to `127.0.0.1` with the command doctor prints, such as `promptmend config set OLLAMA_BASE_URL http://127.0.0.1:11434` (see [Ollama](configuration.md#ollama)) |
+| On Windows, every `-il-` or `-ilm-` call takes about 2 s longer than the model needs, and `promptmend doctor` says `may wait about 2 s for ::1 at localhost` | `OLLAMA_BASE_URL` / `LMSTUDIO_BASE_URL` names `localhost`, which Windows tries as `::1` first, while the server listens on `127.0.0.1` only. Use `127.0.0.1` where doctor says the setting comes from: for a saved setting the command it prints, such as `promptmend config set OLLAMA_BASE_URL http://127.0.0.1:11434`; else the environment or your `PROMPTMEND_ENV` file (see [Ollama](configuration.md#ollama)) |
 | Rewrites through Ollama ignore the template | The context window may be too small; see [Ollama context window](configuration.md#ollama-context-window) |
 
 For fully local use, pull a model (`ollama pull qwen3:8b`) or load one in LM Studio and enable
