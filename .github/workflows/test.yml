@@ -218,6 +218,14 @@ jobs:
           $expected = $wheel.Name.Split('-')[1]
           if ($installed -ne $expected) { throw "installed $installed, expected $expected" }
           Write-Host "promptmend $installed from $bin"
+          # https is verified against the Windows certificate store (#314): truststore came
+          # with the constraints. doctor exits 4 here (no key, no Espanso).
+          $PSNativeCommandUseErrorActionPreference = $false
+          $report = (& "$bin\promptmend.exe" doctor --no-clipboard --json) | Out-String | ConvertFrom-Json
+          if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE" }
+          $report.checks.tls | ConvertTo-Json -Depth 5
+          if ($report.checks.tls.data.verified_against -ne "os_trust_store") { throw "the uv install does not verify against the OS trust store" }
+          exit 0  # not doctor's 4
       # A promptmend running from uv's tool folder (here its Scripts\python.exe, as the open
       # interface holds it) makes the uv channel refuse before uv runs, so the install stays
       # whole (#356).
@@ -354,6 +362,10 @@ jobs:
           if ($report.checks.version.data.version -ne $version) { throw "doctor reports another version" }
           if (-not "$($report.checks.version.data.python)".StartsWith("3.14.")) { throw "the exe runs Python $($report.checks.version.data.python), not 3.14 (#348)" }
           if ($report.checks.install.data.channel -ne "script") { throw "an unzipped exe is not the script channel" }
+          # https is verified against the Windows certificate store (#314), not certifi's
+          # bundle: the frozen build carries truststore and its ctypes bindings load.
+          $report.checks.tls | ConvertTo-Json -Depth 5
+          if ($report.checks.tls.data.verified_against -ne "os_trust_store") { throw "the exe does not verify against the OS trust store" }
           "FROZEN_EXE=$exe" >> $env:GITHUB_ENV
           exit 0  # not doctor's 4
       # install.ps1's default channel (#185) with this zip (PROMPTMEND_ZIP), run as the

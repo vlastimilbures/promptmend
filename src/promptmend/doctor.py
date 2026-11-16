@@ -4,7 +4,8 @@ Read-only: it runs only `espanso path config`, `espanso status` and the launcher
 (uv's receipt, else `uv tool dir`; `brew --prefix`) through deploy.run_command, reads the
 settings in repair mode, asks PyPI for the newest release at most once a day (update_check,
 unless PROMPT_UPDATE_CHECK is false), asks a loopback Ollama and LM Studio at the same time
-whether they answer (local_probe), reads the deployed match files, and reads the clipboard
+whether they answer (local_probe), builds (never uses) an https context to report what a
+certificate is checked against (tls), reads the deployed match files, and reads the clipboard
 only to report its length. The report never holds a key, the persona or clipboard text,
 since people paste it into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and
 keys are only ever added (the one exception: the previous_install check, removed by owner
@@ -31,6 +32,7 @@ from . import (
     factory,
     installed_version,
     local_probe,
+    tls,
     update_check,
 )
 from .config import ConfigLayers, secret_names
@@ -61,6 +63,7 @@ CHECK_IDS = (
     "profiles",
     "folders",
     "local_servers",
+    "tls",
 )
 # Every key of each check's data, in every report: a check that could not run has them all
 # as None, so a consumer never meets a missing key.
@@ -103,6 +106,7 @@ DATA_KEYS = {
     "profiles": ("profile", "pro_profile", "user"),
     "folders": ("config_dir", "data_dir", "legacy", "conflicts"),
     "local_servers": ("servers", "deployed", "slow_localhost"),
+    "tls": ("verified_against", "ca_variable"),
 }
 
 
@@ -864,6 +868,32 @@ def _folders_check() -> Check:
     )
 
 
+def _tls_check() -> Check:
+    """What an https call (a cloud provider, the update check) verifies the server's
+    certificate against (#314). The fallback still verifies, so it is information, not a
+    warning; it does mean a root installed only in the OS store is not trusted."""
+    source, variable = tls.describe()
+    data = {"verified_against": source, "ca_variable": variable}
+    if variable is not None and tls.missing_bundle(variable):
+        # The path is never shown: it can name a user's folders.
+        what, other = ("file", "folder") if variable == "SSL_CERT_FILE" else ("folder", "file")
+        if tls.bundle_is_other_kind(variable):
+            message = f"{variable} names a {other}, not a {what}: https calls will fail"
+        else:
+            message = f"{variable} names a {what} that does not exist: https calls will fail"
+        return Check("tls", WARN, message, data)
+    if source == tls.CA_BUNDLE:
+        message = f"https certificates checked against the CA bundle {variable} names"
+    elif source == tls.OS_STORE:
+        message = "https certificates checked against the operating system's trust store"
+    else:
+        message = (
+            "truststore cannot load here: https certificates checked against certifi's "
+            "bundle, so a root installed only in the OS trust store is not trusted"
+        )
+    return Check("tls", OK if source != tls.CERTIFI else INFO, message, data)
+
+
 @dataclass(frozen=True)
 class Lookups:
     """This install's launcher and the deploy manifest, each looked up once, so the interface's
@@ -1041,6 +1071,7 @@ def _run(
     checks.append(
         timed("local_servers", lambda: _local_servers_check(layers, settings, triggers, deployed))
     )
+    checks.append(timed("tls", _tls_check))
     return Report(tuple(checks))
 
 

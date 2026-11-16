@@ -28,6 +28,10 @@ def answers(url: str) -> bool | None:
 def _get(url: str) -> None:
     import httpx
 
-    # Its own transport, as post_json gives a loopback URL: no env or system proxy.
-    with httpx.Client(transport=httpx.HTTPTransport(), timeout=TIMEOUT) as client:
+    from .tls import verify
+
+    # Its own transport, as post_json gives a loopback URL: no env or system proxy. An https
+    # URL is checked against the OS trust store, as post_json checks it (#314).
+    transport = httpx.HTTPTransport(verify=verify(url))
+    with httpx.Client(transport=transport, timeout=TIMEOUT) as client:
         client.get(url)

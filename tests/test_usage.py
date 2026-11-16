@@ -410,7 +410,9 @@ def test_certificate_failure_is_not_retried(fake_http: FakeHttp) -> None:
     cause = ssl.SSLCertVerificationError("certificate verify failed")
     fake_http.queue(_tls_connect_error(cause), {"json_data": _OLLAMA_BODY})
     with pytest.raises(
-        ProviderError, match=r"^Ollama request failed: certificate verify"
+        ProviderError,
+        match=r"^Ollama: the server's certificate is not trusted by this computer "
+        r"\(TLS verification failed: certificate verify failed\); see `promptmend doctor`$",
     ) as caught:
         _remote_ollama(records).generate("d", "s")
     assert caught.value.transient is False

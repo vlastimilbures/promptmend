@@ -1396,3 +1396,74 @@ def test_local_servers_on_a_refused_url(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_on_localhost_on_a_malformed_url() -> None:
     assert doctor._on_localhost("http://[::1") is False
+
+
+# --- tls (#314) ---------------------------------------------------------------------------
+
+
+def test_tls_reports_the_os_trust_store() -> None:
+    check = doctor._tls_check()
+    assert (check.status, dict(check.data)) == (
+        "ok",
+        {"verified_against": "os_trust_store", "ca_variable": None},
+    )
+    assert "operating system's trust store" in check.message
+
+
+# The bundle's path is not shown: only the variable that names it.
+@pytest.mark.parametrize("name", ["SSL_CERT_FILE", "SSL_CERT_DIR"])
+def test_tls_reports_a_ca_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
+) -> None:
+    bundle = tmp_path / "secret-place" / "ca.pem"
+    if name == "SSL_CERT_FILE":
+        bundle.parent.mkdir()
+        bundle.write_text("", "utf-8")
+    else:
+        bundle.mkdir(parents=True)
+    monkeypatch.setenv(name, str(bundle))
+    check = doctor._tls_check()
+    assert (check.status, dict(check.data)) == (
+        "ok",
+        {"verified_against": "ca_bundle", "ca_variable": name},
+    )
+    assert name in check.message
+    assert "secret-place" not in check.message
+
+
+# A bundle that is not there fails every https call (a missing file at once, a missing folder
+# at the handshake): a warning, still without the path. A folder where a file is wanted counts
+# as missing, and the other way round.
+@pytest.mark.parametrize("name", ["SSL_CERT_FILE", "SSL_CERT_DIR"])
+@pytest.mark.parametrize("kind", ["missing", "wrong-kind"])
+def test_tls_warns_about_a_missing_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, kind: str
+) -> None:
+    path = tmp_path / "secret-place"
+    if kind == "wrong-kind" and name == "SSL_CERT_FILE":
+        path.mkdir()
+    elif kind == "wrong-kind":
+        path.write_text("", "utf-8")
+    monkeypatch.setenv(name, str(path))
+    check = doctor._tls_check()
+    assert (check.status, dict(check.data)) == (
+        "warn",
+        {"verified_against": "ca_bundle", "ca_variable": name},
+    )
+    assert name in check.message
+    if kind == "missing":
+        assert "does not exist" in check.message
+    else:
+        wanted = "not a file" if name == "SSL_CERT_FILE" else "not a folder"
+        assert wanted in check.message
+        assert "does not exist" not in check.message
+    assert "secret-place" not in check.message
+
+
+def test_tls_reports_the_certifi_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "truststore", None)
+    check = doctor._tls_check()
+    assert (check.status, check.data["verified_against"]) == ("info", "certifi")
+    assert "certifi" in check.message
+    data = doctor.Report((check,)).to_json()["checks"]["tls"]["data"]
+    assert data == {"verified_against": "certifi", "ca_variable": None}
