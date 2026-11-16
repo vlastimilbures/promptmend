@@ -157,8 +157,10 @@ CA bundle that ships with httpx (certifi), as earlier releases always did. `prom
 shows which one applies (`tls`), and warns when either variable names a file or folder that
 is not there.
 
-An `https://` proxy URL is the exception: the proxy's own certificate is checked by httpx
-against certifi's bundle, not the trust store. A proxy given as `http://` (the usual case)
+An `https://` proxy URL is the exception: the proxy's own certificate is checked by httpcore
+(httpx's connection layer) with `ssl.create_default_context()` plus certifi's bundle, so
+against certifi's roots and Python's default CA locations, not the operating system's trust
+store. A proxy given as `http://` (the usual case)
 has no certificate of its own; the server's certificate behind it is checked as above.
 
 ## Settings reference

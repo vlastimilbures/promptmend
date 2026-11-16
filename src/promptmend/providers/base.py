@@ -283,6 +283,18 @@ def timed_out_message(label: str, timeout: float) -> str:
     return f"{label} timed out after {timeout}s"
 
 
+def _reason(text: str, limit: int) -> str:
+    """A transport error's text, which can quote what the peer sent (a garbage status line, a
+    certificate name), as _one_line() makes it and without brackets, so it cannot close the
+    marker or fake another one."""
+    return _one_line(text.replace("[", " ").replace("]", " "), limit)
+
+
+def _failed(label: str, exc: BaseException) -> str:
+    reason = _reason(str(exc), SERVER_MESSAGE_MAX)
+    return f"{label} request failed" + (f": {reason}" if reason else "")
+
+
 # The longest certificate-failure reason a marker repeats: the OS words it, partly from what
 # the server's certificate says, so it is kept short and stripped like a server message.
 TLS_REASON_MAX = 80
@@ -312,7 +324,7 @@ def tls_message(label: str, error: ssl.SSLCertVerificationError) -> str:
     reason = getattr(error, "verify_message", None)
     if not isinstance(reason, str) or not reason:
         reason = next((arg for arg in error.args if isinstance(arg, str)), "")
-    reason = _one_line(reason.replace("[", " ").replace("]", " "), TLS_REASON_MAX)
+    reason = _reason(reason, TLS_REASON_MAX)
     return (
         f"{label}: the server's certificate is not trusted by this computer "
         f"(TLS verification failed{': ' + reason if reason else ''}); see `promptmend doctor`"
@@ -368,7 +380,7 @@ def _exchange(
     except httpx.ConnectError as exc:
         outcome.error_kind = "refused"
         tls = _tls_failure(exc)
-        message = f"{label} request failed: {exc}" if tls is None else tls_message(label, tls)
+        message = _failed(label, exc) if tls is None else tls_message(label, tls)
         refused = ProviderError(message, transient=tls is None)
         refused.__cause__ = exc  # kept when post_json re-raises it after the retry
         # A local server that refuses the connection is not running, and a certificate
@@ -378,7 +390,7 @@ def _exchange(
         raise _Retry(refused) from exc
     except httpx.HTTPError as exc:
         outcome.error_kind = "transport"
-        raise ProviderError(f"{label} request failed: {exc}") from exc
+        raise ProviderError(_failed(label, exc)) from exc
 
     try:
         body: object = jsonlib.loads(content)

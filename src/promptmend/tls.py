@@ -80,6 +80,13 @@ def missing_bundle(variable: str, environ: Mapping[str, str] | None = None) -> b
     return not (os.path.isfile(path) if variable == "SSL_CERT_FILE" else os.path.isdir(path))
 
 
+def bundle_is_other_kind(variable: str, environ: Mapping[str, str] | None = None) -> bool:
+    """Whether ``variable`` names a folder where a file is wanted, or a file for SSL_CERT_DIR."""
+    environ = os.environ if environ is None else environ
+    path = environ.get(variable, "")
+    return os.path.isdir(path) if variable == "SSL_CERT_FILE" else os.path.isfile(path)
+
+
 def describe() -> tuple[str, str | None]:
     """What an https call made now is verified against, for doctor: OS_STORE, CA_BUNDLE (with
     the variable that names it) or CERTIFI (truststore could not load here)."""

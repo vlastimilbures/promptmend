@@ -1451,7 +1451,12 @@ def test_tls_warns_about_a_missing_bundle(
         {"verified_against": "ca_bundle", "ca_variable": name},
     )
     assert name in check.message
-    assert "does not exist" in check.message
+    if kind == "missing":
+        assert "does not exist" in check.message
+    else:
+        wanted = "not a file" if name == "SSL_CERT_FILE" else "not a folder"
+        assert wanted in check.message
+        assert "does not exist" not in check.message
     assert "secret-place" not in check.message
 
 

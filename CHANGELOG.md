@@ -43,6 +43,10 @@ All notable changes to this project are documented here. The format follows
   before `winget validate`, since the runner's v1.11 knows schemas only up to 1.10.0.
 
 ### Fixed
+- A connection or transport failure's marker (`… request failed: …`) now repeats the
+  error's text as one short printable line without brackets (at most 160 characters, and not
+  at all when it matches a sensitive pattern), like a server's own reason. It could quote
+  what the other side sent, such as a garbled status line, in full.
 - Settings: a malformed base URL (`OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`,
   `OPENROUTER_BASE_URL`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) is now refused when the
   settings load (#368): one that is not `http://` or `https://`, has no host, an unclosed
