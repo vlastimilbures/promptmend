@@ -56,6 +56,15 @@ All notable changes to this project are documented here. The format follows
   runs 3.12.
 
 ### Fixed
+- `improve` and `persona`: loading the settings is now bounded by the watchdog too (#331).
+  A load that a stalled file system (a redirected `%APPDATA%`, say) blocks ends within the
+  call's `--timeout`, else the built-in 30 s, plus 2 s, with
+  `[promptmend: the settings did not load within …s]` and exit code 0, instead of never.
+  The configured limit takes over once the settings have loaded. A load of a second or more
+  is named in the timed-out marker instead of the provider being blamed for all of it, and a
+  run whose start-up and load used up the whole limit now ends at once with a marker saying
+  which took the time (`starting up took …s` or `the settings took …s to load`) and sends
+  nothing, instead of starting a call that could not finish in time.
 - Settings: a malformed base URL (`OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`,
   `OPENROUTER_BASE_URL`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) is now refused when the
   settings load (#368): one that is not `http://` or `https://`, has no host, an unclosed

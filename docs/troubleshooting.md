@@ -93,6 +93,8 @@ paste. To tell the cases apart:
 | Symptom | Fix |
 |---------|-----|
 | `[promptmend: OPENROUTER_API_KEY is not configured]` | Save the key with `promptmend secrets set OPENROUTER_API_KEY`. With a `.env`, check that `PROMPTMEND_ENV` names it: no other `.env` is read ([Settings in a .env](configuration.md#settings-in-a-env)) |
+| `[promptmend: the settings did not load within …s]`, `[promptmend: the settings took …s to load, …]` or `… timed out after …s, …s of it loading the settings]` | Reading the settings files stalled or was slow: the config folder sits on a redirected, synced or network folder (a redirected `%APPDATA%` on a managed Windows laptop, say), or antivirus holds its files. Run `promptmend doctor` to see which config and data folders are used (its `folders` check), and ask IT to keep them on a local disk or exclude them from scanning. See [While it runs](usage.md#while-it-runs) |
+| `[promptmend: starting up took …s, past the …s time limit; nothing was sent]` | Start-up alone used up the call's time limit, so no call was made. See the slow-start row under [Triggers and Espanso](#triggers-and-espanso), or raise `PROMPT_TIMEOUT_SECONDS` |
 | `[promptmend: config.toml is not valid TOML (at line …)]` | Fix that line of `config.toml` in the config folder (`secrets.toml` likewise) |
 | `[promptmend: …_API_KEY contains a non-ASCII or invisible character…]` | The key was pasted with a smart quote or an invisible character. Save it again as plain text |
 | `[promptmend: … request failed: invalid header value (check the API key)]` | The key contains a line break or another character a key never has. Save it again |
