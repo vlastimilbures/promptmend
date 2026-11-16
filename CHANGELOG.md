@@ -31,6 +31,23 @@ All notable changes to this project are documented here. The format follows
   rows and doctor's `keys` check.
 
 ### Changed
+- Anthropic (`--provider anthropic`, the commented-out `-ic-`): the default
+  `ANTHROPIC_MODEL` is now `claude-sonnet-5-5` (Claude Sonnet 5.5, the current Sonnet), not
+  `claude-sonnet-5` (#277); set `ANTHROPIC_MODEL=claude-sonnet-5` to keep the old one. Current
+  Claude models think before they answer and that thinking counts against the output cap,
+  so a rewrite could end with "used its whole output limit before writing any text". Each
+  call now sends `output_config.effort` from the new `ANTHROPIC_EFFORT` setting (default
+  `low`: short or no thinking on a rewrite; empty omits the field, for a model without an
+  effort control), and `ANTHROPIC_MAX_TOKENS` now defaults to 8000, not 2400. No `thinking`
+  field is sent: Claude Sonnet 5.5 rejects `disabled`. The effort is never sent to a model
+  without an effort control, so a saved `ANTHROPIC_MODEL` of Claude Sonnet 4.5, Haiku 4.5,
+  Opus 4.1, Opus 4, Sonnet 4 or any Claude 3 or 2 model keeps working; a level a model does
+  not take (`xhigh` on a 4.6 model) is sent as set. Thinking is billed as output, so the
+  most one call can cost in output rises from 2,400 to 8,000 tokens (about $0.024 to $0.08
+  on Claude Sonnet 5.5), and a long reply may now end on the time-limit marker. `--effort`
+  with `--provider anthropic` is still refused; its message now says to set
+  `ANTHROPIC_EFFORT` instead. A live call on these defaults is still to be confirmed by the
+  owner.
 - `-ip-` no longer passes `--provider openrouter`, so it follows `PROMPT_PRO_PROVIDER`
   (OpenRouter by default, as before; #278), and its label is now `PromptMend: rewrite on the
   pro tier`. Deploy updates the match file; one you edited keeps the old line and stays on

@@ -163,6 +163,78 @@ def test_anthropic_request_shape(fake_http: FakeHttp) -> None:
     ]
 
 
+# An effort goes out as output_config.effort; no thinking field is ever sent, since Claude
+# Sonnet 5.5 and Opus 5.5 reject `disabled` (#277).
+def test_anthropic_sends_effort(fake_http: FakeHttp) -> None:
+    fake_http.reply(_anthropic_body("ok"))
+    AnthropicProvider("http://x/", "m", "key", effort="low").generate("draft", "sys")
+    body = fake_http.calls[0]["json"]
+    assert body["output_config"] == {"effort": "low"}
+    assert "thinking" not in body
+
+
+# A model without an effort control gets no output_config, so a saved older model keeps
+# working (#277); any other id, a future one too, gets the effort, and a level the model
+# may not take is the user's choice and is sent as set.
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-5-20250929",
+        "claude-haiku-4-5-20251001",
+        "claude-opus-4-1-20250805",
+        "claude-opus-4-20250514",
+        "claude-opus-4-0",
+        "claude-sonnet-4-20250514",
+        "claude-3-7-sonnet-20250219",
+        "claude-2.1",
+        " Claude-Haiku-4-5 ",
+    ],
+)
+def test_anthropic_no_effort_models(fake_http: FakeHttp, model: str) -> None:
+    fake_http.reply(_anthropic_body("ok"))
+    AnthropicProvider("http://x/", model, "key", effort="low").generate("draft", "sys")
+    assert "output_config" not in fake_http.calls[0]["json"]
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["claude-sonnet-4-6", "claude-opus-4-5", "claude-opus-4-8", "claude-haiku-5-5", "claude-x-9"],
+)
+def test_anthropic_effort_models(fake_http: FakeHttp, model: str) -> None:
+    fake_http.reply(_anthropic_body("ok"))
+    AnthropicProvider("http://x/", model, "key", effort="xhigh").generate("draft", "sys")
+    assert fake_http.calls[0]["json"]["output_config"] == {"effort": "xhigh"}
+
+
+# The default Anthropic setup (#277): Claude Sonnet 5.5, effort low, an 8000-token cap that
+# leaves room for thinking, and neither temperature nor thinking.
+def test_anthropic_default_request_body(
+    fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    fake_http.reply(_anthropic_body("ok"))
+    make_provider("anthropic", Settings()).generate("draft", "sys")
+    assert fake_http.calls[0]["json"] == {
+        "model": "claude-sonnet-5-5",
+        "max_tokens": 8000,
+        "system": "sys",
+        "messages": [{"role": "user", "content": "draft"}],
+        "output_config": {"effort": "low"},
+    }
+
+
+# ANTHROPIC_EFFORT empty sends no output_config, for a model without an effort control.
+def test_anthropic_empty_effort_omits_output_config(
+    fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_EFFORT", "")
+    fake_http.reply(_anthropic_body("ok"))
+    make_provider("anthropic", Settings()).generate("draft", "sys")
+    assert "output_config" not in fake_http.calls[0]["json"]
+
+
 # The CLI's OpenRouter provider sends the pinned route, X-Title, key and max_tokens.
 def test_openrouter_request_shape(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")

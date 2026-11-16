@@ -381,6 +381,7 @@ _ROUND_TRIP = {
     "ANTHROPIC_BASE_URL": "https://anthropic.example.com",
     "ANTHROPIC_MODEL": "claude-opus-5",
     "ANTHROPIC_MAX_TOKENS": "1800",
+    "ANTHROPIC_EFFORT": "xhigh",
     "ANTHROPIC_TEMPERATURE": "0.3",
     "OPENAI_BASE_URL": "https://openai.example.com/v1",
     "OPENAI_MODEL": "gpt-6",

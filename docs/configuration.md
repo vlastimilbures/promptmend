@@ -231,8 +231,9 @@ existed: OpenRouter, `openai/gpt-6-luna` on the `openai` endpoint at effort `low
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `ANTHROPIC_API_KEY` | — | Required for Anthropic |
-| `ANTHROPIC_MODEL` | `claude-sonnet-5` | Model |
-| `ANTHROPIC_MAX_TOKENS` | `2400` | Output cap |
+| `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Model (Claude Sonnet 5.5); `claude-sonnet-5` keeps Claude Sonnet 5 |
+| `ANTHROPIC_MAX_TOKENS` | `8000` | Output cap. Current Claude models think before they answer, and that thinking counts against the cap although its text is never shown, so the cap leaves room for both. Thinking is billed as output: the most one call can cost in output rose from 2,400 to 8,000 tokens (about $0.024 to $0.08 at Claude Sonnet 5.5's $10 per million output tokens), and a long reply may now end on the time-limit marker rather than the output-limit one |
+| `ANTHROPIC_EFFORT` | `low` | `low`, `medium`, `high`, `xhigh` or `max`, sent as `output_config.effort`: how much Claude thinks before it writes the rewrite. Claude Sonnet 5.5 rejects `thinking: disabled`; `low` is the low-latency setting this provider uses, with short or no thinking on a simple draft. Never sent to a model without an effort control: Claude Sonnet 4.5, Haiku 4.5, Opus 4.1, Opus 4, Sonnet 4 and every Claude 3 or 2 model (ids starting `claude-sonnet-4-5`, `claude-haiku-4-5`, `claude-opus-4-1`, `claude-opus-4-0`, `claude-opus-4-2025`, `claude-sonnet-4-0`, `claude-sonnet-4-2025`, `claude-3`, `claude-2`). A level the model does not take (`xhigh` on a 4.6 model, `xhigh` or `max` on Opus 4.5) is sent as set and comes back as HTTP 400. Empty omits it. `--effort` does not set it |
 | `ANTHROPIC_TEMPERATURE` | *(empty)* | Sampling temperature for Anthropic; empty sends none, since current Claude models (Opus 4.7, Sonnet 5 and later) return HTTP 400 for a temperature (most for any value, the rest for any but the default). A set value is sent as is, so set it only for a model that accepts one |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | API endpoint; must be `https://` |
 
