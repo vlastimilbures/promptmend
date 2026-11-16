@@ -90,9 +90,19 @@ promptmend secrets status                            # set or not set, and where
 promptmend secrets remove OPENROUTER_API_KEY
 ```
 
-`secrets.toml` is private to your user: mode 600 on macOS and Linux, an access list for your
-account alone on Windows. A keychain is not supported yet. Keys are never logged, never shown
+`secrets.toml`, the secrets file, is a private plaintext file: the keys in it are not
+encrypted. What keeps other accounts out is its file permissions: mode 600 on macOS and Linux,
+and on Windows an access list that grants your account alone (no SYSTEM, no Administrators,
+nothing inherited). Anyone who can read the file as you, or a backup of it, can read the keys.
+A keychain or Windows Credential Manager is not supported. Keys are never logged, never shown
 in a traceback, and sent only as the authentication header of their own provider.
+
+`promptmend doctor` and `config validate` warn when the file has been opened up since it was
+written: on macOS and Linux a mode that lets the group or others read or write it (fix with
+`chmod 600`), on Windows an access-list entry or an owner other than your account, SYSTEM and
+Administrators (those two may hold access, as they do across your profile folder). On Windows,
+save a key again with `promptmend secrets set OPENROUTER_API_KEY` (any key): every save rewrites
+the whole file with an access list for your account alone.
 
 ## Settings in a .env
 

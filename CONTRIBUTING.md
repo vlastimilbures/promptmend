@@ -523,7 +523,7 @@ pro tier's profile.
 Add a field to `Settings` in `src/promptmend/config.py` with `_env("NAME", "default")`, then
 document it in the settings reference in `docs/configuration.md` and in `.env.example` (commented out with its
 default: `# NAME=default`). `tests/test_docs.py` fails until both are done. A setting that holds
-a secret takes `secret=True`: it then stays out of `repr()`, is saved only in the secret store,
+a secret takes `secret=True`: it then stays out of `repr()`, is saved only in the secrets file,
 and is never written to `config.toml`.
 
 ### Add a static snippet or form

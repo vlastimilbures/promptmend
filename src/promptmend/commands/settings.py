@@ -25,7 +25,7 @@ secrets_app = typer.Typer(
     name="secrets",
     no_args_is_help=True,
     add_completion=False,
-    help="Save, check or remove API keys in the secret store. Keys are never arguments.",
+    help="Save, check or remove API keys in the secrets file. Keys are never arguments.",
 )
 
 _NAME = typer.Argument(..., help="A setting name, e.g. PROMPT_PROVIDER", show_default=False)
@@ -116,11 +116,11 @@ def save_setting(name: str, value: str) -> config_store.SavedSettings:
 
 def store_key(name: str, value: str) -> str:
     """`secrets set` without the printing, shared with setup and the interface: refuse legacy
-    mode (CommandError), save ``value`` in the secret store and say so. after_save() gives the
+    mode (CommandError), save ``value`` in the secrets file and say so. after_save() gives the
     warnings to show with it."""
-    common.refuse_in_legacy_mode("the secret store")
+    common.refuse_in_legacy_mode("the secrets file")
     config_store.save_secret(name, value)
-    return f"{name} saved in the secret store ({config_store.config_dir()})"
+    return f"{name} saved in the secrets file ({config_store.config_dir()})"
 
 
 # --- config -------------------------------------------------------------------------------
@@ -141,7 +141,7 @@ def layers_lines(layers: ConfigLayers, raw: bool) -> list[str]:
                     lines.append(f"      {name} = {common.shown_value(name, entry)}")
     if common.legacy_env():
         lines.append(
-            f"  ({config.ENV_FILE_VAR} is set: config.toml and the secret store are not read)"
+            f"  ({config.ENV_FILE_VAR} is set: config.toml and the secrets file are not read)"
         )
     return lines
 
@@ -266,9 +266,9 @@ def secrets_set(
         False, "--stdin", help="Read the key from the first line of stdin instead of asking"
     ),
 ) -> None:
-    """Save an API key in the secret store (asks with hidden input, or reads --stdin)."""
+    """Save an API key in the secrets file (asks with hidden input, or reads --stdin)."""
     _secret(name)
-    common.refuse_in_legacy_mode("the secret store")  # before asking for a key it cannot save
+    common.refuse_in_legacy_mode("the secrets file")  # before asking for a key it cannot save
     value = common.read_secret(name, from_stdin=stdin)
     typer.echo(store_key(name, value))
     _warn_after_save(name)
@@ -294,15 +294,15 @@ def secrets_status() -> None:
 @secrets_app.command("remove")
 @guard
 def secrets_remove(name: str = _SECRET, yes: bool = _YES) -> None:
-    """Delete an API key from the secret store."""
+    """Delete an API key from the secrets file."""
     _secret(name)
-    common.refuse_in_legacy_mode("the secret store")
+    common.refuse_in_legacy_mode("the secrets file")
     if name not in config_store.saved_secret_names():
-        typer.echo(f"{name} is not in the secret store; nothing to do.")
+        typer.echo(f"{name} is not in the secrets file; nothing to do.")
         return
-    common.confirm(f"Delete {name} from the secret store?", yes=yes)
+    common.confirm(f"Delete {name} from the secrets file?", yes=yes)
     config_store.delete_secret(name)
-    typer.echo(f"{name} removed from the secret store.")
+    typer.echo(f"{name} removed from the secrets file.")
     layers, _ = common.load_layers()
     entry = layers.entries[name]
     if entry.value:

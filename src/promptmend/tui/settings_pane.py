@@ -318,7 +318,7 @@ class SettingsPane(Pane):
             Field("key-value", "Value (hidden as you type; never shown again)", secret=True),
         ]
         self.app.push_screen(
-            FormModal("Save an API key in the secret store", fields), self._save_key
+            FormModal("Save an API key in the secrets file", fields), self._save_key
         )
 
     def _save_key(self, values: dict[str, str] | None) -> None:
@@ -337,13 +337,13 @@ class SettingsPane(Pane):
     def remove_key(self, name: str | None = None) -> None:
         """Pick a saved key (``name`` first, when saved), then confirm (`secrets remove`)."""
         try:
-            common.refuse_in_legacy_mode("the secret store")
+            common.refuse_in_legacy_mode("the secrets file")
             saved = config_store.saved_secret_names()
         except EXPECTED as exc:
             self.report(error_message(exc), error=True)
             return
         if not saved:
-            self.report("The secret store holds no key; nothing to do.")
+            self.report("The secrets file holds no key; nothing to do.")
             return
         self.app.push_screen(
             FormModal(
@@ -367,7 +367,7 @@ class SettingsPane(Pane):
                 )
 
         self.app.push_screen(
-            ConfirmModal(f"Delete {name} from the secret store?", confirm="Delete"), done
+            ConfirmModal(f"Delete {name} from the secrets file?", confirm="Delete"), done
         )
 
     def _delete(self, name: str) -> str:
@@ -376,8 +376,8 @@ class SettingsPane(Pane):
         entry = layers.entries[name]
         if entry.value:
             still = common.source_label(entry.source)
-            return f"{name} removed from the secret store; it is still set, from {still}."
-        return f"{name} removed from the secret store."
+            return f"{name} removed from the secrets file; it is still set, from {still}."
+        return f"{name} removed from the secrets file."
 
     @on(Button.Pressed, "#smoke")
     def _smoke(self) -> None:

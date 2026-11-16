@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 ### Changed
+- The API keys' file is now called "the secrets file" wherever PromptMend shows it (the
+  `secrets` command's help and messages, `setup`, doctor and `config validate` findings, the
+  interface), no longer "the secret store" (#284). It is `secrets.toml`, as before; the docs
+  now say plainly that it is a plaintext file protected by its file permissions (mode 600, or
+  an access list for your account alone on Windows), not by encryption.
+- Windows: `promptmend doctor` and `config validate` now notice a `secrets.toml` whose access
+  list was widened after it was written (#284): an entry or an owner other than your account,
+  SYSTEM and Administrators. The finding says to save a key again with
+  `promptmend secrets set`, which rewrites the file private to your account. Until now the
+  access list was set and checked only when the file was written. macOS and Linux keep their
+  mode check, whose hint now names `chmod 600`.
 - Ollama and LM Studio: the default `OLLAMA_BASE_URL` is now `http://127.0.0.1:11434` and
   `LMSTUDIO_BASE_URL` `http://127.0.0.1:1234/v1`, not `localhost` (#365). Windows tries
   `localhost` as `::1` first, where these servers do not listen by default, and waits about
