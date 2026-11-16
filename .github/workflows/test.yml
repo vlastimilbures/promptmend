@@ -541,8 +541,35 @@ jobs:
           if ($failed.Count -gt 0) { throw "$($failed.Count) timing row(s) failed" }
           if ($files.Count -eq 0) { throw "_internal is empty" }
           exit 0  # not doctor's 4
+      # The runner image ships winget v1.11, which knows manifest schemas only up to 1.10.0
+      # (a 1.28.0 schema header is a warning there, and `winget validate` fails on warnings).
+      # winget-pkgs requires 1.28.0, so install a pinned winget-cli release, each download
+      # checked against the SHA-256 its GitHub Release lists.
+      - name: Update winget
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $ProgressPreference = 'SilentlyContinue'
+          $tag = "v1.29.380"
+          $base = "https://github.com/microsoft/winget-cli/releases/download/$tag"
+          $files = [ordered]@{
+            "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" = "65dea9c01ce08ee7b763366b27c0e651f97db857c11ca9b9c301826c10092f2e"
+            "DesktopAppInstaller_Dependencies.zip" = "ba875afe9d190f61218985ac0292a99d1db710bf93e13c68944ca9d89f0d82d1"
+          }
+          $dir = "$env:RUNNER_TEMP\winget-cli"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          foreach ($name in $files.Keys) {
+            Invoke-WebRequest -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 5 -Uri "$base/$name" -OutFile "$dir\$name"
+            $hash = (Get-FileHash -LiteralPath "$dir\$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($hash -ne $files[$name]) { throw "$name has SHA-256 $hash, expected $($files[$name])" }
+          }
+          Expand-Archive -LiteralPath "$dir\DesktopAppInstaller_Dependencies.zip" -DestinationPath "$dir\deps" -Force
+          $deps = @(Get-ChildItem "$dir\deps\x64" -Filter *.appx)
+          if ($deps.Count -eq 0) { throw "no x64 dependency packages in the zip" }
+          Add-AppxPackage -Path "$dir\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" -DependencyPath $deps.FullName -ForceApplicationShutdown
+          $have = (winget --version).Trim()
+          if ($have -ne $tag) { throw "winget is $have after the update, expected $tag" }
       # The manifests a release would submit to microsoft/winget-pkgs (by hand, #185),
-      # rendered for this zip and checked by the runner's own winget.
+      # rendered for this zip and checked by the winget installed above.
       - name: Validate the WinGet manifests
         run: |
           $PSNativeCommandUseErrorActionPreference = $true

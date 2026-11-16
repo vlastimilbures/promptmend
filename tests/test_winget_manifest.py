@@ -26,7 +26,7 @@ else:
 
 SHA = "ab" * 32
 VERSION = "1.2.3"
-SCHEMA = "1.10.0"
+SCHEMA = "1.28.0"
 
 
 def _parsed(**kwargs: Any) -> dict[str, dict[str, Any]]:
@@ -85,6 +85,37 @@ def test_locale_keeps_the_schema_limits() -> None:
     assert locale["Moniker"] == locale["Moniker"].lower()
     assert " " not in locale["Moniker"]
     assert installer["MinimumOSVersion"] == "10.0.17763.0"
+
+
+# The "required" lists of the 1.28.0 schemas (winget-cli schemas/JSON/manifests/v1.28.0),
+# copied here so the test stays offline, without ManifestType and ManifestVersion (the test
+# adds those). They equal 1.10.0's, so this catches a required field dropped from a template,
+# not a schema change; the CI frozen-windows job runs `winget validate` for the rest.
+REQUIRED = {
+    "version": {"PackageIdentifier", "PackageVersion", "DefaultLocale"},
+    "installer": {"PackageIdentifier", "PackageVersion", "Installers"},
+    "defaultLocale": {
+        "PackageIdentifier",
+        "PackageVersion",
+        "PackageLocale",
+        "Publisher",
+        "PackageName",
+        "License",
+        "ShortDescription",
+    },
+}
+REQUIRED_PER_INSTALLER = {"Architecture", "InstallerUrl", "InstallerSha256"}
+
+
+def test_manifests_have_the_schema_required_fields() -> None:
+    parsed = _parsed()
+    assert sorted(m["ManifestType"] for m in parsed.values()) == sorted(REQUIRED)
+    for name, manifest in parsed.items():
+        missing = REQUIRED[manifest["ManifestType"]] | {"ManifestType", "ManifestVersion"}
+        assert not missing - set(manifest), name
+    installer = parsed["vlastimilbures.PromptMend.installer.yaml"]
+    for entry in installer["Installers"]:
+        assert not REQUIRED_PER_INSTALLER - set(entry)
 
 
 def test_license_matches_the_repo() -> None:

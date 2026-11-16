@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Changed
+- Packaging: the WinGet manifests (#185) now use manifest schema 1.28.0
+  (`ManifestVersion: 1.28.0` and the matching `$schema` headers), because winget-pkgs
+  deprecated 1.10.0 and its bot refuses it. No field changed: 1.28.0 only adds optional ones.
+  CI's `frozen-windows` job now installs a pinned winget-cli (v1.29.380, SHA-256 checked)
+  before `winget validate`, since the runner's v1.11 knows schemas only up to 1.10.0.
+
 ## 0.26.0 - 2026-11-16
 
 ### Security
