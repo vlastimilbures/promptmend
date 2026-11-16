@@ -3051,7 +3051,7 @@ def test_about_says_whether_a_newer_release_exists(monkeypatch: pytest.MonkeyPat
 
     newer = update_check.UpdateStatus(update_check.AVAILABLE, "0.22.0", "x")
     hint = doctor.upgrade_hint({"channel": "uv", "editable": False})
-    assert hint.endswith(update_check._UV)
+    assert hint.endswith(update_check.upgrade_command("uv"))
     assert update_line(newer) == f"Update:    0.22.0 available: {hint}"
     assert update_line(None).endswith("unknown (pypi.org could not be asked)")
     assert update_line(update_check.UpdateStatus(update_check.OFF)).endswith(

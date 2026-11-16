@@ -143,6 +143,26 @@ def test_install_compiles_bytecode(name: str) -> None:
     assert all("--compile-bytecode" in call for call in calls), calls
 
 
+# The Windows uv installs ask for Python 3.13 or later (#348: on Windows 3.12 the interface's
+# background threads starve); the macOS one keeps uv's own choice.
+@pytest.mark.parametrize(
+    ("name", "flag"),
+    [
+        ("install.ps1", "'--python', '>=3.13'"),
+        ("install_windows.ps1", '--python ">=3.13"'),
+        ("install_macos.sh", None),
+    ],
+)
+def test_windows_installs_ask_for_python_3_13(name: str, flag: str | None) -> None:
+    text = (SCRIPTS / name).read_text("utf-8")
+    calls = re.findall(r"(?m)^\s*(?:uv tool install|\$InstallArgs = @\('tool', 'install').*$", text)
+    assert calls
+    if flag is None:
+        assert all("--python" not in call for call in calls), calls
+    else:
+        assert all(flag in call for call in calls), calls
+
+
 def test_readme_url() -> None:
     readme = (REPO / "README.md").read_text("utf-8")
     url = "https://github.com/vlastimilbures/promptmend/releases/latest/download/"
@@ -169,8 +189,8 @@ def test_install_command() -> None:
     assert '$Spec = "$Download/promptmend-$Version-py3-none-any.whl"' in code
     assert '$Constraints = "$Download/constraints.txt"' in code
     assert (
-        "$InstallArgs = @('tool', 'install', '--force', '--compile-bytecode', $Spec, "
-        "'-c', $Constraints)" in code
+        "$InstallArgs = @('tool', 'install', '--force', '--compile-bytecode', '--python', "
+        "'>=3.13', $Spec, '-c', $Constraints)" in code
     )
     assert "Assert-Native 'uv' $InstallArgs" in code
     assert "promptmend==" not in code

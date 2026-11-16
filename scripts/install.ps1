@@ -19,7 +19,8 @@
 #
 # uv: uv if missing (winget, else uv's official installer), then the wheel attached to that
 # same Release (attested, never a PyPI upload that may come later):
-# `uv tool install --force <Release>/promptmend-<version>-py3-none-any.whl -c <Release>/constraints.txt`,
+# `uv tool install --force --compile-bytecode --python >=3.13 <Release>/promptmend-<version>-py3-none-any.whl
+# -c <Release>/constraints.txt` (Python 3.13 or later, #348),
 # then `uv tool update-shell` and `promptmend doctor --no-clipboard` (the launcher stays in
 # uv's tool bin folder). A promptmend still running from uv's tool folder, or its launcher
 # there, stops it before uv runs (#356).
@@ -517,8 +518,10 @@ function Invoke-PromptMendInstall {
             $Spec = "$Download/promptmend-$Version-py3-none-any.whl"
             $Constraints = "$Download/constraints.txt"
         }
-        # Bytecode compiled now, where a wait is expected, not on the first run (#216).
-        $InstallArgs = @('tool', 'install', '--force', '--compile-bytecode', $Spec, '-c', $Constraints)
+        # Bytecode compiled now, where a wait is expected, not on the first run (#216). Python
+        # 3.13 or later: on Windows 3.12 the interface's background threads starve (#348); uv
+        # finds one or downloads it, and picks again on every --force install.
+        $InstallArgs = @('tool', 'install', '--force', '--compile-bytecode', '--python', '>=3.13', $Spec, '-c', $Constraints)
         Write-Host "Installing $Spec"
         Write-Host "with the dependency versions in $Constraints"
         if ($env:PROMPTMEND_DRY_RUN -eq '1') {

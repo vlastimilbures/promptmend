@@ -187,7 +187,8 @@ $env:PROMPTMEND_VERSION = "<version>"   # optional: another release than the new
 
 It then installs uv if it is missing (`winget install --id astral-sh.uv -e`, or uv's
 official installer where there is no winget), installs the wheel attached to the same Release
-with its `constraints.txt` and `--force` (PyPI is not used), and runs `uv tool update-shell`
+with its `constraints.txt` and `--force` (PyPI is not used) on Python 3.13 or later (from
+the release after 0.26.0 on; see [uv](#windows) below), and runs `uv tool update-shell`
 and `promptmend doctor --no-clipboard`. It says so when it replaces an editable install from a
 checkout. While a `promptmend` from uv's tool folder runs (the interface, or a trigger), or
 uv's `promptmend.exe` launcher, it stops before uv runs and changes nothing (see
@@ -199,7 +200,7 @@ uv's `promptmend.exe` launcher, it stops before uv runs and changes nothing (see
 
 ```powershell
 winget install --id astral-sh.uv -e
-uv tool install promptmend -c https://github.com/vlastimilbures/promptmend/releases/latest/download/constraints.txt
+uv tool install --python ">=3.13" promptmend -c https://github.com/vlastimilbures/promptmend/releases/latest/download/constraints.txt
 uv tool update-shell
 ```
 
@@ -207,6 +208,15 @@ Then close every Windows Terminal window and open a new one, so it finds `prompt
 [Espanso on Windows](#espanso-on-windows)). If uv fails with
 `Failed to persist temporary file … Access is denied`, add `--no-cache` (see
 [Troubleshooting, "Triggers and Espanso"](troubleshooting.md#triggers-and-espanso)).
+
+`--python ">=3.13"` makes uv use Python 3.13 or later, one it finds or one it downloads (the
+quotes keep PowerShell from reading `>` as a redirection). On Windows with Python 3.12 the
+interface's background work (its checks, the update check, the setup plan) runs far slower
+while it is open (#348); the interface works around it, but 3.13 does not have the problem.
+uv picks the Python again on every `--force` install, so the update below passes it too, as
+`install.ps1` and `install_windows.ps1` do. `promptmend doctor --json` shows the Python an
+install uses (`checks.version.data.python`). From the release after 0.26.0 on, the exe
+brings its own Python 3.14, so this does not apply to it (0.26.0's exe has 3.12).
 
 ### The exe
 
@@ -309,7 +319,7 @@ command below for your channel when a newer release exists.
 | Homebrew | `brew update && brew upgrade promptmend` |
 | One-command install (the exe, `installer` in `doctor`) | `powershell -ExecutionPolicy ByPass -c "irm https://github.com/vlastimilbures/promptmend/releases/latest/download/install.ps1 \| iex"` again; close the interface first |
 | One-command install with uv | The same command again, with `PROMPTMEND_CHANNEL=uv` set and `PROMPTMEND_VERSION` unset; close the interface first. Without `PROMPTMEND_CHANNEL=uv` it now installs the exe beside the uv install (see [Switch from a uv install](#switch-from-a-uv-install)) |
-| uv from PyPI | `uv tool install --force promptmend -c <latest constraints URL>` (below) |
+| uv from PyPI | `uv tool install --force promptmend -c <latest constraints URL>` (below); on Windows `uv tool install --force --python ">=3.13" promptmend -c <latest constraints URL>` |
 | uv from a Release wheel | The install command with the new version and `--force` |
 | WinGet (once published) | `winget upgrade vlastimilbures.PromptMend` |
 | The exe, unzipped by hand | Delete the old `%LOCALAPPDATA%\Programs\promptmend` folder and unzip the new release to the same place, or run the one-command install |
@@ -321,6 +331,13 @@ too):
 
 ```bash
 uv tool install --force promptmend -c https://github.com/vlastimilbures/promptmend/releases/latest/download/constraints.txt
+promptmend doctor
+```
+
+On Windows, ask for Python 3.13 or later (see [uv](#windows) above):
+
+```powershell
+uv tool install --force --python ">=3.13" promptmend -c https://github.com/vlastimilbures/promptmend/releases/latest/download/constraints.txt
 promptmend doctor
 ```
 

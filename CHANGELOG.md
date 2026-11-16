@@ -39,6 +39,20 @@ All notable changes to this project are documented here. The format follows
   deprecated 1.10.0 and its bot refuses it. No field changed: 1.28.0 only adds optional ones.
   CI's `frozen-windows` job now installs a pinned winget-cli (v1.29.380, SHA-256 checked)
   before `winget validate`, since the runner's v1.11 knows schemas only up to 1.10.0.
+- Windows: the exe (`promptmend-<version>-windows-x64.zip`, the one-command install's default
+  channel and the WinGet package) is now built on Python 3.14 instead of 3.12 (#348), from
+  the next release on. On Windows with Python 3.12 the interface's background work (its
+  checks, the update check, the setup plan) ran far slower while it was open. CI's
+  `frozen-windows` job builds and tests the zip on the same Python, and
+  `scripts/build_windows.py build` refuses a Python older than 3.13; the release checks the
+  exe's Python too.
+- Windows, uv channel: the one-command install with `PROMPTMEND_CHANNEL=uv` and
+  `scripts/install_windows.ps1` now install on Python 3.13 or later (`--python ">=3.13"`),
+  one uv finds or downloads (#348). uv picks the Python again on every `--force` install, so
+  the update command `promptmend doctor` and the interface's About screen give on Windows
+  carries the same option, as docs/install.md's uv section and Update table do. macOS and
+  Linux are unchanged. The interface's 3.12 workaround stays for a uv install that still
+  runs 3.12.
 
 ### Fixed
 - Settings: a malformed base URL (`OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`,
