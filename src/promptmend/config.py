@@ -478,6 +478,21 @@ def _override[T](raw: str | None, option: str, parse: Callable[[str], T]) -> T |
         raise ValueError(f"{option} must be {exc} or {KEEP}, got {safe_repr(raw)}") from None
 
 
+# PROMPT_TIMEOUT_SECONDS' built-in default; also loading_limit()'s, known without any setting.
+DEFAULT_TIMEOUT = "30"
+
+
+def loading_limit(timeout: str | None) -> float:
+    """How long improve's watchdog lets Settings.load() take, before any setting is read: the
+    call's ``--timeout`` when it is a valid number, else PROMPT_TIMEOUT_SECONDS' built-in
+    default (a bad value is reported once the settings are loaded, as before)."""
+    try:
+        seconds = _override(timeout, "--timeout", _positive_float)
+    except ValueError:
+        seconds = None
+    return float(DEFAULT_TIMEOUT) if seconds is None else seconds
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime settings resolved at instantiation, not import time."""
@@ -491,7 +506,7 @@ class Settings:
     # and prints only markers (errors, the sent-despite note, a cut-off note), so a successful
     # trigger just vanishes and the user pastes when ready.
     output: str = _env("PROMPT_OUTPUT", PASTE, _output)
-    timeout: float = _env("PROMPT_TIMEOUT_SECONDS", "30", _positive_float)
+    timeout: float = _env("PROMPT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT, _positive_float)
     # Low by default: the rewrite must reproduce fixed template wordings verbatim.
     # Empty omits the temperature from every OpenRouter, Ollama and LM Studio request (models
     # that reject the field); Anthropic and OpenAI have their own (anthropic_temperature,

@@ -23,9 +23,9 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from promptmend import factory, pipeline, recorder, smoke, trigger
+from promptmend import config, factory, pipeline, recorder, smoke, trigger
 from promptmend.cli import app
-from promptmend.config import Settings
+from promptmend.config import Settings, loading_limit
 from promptmend.gate import GatedProvider
 from promptmend.pipeline import Rewrite
 from promptmend.providers import base
@@ -701,6 +701,161 @@ def test_usage_parsed_only_when_recorded(history: bool) -> None:
         meter.begin(loopback=False, attempt=2)
 
 
+# --- The settings load (#331) ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("timeout", "limit"),
+    [(None, 30.0), ("default", 30.0), ("5", 5.0), ("0", 30.0), ("nonsense", 30.0)],
+)
+def test_loading_limit(timeout: str | None, limit: float) -> None:
+    assert loading_limit(timeout) == limit
+
+
+def test_arm_loading_words_its_marker() -> None:
+    watch, _ = _watchdog()
+    watch.arm_loading("1e300")
+    try:
+        assert watch._marker == "[promptmend: the settings did not load within 1e+300s]"
+        assert watch._timer is not None
+        assert watch._timer.interval == threading.TIMEOUT_MAX
+    finally:
+        watch.cancel()
+
+
+# A load that took long but finished: the marker says so instead of blaming the provider for
+# the whole limit, and one that used up the limit blames the provider not at all.
+@pytest.mark.parametrize(
+    ("took", "timeout", "expected"),
+    [
+        (5.0, 1.0, r"\[promptmend: the settings took 5\.\ds to load, past the 1\.0s time limit\]"),
+        (
+            3.0,
+            30.0,
+            r"\[promptmend: Ollama timed out after 30\.0s, 3\.\ds of it loading the settings\]",
+        ),
+    ],
+)
+def test_arm_after_a_slow_load(
+    monkeypatch: pytest.MonkeyPatch, took: float, timeout: float, expected: str
+) -> None:
+    import re
+
+    from promptmend import entry
+
+    monkeypatch.setattr(_Watchdog, "_fire", lambda self: None)
+    monkeypatch.setattr(entry, "_started", time.monotonic() - took)
+    watch, _ = _watchdog()
+    watch.arm(Settings(timeout=timeout), "ollama")
+    watch.cancel()
+    assert re.fullmatch(expected, watch._marker)
+
+
+# arm() retires the provisional timer: cancelled, and if it fires anyway it does nothing.
+def test_arm_retires_the_provisional_timer(exits: Exits) -> None:
+    watch, _ = _watchdog()
+    watch.arm_loading(None)
+    provisional = watch._timer
+    watch.arm(Settings(timeout=30), "ollama")
+    try:
+        assert provisional is not None
+        assert watch._timer is not provisional
+        assert provisional.finished.is_set()
+        late = threading.Timer(0, watch._fire)
+        watch._retired = late  # stands in for the provisional timer's thread
+        late.start()
+        late.join(5)
+        assert exits.codes == []
+        assert watch._state == trigger._IDLE
+    finally:
+        watch.cancel()
+
+
+# The provisional watchdog fired already: arm() leaves it be, starting no timer.
+def test_arm_after_the_provisional_fired(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
+    watch, _ = _watchdog()
+    watch.arm_loading("1")
+    provisional = watch._timer
+    watch._fire()
+    watch.arm(Settings(timeout=30), "ollama")
+    watch.cancel()
+    assert watch._timer is provisional
+    assert capfd.readouterr().out == "[promptmend: the settings did not load within 1.0s]"
+    assert exits.codes == [0]
+
+
+def _blocking_load(monkeypatch: pytest.MonkeyPatch) -> threading.Event:
+    release = threading.Event()
+
+    def load(*args: Any, **kwargs: Any) -> Settings:
+        release.wait(30)
+        raise OSError("released by the test")
+
+    monkeypatch.setattr(Settings, "load", load)
+    monkeypatch.setattr(trigger, "_hard_exit", Exits(then=release))
+    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
+    monkeypatch.setattr(config, "DEFAULT_TIMEOUT", "0.05")
+    return release
+
+
+# A load that never returns ends with the settings marker, and no history: whether there is
+# one is itself a setting.
+@pytest.mark.parametrize("command", ["improve", "persona"])
+def test_blocking_load_in_process(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    history_rows: HistoryRows,
+    stub_provider: StubProvider,
+    command: str,
+) -> None:
+    _blocking_load(monkeypatch)
+    started = time.monotonic()
+    result = runner.invoke(app, [command, "--trigger-id", "i" if command == "improve" else "p"])
+    assert time.monotonic() - started < 10
+    assert (result.exit_code, result.stdout) == (0, "")
+    assert capfd.readouterr().out == "[promptmend: the settings did not load within 0.05s]"
+    assert history_rows("operations") == []
+    assert stub_provider.calls == []
+
+
+# The call's --timeout bounds the load too, so a short one keeps its hard limit.
+def test_blocking_load_on_the_call_timeout(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    _blocking_load(monkeypatch)
+    monkeypatch.setattr(config, "DEFAULT_TIMEOUT", "1e300")
+    result = runner.invoke(app, ["improve", "--timeout", "0.05"])
+    assert (result.exit_code, result.stdout) == (0, "")
+    assert capfd.readouterr().out == "[promptmend: the settings did not load within 0.05s]"
+
+
+# A load that finished past the call's limit, then a clipboard that stalls: the marker names
+# the load, never the provider, which was not called.
+def test_slow_load_then_stall_in_process(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_provider: StubProvider,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    load = Settings.load
+
+    def slow(*args: Any, **kwargs: Any) -> Settings:
+        time.sleep(0.2)
+        return load(*args, **kwargs)
+
+    release = threading.Event()
+    monkeypatch.setattr(Settings, "load", slow)
+    monkeypatch.setattr(pipeline, "_clipboard", lambda op, *args: release.wait(30) and "x")
+    monkeypatch.setattr(trigger, "_hard_exit", Exits(then=release))
+    # The provisional timer (0.1 + 1.1 - 0.5 s) lets the 0.2 s load finish.
+    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 1.1)
+    result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "0.1"])
+    assert (result.exit_code, result.stdout) == (0, "")
+    out = capfd.readouterr().out
+    assert out.startswith("[promptmend: the settings took 0.")
+    assert out.endswith("s to load, past the 0.1s time limit]")
+    assert stub_provider.calls == []
+
+
 # --- As a real process, the way Espanso runs it --------------------------------------------
 
 _ARGS = [
@@ -779,6 +934,37 @@ def test_name_lookup_that_never_returns() -> None:
     }
     proc, seconds = _run([sys.executable, "-c", _BLOCKED_LOOKUP, *_ARGS], env)
     _assert_marker(proc, seconds)
+
+
+# A settings load that never returns (simulated in the child, with a 1 s built-in default or
+# the call's --timeout 1): the settings marker, exit 0 and empty stderr, within limit + margin.
+_BLOCKED_LOAD = """
+import sys
+import threading
+
+from promptmend import config
+
+if sys.argv[1] == "default":
+    config.DEFAULT_TIMEOUT = "1"
+config.Settings.load = classmethod(lambda cls: threading.Event().wait())
+sys.argv = ["promptmend", *sys.argv[2:]]
+from promptmend.entry import main
+
+main()
+"""
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["default", "improve"], ["option", "improve", "--timeout", "1"], ["default", "persona"]],
+    ids=["improve-default", "improve-timeout", "persona"],
+)
+def test_settings_load_that_never_returns(args: list[str]) -> None:
+    env = smoke.stub_env(9, os.environ)
+    proc, seconds = _run([sys.executable, "-c", _BLOCKED_LOAD, *args, "--trigger-id", "i"], env)
+    assert (proc.returncode, proc.stderr) == (0, b"")
+    assert proc.stdout.decode("utf-8") == "[promptmend: the settings did not load within 1.0s]"
+    assert seconds <= LIMIT + trigger.WATCHDOG_MARGIN + SLACK
 
 
 # A reply that lands before the limit prints only the rewrite.

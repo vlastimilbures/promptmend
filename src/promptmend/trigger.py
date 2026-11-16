@@ -22,7 +22,7 @@ from collections.abc import Callable
 import typer
 
 from . import recorder
-from .config import CLIPBOARD, Settings, check_provider_options
+from .config import CLIPBOARD, Settings, check_provider_options, loading_limit
 from .factory import PROVIDER_NAMES
 from .pipeline import (
     Rewrite,
@@ -54,13 +54,17 @@ def _emit(text: str, watch: _Watchdog | None = None) -> None:
 # a server trickling its reply. The provider's own timeout (providers/base.py) words the same
 # marker and records the attempt itself, but counts from its request: it ends a slow call
 # first only when start-up and reading the draft took under WATCHDOG_MARGIN -
-# _WATCHDOG_HISTORY seconds; otherwise the watchdog does. Documented in docs/usage.md.
+# _WATCHDOG_HISTORY seconds; otherwise the watchdog does. Until the settings have loaded the
+# limit is config.loading_limit() (#331). Documented in docs/usage.md.
 WATCHDOG_MARGIN = 2.0
 # Of WATCHDOG_MARGIN, the most the watchdog waits for the usage history before its marker.
 _WATCHDOG_HISTORY = 0.5
 # Of _WATCHDOG_HISTORY, what the history wait leaves for writing the marker and for a late
 # timer (Windows' run up to ~15 ms late), so the marker still lands by the deadline.
 _WATCHDOG_HEADROOM = 0.1
+# A settings load that took this many seconds or more (a healthy one takes milliseconds) is
+# named in the watchdog's timed-out marker, which would otherwise blame the provider alone.
+_SLOW_LOAD = 1.0
 # Names the call in the watchdog's marker when the provider name is not one of ours.
 _UNKNOWN_LABEL = "The call"
 # The watchdog's marker when the copy of a finished rewrite (clipboard output, --copy) has
@@ -105,7 +109,15 @@ class _Watchdog:
     """improve's hard time limit, and the one decision of what is printed: the run's
     own output (_emit()) or the watchdog's marker, exactly one of them.
 
-    arm() starts a daemon timer once the call's limit is known. When it fires, by state:
+    arm_loading() starts a provisional daemon timer before the settings load, on
+    config.loading_limit() (the call's --timeout, else the built-in default), since a stalled
+    file system can block Settings.load() too (#331). Firing, it writes only its own marker
+    ("the settings did not load within ...s") and no history: whether the history is on is
+    itself a setting, and history must not be imported when it is off. arm() retires that
+    timer and starts the real one once the call's limit is known, on the same start, so a
+    longer configured limit is unaffected; its marker names a load that took _SLOW_LOAD
+    seconds or more, and one that used up the whole limit, instead of blaming the provider.
+    A retired timer that fires anyway does nothing. When the real timer fires, by state:
 
     - idle (the run is still reading its input or calling the provider): it writes the
       timed-out marker, the sent-despite note first, cleaned, UTF-8 (a lone surrogate
@@ -140,9 +152,8 @@ class _Watchdog:
     attempt that began before the observer closed and is still blocked before its request (a
     name lookup, a connect, TLS) may send it during the history wait, or in the few
     milliseconds between the marker and the exit while this thread waits for the GIL; its
-    result is ignored. A run whose
-    settings did not load has no watchdog (no limit is known, and its marker is already on
-    its way).
+    result is ignored. A run whose settings failed to load keeps the provisional watchdog,
+    for its marker and history (none: no settings) until it is out.
     """
 
     def __init__(self, rec: recorder.Recorder, ran: Rewrite) -> None:
@@ -160,13 +171,45 @@ class _Watchdog:
         self._delivered = ("", "")
         # The final timer fired while the run was still printing (see flushed()).
         self._final_missed = False
+        # The provisional timer is armed (arm_loading()) and not yet replaced (arm()).
+        self._loading = False
+        # The provisional timer arm() replaced: if it fires anyway, it does nothing.
+        self._retired: threading.Timer | None = None
+
+    def arm_loading(self, timeout: str | None) -> None:
+        """Before Settings.load(): the provisional limit, from the call's ``timeout`` option
+        or the built-in default; nothing about the settings is known yet."""
+        limit = loading_limit(timeout)
+        self._loading = True
+        self._marker = f"[promptmend: the settings did not load within {limit}s]"
+        self._deadline = self._started + limit + WATCHDOG_MARGIN
+        self._timer = _start_timer(self._deadline - _WATCHDOG_HISTORY, self._fire)
 
     def arm(self, cfg: Settings, provider: str) -> None:
+        """The call's limit is known: replace the provisional timer with the real one, counted
+        from the same start. Does nothing once the provisional one has fired."""
         spec = PROVIDERS.get(provider)
         label = spec.label if spec is not None else _UNKNOWN_LABEL
-        self._marker = f"[promptmend: {timed_out_message(label, cfg.timeout)}]"
-        self._deadline = self._started + cfg.timeout + WATCHDOG_MARGIN
-        self._timer = _start_timer(self._deadline - _WATCHDOG_HISTORY, self._fire)
+        took = time.monotonic() - self._started
+        if took >= cfg.timeout:
+            # The call had (almost) none of its limit: never blame the provider for it.
+            text = f"the settings took {took:.1f}s to load, past the {cfg.timeout}s time limit"
+        elif took >= _SLOW_LOAD:
+            text = (
+                f"{timed_out_message(label, cfg.timeout)}, {took:.1f}s of it loading the settings"
+            )
+        else:
+            text = timed_out_message(label, cfg.timeout)
+        with self._lock:
+            if self._state == _FIRED:
+                return
+            if self._timer is not None:
+                self._timer.cancel()
+            self._retired = self._timer
+            self._loading = False
+            self._marker = f"[promptmend: {text}]"
+            self._deadline = self._started + cfg.timeout + WATCHDOG_MARGIN
+            self._timer = _start_timer(self._deadline - _WATCHDOG_HISTORY, self._fire)
 
     def cancel(self) -> None:
         for timer in (self._timer, self._final):
@@ -215,15 +258,17 @@ class _Watchdog:
     def _fire(self) -> None:
         with self._lock:
             was = self._state
-            if was in (_CLAIMED, _FIRED):
+            retired = self._retired is not None and threading.current_thread() is self._retired
+            if retired or was in (_CLAIMED, _FIRED):
                 return
             # A reply may have just arrived and the main thread be about to claim the output:
             # the marker still wins, and that rewrite is dropped (an accepted race).
             self._state = _FIRED
+            loading, text = self._loading, self._marker
         # Nothing raised here may stop the exit below.
         try:
             if was != _FLUSHED:
-                self._finish_run(delivering=was == _DELIVERING)
+                self._finish_run(text, delivering=was == _DELIVERING, loading=loading)
         finally:
             self._exit()
 
@@ -242,30 +287,32 @@ class _Watchdog:
         finally:
             self._done.set()  # reached only where _hard_exit returns or raises (the tests)
 
-    def _finish_run(self, *, delivering: bool) -> None:
+    def _finish_run(self, text: str, *, delivering: bool, loading: bool) -> None:
         """Close the run's observer (no attempt may start from here), give the history its
-        bounded write, then print the watchdog's marker; _fire() ends the process right after
-        it. The history is written first so its wait falls before the marker: after the marker
-        only an attempt already begun can still act, for the few milliseconds until this
-        thread holds the GIL again and exits (see the class docstring)."""
+        bounded write, then print the watchdog's marker ``text``; _fire() ends the process
+        right after it. The history is written first so its wait falls before the marker:
+        after the marker only an attempt already begun can still act, for the few
+        milliseconds until this thread holds the GIL again and exits (see the class
+        docstring). While ``loading`` the settings there is no history to write."""
         rec = self._rec
         with contextlib.suppress(Exception):
             rec.timed_out()
-        with contextlib.suppress(Exception):
-            rec.profile_id = self._ran.profile_id
-            rec.emitted()
-            if delivering:
-                rec.outcome = recorder.CLIPBOARD_FAILED
-            # Bounded: a locked or slow history must not keep the process past its limit.
-            writer = threading.Thread(target=rec.finish, daemon=True)
-            writer.start()
-            writer.join(max(_WATCHDOG_HISTORY - _WATCHDOG_HEADROOM, 0.0))
+        if not loading:
+            with contextlib.suppress(Exception):
+                rec.profile_id = self._ran.profile_id
+                rec.emitted()
+                if delivering:
+                    rec.outcome = recorder.CLIPBOARD_FAILED
+                # Bounded: a locked or slow history must not keep the process past its limit.
+                writer = threading.Thread(target=rec.finish, daemon=True)
+                writer.start()
+                writer.join(max(_WATCHDOG_HISTORY - _WATCHDOG_HEADROOM, 0.0))
         with contextlib.suppress(Exception):
             if delivering:
                 note, rewrite = self._delivered
                 text = note + CLIPBOARD_STALLED + rewrite
             else:
-                text = sent_despite_note(self._ran.built) + self._marker
+                text = sent_despite_note(self._ran.built) + text
             data = clean(text).replace("\n", os.linesep).encode("utf-8", errors="replace")
             # From here to _hard_exit the main thread can run only while os.write's system
             # call releases the GIL, a few milliseconds: no new request can be started (the
@@ -293,6 +340,8 @@ def _improve(
     allow_flagged: bool,
 ) -> None:
     try:
+        # A stalled file system can block the load: bounded from the start (#331).
+        watch.arm_loading(timeout)
         loaded = Settings.load()
         rec.track(loaded)
         provider = provider or loaded.provider
