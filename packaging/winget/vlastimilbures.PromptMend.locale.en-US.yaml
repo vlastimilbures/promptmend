@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.28.0.schema.json
 
 PackageIdentifier: vlastimilbures.PromptMend
 PackageVersion: __VERSION__
@@ -32,4 +32,4 @@ Tags:
 - text-expansion
 ReleaseNotesUrl: __RELEASE_NOTES_URL__
 ManifestType: defaultLocale
-ManifestVersion: 1.10.0
+ManifestVersion: 1.28.0

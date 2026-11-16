@@ -207,9 +207,12 @@ Releases are cut by `.github/workflows/release.yml`, never by hand-made tags.
 
    It writes `dist/winget/manifests/v/vlastimilbures/PromptMend/X.Y.Z/` (the version,
    installer and en-US locale manifests, with the Release asset's URL and SHA-256 and the
-   release date of the version's CHANGELOG heading), the layout of [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). CI's
+   release date of the version's CHANGELOG heading), the layout of [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs),
+   in manifest schema 1.28.0 (what winget-pkgs asks for since 2026-11; when its bot calls a version
+   deprecated, update the three templates, `SCHEMA` in `tests/test_winget_manifest.py` and,
+   if the runner's winget is too old for it, the winget-cli pin in `test.yml`). CI's
    `frozen-windows` job already ran `winget validate` and a `winget install --manifest` on
-   the same templates. Submitting them (a pull request to microsoft/winget-pkgs from the
+   the same templates, with a pinned winget-cli release. Submitting them (a pull request to microsoft/winget-pkgs from the
    owner's fork, or `wingetcreate submit`) is a manual step that only the owner approves;
    Microsoft's validation and review take days. The exe is unsigned, so if their Defender
    scan flags it (a false positive is common for PyInstaller builds), submit the zip to
