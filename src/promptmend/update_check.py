@@ -129,9 +129,12 @@ def _fetch() -> str:
     test reaches pypi.org."""
     import httpx
 
+    from .tls import verify
+
     headers = {"User-Agent": f"promptmend/{installed_version()}"}
-    # Per phase (connect, read, ...); _within() bounds the whole call.
-    with httpx.Client(timeout=httpx.Timeout(TIMEOUT)) as client:
+    # Per phase (connect, read, ...); _within() bounds the whole call. The certificate is
+    # checked against the OS trust store, as a provider call's is (#314).
+    with httpx.Client(timeout=httpx.Timeout(TIMEOUT), verify=verify(URL)) as client:
         response = client.get(URL, headers=headers)
     response.raise_for_status()
     data = response.json()

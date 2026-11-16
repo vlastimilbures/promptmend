@@ -4,7 +4,8 @@ Read-only: it runs only `espanso path config`, `espanso status` and the launcher
 (uv's receipt, else `uv tool dir`; `brew --prefix`) through deploy.run_command, reads the
 settings in repair mode, asks PyPI for the newest release at most once a day (update_check,
 unless PROMPT_UPDATE_CHECK is false), asks a loopback Ollama and LM Studio at the same time
-whether they answer (local_probe), reads the deployed match files, and reads the clipboard
+whether they answer (local_probe), builds (never uses) an https context to report what a
+certificate is checked against (tls), reads the deployed match files, and reads the clipboard
 only to report its length. The report never holds a key, the persona or clipboard text,
 since people paste it into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and
 keys are only ever added (the one exception: the previous_install check, removed by owner
@@ -31,6 +32,7 @@ from . import (
     factory,
     installed_version,
     local_probe,
+    tls,
     update_check,
 )
 from .config import ConfigLayers, secret_names
@@ -51,6 +53,7 @@ CHECK_IDS = (
     "config",
     "keys",
     "persona",
+    "gate_packs",
     "espanso",
     "match_files",
     "launcher",
@@ -60,6 +63,7 @@ CHECK_IDS = (
     "profiles",
     "folders",
     "local_servers",
+    "tls",
 )
 # Every key of each check's data, in every report: a check that could not run has them all
 # as None, so a consumer never meets a missing key.
@@ -71,6 +75,7 @@ DATA_KEYS = {
     "config": ("mode", "files", "valid", "findings"),
     "keys": ("keys", "provider", "triggers"),
     "persona": ("set", "local_only", "findings"),
+    "gate_packs": ("packs", "off"),
     "espanso": (
         "found",
         "config_dir",
@@ -101,6 +106,7 @@ DATA_KEYS = {
     "profiles": ("profile", "pro_profile", "user"),
     "folders": ("config_dir", "data_dir", "legacy", "conflicts"),
     "local_servers": ("servers", "deployed", "slow_localhost"),
+    "tls": ("verified_against", "ca_variable"),
 }
 
 
@@ -497,7 +503,7 @@ def persona_findings(settings: config.Settings) -> list[str]:
     the key patterns, as `config set` checks every value with the same scan()."""
     from .redaction import compile_extra, scan
 
-    return scan(settings.persona, compile_extra(settings.extra_patterns))
+    return scan(settings.persona, compile_extra(settings.extra_patterns), settings.gate_packs)
 
 
 def _persona_stays_local(settings: config.Settings) -> bool:
@@ -566,6 +572,36 @@ def _persona_check(settings: config.Settings, readable: bool = True) -> Check:
             why = "not used by the configured profiles"
         return Check("persona", INFO, f"matches {', '.join(findings)}; {why}", data)
     return Check("persona", OK, "PROMPT_PERSONA matches no data-protection pattern", data)
+
+
+def _packs_off(settings: config.Settings) -> list[str]:
+    from .redaction import GATE_PACKS
+
+    return [pack for pack in GATE_PACKS if pack not in settings.gate_packs]
+
+
+def gate_packs_note(settings: config.Settings) -> str | None:
+    """The note for gate packs PROMPT_GATE_PACKS leaves off (an empty value, or an empty
+    ${VAR} it expanded from), or None when every pack is on. Information, not a problem: a
+    pack may be off on purpose, but the gate then flags less."""
+    from .redaction import GATE_PACK_COVERS
+
+    off = _packs_off(settings)
+    if not off:
+        return None
+    return "; ".join(
+        f"gate pack {pack} is off (PROMPT_GATE_PACKS): the gate does not flag "
+        f"{GATE_PACK_COVERS[pack]}"
+        for pack in off
+    )
+
+
+def _gate_packs_check(settings: config.Settings) -> Check:
+    data = {"packs": list(settings.gate_packs), "off": _packs_off(settings)}
+    note = gate_packs_note(settings)
+    if note:
+        return Check("gate_packs", INFO, note, data)
+    return Check("gate_packs", OK, "every gate pack is on", data)
 
 
 def _espanso_check(runner: deploy.Runner, espanso_dir: Path | None) -> tuple[Check, Path]:
@@ -832,6 +868,32 @@ def _folders_check() -> Check:
     )
 
 
+def _tls_check() -> Check:
+    """What an https call (a cloud provider, the update check) verifies the server's
+    certificate against (#314). The fallback still verifies, so it is information, not a
+    warning; it does mean a root installed only in the OS store is not trusted."""
+    source, variable = tls.describe()
+    data = {"verified_against": source, "ca_variable": variable}
+    if variable is not None and tls.missing_bundle(variable):
+        # The path is never shown: it can name a user's folders.
+        what, other = ("file", "folder") if variable == "SSL_CERT_FILE" else ("folder", "file")
+        if tls.bundle_is_other_kind(variable):
+            message = f"{variable} names a {other}, not a {what}: https calls will fail"
+        else:
+            message = f"{variable} names a {what} that does not exist: https calls will fail"
+        return Check("tls", WARN, message, data)
+    if source == tls.CA_BUNDLE:
+        message = f"https certificates checked against the CA bundle {variable} names"
+    elif source == tls.OS_STORE:
+        message = "https certificates checked against the operating system's trust store"
+    else:
+        message = (
+            "truststore cannot load here: https certificates checked against certifi's "
+            "bundle, so a root installed only in the OS trust store is not trusted"
+        )
+    return Check("tls", OK if source != tls.CERTIFI else INFO, message, data)
+
+
 @dataclass(frozen=True)
 class Lookups:
     """This install's launcher and the deploy manifest, each looked up once, so the interface's
@@ -991,6 +1053,7 @@ def _run(
     checks += [
         timed("keys", lambda: _keys_check(layers, settings, triggers, deployed)),
         timed("persona", lambda: _persona_check(settings, _persona_readable())),
+        timed("gate_packs", lambda: _gate_packs_check(settings)),
         espanso,
     ]
     checks.append(timed("match_files", lambda: _match_check(target, compare, manifest, plan)))
@@ -1008,6 +1071,7 @@ def _run(
     checks.append(
         timed("local_servers", lambda: _local_servers_check(layers, settings, triggers, deployed))
     )
+    checks.append(timed("tls", _tls_check))
     return Report(tuple(checks))
 
 

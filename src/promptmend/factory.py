@@ -154,6 +154,7 @@ def _gate(
         inner,
         allow_override=cfg.allow_cloud_override,
         extra_patterns=compile_extra(cfg.extra_patterns),
+        packs=cfg.gate_packs,
         allow_flagged=allow_flagged,
         name=name,
         relay=not remote,

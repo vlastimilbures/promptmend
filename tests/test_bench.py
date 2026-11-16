@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
+import truststore
 from bench_module import GOOD, bench
 
 from promptmend.config import Settings
@@ -509,9 +510,9 @@ def test_call_request_shape(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch
     assert text == "ok"
     assert body["usage"] == {"cost": 0.01}
     call = fake_http.calls[0]
-    assert fake_http.client_kwargs == [
-        {"timeout": httpx.Timeout(120, connect=10), "transport": None}
-    ]
+    (kwargs,) = fake_http.client_kwargs
+    assert type(kwargs.pop("verify")) is truststore.SSLContext  # the OS trust store (#314)
+    assert kwargs == {"timeout": httpx.Timeout(120, connect=10), "transport": None}
     assert call["headers"]["X-Title"] == "promptmend-bench"
     assert call["json"]["model"] == "a/b"
     assert call["json"]["usage"] == {"include": True}

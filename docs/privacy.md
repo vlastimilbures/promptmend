@@ -79,6 +79,15 @@ in clear text. Ollama and LM Studio send no key and accept any scheme: an `http:
 another machine sends the draft and the rewrite in clear text across your network, so use
 `https://` (or an SSH tunnel) for a server you do not reach over `localhost`.
 
+An `https://` server's certificate is checked against your operating system's trust store
+(the macOS keychain, the Windows certificate store, or on Linux the CA files at OpenSSL's
+default paths), including a company root that IT installed there. When `SSL_CERT_FILE` or
+`SSL_CERT_DIR` is set in the environment Espanso passes on, that bundle is used instead (see
+[Certificates](configuration.md#certificates)). Verification is never switched off. On macOS
+and Windows the operating system may itself fetch a missing intermediate certificate, a
+revocation (OCSP) answer or a root update while it checks, over its own connection and proxy
+settings, not PromptMend's; that request carries no draft or key.
+
 What never leaves this machine: the usage history, your settings files and keys (a key only as
 the authentication header of its own provider), and anything else on the clipboard before or
 after the trigger.
@@ -133,21 +142,45 @@ No code path builds a provider that can reach another machine without the gate.
 - A draft that is a single password- or token-like word, such as a vault password left on the
   clipboard.
 - An email address next to a password (`jane@example.com:…`, `login jane@… / …`).
-- Confidentiality labels written as labels: upper case (`CONFIDENTIAL`, `RESTRICTED`, `MẬT`,
-  `NỘI BỘ`), alone on a line or opening one (`# Confidential`, `**Confidential**:`,
-  `Restricted - …`), in brackets (`[restricted]`), a classification field (`Classification:
-  Restricted`, `Độ mật: Mật`), *highly/company/strictly confidential*, *internal only*, *do not
-  distribute*, and Vietnamese *tài liệu/văn bản/thông tin mật*, *tối mật*, *lưu hành nội bộ*.
-  The words in prose ("output restricted to 5 bullets", "confidential information", *bảo mật*,
-  *mật độ*, *mật khẩu*) are not flagged.
-- National ID numbers, in Vietnamese formats only today: a 12-digit CCCD with a valid province and century code (not digits
-  inside an AWS ARN), and a 9-digit number next to CMND, CCCD, CMT, *chứng minh nhân dân/thư*,
-  *căn cước*, *hộ chiếu*, *passport*, *national ID* or *ID card*.
+- Confidentiality labels written as labels: upper case (`CONFIDENTIAL`, `RESTRICTED`), alone
+  on a line or opening one (`# Confidential`, `**Confidential**:`, `Restricted - …`), in
+  brackets (`[restricted]`), a classification field (`Classification: Restricted`),
+  *highly/company/strictly confidential*, *internal only* and *do not distribute*. The words in
+  prose ("output restricted to 5 bullets", "confidential information") are not flagged.
+- National ID numbers and confidentiality labels in the formats of a [pattern
+  pack](#pattern-packs) that is on (the `vn` pack, on by default).
 - Your own patterns from `PROMPT_EXTRA_PATTERNS` (below).
 
 The draft is also scanned in a normalised form, so no-break or zero-width spaces, soft
 hyphens, variation selectors, Hangul fillers and fullwidth digits cannot split a card number or
 key.
+
+### Pattern packs
+
+Patterns that fit one country's documents are grouped into packs, which `PROMPT_GATE_PACKS`
+turns on (a comma-separated list; default `vn`):
+
+- `vn` (Vietnam): national ID numbers, a 12-digit CCCD with a valid province and century code
+  (not digits inside an AWS ARN) and a 9-digit number next to CMND, CCCD, CMT, *chứng minh
+  nhân dân/thư*, *căn cước*, *hộ chiếu*, *passport*, *national ID* or *ID card*; and
+  confidentiality labels: upper case `MẬT`, `TỐI MẬT`, `NỘI BỘ`, the same label shapes as above
+  (`# Nội bộ`, `Mật:`, `Độ mật: Mật`), *tài liệu/văn bản/thông tin mật*, *tối mật* and *lưu
+  hành nội bộ*. The words in prose (*bảo mật*, *mật độ*, *mật khẩu*) are not flagged.
+
+A pack's findings keep their names (`vietnam_id_12`, `vietnam_id_9`, `confidential_label`),
+and passwords in Vietnamese (`mật khẩu là …`) are flagged whatever the setting.
+
+To turn the packs off, set the list empty:
+
+```bash
+promptmend config set PROMPT_GATE_PACKS ""
+```
+
+This weakens the gate: a draft holding a Vietnamese ID number or label then reaches a cloud
+model without a block. Do it only where those formats never occur in your drafts. An unknown
+pack name is rejected when settings load, like any other bad value. `doctor` (`gate_packs`)
+and `config validate` note a pack that is off. `doctor`, `config
+validate` and the interface scan the persona with the same packs.
 
 ### Your own patterns
 

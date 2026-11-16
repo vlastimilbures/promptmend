@@ -273,7 +273,9 @@ HISTORY_MODULES = ("promptmend.history", "sqlite3", "_sqlite3")
 
 # Modules the trigger scenarios add to a bare interpreter, macOS: 307 on Python 3.12 and 306 on
 # 3.14 with the usage history on, 296 on both with it off (see "Trigger start-up budget" in
-# CONTRIBUTING.md), +3 since #281 (sanitize, pipeline, trigger). A coarse ceiling, not a
+# CONTRIBUTING.md), +3 since #281 (sanitize, pipeline, trigger), +19 since #314 (truststore
+# and the ctypes, plistlib and subprocess it loads on macOS for an https call: 323 -> 342 on
+# 3.13 with the history on, 304 -> 323 off; about 4.5 ms). A coarse ceiling, not a
 # timing: a new dependency tree on the trigger path crosses it; ordinary growth does not.
 MODULE_CEILING = 400
 
@@ -755,3 +757,30 @@ def test_management_commands_do_not_import_the_interface(tmp_path: Path) -> None
     assert "promptmend.commands.ui" in loaded  # --help listed it, so the guard is real
     for module in ("textual", "promptmend.tui"):
         assert not [m for m in loaded if m == module or m.startswith(module + ".")], module
+
+
+# The https call's TLS context (#314, tls.verify()) adds no Windows extension module of its
+# own: truststore's ctypes needs _ctypes, which Typer has loaded there already. Measured after
+# typer and httpx (the call loads both first). macOS loads pyexpat for it (plistlib), which is
+# linked into the interpreter there, so the check runs on Windows only.
+_TLS_RUN = """
+import sys
+out = sys.argv[1]
+import typer
+import httpx
+started = set(sys.modules)
+from promptmend import tls
+context = tls.verify("https://x")
+import json
+from pathlib import Path
+added = sorted(set(sys.modules) - started)
+Path(out).write_text(json.dumps({"added": added, "os_store": context is not True}), "utf-8")
+"""
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows extension modules")
+def test_tls_context_adds_no_windows_extension(tmp_path: Path) -> None:
+    _, data = _startup(_TLS_RUN, tmp_path)
+    assert data["os_store"] is True
+    assert "truststore" in data["added"]
+    assert _loaded(data["added"], WINDOWS_EXTENSIONS) == []

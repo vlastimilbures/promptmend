@@ -307,6 +307,18 @@ measures what `import typer` loads of them in a fresh interpreter (held to
 and for `persona`, and checks with Typer imported first that the trigger path adds none;
 `PERSONA_CEILING` and `IMPROVE_CEILING` are 175.
 
+Since #314 (2026-11-16, same machine, Python 3.13) an https call builds its TLS context with
+truststore (the OS trust store) inside `tls.verify()`, after the counts above are taken, so
+they are unchanged. The full guarded trigger run adds 19 modules for it (323 to 342 with the
+history on, 304 to 323 off; `MODULE_CEILING` stays 400): truststore's four and, on macOS,
+ctypes, ctypes.util and plistlib (with pyexpat) for the Security framework, about 4.5 ms
+cumulative under `-X importtime`. On Windows it loads ctypes and ctypes.wintypes, whose
+`_ctypes` Typer has already loaded. httpx still imports certifi for every client it builds
+(`create_ssl_context()` imports it first), so certifi stays loaded: it verifies the call's
+server only in the fallback, but still an `https://` proxy's own certificate (httpcore's
+`default_ssl_context()`, since httpx passes no `proxy_ssl_context`), so a certifi advisory
+can still matter at run time.
+
 On Windows (#306), every CI run (each pull request and each push to `main`) times both
 channels on `windows-latest` with `promptmend doctor --timing` and writes the table to the job
 summary, with whether Defender's real-time protection was on as the runner reports it: the
@@ -406,6 +418,7 @@ promptmend/
 │   ├── clipboard_guard.py        refuses password-manager (concealed) clipboard items
 │   ├── redaction.py              the gate's sensitive-content patterns
 │   ├── sanitize.py               clean(): strips control and invisible characters
+│   ├── tls.py                    verify(): https certificates against the OS trust store
 │   ├── history.py                local usage history (SQLite, metadata only, fail-open)
 │   ├── recorder.py               records each improve/persona run in the usage history
 │   ├── prompt_builder.py         loads built-in and user profiles, fills in the persona rule

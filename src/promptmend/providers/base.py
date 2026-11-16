@@ -13,6 +13,8 @@ from ..redaction import safe_repr, scan
 from .usage import Meter
 
 if TYPE_CHECKING:
+    import ssl
+
     import httpx
 
 
@@ -82,14 +84,20 @@ def error_detail(body: object) -> str:
     message = error.get("message") if isinstance(error, dict) else error
     if not isinstance(message, str):
         return ""
+    return _one_line(message, SERVER_MESSAGE_MAX)
+
+
+def _one_line(message: str, limit: int) -> str:
+    """``message`` as one short printable line of at most ``limit`` characters, or "" when it
+    matches a sensitive pattern."""
     # Bounded before the scan, which then sees everything that could be shown.
-    words = " ".join(message[: SERVER_MESSAGE_MAX * 4].split())
+    words = " ".join(message[: limit * 4].split())
     # Drops control, bidi, zero-width and tag characters (Unicode "Other"/"Separator").
     text = "".join(char for char in words if char.isprintable())
     if scan(text):
         return ""
-    if len(text) > SERVER_MESSAGE_MAX:
-        return text[: SERVER_MESSAGE_MAX - 1] + "…"
+    if len(text) > limit:
+        return text[: limit - 1] + "…"
     return text
 
 
@@ -195,6 +203,9 @@ def post_json(
     the rest of the environment (SSL_CERT_FILE for a local https server) in effect. Other
     URLs keep using the proxy, which corporate networks need.
 
+    An https certificate is checked against the operating system's trust store unless
+    SSL_CERT_FILE or SSL_CERT_DIR names a bundle (tls.verify(), #314); never unverified.
+
     With a ``meter``, every attempt, failed ones included, reports one AttemptUsage to its
     observer before this returns or raises, so usage the API charged for is kept even when
     the caller then fails to finalise the content. The observer's own time is not charged
@@ -272,20 +283,52 @@ def timed_out_message(label: str, timeout: float) -> str:
     return f"{label} timed out after {timeout}s"
 
 
-def _tls_failure(exc: BaseException) -> bool:
-    """Whether a certificate failure (``ssl.SSLCertVerificationError``: an untrusted or
-    self-signed certificate, a hostname mismatch) caused ``exc``. Other TLS errors, such as
-    a handshake the network dropped (``SSLEOFError``), may pass on a second try."""
+def _reason(text: str, limit: int) -> str:
+    """A transport error's text, which can quote what the peer sent (a garbage status line, a
+    certificate name), as _one_line() makes it and without brackets, so it cannot close the
+    marker or fake another one."""
+    return _one_line(text.replace("[", " ").replace("]", " "), limit)
+
+
+def _failed(label: str, exc: BaseException) -> str:
+    reason = _reason(str(exc), SERVER_MESSAGE_MAX)
+    return f"{label} request failed" + (f": {reason}" if reason else "")
+
+
+# The longest certificate-failure reason a marker repeats: the OS words it, partly from what
+# the server's certificate says, so it is kept short and stripped like a server message.
+TLS_REASON_MAX = 80
+
+
+def _tls_failure(exc: BaseException) -> ssl.SSLCertVerificationError | None:
+    """The certificate failure (``ssl.SSLCertVerificationError``: an untrusted or
+    self-signed certificate, a hostname mismatch) that caused ``exc``, if one did. Other TLS
+    errors, such as a handshake the network dropped (``SSLEOFError``), may pass on a second
+    try."""
     import ssl  # httpx has loaded it already
 
     seen: set[int] = set()
     cause: BaseException | None = exc
     while cause is not None and id(cause) not in seen:
         if isinstance(cause, ssl.SSLCertVerificationError):
-            return True
+            return cause
         seen.add(id(cause))
         cause = cause.__cause__ or cause.__context__
-    return False
+    return None
+
+
+def tls_message(label: str, error: ssl.SSLCertVerificationError) -> str:
+    """A certificate failure in our own words, with at most the reason (OpenSSL's
+    ``verify_message``, else truststore's single argument) as one short, printable, scanned
+    line without brackets, so a hostile certificate name cannot shape the marker."""
+    reason = getattr(error, "verify_message", None)
+    if not isinstance(reason, str) or not reason:
+        reason = next((arg for arg in error.args if isinstance(arg, str)), "")
+    reason = _reason(reason, TLS_REASON_MAX)
+    return (
+        f"{label}: the server's certificate is not trusted by this computer "
+        f"(TLS verification failed{': ' + reason if reason else ''}); see `promptmend doctor`"
+    )
 
 
 def _exchange(
@@ -302,14 +345,17 @@ def _exchange(
     trickles bytes is cut off here once the budget is spent."""
     import httpx
 
-    transport = httpx.HTTPTransport() if is_loopback(url) else None
+    from ..tls import verify
+
+    trust = verify(url)
+    transport = httpx.HTTPTransport(verify=trust) if is_loopback(url) else None
     limits = httpx.Timeout(budget, connect=min(budget, CONNECT_TIMEOUT_MAX))
     stop_at = time.monotonic() + budget
     timed_out = ProviderError(timed_out_message(label, timeout), transient=True)
     content = bytearray()
     try:
         with (
-            httpx.Client(timeout=limits, transport=transport) as client,
+            httpx.Client(timeout=limits, transport=transport, verify=trust) as client,
             client.stream("POST", url, json=json, headers=headers) as response,
         ):
             outcome.status = response.status_code
@@ -334,16 +380,17 @@ def _exchange(
     except httpx.ConnectError as exc:
         outcome.error_kind = "refused"
         tls = _tls_failure(exc)
-        refused = ProviderError(f"{label} request failed: {exc}", transient=not tls)
+        message = _failed(label, exc) if tls is None else tls_message(label, tls)
+        refused = ProviderError(message, transient=tls is None)
         refused.__cause__ = exc  # kept when post_json re-raises it after the retry
         # A local server that refuses the connection is not running, and a certificate
         # failure fails the same way again: a second try a second later only delays the marker.
-        if is_loopback(url) or tls:
+        if is_loopback(url) or tls is not None:
             raise refused from exc
         raise _Retry(refused) from exc
     except httpx.HTTPError as exc:
         outcome.error_kind = "transport"
-        raise ProviderError(f"{label} request failed: {exc}") from exc
+        raise ProviderError(_failed(label, exc)) from exc
 
     try:
         body: object = jsonlib.loads(content)
