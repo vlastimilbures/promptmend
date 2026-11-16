@@ -462,7 +462,7 @@ def test_a_given_plan_counts_only_for_the_same_comparison(tmp_path: Path) -> Non
     try:
         link.symlink_to(espanso, target_is_directory=True)
     except OSError:
-        return  # no symlinks here (Windows without the privilege)
+        pytest.skip("no symlinks here (Windows without the privilege)")
     planned = deploy.plan(deploy.resolved(link), text, manifest)
     planned.steps[0].state = "marked"
     assert "marked" in files(planned, link)
@@ -534,9 +534,10 @@ def test_match_files_in_sync_edited_and_unknown(espanso: Path) -> None:
 def test_match_files_through_a_linked_espanso_folder(
     tmp_path: Path, espanso: Path, no_clipboard: None
 ) -> None:
-    """#339: a deploy keys its manifest by the resolved folder, so doctor given the linked
-    folder (as `espanso path config` prints it) still finds its files deployed, and keeps
-    the folder as printed."""
+    """#339: a deploy keys its manifest by the resolved folder, and doctor given the linked
+    folder (as `espanso path config` prints it) keeps the folder as printed. The edited
+    file is the regression check: before, doctor missed its manifest entry and called it
+    `foreign`, not `modified` (unedited files were `in sync` either way)."""
     link = tmp_path / "linked-espanso"
     try:
         link.symlink_to(espanso, target_is_directory=True)
@@ -552,6 +553,22 @@ def test_match_files_through_a_linked_espanso_folder(
     target.write_text(target.read_text("utf-8") + "# mine\n", "utf-8")
     report = doctor.run(espanso_dir=link, launcher=LAUNCHER, runner=_runner())
     states = {f["name"]: f["state"] for f in _status("match_files", report).data["files"]}
+    assert states.pop("prompts-core.yml") == deploy.MODIFIED
+    assert set(states.values()) == {deploy.IN_SYNC}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows paths ignore case")
+def test_match_files_through_another_spelling_on_windows(espanso: Path, no_clipboard: None) -> None:
+    """#339: the Espanso folder spelled in another case still finds the manifest entries a
+    deploy keyed by the resolved folder, so an edited file is `modified`, not `foreign`."""
+    deploy.apply(deploy.plan(espanso, LAUNCHER, deploy.Manifest.load()))
+    target = espanso / "match" / "prompts-core.yml"
+    target.write_text(target.read_text("utf-8") + "# mine\n", "utf-8")
+    spelled = Path(str(espanso).upper())
+    report = doctor.run(espanso_dir=spelled, launcher=LAUNCHER, runner=_runner())
+    check = _status("match_files", report)
+    assert check.data["espanso_dir"] == str(spelled)
+    states = {f["name"]: f["state"] for f in check.data["files"]}
     assert states.pop("prompts-core.yml") == deploy.MODIFIED
     assert set(states.values()) == {deploy.IN_SYNC}
 
