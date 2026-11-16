@@ -203,7 +203,7 @@ OpenAI's own API, called directly (the commented-out `-io-` trigger, `--provider
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Server address |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Server address |
 | `OLLAMA_MODEL` | `qwen3:8b` | Model; a `cloud`-tagged model counts as a cloud call |
 | `OLLAMA_THINK` | `false` | Keep reasoning off for thinking models |
 | `OLLAMA_NUM_CTX` | *(empty)* | Context window in tokens, sent as `options.num_ctx`; empty sends nothing, so Ollama's own applies. See [below](#ollama-context-window) |
@@ -212,8 +212,15 @@ OpenAI's own API, called directly (the commented-out `-io-` trigger, `--provider
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `LMSTUDIO_BASE_URL` | `http://localhost:1234/v1` | Server address |
+| `LMSTUDIO_BASE_URL` | `http://127.0.0.1:1234/v1` | Server address |
 | `LMSTUDIO_MODEL` | `local-model` | Model |
+
+Both defaults name `127.0.0.1`, the address Ollama and LM Studio listen on by default.
+`localhost` works too, but Windows tries it as `::1` first and waits about 2 s for that
+refused connect on every call, so on Windows `promptmend doctor` (`local_servers`) names a
+`localhost` URL with the command that fixes it, such as
+`promptmend config set OLLAMA_BASE_URL http://127.0.0.1:11434`. A server that listens on `::1`
+only needs its URL set to `http://[::1]:<port>`.
 
 ### Privacy and gate
 

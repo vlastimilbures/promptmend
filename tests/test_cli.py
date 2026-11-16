@@ -285,7 +285,7 @@ def test_local_only_allows_local_trigger(
         "--provider", "ollama", "--profile", "general", "--source", "argument", "--text", "d"
     )
     assert result.stdout == "improved"
-    assert [str(r.url) for r in fake_http.requests] == ["http://localhost:11434/api/chat"]
+    assert [str(r.url) for r in fake_http.requests] == ["http://127.0.0.1:11434/api/chat"]
 
 
 # Any other exception is still caught and marked as unexpected, never a traceback.

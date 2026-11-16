@@ -381,7 +381,7 @@ def _servers(monkeypatch: pytest.MonkeyPatch, answering: set[str]) -> doctor.Che
     settings = ConfigLayers.resolve(strict=False).settings()
     check = doctor._local_servers_check(settings, assets.triggers(), True)
     # Asked at the same time (#315), so in either order.
-    assert sorted(asked) == ["http://localhost:11434/api/tags", "http://localhost:1234/v1/models"]
+    assert sorted(asked) == ["http://127.0.0.1:11434/api/tags", "http://127.0.0.1:1234/v1/models"]
     return check
 
 
@@ -500,6 +500,53 @@ def test_local_servers_never_ask_another_host(monkeypatch: pytest.MonkeyPatch) -
     assert check.data["servers"]["ollama"]["answers"] is None
     none = doctor._local_servers_check(settings, [], False)
     assert none.message == "no trigger uses Ollama or LM Studio"
+
+
+def test_local_servers_on_localhost_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#365: Windows tries localhost as ::1 first, about 2 s per call to a server on 127.0.0.1
+    only; the check says so, and how to set the URL, without warning."""
+    from promptmend import local_probe
+
+    monkeypatch.setattr(local_probe, "_get", lambda url: None)
+    triggers = assets.triggers()
+    defaults = ConfigLayers.resolve(strict=False).settings()
+    quiet = doctor._local_servers_check(defaults, triggers, True, "win32")
+    assert quiet.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
+    assert quiet.data["slow_localhost"] == []
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434/")
+    monkeypatch.setenv("LMSTUDIO_BASE_URL", "http://user:pw@LOCALHOST:1234/v1")
+    settings = ConfigLayers.resolve(strict=False).settings()
+    check = doctor._local_servers_check(settings, triggers, True, "win32")
+    assert check.status == doctor.INFO
+    assert check.message == (
+        "Ollama answers (-il-); on Windows each -il- call may wait about 2 s for ::1 at "
+        "localhost: set OLLAMA_BASE_URL to http://127.0.0.1:11434/ "
+        "(`promptmend config set OLLAMA_BASE_URL http://127.0.0.1:11434/`); "
+        "LM Studio answers (-ilm-); on Windows each -ilm- call may wait about 2 s for ::1 at "
+        "localhost: use 127.0.0.1 for localhost in LMSTUDIO_BASE_URL"
+    )
+    assert "pw" not in check.message
+    assert check.data["slow_localhost"] == ["OLLAMA_BASE_URL", "LMSTUDIO_BASE_URL"]
+    assert doctor.Report((check,)).to_json()["checks"]["local_servers"]["data"][
+        "slow_localhost"
+    ] == ["OLLAMA_BASE_URL", "LMSTUDIO_BASE_URL"]
+    # Elsewhere localhost costs nothing.
+    other = doctor._local_servers_check(settings, triggers, True, "darwin")
+    assert other.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
+    assert other.data["slow_localhost"] == []
+
+
+def test_localhost_note_quotes_no_odd_url() -> None:
+    names = ["-il-"]
+    for url in ("http://localhost:99999", "http://localhost:11434/?k=v", "http://localhost"):
+        note = doctor._localhost_note("OLLAMA_BASE_URL", url, names)
+        if url == "http://localhost":
+            assert note.endswith(
+                "set OLLAMA_BASE_URL to http://127.0.0.1 "
+                "(`promptmend config set OLLAMA_BASE_URL http://127.0.0.1`)"
+            )
+        else:
+            assert note.endswith(": use 127.0.0.1 for localhost in OLLAMA_BASE_URL"), url
 
 
 def test_cli_path_names_the_windows_exe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

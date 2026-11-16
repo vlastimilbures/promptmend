@@ -100,7 +100,7 @@ DATA_KEYS = {
     "clipboard": ("read", "length", "concealed", "error"),
     "profiles": ("profile", "pro_profile", "user"),
     "folders": ("config_dir", "data_dir", "legacy", "conflicts"),
-    "local_servers": ("servers", "deployed"),
+    "local_servers": ("servers", "deployed", "slow_localhost"),
 }
 
 
@@ -349,13 +349,18 @@ def _keys_check(
 
 
 def _local_servers_check(
-    settings: config.Settings, triggers: list[assets.Trigger], deployed: bool
+    settings: config.Settings,
+    triggers: list[assets.Trigger],
+    deployed: bool,
+    plat: str = sys.platform,
 ) -> Check:
     """Whether the Ollama and LM Studio the local triggers need answer. The triggers
-    stay deployed either way; this says what typing one would need. Never fails or warns."""
+    stay deployed either way; this says what typing one would need. Never fails or warns:
+    a ``localhost`` URL on Windows still works, so its note (#365) is only advice."""
     used = _rewrites(triggers, settings)
     servers: dict[str, dict[str, Any]] = {}
     notes = []
+    slow: list[str] = []
     asked = {
         provider: spec.url(settings).rstrip("/") + spec.probe_path
         for provider, spec in PROVIDERS.items()
@@ -374,11 +379,39 @@ def _local_servers_check(
             notes.append(f"{spec.label} answers ({', '.join(names)})")
         else:
             notes.append(f"{', '.join(names)} needs {spec.label}: no answer at {spec.url_setting}")
-    data = {"servers": servers, "deployed": deployed}
+        if plat == "win32" and _on_localhost(spec.url(settings)):
+            slow.append(spec.url_setting)
+            notes.append(_localhost_note(spec.url_setting, spec.url(settings), names))
+    data = {"servers": servers, "deployed": deployed, "slow_localhost": slow}
     if not notes:
         probed = " or ".join(s.label for s in PROVIDERS.values() if s.probe_path)
         return Check("local_servers", INFO, f"no trigger uses {probed}", data)
     return Check("local_servers", INFO, "; ".join(notes), data)
+
+
+def _on_localhost(url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    return urlsplit(url).hostname == "localhost"
+
+
+def _localhost_note(setting: str, url: str, names: list[str]) -> str:
+    """Windows tries ``localhost`` as ::1 first and retries a refused connect for about 2 s,
+    and Ollama and LM Studio listen on 127.0.0.1 only by default (#365). A URL with a user
+    name, password, query or fragment is not quoted back."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    why = f"on Windows each {', '.join(names)} call may wait about 2 s for ::1 at localhost"
+    generic = f"{why}: use 127.0.0.1 for localhost in {setting}"
+    if "@" in parts.netloc or parts.query or parts.fragment:
+        return generic
+    try:
+        port = parts.port
+    except ValueError:
+        return generic
+    fixed = parts._replace(netloc="127.0.0.1" + (f":{port}" if port else "")).geturl()
+    return f"{why}: set {setting} to {fixed} (`promptmend config set {setting} {fixed}`)"
 
 
 def _probe_all(urls: Mapping[str, str]) -> dict[str, bool | None]:
