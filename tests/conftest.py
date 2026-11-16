@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import faulthandler
 import json
+import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,6 +16,21 @@ from promptmend.providers import base
 
 if TYPE_CHECKING:
     from promptmend.history import HistoryStore
+
+# How long the interpreter may take to exit after the summary (#375).
+_EXIT_LIMIT = 60
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """#375: after the summary, the interpreter's exit joins every thread pool's threads
+    (shutdown_default_executor, concurrent.futures' exit hook); one that never ends, a
+    Textual thread worker say, would hang the CI job where no per-test limit reaches. A
+    minute later every thread's stack is dumped and the process exits 1; a clean exit
+    cancels the dump."""
+    if sys.__stderr__ is not None:
+        faulthandler.dump_traceback_later(_EXIT_LIMIT, exit=True, file=sys.__stderr__)
+
 
 # history_rows(table) lists that table of the per-test usage history as dicts.
 HistoryRows = Callable[[str], list[dict[str, Any]]]
