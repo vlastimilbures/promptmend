@@ -177,13 +177,13 @@ def test_bounded_patterns_flag_what_unbounded_ones_did(text: str, name: str) -> 
     assert name in scan(f"use {text} please")
 
 
-# Every repeat in a built-in pattern has an upper bound, as the comment on _PATTERNS says:
+# Every repeat in a built-in pattern has an upper bound, as the comment on _RULES says:
 # an unbounded one is tried at every start position and makes a long run quadratic.
 def test_builtin_patterns_have_no_unbounded_repeat() -> None:
     import re._constants as sre
     import re._parser as parser
 
-    from promptmend.redaction import _PATTERNS
+    from promptmend.redaction import _RULES
 
     def unbounded(items: Iterable[tuple[Any, Any]]) -> bool:
         for op, av in items:
@@ -199,7 +199,9 @@ def test_builtin_patterns_have_no_unbounded_repeat() -> None:
                 return True
         return False
 
-    flagged = [n for n, p in _PATTERNS.items() if unbounded(parser.parse(p.pattern, p.flags))]
+    flagged = [
+        r.name for r in _RULES if unbounded(parser.parse(r.pattern.pattern, r.pattern.flags))
+    ]
     assert flagged == []
 
 

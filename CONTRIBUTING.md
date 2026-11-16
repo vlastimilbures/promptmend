@@ -149,7 +149,8 @@ Releases are cut by `.github/workflows/release.yml`, never by hand-made tags.
    `constraints.txt` (`uv export --frozen --no-dev --no-emit-project --no-hashes`), installs the
    wheel with those constraints into a clean venv on macOS, Windows and Linux and runs
    `scripts/check_wheel.py --constraints`, builds `promptmend-X.Y.Z-windows-x64.zip` on Windows
-   (`scripts/build_windows.py build`, #185) and, in the same job, renders `install.ps1` with the
+   (`scripts/build_windows.py build`, #185, on Python 3.14 as CI's `frozen-windows` job; the
+   script refuses anything below 3.13, #348) and, in the same job, renders `install.ps1` with the
    version and that zip's SHA-256 (`scripts/render_installer.py --zip`; the release job checks
    the hash again), then attests the files, creates the annotated tag
    `vX.Y.Z` and publishes the Release with that CHANGELOG section as its notes. *dry-run* is on by
@@ -331,12 +332,14 @@ The rows below come from the CI run of 2026-11-15
 ([run 43705361645](https://github.com/vlastimilbures/promptmend/actions/runs/43705361645)).
 Defender real-time protection was **off** on both runners, so they are a Windows baseline with
 no scanning, not the endpoint-scanning case; for that, the owner's laptop numbers (#304) count.
+The exe in that run was built on Python 3.12 and both uv installs ran 3.12; the zip is built
+on 3.14 since #348, so the exe row is re-measured from the first CI run with a 3.14 build.
 
 | Channel | `--version`, cold / warm ms | `persona`, cold / warm ms | `improve` (`-i-`), cold / warm ms | `_internal` |
 | --- | --- | --- | --- | --- |
 | uv tool install, through the shim | 64 / 63 | 99 / 100 | 262 / 257 | n/a |
 | uv tool install, through the interpreter | 106 / 106 | 94 / 93 | 260 / 252 | n/a |
-| Frozen exe (the Windows zip) | 121 / 120 | 179 / 178 | 477 / 476 | 108 files, 20.5 MB |
+| Frozen exe (the Windows zip, built on Python 3.12) | 121 / 120 | 179 / 178 | 477 / 476 | 108 files, 20.5 MB |
 
 On that runner the frozen exe is slower than the uv install (`improve` 477 against 262 ms), and
 the uv shim adds little over the interpreter. The uv job's `import promptmend.tui.app` took

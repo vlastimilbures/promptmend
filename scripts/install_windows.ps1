@@ -66,12 +66,13 @@ if ($Running.Count -gt 0) {
 
 # `uv tool install` ignores uv.lock, so pass the locked versions as constraints (#34). The
 # tool gets its own isolated environment; dev dependencies are not needed to deploy. Bytecode is
-# compiled now, where a wait is expected, not on the first run (#216).
+# compiled now, where a wait is expected, not on the first run (#216). Python 3.13 or later:
+# on Windows 3.12 the interface's background threads starve (#348).
 $Constraints = [System.IO.Path]::GetTempFileName()
 try {
     uv export --frozen --no-dev --no-emit-project --no-hashes --quiet -o $Constraints
     Assert-Exit "uv export"
-    uv tool install --editable . --force --compile-bytecode -c $Constraints
+    uv tool install --editable . --force --compile-bytecode --python ">=3.13" -c $Constraints
     Assert-Exit "uv tool install"
 } finally {
     Remove-Item $Constraints -ErrorAction SilentlyContinue

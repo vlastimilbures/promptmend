@@ -126,10 +126,12 @@ jobs:
         with:
           persist-credentials: false
       # No cache in a workflow that publishes: a poisoned cache could reach the artifacts.
+      # Python 3.14, as test.yml's frozen-windows job: on Windows 3.12 background threads
+      # starve while the interface runs (#348); build_windows.py refuses anything below 3.13.
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           enable-cache: false
       - name: Build the zip
         run: |
@@ -147,6 +149,14 @@ jobs:
           Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\frozen"
           $installed = (& "$env:RUNNER_TEMP\frozen\promptmend\promptmend.exe" --version).Trim()
           if ($installed -ne $env:VERSION) { throw "the exe says $installed, expected $env:VERSION" }
+          # The Python the zip brings (#348), as test.yml's frozen-windows job checks it.
+          # doctor exits 4 here (no key, no Espanso); only its report matters.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $report = (& "$env:RUNNER_TEMP\frozen\promptmend\promptmend.exe" doctor --no-clipboard --json) | Out-String | ConvertFrom-Json
+          if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE" }
+          $python = "$($report.checks.version.data.python)"
+          if (-not $python.StartsWith("3.14.")) { throw "the exe runs Python $python, not 3.14 (#348)" }
+          exit 0  # not doctor's 4
       # The Windows installer (#186), with this release's version and the SHA-256 of the zip
       # just built in place of its placeholders, so `releases/latest/download/install.ps1`
       # installs exactly the release it came from and refuses any other zip (#185). Rendered

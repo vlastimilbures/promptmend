@@ -40,6 +40,11 @@ _UV = (
     "uv tool install --force promptmend -c "
     "https://github.com/vlastimilbures/promptmend/releases/latest/download/constraints.txt"
 )
+# On Windows the update asks uv for Python 3.13 or later, as install.ps1 and
+# install_windows.ps1 do: a --force install picks its Python again, and on Windows 3.12 the
+# interface's background threads starve (#348). The quotes keep PowerShell from reading `>`
+# as a redirection.
+_UV_WIN32 = _UV.replace("--force ", '--force --python ">=3.13" ', 1)
 # The Windows one-command install (docs/install.md, README); its default channel installs the
 # frozen exe, and running it again updates it in place.
 INSTALL_PS1 = (
@@ -83,6 +88,8 @@ def upgrade_command(channel: str, platform: str = sys.platform) -> str:
     """How to update an install of ``channel`` (doctor's install check)."""
     if channel == "editable":
         return _CHECKOUT.get(platform, _CHECKOUT_ELSE)
+    if channel == "uv" and platform == "win32":
+        return _UV_WIN32
     return UPGRADE_COMMANDS.get(channel, "see docs/install.md")
 
 

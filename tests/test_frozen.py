@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -312,13 +313,53 @@ def test_build_runs_pyinstaller_then_zips(tmp_path: Path, monkeypatch: pytest.Mo
         _onedir(tmp_path / "work" / "dist" / "promptmend")
 
     monkeypatch.setattr(subprocess, "run", fake)
-    out = bw.build(tmp_path / "out", tmp_path / "work")
+    # The test suite runs on 3.12 too; the build itself must not (below).
+    out = bw.build(tmp_path / "out", tmp_path / "work", python=(3, 14))
     assert out == tmp_path / "out" / bw.zip_name(bw.version())
     assert out.is_file()
     ((*head, spec),) = calls
     assert head[:3] == [sys.executable, "-m", "PyInstaller"]
     assert spec == str(bw.SPEC)
     assert bw.SPEC.is_file()
+
+
+@pytest.mark.parametrize("version", [(3, 13, 0), (3, 14, 2, "final", 0), (4, 0)])
+def test_check_python_accepts_3_13_and_later(version: tuple[int, ...]) -> None:
+    bw.check_python(version)
+
+
+def test_build_refuses_python_3_12(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The zip brings its own Python, and Windows 3.12 starves the interface's threads (#348):
+    neither the release nor CI may build it on 3.12."""
+    calls: list[object] = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a))
+    with pytest.raises(SystemExit, match=r"Python 3\.13 or later, not 3\.12 \(#348\)"):
+        bw.build(tmp_path / "out", tmp_path / "work", python=(3, 12, 10))
+    assert not calls
+    assert not (tmp_path / "out").exists()
+
+
+def test_release_and_ci_build_the_zip_on_the_same_python() -> None:
+    """release.yml's build-windows and test.yml's frozen-windows set up the same Python, at
+    least MIN_PYTHON, so CI tests the Python that ships (#348)."""
+    workflows = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+
+    def job_python(workflow: str, job: str) -> str:
+        text = (workflows / workflow).read_text("utf-8")
+        body = re.split(rf"^  {job}:\n", text, flags=re.MULTILINE)[1]
+        body = re.split(r"^  \S", body, flags=re.MULTILINE)[0]
+        # No other Python sneaks in past setup-uv's.
+        assert "UV_PYTHON" not in body, (workflow, job)
+        assert "--python" not in body, (workflow, job)
+        found: list[str] = re.findall(r'python-version: "([\d.]+)"', body)
+        (python,) = found
+        # And the built exe must report that Python (doctor's version check).
+        assert f'.StartsWith("{python}.")' in body, (workflow, job)
+        return python
+
+    release = job_python("release.yml", "build-windows")
+    assert release == job_python("test.yml", "frozen-windows")
+    assert tuple(map(int, release.split("."))) >= bw.MIN_PYTHON
 
 
 def test_trigger_args_are_the_i_trigger_with_the_draft_as_argument() -> None:

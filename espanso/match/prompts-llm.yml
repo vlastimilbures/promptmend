@@ -13,7 +13,7 @@ matches:
   # This is the live cloud trigger: it runs on OpenRouter, so the clipboard
   # leaves the machine. The CLI's redaction gate blocks sensitive content
   # unless ALLOW_CLOUD_OVERRIDE=true, but that gate is a heuristic, not a
-  # guarantee — only use this trigger where company policy permits.
+  # guarantee — only use this trigger where your organisation's policy permits.
   - trigger: "-i-"
     label: "PromptMend: rewrite the clipboard (OpenRouter)"
     left_word: true
@@ -26,7 +26,7 @@ matches:
           args: ["__PROMPT_WORKFLOW__", "improve", "--trigger-id", "i", "--provider", "openrouter", "--source", "clipboard"]
 
   # Same rewrite as -i-, sent once although the gate flagged a confidentiality label, a
-  # Vietnamese ID number, an email address or an IBAN. Keys, tokens, passwords, cards and
+  # national ID number, an email address or an IBAN. Keys, tokens, passwords, cards and
   # private keys stay blocked. The paste starts with a "[promptmend: sent despite: …]"
   # line. Use it only for a draft whose flagged content may leave the machine.
   - trigger: "-iok-"
@@ -126,7 +126,7 @@ matches:
           args: ["__PROMPT_WORKFLOW__", "improve", "--trigger-id", "ilm", "--provider", "lmstudio", "--profile", "general", "--source", "clipboard"]
 
   # Claude cloud trigger, disabled by default. It sends clipboard content
-  # to the Anthropic API. Uncomment only if company policy permits, and note
+  # to the Anthropic API. Uncomment only if your organisation's policy permits, and note
   # that the CLI still blocks sensitive content unless ALLOW_CLOUD_OVERRIDE=true.
   # - trigger: "-ic-"
   #   label: "PromptMend: rewrite (Anthropic)"
@@ -140,7 +140,7 @@ matches:
   #         args: ["__PROMPT_WORKFLOW__", "improve", "--trigger-id", "ic", "--provider", "anthropic", "--profile", "general", "--source", "clipboard"]
 
   # OpenAI cloud trigger, disabled by default. It sends clipboard content
-  # to the OpenAI API. Uncomment only if company policy permits, and note
+  # to the OpenAI API. Uncomment only if your organisation's policy permits, and note
   # that the CLI still blocks sensitive content unless ALLOW_CLOUD_OVERRIDE=true.
   # - trigger: "-io-"
   #   label: "PromptMend: rewrite (OpenAI)"

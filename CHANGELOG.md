@@ -21,6 +21,19 @@ All notable changes to this project are documented here. The format follows
   failed: <reason>); see promptmend doctor`, with the operating system's reason shortened to
   one printable line, since part of it comes from the server's certificate. See
   [Certificates](https://github.com/vlastimilbures/promptmend/blob/main/docs/configuration.md#certificates).
+- Data-protection gate: the Vietnamese patterns (the `vietnam_id_12` and `vietnam_id_9`
+  national ID numbers and the Vietnamese confidentiality labels) are now a named pattern pack,
+  `vn`, turned on by the new setting `PROMPT_GATE_PACKS` (a comma-separated list of packs;
+  default `vn`, #231). With the default the gate flags exactly what it flagged before, under
+  the same finding names, so no install is weakened by the upgrade. An empty value turns the
+  pack off, which weakens the gate (docs/privacy.md "Pattern packs"); an unknown pack name is
+  rejected when settings load. A Vietnamese password (`mật khẩu là …`) stays flagged whatever
+  the setting. `doctor`, `config validate` and the interface scan the persona with the same
+  packs. A pack that is off (also an empty `${VAR}` the value expanded from) shows as
+  information in `doctor`'s new `gate_packs` check (`--json`: `packs`, `off`) and as a
+  `note:` line from `config validate`, whose exit code it does not change.
+- Match files: the `-iok-` comment names "a national ID number", and the cloud triggers'
+  comments say "where your organisation's policy permits" (#231).
 - The pro tier's time limit, `PROMPT_PRO_TIMEOUT_SECONDS`, now defaults to 45 seconds, not 60
   (#311, the owner's choice). Pro calls finish well within that in the
   [benchmark](https://github.com/vlastimilbures/promptmend/blob/main/docs/benchmark.md#at-a-glance) and on a scanned Windows laptop (p95 about 21 s,
@@ -41,12 +54,35 @@ All notable changes to this project are documented here. The format follows
   deprecated 1.10.0 and its bot refuses it. No field changed: 1.28.0 only adds optional ones.
   CI's `frozen-windows` job now installs a pinned winget-cli (v1.29.380, SHA-256 checked)
   before `winget validate`, since the runner's v1.11 knows schemas only up to 1.10.0.
+- Windows: the exe (`promptmend-<version>-windows-x64.zip`, the one-command install's default
+  channel and the WinGet package) is now built on Python 3.14 instead of 3.12 (#348), from
+  the next release on. On Windows with Python 3.12 the interface's background work (its
+  checks, the update check, the setup plan) ran far slower while it was open. CI's
+  `frozen-windows` job builds and tests the zip on the same Python, and
+  `scripts/build_windows.py build` refuses a Python older than 3.13; the release checks the
+  exe's Python too.
+- Windows, uv channel: the one-command install with `PROMPTMEND_CHANNEL=uv` and
+  `scripts/install_windows.ps1` now install on Python 3.13 or later (`--python ">=3.13"`),
+  one uv finds or downloads (#348). uv picks the Python again on every `--force` install, so
+  the update command `promptmend doctor` and the interface's About screen give on Windows
+  carries the same option, as docs/install.md's uv section and Update table do. macOS and
+  Linux are unchanged. The interface's 3.12 workaround stays for a uv install that still
+  runs 3.12.
 
 ### Fixed
 - A connection or transport failure's marker (`… request failed: …`) now repeats the
   error's text as one short printable line without brackets (at most 160 characters, and not
   at all when it matches a sensitive pattern), like a server's own reason. It could quote
   what the other side sent, such as a garbled status line, in full.
+- `improve` and `persona`: loading the settings is now bounded by the watchdog too (#331).
+  A load that a stalled file system (a redirected `%APPDATA%`, say) blocks ends within the
+  call's `--timeout`, else the built-in 30 s, plus 2 s, with
+  `[promptmend: the settings did not load within …s]` and exit code 0, instead of never.
+  The configured limit takes over once the settings have loaded. A load of a second or more
+  is named in the timed-out marker instead of the provider being blamed for all of it, and a
+  run whose start-up and load used up the whole limit now ends at once with a marker saying
+  which took the time (`starting up took …s` or `the settings took …s to load`) and sends
+  nothing, instead of starting a call that could not finish in time.
 - Settings: a malformed base URL (`OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`,
   `OPENROUTER_BASE_URL`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) is now refused when the
   settings load (#368): one that is not `http://` or `https://`, has no host, an unclosed
@@ -56,6 +92,15 @@ All notable changes to this project are documented here. The format follows
   do not use (`-p-` still pastes the persona), and `promptmend config validate` names it;
   the error names the setting but never quotes the URL. doctor's `local_servers` says the
   URL is not used and does not probe it (nor the default repair mode puts in its place).
+
+### Fixed
+- `promptmend config set PROMPT_PROFILE_OVERRIDES …` (and the interface's Settings pane)
+  wrote the list to `config.toml` as a TOML array, which settings then refused to read: every
+  trigger pasted `[promptmend: PROMPT_PROFILE_OVERRIDES in config.toml must be text, a number
+  or true/false]` until the line was removed. A list setting is now saved as its
+  comma-separated text, and an array saved by an earlier version now loads, joined with
+  commas, so an affected install works again without any change (#231). An array for any
+  other setting, or one holding anything but text, is still refused.
 
 ## 0.26.0 - 2026-11-16
 
