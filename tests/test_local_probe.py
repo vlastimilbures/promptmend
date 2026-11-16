@@ -63,7 +63,7 @@ def test_another_host_is_never_asked(fake_http: FakeHttp) -> None:
 # numbers.
 
 TRIES = 3
-BOUND_MS = 300.0
+BOUND_MS = 0.0  # measurement only: always fail to print the times
 
 
 def _free_port() -> int:
