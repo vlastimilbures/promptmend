@@ -6,11 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.26.0 - 2026-11-16
+
 ### Security
 - certifi is now 2026.10.19 (#291), replacing a CA bundle with roots whose intermediate keys
   were compromised (PYSEC-2026-4320, GHSA-6q48-6c7w-9gw2). Constrained installs (the install
   scripts, which use the release's `constraints.txt`, Homebrew, and the WinGet/portable zip)
-  get it with the next release; a plain `pip install promptmend` or `uv tool install
+  get it with this release; a plain `pip install promptmend` or `uv tool install
   promptmend` already resolves the new certifi.
 
 ### Added
