@@ -60,6 +60,15 @@ uv run mypy                                     # strict: src, scripts and tests
 uv run pre-commit run --all-files               # also YAML checks, gitleaks and zizmor
 ```
 
+Every test runs under a time limit (`[tool.pytest.ini_options]` in `pyproject.toml`, #375):
+`pytest-timeout` fails a test that runs past `timeout` and prints every thread's stack, so a
+hang names its test instead of running into the CI job's `timeout-minutes`. A wait that limit
+cannot break (on macOS and Linux it is a SIGALRM) ends the run at `faulthandler_timeout` with
+faulthandler's dump of every thread. Both sit far above the slowest test; a test that really
+needs longer says so with `@pytest.mark.timeout(seconds)`, and `--timeout=0` turns the limit
+off for a debugger session. Wait with a bound in tests too (`join(10)`, `Event.wait(10)`, `timeout=` on
+`subprocess.run`), so a stuck wait fails with its own message well before the limit.
+
 The `audit` workflow (`.github/workflows/audit.yml`) checks the locked dependencies for known
 vulnerabilities with pip-audit. It **fails** on any finding in the runtime set, the same set
 the release pins into `constraints.txt` (`uv export --frozen --no-dev --no-emit-project`),
