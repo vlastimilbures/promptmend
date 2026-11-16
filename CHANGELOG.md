@@ -15,7 +15,9 @@ All notable changes to this project are documented here. The format follows
   pack off, which weakens the gate (docs/privacy.md "Pattern packs"); an unknown pack name is
   rejected when settings load. A Vietnamese password (`mật khẩu là …`) stays flagged whatever
   the setting. `doctor`, `config validate` and the interface scan the persona with the same
-  packs.
+  packs. A pack that is off (also an empty `${VAR}` the value expanded from) shows as
+  information in `doctor`'s new `gate_packs` check (`--json`: `packs`, `off`) and as a
+  `note:` line from `config validate`, whose exit code it does not change.
 - Match files: the `-iok-` comment names "a national ID number", and the cloud triggers'
   comments say "where your organisation's policy permits" (#231).
 - Ollama and LM Studio: the default `OLLAMA_BASE_URL` is now `http://127.0.0.1:11434` and
@@ -31,6 +33,15 @@ All notable changes to this project are documented here. The format follows
   deprecated 1.10.0 and its bot refuses it. No field changed: 1.28.0 only adds optional ones.
   CI's `frozen-windows` job now installs a pinned winget-cli (v1.29.380, SHA-256 checked)
   before `winget validate`, since the runner's v1.11 knows schemas only up to 1.10.0.
+
+### Fixed
+- `promptmend config set PROMPT_PROFILE_OVERRIDES …` (and the interface's Settings pane)
+  wrote the list to `config.toml` as a TOML array, which settings then refused to read: every
+  trigger pasted `[promptmend: PROMPT_PROFILE_OVERRIDES in config.toml must be text, a number
+  or true/false]` until the line was removed. A list setting is now saved as its
+  comma-separated text (#231). Fix an affected install with `promptmend config set
+  PROMPT_PROFILE_OVERRIDES <names>` again, or `promptmend config unset
+  PROMPT_PROFILE_OVERRIDES`.
 
 ## 0.26.0 - 2026-11-16
 

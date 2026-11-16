@@ -76,7 +76,12 @@ SETTINGS: tuple[Meta, ...] = (
     _m(_PRIV, "PROMPT_GATE_LOCAL", BOOL, "Run the data-protection gate for local models too."),
     _m(_PRIV, "ALLOW_CLOUD_OVERRIDE", BOOL, "Let a draft the gate flags reach a cloud provider."),
     _m(_PRIV, "PROMPT_EXTRA_PATTERNS", TEXT, "Your own ';'-separated regexes the gate blocks."),
-    _m(_PRIV, "PROMPT_GATE_PACKS", TEXT, "Pattern packs the gate scans with (vn); empty: none."),
+    _m(
+        _PRIV,
+        "PROMPT_GATE_PACKS",
+        TEXT,
+        "Pattern packs the gate scans with (vn); empty turns them off and weakens the gate.",
+    ),
     _m(_PRIV, "PROMPT_UPDATE_CHECK", BOOL, "Ask PyPI once a day for a newer release."),
     _m(
         _PRIV,

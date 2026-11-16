@@ -73,6 +73,8 @@ _VN_FIELD_VALUES = r"(?:tối mật|tuyệt mật|mật)\b"
 # khẩu là ...") is a secret in any locale and stays in password_value.
 VN = "vn"
 GATE_PACKS = (VN,)
+# What each pack flags, for doctor's note when one is off.
+GATE_PACK_COVERS = {VN: "Vietnamese national ID numbers and confidentiality labels"}
 
 
 class _Rule(NamedTuple):

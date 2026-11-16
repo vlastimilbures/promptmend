@@ -169,7 +169,8 @@ promptmend config set PROMPT_GATE_PACKS ""
 
 This weakens the gate: a draft holding a Vietnamese ID number or label then reaches a cloud
 model without a block. Do it only where those formats never occur in your drafts. An unknown
-pack name is rejected when settings load, like any other bad value. `doctor`, `config
+pack name is rejected when settings load, like any other bad value. `doctor` (`gate_packs`)
+and `config validate` note a pack that is off. `doctor`, `config
 validate` and the interface scan the persona with the same packs.
 
 ### Your own patterns

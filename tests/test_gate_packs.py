@@ -72,12 +72,61 @@ _WORDS = [
     "**Độ mật**: Mật",
     "classification: secret",
 ]
-_BEFORE = ["", "# ", "**", "> ", "[", "Tiêu đề: ", "the ", "(", "x\n"]
-_AFTER = ["", ":", " - board", "**:", "\nKế hoạch", ")", "]", " ong", " information", "-access"]
+# Line breaks (LF, CRLF, a label mid-document), a no-break space and look-alikes that
+# _normalize() folds (zero-width space) around each word.
+_BEFORE = [
+    "",
+    "# ",
+    "**",
+    "> ",
+    "[",
+    "Tiêu đề: ",
+    "the ",
+    "(",
+    "x\n",
+    "Intro\r\n",
+    "Q3 plan\n\nSection 2\n",
+    "\u00a0",
+    "\u200b",
+    "Strictly ",
+    "Company ",
+]
+_AFTER = [
+    "",
+    ":",
+    " - board",
+    "**:",
+    "\nKế hoạch",
+    ")",
+    "]",
+    " ong",
+    " information",
+    "-access",
+    "\r\nBody",
+    "\nBody\nmore",
+    "\u00a0:",
+    "\u200b:",
+]
+# Labels split or disguised inside the word (zero-width, fullwidth, no-break space), and
+# multi-line documents with a label mid-way.
+_SPECIAL = [
+    "T\u200bỐI MẬT",
+    "\uff2dẬ\uff34",
+    "Nội\u00a0bộ",
+    "tài liệu\u00a0mật",
+    "\uff23\uff2f\uff2e\uff26\uff29\uff24\uff25\uff2e\uff34\uff29\uff21\uff2c",
+    "Strictly mật: kế hoạch",
+    "Highly nội bộ",
+    "Report\nNội bộ\nBody",
+    "Report\r\n# Confidential\r\nBody",
+    "Report\n**Độ mật**: Tối mật\nend",
+    "Intro\n\nMẬT - Kế hoạch\n\nEnd",
+    "line one\r\nThông tin mật: x\r\nline three",
+]
 
 
 def _corpus() -> list[str]:
-    texts = [p.values[0] for p in (*MUST_DETECT, *MUST_PASS)]
+    texts = [p.values[0] for p in (*MUST_DETECT, *MUST_PASS)] + _SPECIAL
     texts.extend(
         f"{before}{case}{after}"
         for word, before, after in itertools.product(_WORDS, _BEFORE, _AFTER)
@@ -91,6 +140,22 @@ _CORPUS = _corpus()
 
 def _old_label(text: str) -> bool:
     return any(_OLD_CONFIDENTIAL_LABEL.search(t) for t in {text, redaction._normalize(text)})
+
+
+# The vn pack's ID rules are the 0.26.0 patterns, verbatim (pattern text and flags).
+def test_vn_id_rules_unchanged() -> None:
+    rules = {r.name: r for r in redaction._RULES if r.name.startswith("vietnam_id")}
+    old_12 = re.compile(r"\b\d{12}\b")
+    old_9 = re.compile(
+        r"\b(?:CMND|CCCD|(?-i:CMT)|chứng minh (?:nhân dân|thư)|căn cước(?: công dân)?|hộ chiếu"
+        r"|passport|national ID|ID card)\D{0,20}\d{9}\b",
+        re.IGNORECASE,
+    )
+    for name, old in (("vietnam_id_12", old_12), ("vietnam_id_9", old_9)):
+        assert rules[name].pattern.pattern == old.pattern
+        assert rules[name].pattern.flags == old.flags
+        assert rules[name].pack == "vn"
+    assert redaction._VALIDATORS["vietnam_id_12"] is redaction._is_cccd
 
 
 # With every pack on (the default, PROMPT_GATE_PACKS=vn) the split confidential_label finds
@@ -194,3 +259,29 @@ def test_persona_findings_use_packs() -> None:
     persona = "HR lead, CCCD 001099012345"
     assert doctor.persona_findings(Settings(persona=persona)) == ["vietnam_id_12"]
     assert doctor.persona_findings(Settings(persona=persona, gate_packs=())) == []
+
+
+# doctor's gate_packs check and `config validate` note a pack that is off (an empty value,
+# or an empty ${VAR} it expanded from) as information; every pack on is ok.
+def test_doctor_notes_a_pack_that_is_off() -> None:
+    on = doctor._gate_packs_check(Settings())
+    assert (on.status, on.data) == (doctor.OK, {"packs": ["vn"], "off": []})
+    off = doctor._gate_packs_check(Settings(gate_packs=()))
+    assert (off.status, off.data) == (doctor.INFO, {"packs": [], "off": ["vn"]})
+    assert off.message == (
+        "gate pack vn is off (PROMPT_GATE_PACKS): the gate does not flag Vietnamese national "
+        "ID numbers and confidentiality labels"
+    )
+    assert doctor.gate_packs_note(Settings()) is None
+
+
+@pytest.mark.parametrize("packs", ["", "vn"])
+def test_config_validate_notes_a_pack_that_is_off(tmp_path: Path, packs: str) -> None:
+    from typer.testing import CliRunner
+
+    from promptmend.cli import app
+
+    (tmp_path / ".env").write_text(f'PROMPT_GATE_PACKS="{packs}"\n')
+    result = CliRunner().invoke(app, ["config", "validate"])
+    assert result.exit_code == 0, result.output
+    assert ("note: gate pack vn is off" in result.output) is (packs == "")
