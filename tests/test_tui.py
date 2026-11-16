@@ -2257,6 +2257,31 @@ def test_triggers_show_an_older_deployed_ip(
     drive(scenario)
 
 
+# Without a plan (here: the launcher cannot be resolved) the State still reads the deployed
+# triggers from the folder doctor used, so Home and doctor agree (#278).
+def test_gather_reads_the_deployed_triggers_without_a_plan(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from promptmend import assets
+    from promptmend.tui import state as state_module
+
+    old = '"--trigger-id", "ip", "--provider", "openrouter", "--tier"'
+    text = assets.read_match("prompts-llm.yml").replace('"--trigger-id", "ip", "--tier"', old)
+    (espanso.root / "match" / "prompts-llm.yml").write_text(text, "utf-8")
+
+    def no_plan(*_: object) -> deploy.Plan:
+        raise deploy.DeployError("no launcher")
+
+    monkeypatch.setattr(state_module, "_plan", no_plan)
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "anthropic")
+    gathered = state_module.gather()
+    assert gathered.plan is None
+    assert gathered.deployed is not None
+    assert {t.trigger: t.provider for t in gathered.deployed}["-ip-"] == "openrouter"
+    check = next(c for c in gathered.report.checks if c.id == "pro_provider")
+    assert check.status == "warn"
+
+
 def test_triggers_show_fixed_providers_and_deploy(espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await pilot.press("4")

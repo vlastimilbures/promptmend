@@ -25,7 +25,10 @@ All notable changes to this project are documented here. The format follows
   `deployed`, `stale`): it warns when the deployed `-ip-` is older and still names a
   provider other than the `PROMPT_PRO_PROVIDER` you set, so the setting does not reach it
   until `promptmend espanso deploy`. Home's Pro row says the same and shows the provider the
-  deployed `-ip-` really calls, and the Triggers tab shows it as `… until redeployed`.
+  deployed `-ip-` really calls, and the Triggers tab shows it as `… until redeployed`. Home's
+  Rewrites and Pro rows now name the provider of the deployed trigger, so they match doctor;
+  a match file deployed by 0.7.0 to 0.20.0 (the shell `cmd:` form) is read too, for these
+  rows and doctor's `keys` check.
 
 ### Changed
 - `-ip-` no longer passes `--provider openrouter`, so it follows `PROMPT_PRO_PROVIDER`

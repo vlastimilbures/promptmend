@@ -175,6 +175,58 @@ def test_pro_row_follows_an_older_deployed_ip() -> None:
     assert _rows(state)["Pro (-ip-)"].text == "openai · gpt-6-luna"
 
 
+# A file deployed by v0.20.0 or earlier (the shell `cmd:` form) is read: its -i- names
+# OpenRouter, so PROMPT_PROVIDER=ollama does not make Home say it stays local (#278).
+def test_rows_read_a_shell_form_deployed_file() -> None:
+    from test_doctor import V0_20_0_BLOCKS
+
+    from promptmend import assets
+
+    deployed = assets.triggers_in(V0_20_0_BLOCKS, "prompts-llm.yml")
+    base = dataclasses.replace(ready(), deployed=deployed)
+    state = _with_env(base, PROMPT_PROVIDER="ollama", OPENROUTER_API_KEY="-".join(("a", "b")))
+    found = _rows(state)
+    assert found["Rewrites"].text == "openrouter · google/gemini-3.5-flash-lite"
+    assert found["Pro (-ip-)"].text == "openrouter · openai/gpt-6-luna"
+
+
+# A commented-out copy, or one whose command line was not read, never stands in for the
+# trigger: the active deployed one does, else the shipped one.
+def test_rows_skip_inactive_and_unread_deployed_triggers() -> None:
+    from promptmend import assets
+
+    deployed = [
+        assets.Trigger("-i-", "prompts-llm.yml", False, "improve", "ollama"),
+        assets.Trigger("-i-", "prompts-llm.yml", True, "improve", "lmstudio"),
+        assets.Trigger("-ip-", "prompts-llm.yml", True),  # a command line not read
+    ]
+    state = _with_env(dataclasses.replace(ready(), deployed=deployed), PROMPT_PROVIDER="ollama")
+    found = _rows(state)
+    assert found["Rewrites"].text.startswith("lmstudio · ")
+    assert found["Pro (-ip-)"].text == "openrouter · openai/gpt-6-luna"  # the shipped -ip-
+
+
+# A stale -ip- whose key is missing: the FAIL also says to redeploy, and points to Triggers.
+def test_stale_pro_row_with_a_missing_key_points_to_triggers() -> None:
+    older = [
+        dataclasses.replace(t, provider="openrouter") if t.trigger == "-ip-" else t
+        for t in ready().triggers
+    ]
+    state = _with_env(dataclasses.replace(ready(), deployed=older), PROMPT_PRO_PROVIDER="openai")
+    row = _rows(state)["Pro (-ip-)"]
+    assert (row.status, row.detail, row.jump) == (doctor.FAIL, "key not set", "triggers")
+    assert row.problem.startswith("OPENROUTER_API_KEY is not set, so -ip- cannot rewrite; ")
+    assert "redeploy to apply it" in row.problem
+    refused = _with_env(
+        dataclasses.replace(ready(), deployed=older),
+        PROMPT_PRO_PROVIDER="openai",
+        PROMPT_LOCAL_ONLY="true",
+    )
+    row = _rows(refused)["Pro (-ip-)"]
+    assert (row.status, row.detail, row.jump) == (doctor.FAIL, "refused", "triggers")
+    assert "redeploy to apply it" in row.problem
+
+
 def test_local_only_refuses_the_cloud_triggers() -> None:
     state = _with_env(ready(), OPENROUTER_API_KEY="-".join(("a", "b")), PROMPT_LOCAL_ONLY="true")
     found = _rows(state)

@@ -105,7 +105,9 @@ def _trigger_row(state: State, label: str, name: str) -> HomeRow:
     or PROMPT_PRO_PROVIDER on the pro tier, only when it does not), and whether its key is
     there. The deployed match file's command line wins over the shipped one, since that is
     what Espanso runs: an older -ip- still names OpenRouter (doctor.stale_pro_pins())."""
-    deployed = state.deployed or []
+    # Only an active deployed trigger whose command line was read; a commented-out copy or
+    # one this release cannot read falls back to the shipped one.
+    deployed = [t for t in state.deployed or [] if t.active and t.command is not None]
     trigger = next((t for t in [*deployed, *state.triggers] if t.trigger == name), None)
     cfg = state.settings
     tier = (trigger.tier if trigger else None) or "standard"
@@ -116,17 +118,23 @@ def _trigger_row(state: State, label: str, name: str) -> HomeRow:
     entries = state.layers.entries
     model = model_setting(provider, tier)
     text = f"{provider} · {common.shown_value(model, entries[model])}"
+    stale = {k: v for k, v in doctor.stale_pro_pins(deployed, cfg).items() if k == name}
+    # An older deployed -ip-: the Triggers tab redeploys it, whatever else is wrong.
+    redeploy = doctor.stale_pro_message(stale, cfg.pro_provider) if stale else ""
+    jump = "triggers" if stale else "settings"
     if route.refused:
         problem = f"PROMPT_LOCAL_ONLY is on, so {name} ({provider}) is refused"
-        return HomeRow(FAIL, label, text, "refused", "settings", problem)
+        return HomeRow(
+            FAIL, label, text, "refused", jump, "; ".join(filter(None, (problem, redeploy)))
+        )
     if route.key and not entries[route.key].value:
         problem = f"{route.key} is not set, so {name} cannot rewrite"
-        return HomeRow(FAIL, label, text, "key not set", "settings", problem)
+        return HomeRow(
+            FAIL, label, text, "key not set", jump, "; ".join(filter(None, (problem, redeploy)))
+        )
     detail = "key set" if route.key else ("no key needed" if route.remote else "stays local")
-    stale = {k: v for k, v in doctor.stale_pro_pins(deployed, cfg).items() if k == name}
     if stale:
-        problem = doctor.stale_pro_message(stale, cfg.pro_provider)
-        return HomeRow(WARN, label, text, "redeploy", "triggers", problem)
+        return HomeRow(WARN, label, text, "redeploy", "triggers", redeploy)
     return HomeRow(OK, label, text, detail, "settings")
 
 

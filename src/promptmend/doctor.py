@@ -338,11 +338,18 @@ def stale_pro_pins(deployed: list[assets.Trigger], settings: config.Settings) ->
 
 
 def stale_pro_message(stale: dict[str, str], pro_provider: str) -> str:
-    """What doctor and Home say about stale_pro_pins()."""
-    named = ", ".join(f"{name} still names {provider}" for name, provider in stale.items())
+    """What doctor and Home say about stale_pro_pins(). OpenRouter is what -ip- named before
+    #278, so that pin is an older file; any other was written in by hand."""
+    named = ", ".join(
+        f"the deployed {name} is from an older release and still names {provider}"
+        if provider == "openrouter"
+        else f"the deployed {name} names {provider} itself"
+        for name, provider in stale.items()
+    )
     return (
-        f"the deployed match file is older: {named}, so PROMPT_PRO_PROVIDER={pro_provider} "
-        "does not apply to it; redeploy to apply it (`promptmend espanso deploy`)"
+        f"{named}, so PROMPT_PRO_PROVIDER={pro_provider} does not apply to it; redeploy to "
+        "apply it (`promptmend espanso deploy`, which asks first for a file you edited, or "
+        "`promptmend espanso deploy --on-conflict ours` to replace it with a backup)"
     )
 
 

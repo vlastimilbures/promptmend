@@ -399,8 +399,12 @@ def test_pro_provider_warns_about_an_older_deployed_ip(
         "deployed": True,
         "stale": {"-ip-": "openrouter"},
     }
-    assert "-ip- still names openrouter" in check.message
-    assert check.message.endswith("redeploy to apply it (`promptmend espanso deploy`)")
+    assert check.message.startswith(
+        "the deployed -ip- is from an older release and still names openrouter, so "
+        "PROMPT_PRO_PROVIDER=anthropic does not apply to it; redeploy to apply it "
+        "(`promptmend espanso deploy`, "
+    )
+    assert "`promptmend espanso deploy --on-conflict ours`" in check.message
     # The keys check follows the deployed file: OpenRouter's key, not Anthropic's.
     keys = doctor._keys_check(ConfigLayers.resolve(strict=False), settings, found, True)
     assert keys.data["triggers"] == {"OPENROUTER_API_KEY": ["-i-", "-iok-", "-ip-", "-if-"]}
@@ -414,6 +418,58 @@ def test_pro_provider_warns_about_an_older_deployed_ip(
     assert (check.status, check.message) == ("ok", "the pro tier runs on openai")
     inactive = [dataclasses.replace(t, active=False) for t in found]
     assert doctor.stale_pro_pins(inactive, config.Settings()) == {}
+
+
+# The -i- and -ip- blocks of prompts-llm.yml as v0.20.0 shipped them: a `type: shell` var whose
+# one `cmd:` string holds the launcher and the options (v0.7.0 to v0.20.0), here deployed.
+V0_20_0_BLOCKS = r"""matches:
+  - trigger: "-i-"
+    label: "PromptMend: rewrite the clipboard (OpenRouter)"
+    left_word: true
+    replace: "{{output}}"
+    force_mode: clipboard
+    vars:
+      - name: output
+        type: shell
+        params:
+          cmd: "\"/home/me/.local/bin/promptmend\" improve --trigger-id i --provider openrouter --source clipboard"
+
+  - trigger: "-ip-"
+    label: "PromptMend: rewrite on the pro tier (OpenRouter)"
+    left_word: true
+    replace: "{{output}}"
+    force_mode: clipboard
+    vars:
+      - name: output
+        type: shell
+        params:
+          cmd: "\"/home/me/.local/bin/promptmend\" improve --trigger-id ip --provider openrouter --tier pro --source clipboard"
+"""  # noqa: E501 - the shipped lines, verbatim
+
+
+# A file deployed by v0.7.0 to v0.20.0 is read too: its triggers name OpenRouter, so the keys
+# check and pro_provider are right for it (#278).
+def test_shell_form_triggers_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    found = assets.triggers_in(V0_20_0_BLOCKS, "prompts-llm.yml")
+    assert [(t.trigger, t.command, t.provider, t.tier) for t in found] == [
+        ("-i-", "improve", "openrouter", None),
+        ("-ip-", "improve", "openrouter", "pro"),
+    ]
+    monkeypatch.setenv("PROMPT_PROVIDER", "ollama")
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
+    settings = config.Settings()
+    assert doctor.stale_pro_pins(found, settings) == {"-ip-": "openrouter"}
+    keys = doctor._keys_check(ConfigLayers.resolve(strict=False), settings, found, True)
+    assert keys.data["triggers"] == {"OPENROUTER_API_KEY": ["-i-", "-ip-"]}
+
+
+# A pin other than OpenRouter was written in by hand: the message says so, not "older".
+def test_pro_provider_names_a_hand_written_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
+    edited = [assets.Trigger("-ip-", "prompts-llm.yml", True, "improve", "anthropic", None, "pro")]
+    check = doctor._pro_provider_check(config.Settings(), edited, True)
+    assert check.status == "warn"
+    assert check.message.startswith("the deployed -ip- names anthropic itself, so ")
 
 
 # --- local servers (#220) -----------------------------------------------------------------

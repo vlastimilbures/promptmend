@@ -20,6 +20,7 @@ import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from .. import assets, config, config_files, deploy, doctor, espanso_windows, history, update_check
 from ..commands import common
@@ -219,9 +220,13 @@ def gather(group_by: str = "trigger", first: State | None = None) -> State:
             found=found,
             plan=plan,
         )
+    # The folder doctor read its deployed triggers from, so Home and doctor never disagree,
+    # with or without a plan (a launcher not found, say).
+    espanso = next((c for c in report.checks if c.id == "espanso"), None)
+    folder = espanso.data.get("config_dir") if espanso else None
     deployed = None
-    if plan is not None:
-        found_triggers, any_deployed = doctor.deployed_triggers(plan.espanso_dir)
+    if isinstance(folder, str) and folder:
+        found_triggers, any_deployed = doctor.deployed_triggers(Path(folder))
         deployed = found_triggers if any_deployed else None
     stats: list[history.StatsRow] = []
     stats_error = None
