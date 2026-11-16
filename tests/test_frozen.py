@@ -83,6 +83,14 @@ def test_winget_upgrade_command() -> None:
     )
 
 
+def test_installer_upgrade_command_is_the_one_liner() -> None:
+    command = update_check.upgrade_command("installer")
+    assert command == update_check.INSTALL_PS1
+    assert "releases/latest/download/install.ps1 | iex" in command
+    assert command in (REPO / "README.md").read_text("utf-8")
+    assert doctor.upgrade_hint({"channel": "installer", "editable": False}) == command
+
+
 # --- The WinGet launcher ---------------------------------------------------------------------
 
 
@@ -196,6 +204,27 @@ def test_a_frozen_exe_elsewhere_is_a_script(tmp_path: Path) -> None:
         _resolve(tmp_path / "gone.exe", {})
 
 
+# install.ps1's default channel (#185): the exe in %LOCALAPPDATA%\Programs\promptmend.
+def test_install_ps1_folder_is_the_installer_channel(tmp_path: Path) -> None:
+    local = tmp_path / "Local"
+    environ = {"LOCALAPPDATA": str(local)}
+    exe = _file(local / "Programs" / "promptmend" / "promptmend.exe")
+    assert _resolve(exe, environ) == deploy.Launcher(exe, "installer")
+    # Case is ignored, as on Windows.
+    spelled = local.parent / "local"
+    other_case = spelled / "PROGRAMS" / "PromptMend" / "promptmend.exe"
+    found = deploy._installer_launcher(other_case, {"LOCALAPPDATA": str(spelled)})
+    assert found == deploy.Launcher(other_case, "installer")
+    check = doctor._install_check(_resolve(exe, environ), None)
+    assert check.data["channel"] == "installer"
+    assert check.message == f"installer: {exe}"
+    # Another folder under Programs, or the same folder off Windows, is a plain script.
+    other = _file(local / "Programs" / "promptmend-ci" / "promptmend" / "promptmend.exe")
+    assert _resolve(other, environ) == deploy.Launcher(other, "script")
+    assert _resolve(exe, environ, windows=False) == deploy.Launcher(exe, "script")
+    assert _resolve(exe, {}) == deploy.Launcher(exe, "script")
+
+
 @pytest.mark.usefixtures("frozen")
 def test_resolve_launcher_reads_sys_frozen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     environ, _, exe = _winget(tmp_path)
@@ -208,6 +237,20 @@ def test_resolve_launcher_reads_sys_frozen(tmp_path: Path, monkeypatch: pytest.M
 
 
 # --- scripts/build_windows.py --------------------------------------------------------------
+
+
+# The spec compiles with optimize=1 (asserts and `if __debug__:` blocks dropped), never 2
+# (docstrings, which Typer's help reads): so no runtime check in promptmend may be an assert.
+def test_frozen_build_may_drop_asserts() -> None:
+    import ast
+
+    assert "    optimize=1,\n" in bw.SPEC.read_text("utf-8")
+    for path in sorted((REPO / "src" / "promptmend").rglob("*.py")):
+        tree = ast.parse(path.read_text("utf-8"), str(path))
+        for node in ast.walk(tree):
+            assert not isinstance(node, ast.Assert), f"{path}:{node.lineno}: assert"
+            if isinstance(node, ast.Name):
+                assert node.id != "__debug__", f"{path}:{node.lineno}: __debug__"
 
 
 def test_zip_name_and_version() -> None:

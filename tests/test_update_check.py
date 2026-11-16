@@ -348,6 +348,7 @@ def test_tests_never_reach_pypi() -> None:
     [
         ("uv", update_check._UV),
         ("homebrew", "brew update && brew upgrade promptmend"),
+        ("installer", update_check.INSTALL_PS1),
         ("script", "see docs/install.md"),
         ("scoop", "see docs/install.md"),
         ("", "see docs/install.md"),

@@ -1,7 +1,7 @@
 name: release
-# Builds the sdist, the wheel, constraints.txt (the runtime pins from uv.lock), the Windows
-# installer install.ps1 (rendered with the version, #186) and the frozen Windows build
-# promptmend-<version>-windows-x64.zip (PyInstaller onedir, #185), installs the
+# Builds the sdist, the wheel, constraints.txt (the runtime pins from uv.lock), the frozen
+# Windows build promptmend-<version>-windows-x64.zip (PyInstaller onedir, #185) and the Windows
+# installer install.ps1 (rendered with the version and the zip's SHA-256, #186), installs the
 # wheel with those pins into a clean venv on every OS, then attests the files and creates the
 # annotated tag v<version> and a GitHub Release with that version's CHANGELOG notes. While the
 # repository variable PYPI_PUBLISH is "true", the same sdist and wheel then go to PyPI through
@@ -100,13 +100,6 @@ jobs:
         run: |
           uv build --out-dir dist
           uv export --frozen --no-dev --no-emit-project --no-hashes --output-file dist/constraints.txt
-      # The Windows installer (#186), with this release's version in place of its placeholder,
-      # so `releases/latest/download/install.ps1` installs exactly the release it came from.
-      - name: Render install.ps1
-        env:
-          VERSION: ${{ needs.plan.outputs.version }}
-        run: |
-          python3 scripts/render_installer.py "$VERSION" dist/install.ps1
       - name: Upload the artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
@@ -154,11 +147,23 @@ jobs:
           Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\frozen"
           $installed = (& "$env:RUNNER_TEMP\frozen\promptmend\promptmend.exe" --version).Trim()
           if ($installed -ne $env:VERSION) { throw "the exe says $installed, expected $env:VERSION" }
+      # The Windows installer (#186), with this release's version and the SHA-256 of the zip
+      # just built in place of its placeholders, so `releases/latest/download/install.ps1`
+      # installs exactly the release it came from and refuses any other zip (#185). Rendered
+      # here, where the zip is, and handed on with it.
+      - name: Render install.ps1
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          uv run --no-project python scripts/render_installer.py "$env:VERSION" dist/install.ps1 --zip "dist/promptmend-$env:VERSION-windows-x64.zip"
       - name: Upload the zip
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: windows
-          path: dist/promptmend-*-windows-x64.zip
+          path: |
+            dist/promptmend-*-windows-x64.zip
+            dist/install.ps1
           if-no-files-found: error
 
   # The wheel goes into a clean venv outside the checkout, pinned by the constraints.txt being
@@ -235,11 +240,23 @@ jobs:
         with:
           name: dist
           path: dist
-      - name: Download the Windows zip
+      - name: Download the Windows zip and install.ps1
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: windows
           path: dist
+      # The hash install.ps1 checks the download against must be this zip's, byte for byte.
+      - name: Check install.ps1 against the zip
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          sum=$(sha256sum "dist/promptmend-$VERSION-windows-x64.zip" | cut -d ' ' -f 1)
+          for line in "\$ReleaseVersion = '$VERSION'" "\$ReleaseZipSha256 = '$sum'"; do
+            if ! grep -qF -- "$line" dist/install.ps1; then
+              echo "::error::dist/install.ps1 lacks: $line"
+              exit 1
+            fi
+          done
       - name: Attest build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:

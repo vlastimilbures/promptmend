@@ -93,8 +93,10 @@ jobs:
           & $python "$env:GITHUB_WORKSPACE/scripts/check_wheel.py" --repo $env:GITHUB_WORKSPACE --wheel $wheel
 
   # The Windows user installer (#186), run as the one-liner runs it (Windows PowerShell 5.1,
-  # `irm | iex`). A rendered copy is dry-run to check the Release URLs it would install from;
-  # the installs use the wheel and constraints.txt built here through the local override, so
+  # `irm | iex`). A rendered copy is dry-run on both channels to check the Release URLs and
+  # the zip hash it would install with, and the refusals; the uv channel's installs use the
+  # wheel and constraints.txt built here through the local override (frozen-windows installs
+  # the exe channel from its own zip), so
   # promptmend never comes from PyPI. The first install runs with uv hidden from PATH, so the
   # script installs uv itself (winget, else uv's installer); the second, with uv, must
   # reinstall in place; then `doctor --timing` through uv's shim goes to the job summary. It
@@ -126,25 +128,62 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
       # Native stderr must not stop these steps (Windows PowerShell 5.1): every exit code is
       # checked by hand.
+      # Both channels: exe (the default; a stand-in file gives the rendered copy a known zip
+      # hash, since this job builds no zip: frozen-windows installs a real one) and uv.
       - name: Dry-run a rendered copy and check what it would install
         working-directory: ${{ runner.temp }}
         run: |
           $ErrorActionPreference = 'Continue'
           $wheel = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\*.whl" | Select-Object -First 1
           $version = $wheel.Name.Split('-')[1]
+          $standin = "$env:RUNNER_TEMP\stand-in.zip"
+          [IO.File]::WriteAllText($standin, 'a stand-in for the Windows zip')
+          $hash = (Get-FileHash -LiteralPath $standin -Algorithm SHA256).Hash.ToLowerInvariant()
           $rendered = "$env:RUNNER_TEMP\install.ps1"
-          uv run --no-project python "$env:GITHUB_WORKSPACE\scripts\render_installer.py" $version $rendered
+          uv run --no-project python "$env:GITHUB_WORKSPACE\scripts\render_installer.py" $version $rendered --zip $standin
           if ($LASTEXITCODE -ne 0) { throw "render_installer exited $LASTEXITCODE" }
+          # stdout and the error a refusal throws; Has-Text ignores where an error was wrapped.
+          function Invoke-Rendered {
+            powershell -NoProfile -ExecutionPolicy ByPass -Command "Get-Content -Raw '$rendered' | Invoke-Expression" 2>&1 | Out-String
+          }
+          function Has-Text([string]$Out, [string]$Text) {
+            return ($Out -replace '\s', '').Contains(($Text -replace '\s', ''))
+          }
           $env:PROMPTMEND_DRY_RUN = '1'
-          $out = powershell -NoProfile -ExecutionPolicy ByPass -Command "Get-Content -Raw '$rendered' | Invoke-Expression" | Out-String
-          if ($LASTEXITCODE -ne 0) { throw "dry run exited $LASTEXITCODE`n$out" }
-          Write-Host $out
           $download = "https://github.com/vlastimilbures/promptmend/releases/download/v$version"
+          # exe, the default
+          $out = Invoke-Rendered
+          if ($LASTEXITCODE -ne 0) { throw "exe dry run exited $LASTEXITCODE`n$out" }
+          Write-Host $out
+          $dest = "$env:LOCALAPPDATA\Programs\promptmend"
+          foreach ($want in "Channel: exe", "> Invoke-WebRequest -UseBasicParsing -Uri $download/promptmend-$version-windows-x64.zip -OutFile", "which must have the SHA-256 $hash", "into $dest", "> $dest\promptmend.exe doctor --no-clipboard") {
+            if (-not $out.Contains($want)) { throw "the exe dry run did not print: $want" }
+          }
+          if (Test-Path $dest) { throw "the dry run created $dest" }
+          # uv
+          $env:PROMPTMEND_CHANNEL = 'uv'
+          $out = Invoke-Rendered
+          if ($LASTEXITCODE -ne 0) { throw "uv dry run exited $LASTEXITCODE`n$out" }
+          Write-Host $out
           $want = "> uv tool install --force --compile-bytecode $download/promptmend-$version-py3-none-any.whl -c $download/constraints.txt"
           if (-not $out.Contains($want)) { throw "the dry run did not print: $want" }
           $env:PROMPTMEND_VERSION = '0.18.0'
-          $out = powershell -NoProfile -ExecutionPolicy ByPass -Command "Get-Content -Raw '$rendered' | Invoke-Expression" | Out-String
+          $out = Invoke-Rendered
           if ($LASTEXITCODE -eq 0) { throw "0.18.0 was not refused`n$out" }
+          Remove-Item Env:PROMPTMEND_VERSION
+          # Refused: an unknown channel, another release's zip, a wheel on the exe channel.
+          $env:PROMPTMEND_CHANNEL = 'pip'
+          $out = Invoke-Rendered
+          if ($LASTEXITCODE -eq 0 -or -not (Has-Text $out 'is not exe or uv')) { throw "PROMPTMEND_CHANNEL=pip was not refused`n$out" }
+          Remove-Item Env:PROMPTMEND_CHANNEL
+          $env:PROMPTMEND_VERSION = '0.19.0'
+          $out = Invoke-Rendered
+          if ($LASTEXITCODE -eq 0 -or -not (Has-Text $out "checks the zip of PromptMend $version only")) { throw "another release's zip was not refused`n$out" }
+          Remove-Item Env:PROMPTMEND_VERSION
+          $env:PROMPTMEND_CHANNEL = 'exe'
+          $env:PROMPTMEND_WHEEL = $wheel.FullName
+          $out = Invoke-Rendered
+          if ($LASTEXITCODE -eq 0) { throw "PROMPTMEND_WHEEL on the exe channel was not refused`n$out" }
           exit 0
       - name: Install without uv on PATH (the script installs uv)
         working-directory: ${{ runner.temp }}
@@ -274,6 +313,9 @@ jobs:
           $persona = & $exe persona 2> "$env:RUNNER_TEMP\persona-stderr.txt"
           if ((Get-Item "$env:RUNNER_TEMP\persona-stderr.txt").Length -ne 0) { throw "persona wrote to stderr" }
           if ($persona -ne "I am working as [role] in [company].") { throw "persona printed: $persona" }
+          # The spec's optimize=1 keeps the docstrings Typer's help is made of.
+          $help = (& $exe doctor --help) | Out-String
+          if (-not ($help -replace '\s', '').Contains('Safetopasteintoabugreport')) { throw "doctor --help lost its docstring:`n$help" }
           # doctor exits 4 here (no key, no Espanso); only its report matters.
           $PSNativeCommandUseErrorActionPreference = $false
           $report = (& $exe doctor --no-clipboard --json) | Out-String | ConvertFrom-Json
@@ -284,6 +326,82 @@ jobs:
           if ($report.checks.version.data.version -ne $version) { throw "doctor reports another version" }
           if ($report.checks.install.data.channel -ne "script") { throw "an unzipped exe is not the script channel" }
           "FROZEN_EXE=$exe" >> $env:GITHUB_ENV
+          exit 0  # not doctor's 4
+      # install.ps1's default channel (#185) with this zip (PROMPTMEND_ZIP), run as the
+      # one-liner runs it (Windows PowerShell 5.1, `irm | iex`), from a copy rendered with this
+      # zip's hash: a fresh install, then a reinstall over it; the exe must answer from
+      # %LOCALAPPDATA%\Programs\promptmend, on the user PATH once, with doctor naming the
+      # installer channel. Refused, and nothing changed: a zip whose hash is not the one the
+      # copy carries, and any install while a promptmend.exe from that folder runs.
+      - name: Install it with install.ps1 (the exe channel)
+        working-directory: ${{ runner.temp }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $zip = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\promptmend-*-windows-x64.zip" | Select-Object -First 1
+          $version = $zip.Name.Split('-')[1]
+          $dest = "$env:LOCALAPPDATA\Programs\promptmend"
+          $exe = "$dest\promptmend.exe"
+          if (Test-Path $dest) { throw "$dest exists before the install" }
+          function Render([string]$Out, [string]$Zip) {
+            uv run --no-project python "$env:GITHUB_WORKSPACE\scripts\render_installer.py" $version $Out --zip $Zip
+            if ($LASTEXITCODE -ne 0) { throw "render_installer exited $LASTEXITCODE" }
+          }
+          function Invoke-Installer([string]$Script, [string]$Log) {
+            powershell -NoProfile -ExecutionPolicy ByPass -Command "Get-Content -Raw '$Script' | Invoke-Expression" 2>&1 | Tee-Object -FilePath $Log | Out-Host
+            return $LASTEXITCODE
+          }
+          function Has-Text([string]$Log, [string]$Text) {
+            return ((Get-Content -Raw $Log) -replace '\s', '').Contains(($Text -replace '\s', ''))
+          }
+          $rendered = "$env:RUNNER_TEMP\install-exe.ps1"
+          Render $rendered $zip.FullName
+          $env:PROMPTMEND_ZIP = $zip.FullName
+          foreach ($run in 'fresh', 'again') {
+            $log = "$env:RUNNER_TEMP\install-exe-$run.log"
+            $code = Invoke-Installer $rendered $log
+            if ($code -ne 0) { throw "install.ps1 ($run) exited $code" }
+            if (-not (Has-Text $log "SHA-256: $((Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant())")) { throw "install.ps1 ($run) printed no hash" }
+            $installed = (& $exe --version).Trim()
+            if ($installed -ne $version) { throw "the installed exe says $installed, the zip is $version" }
+          }
+          $left = @(Get-ChildItem "$env:LOCALAPPDATA\Programs" -Directory -Filter 'promptmend.*')
+          if ($left.Count -ne 0) { throw "install.ps1 left $($left.FullName -join ', ')" }
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ieq $dest }
+          if (@($userPath).Count -ne 1) { throw "$dest is $(@($userPath).Count) times on the user PATH" }
+          $report = (& $exe doctor --no-clipboard --json) | Out-String | ConvertFrom-Json
+          if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE" }
+          $report.checks.install | ConvertTo-Json -Depth 5
+          if ($report.checks.install.data.channel -ne 'installer') { throw "doctor does not see the installer channel" }
+          if ($report.checks.install.data.launcher -ne $exe) { throw "the launcher is not $exe" }
+
+          # A marker in the installed folder: still there after each refusal below.
+          $marker = "$dest\ci-marker.txt"
+          Set-Content -LiteralPath $marker -Value 'kept'
+          $bad = "$env:RUNNER_TEMP\install-bad-hash.ps1"
+          $other = "$env:RUNNER_TEMP\other.zip"
+          [IO.File]::WriteAllText($other, 'not this zip')
+          Render $bad $other
+          $log = "$env:RUNNER_TEMP\install-bad-hash.log"
+          $code = Invoke-Installer $bad $log
+          if ($code -eq 0) { throw "a zip with another hash was installed" }
+          if (-not (Has-Text $log 'nothing was changed')) { throw "the hash refusal did not say so" }
+          if (-not (Test-Path $marker)) { throw "the hash refusal changed $dest" }
+
+          # doctor --timing runs for a while, its children from the same folder.
+          $busy = Start-Process -FilePath $exe -ArgumentList 'doctor', '--timing', '--runs', '50', '--no-clipboard' -PassThru -WindowStyle Hidden
+          try {
+            Start-Sleep -Seconds 3
+            if ($busy.HasExited) { throw "doctor --timing ended before the check (exit $($busy.ExitCode))" }
+            $log = "$env:RUNNER_TEMP\install-busy.log"
+            $code = Invoke-Installer $rendered $log
+            if ($code -eq 0) { throw "install.ps1 replaced the folder while its exe was running" }
+            if (-not (Has-Text $log "promptmend.exe from $dest is running")) { throw "the running refusal did not say so" }
+            if (-not (Test-Path $marker)) { throw "the running refusal changed $dest" }
+          } finally {
+            & taskkill.exe /PID $busy.Id /T /F | Out-Null
+          }
+          Write-Host "install.ps1 installed promptmend $version into $dest"
           exit 0  # not doctor's 4
       - name: Run it through a WinGet Links alias
         working-directory: ${{ runner.temp }}

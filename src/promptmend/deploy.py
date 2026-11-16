@@ -214,7 +214,7 @@ def _digest(text: str) -> str:
 @dataclass(frozen=True)
 class Launcher:
     path: Path
-    channel: str  # uv, homebrew, scoop, winget, script or explicit
+    channel: str  # uv, homebrew, scoop, winget, installer, script or explicit
 
 
 def launcher_text(path: Path | str, *, windows: bool = os.name == "nt") -> str:
@@ -289,6 +289,24 @@ def _winget_roots(environ: Mapping[str, str]) -> list[Path]:
     if program_files := environ.get("ProgramFiles"):
         roots.append(Path(program_files) / "WinGet")
     return roots
+
+
+# Where scripts/install.ps1's default channel puts the frozen exe (#185), under
+# %LOCALAPPDATA%: rerunning install.ps1 replaces that folder, at the same path.
+INSTALLER_DIR = ("Programs", "promptmend")
+
+
+def _installer_launcher(executable: Path, environ: Mapping[str, str]) -> Launcher | None:
+    r"""The running frozen exe when it is install.ps1's
+    `%LOCALAPPDATA%\Programs\promptmend\promptmend.exe` (compared case-insensitively, as
+    Windows does)."""
+    local = environ.get("LOCALAPPDATA")
+    if not local:
+        return None
+    expected = Path(local).joinpath(*INSTALLER_DIR, "promptmend.exe")
+    if str(resolved(executable)).lower() == str(resolved(expected)).lower():
+        return Launcher(executable, "installer")
+    return None
 
 
 def _winget_launcher(executable: Path, environ: Mapping[str, str]) -> Launcher | None:
@@ -422,17 +440,20 @@ def resolve_launcher(
     (uv tool's bin dir, from its receipt, else `uv tool dir`; Homebrew's `<prefix>/bin`,
     Scoop's shim, WinGet's alias), never a versioned path such as a Homebrew Cellar, else the
     running console script when that path is stable. A frozen build (the Windows zip) is
-    its own exe: WinGet's, else itself."""
+    its own exe: WinGet's, else itself (the installer channel in install.ps1's folder)."""
     if getattr(sys, "frozen", False) if frozen is None else frozen:
         exe_path = Path(sys.executable) if executable is None else executable
+        env = os.environ if environ is None else environ
         if windows:
-            found = _winget_launcher(exe_path, os.environ if environ is None else environ)
+            found = _winget_launcher(exe_path, env)
             if found is not None:
                 return found
         if not (exe_path.is_absolute() and exe_path.is_file()):
             raise DeployError(f"The running promptmend.exe was not found ({exe_path})")
         if not _frozen_stable(exe_path):
             raise DeployError(FROZEN_UNSTABLE.format(path=exe_path))
+        if windows and (found := _installer_launcher(exe_path, env)) is not None:
+            return found
         return Launcher(exe_path, "script")
     runner = runner or run_command
     prefix = Path(sys.prefix) if prefix is None else prefix

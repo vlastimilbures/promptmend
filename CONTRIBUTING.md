@@ -148,9 +148,10 @@ Releases are cut by `.github/workflows/release.yml`, never by hand-made tags.
    `gh workflow run release.yml --ref main -f dry-run=false`). It builds the sdist, the wheel and
    `constraints.txt` (`uv export --frozen --no-dev --no-emit-project --no-hashes`), installs the
    wheel with those constraints into a clean venv on macOS, Windows and Linux and runs
-   `scripts/check_wheel.py --constraints`, renders `install.ps1` with the version
-   (`scripts/render_installer.py`), builds `promptmend-X.Y.Z-windows-x64.zip` on Windows
-   (`scripts/build_windows.py build`, #185), then attests the files, creates the annotated tag
+   `scripts/check_wheel.py --constraints`, builds `promptmend-X.Y.Z-windows-x64.zip` on Windows
+   (`scripts/build_windows.py build`, #185) and, in the same job, renders `install.ps1` with the
+   version and that zip's SHA-256 (`scripts/render_installer.py --zip`; the release job checks
+   the hash again), then attests the files, creates the annotated tag
    `vX.Y.Z` and publishes the Release with that CHANGELOG section as its notes. *dry-run* is on by
    default and stops after the artifact tests; untick it to release. A dry run attests nothing,
    so it leaves no provenance record for files that were never released. The workflow releases
@@ -420,8 +421,8 @@ promptmend/
 ├── scripts/
 │   ├── install_macos.sh          contributor install pinned to uv.lock, then espanso deploy
 │   ├── install_windows.ps1       the same for Windows
-│   ├── install.ps1               Windows user installer (uv + PyPI), a Release asset (#186)
-│   ├── render_installer.py       release: install.ps1 with the version filled in
+│   ├── install.ps1               Windows user installer (the exe, or uv), a Release asset (#186)
+│   ├── render_installer.py       release: install.ps1 with the version and zip hash filled in
 │   ├── build_windows.py          release: the frozen Windows zip (PyInstaller), trigger timing
 │   ├── check_tool_lock.py        the tool venv's packages match uv.lock (#34)
 │   ├── update_match_history.py   regenerate match_history.py from the release tags

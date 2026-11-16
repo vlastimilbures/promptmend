@@ -40,6 +40,12 @@ _UV = (
     "uv tool install --force promptmend -c "
     "https://github.com/vlastimilbures/promptmend/releases/latest/download/constraints.txt"
 )
+# The Windows one-command install (docs/install.md, README); its default channel installs the
+# frozen exe, and running it again updates it in place.
+INSTALL_PS1 = (
+    'powershell -ExecutionPolicy ByPass -c "irm '
+    'https://github.com/vlastimilbures/promptmend/releases/latest/download/install.ps1 | iex"'
+)
 # Install channel (doctor's install check) -> the command that updates it (docs/install.md,
 # "Update"). uv's own `uv tool upgrade` keeps the old constraints and a Release wheel's URL.
 # The `script` channel is any other console script (pipx, pip, a venv): no one command.
@@ -48,6 +54,8 @@ UPGRADE_COMMANDS = {
     "homebrew": "brew update && brew upgrade promptmend",
     # The frozen Windows build, installed as a portable WinGet package.
     "winget": "winget upgrade vlastimilbures.PromptMend",
+    # The frozen Windows build in install.ps1's folder: the install command again.
+    "installer": INSTALL_PS1,
 }
 # A checkout (CONTRIBUTING.md, "Set up"): its install script syncs the tool with uv.lock.
 _CHECKOUT = {
