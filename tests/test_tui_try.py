@@ -612,7 +612,7 @@ def test_a_local_stub_run_stays_ungated(
 
 
 def test_stub_latency_times_the_call_alone(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The stub's start and shutdown are not in the usage line's time.
+    """The stub's shutdown is not in the usage line's time.
 
     Timed against the stub's own block, not a fixed bound: the call runs inside it, so its
     time is at most the block's (a slow runner makes both longer alike, #355). Counting the
