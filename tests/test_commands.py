@@ -63,7 +63,7 @@ def _changes(calls: list[list[str]]) -> list[list[str]]:
 
 @pytest.fixture
 def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Saved mode: no PROMPTMEND_ENV, so config.toml and the secret store are read (in
+    """Saved mode: no PROMPTMEND_ENV, so config.toml and the secrets file are read (in
     conftest's per-test config dir)."""
     monkeypatch.delenv("PROMPTMEND_ENV")
     return config.user_config_dir()
