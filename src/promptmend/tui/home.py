@@ -123,9 +123,10 @@ def _trigger_row(state: State, label: str, name: str) -> HomeRow:
     redeploy = doctor.stale_pro_message(stale, cfg.pro_provider) if stale else ""
     jump = "triggers" if stale else "settings"
     if route.refused:
+        # A redeploy does not lift the refusal: Settings (PROMPT_LOCAL_ONLY) does.
         problem = f"PROMPT_LOCAL_ONLY is on, so {name} ({provider}) is refused"
         return HomeRow(
-            FAIL, label, text, "refused", jump, "; ".join(filter(None, (problem, redeploy)))
+            FAIL, label, text, "refused", "settings", "; ".join(filter(None, (problem, redeploy)))
         )
     if route.key and not entries[route.key].value:
         problem = f"{route.key} is not set, so {name} cannot rewrite"

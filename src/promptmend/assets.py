@@ -47,7 +47,9 @@ _OPTION = re.compile(r'"--(provider|profile|tier)", "([^"]+)"')
 # The shell form a deploy wrote from v0.7.0 to v0.20.0 (a `type: shell` var): one string, the
 # quoted launcher, the command word, then its options separated by spaces. A deployed file
 # that old still runs, so its triggers are read too.
-_SHELL_CMD = re.compile(r'^\s*(?:#\s*)?cmd: "\\"(?:[^"\\]|\\.)*?\\" (\w+)(.*)"\s*$')
+# The launcher never holds a quote (deploy.launcher_text() refuses one), so an escape inside
+# it is never `\"`: that keeps the match linear on a long unterminated line.
+_SHELL_CMD = re.compile(r'^\s*(?:#\s*)?cmd: "\\"(?:[^"\\]|\\[^"])*\\" (\w+)(.*)"\s*$')
 _SHELL_OPTION = re.compile(r"--(provider|profile|tier) ([^\s\"]+)")
 
 

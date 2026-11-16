@@ -329,7 +329,8 @@ def stale_pro_pins(deployed: list[assets.Trigger], settings: config.Settings) ->
             t.active
             and t.command == "improve"
             and t.tier == "pro"
-            and t.provider not in (None, settings.pro_provider)
+            and t.provider in PROVIDERS  # a known name only: file text is never echoed
+            and t.provider != settings.pro_provider
             and ours is not None
             and ours.provider is None
         ):
@@ -1096,8 +1097,10 @@ def _run(
     try:
         espanso, target = _espanso_check(run_command, espanso_dir)
     except Exception as exc:
-        espanso = Check("espanso", FAIL, f"check failed: {type(exc).__name__}")
         target = espanso_dir or deploy.default_espanso_dir()
+        # The folder the deployed triggers are read from, which the interface reads too.
+        data = {"config_dir": str(target)}
+        espanso = Check("espanso", FAIL, f"check failed: {type(exc).__name__}", data)
     clock("espanso", started)
     started = time.perf_counter()
     try:

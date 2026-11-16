@@ -223,7 +223,7 @@ def test_stale_pro_row_with_a_missing_key_points_to_triggers() -> None:
         PROMPT_LOCAL_ONLY="true",
     )
     row = _rows(refused)["Pro (-ip-)"]
-    assert (row.status, row.detail, row.jump) == (doctor.FAIL, "refused", "triggers")
+    assert (row.status, row.detail, row.jump) == (doctor.FAIL, "refused", "settings")
     assert "redeploy to apply it" in row.problem
 
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -461,6 +462,36 @@ def test_shell_form_triggers_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
     assert doctor.stale_pro_pins(found, settings) == {"-ip-": "openrouter"}
     keys = doctor._keys_check(ConfigLayers.resolve(strict=False), settings, found, True)
     assert keys.data["triggers"] == {"OPENROUTER_API_KEY": ["-i-", "-ip-"]}
+
+
+# A crafted 400 KB line that never closes the shell form is refused in linear time: the
+# launcher pattern cannot backtrack over `\"`, which a launcher never holds.
+@pytest.mark.parametrize("unit", ["a", "\\a", 'a\\" b', "\\\\"])
+def test_shell_form_parse_is_linear(unit: str) -> None:
+    line = 'cmd: "\\"' + unit * (400_000 // len(unit))
+    started = time.perf_counter()
+    assert assets.triggers_in(f'- trigger: "-x-"\n{line}\n', "x.yml")[0].command is None
+    assert time.perf_counter() - started < 1.0
+
+
+# A deployed pin that names no provider is never counted, so its text is never echoed.
+def test_stale_pro_pins_ignore_unknown_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
+    odd = [assets.Trigger("-ip-", "prompts-llm.yml", True, "improve", "sk-secret", None, "pro")]
+    assert doctor.stale_pro_pins(odd, config.Settings()) == {}
+
+
+# The fallback espanso check, when the check itself raises, still names the folder read.
+def test_espanso_check_failure_keeps_the_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def broken(*_: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(doctor, "_espanso_check", broken)
+    report = doctor.run(clipboard=False, espanso_dir=tmp_path, runner=lambda argv: None)
+    check = next(c for c in report.checks if c.id == "espanso")
+    assert (check.status, check.data["config_dir"]) == ("fail", str(tmp_path))
 
 
 # A pin other than OpenRouter was written in by hand: the message says so, not "older".
