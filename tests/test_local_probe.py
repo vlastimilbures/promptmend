@@ -57,13 +57,25 @@ def test_another_host_is_never_asked(fake_http: FakeHttp) -> None:
 
 # --- Timings on the real network stack, loopback only (#365) ---------------------------------
 # These use the real httpx.Client (no fake_http) and never leave this machine: every URL is
-# 127.0.0.1 or localhost, on a port this test bound itself. Each case takes the median of
-# TRIES and fails above BOUND_MS with every measured time in the message, so a slow platform
-# (Windows: a refused loopback connect retried, ``localhost`` tried as ::1 first) reports its
-# numbers.
+# 127.0.0.1 or localhost, on a port this test bound itself. A bounded case takes the median of
+# TRIES and fails above its bound with every measured time in the message.
+#
+# 127.0.0.1 with a server listening is fast everywhere. The rest is fast on macOS and Linux
+# only: Windows retries a refused loopback connect for about 2 s and tries ``localhost`` as ::1
+# first (CI run 43870172511: a closed 127.0.0.1 probe 512-660 ms, a closed localhost one
+# 1010-1152 ms, a post_json to localhost 2-4 s). There the probe is pinned loosely to its own
+# TIMEOUT, and post_json, which has no short timeout, is checked for its result only.
 
 TRIES = 3
-BOUND_MS = 300.0
+FAST_MS = 300.0
+_WINDOWS = sys.platform == "win32"
+_TIMEOUT_MS = local_probe.TIMEOUT * 1000
+_MARGIN_MS = 1000.0
+
+
+def _bound(fast_everywhere: bool, windows: float | None) -> float | None:
+    """FAST_MS, or on Windows ``windows`` (None: the result only) unless fast everywhere."""
+    return windows if _WINDOWS and not fast_everywhere else FAST_MS
 
 
 def _free_port() -> int:
@@ -74,15 +86,37 @@ def _free_port() -> int:
     return port
 
 
-def _times_ms(call: Callable[[], object], expected: object) -> list[float]:
-    """Run ``call`` TRIES times, check each result, and return the milliseconds each took."""
-    times = []
-    for _ in range(TRIES):
-        started = time.perf_counter()
-        result = call()
-        times.append((time.perf_counter() - started) * 1000)
-        assert result == expected, f"got {result!r}, expected {expected!r}"
-    return times
+class _Timings:
+    """Each case's times and bound, checked together so a failure reports them all."""
+
+    def __init__(self) -> None:
+        self.cases: dict[str, tuple[list[float], float | None]] = {}
+
+    def run(
+        self, name: str, call: Callable[[], object], expected: object, bound: float | None
+    ) -> None:
+        """Run ``call`` (TRIES times when bounded, else once) and check each result."""
+        times = []
+        for _ in range(TRIES if bound is not None else 1):
+            started = time.perf_counter()
+            result = call()
+            times.append((time.perf_counter() - started) * 1000)
+            assert result == expected, f"{name}: got {result!r}, expected {expected!r}"
+        self.cases[name] = (times, bound)
+
+    def check(self) -> None:
+        report = "; ".join(
+            f"{name}: median {statistics.median(ms):.0f} ms of {[round(t) for t in ms]}"
+            f" (bound {'none' if bound is None else f'{bound:.0f} ms'})"
+            for name, (ms, bound) in self.cases.items()
+        )
+        print(f"\n[#365 timings, {sys.platform}] {report}")
+        slow = [
+            name
+            for name, (ms, bound) in self.cases.items()
+            if bound is not None and statistics.median(ms) > bound
+        ]
+        assert not slow, f"over the bound on {sys.platform}: {slow}; {report}"
 
 
 def _refused_post(url: str) -> str:
@@ -92,16 +126,6 @@ def _refused_post(url: str) -> str:
     except base.ProviderError:
         return "refused"
     return "answered"
-
-
-def _check_bound(measured: dict[str, list[float]]) -> None:
-    report = "; ".join(
-        f"{name}: median {statistics.median(ms):.0f} ms of {[round(t) for t in ms]}"
-        for name, ms in measured.items()
-    )
-    print(f"\n[#365 timings, {sys.platform}] {report}")
-    slow = [name for name, ms in measured.items() if statistics.median(ms) > BOUND_MS]
-    assert not slow, f"slower than {BOUND_MS:.0f} ms on {sys.platform}: {slow}; {report}"
 
 
 class _Answer(http.server.BaseHTTPRequestHandler):
@@ -139,29 +163,31 @@ def ipv4_server() -> Iterator[int]:
 
 
 @pytest.mark.usefixtures("real_get")
-def test_closed_port_fails_fast() -> None:
+def test_closed_port_probe_ends_within_its_timeout() -> None:
     port = _free_port()
-    measured: dict[str, list[float]] = {}
-    for host in ("localhost", "127.0.0.1"):
+    timings = _Timings()
+    # On Windows a localhost probe waits out its timeout twice: ::1, then 127.0.0.1.
+    for host, attempts in (("localhost", 2), ("127.0.0.1", 1)):
         url = f"http://{host}:{port}"
-        measured[f"probe {host} closed"] = _times_ms(
-            partial(local_probe.answers, f"{url}/api/tags"), False
-        )
+        probe = partial(local_probe.answers, f"{url}/api/tags")
+        bound = _bound(False, attempts * _TIMEOUT_MS + _MARGIN_MS)
+        timings.run(f"probe {host} closed", probe, False, bound)
         # A trigger's POST when Ollama is not running (a refused loopback is not retried).
-        measured[f"post_json {host} closed"] = _times_ms(
-            partial(_refused_post, f"{url}/api/chat"), "refused"
-        )
-    _check_bound(measured)
+        refused = partial(_refused_post, f"{url}/api/chat")
+        timings.run(f"post_json {host} closed", refused, "refused", _bound(False, None))
+    timings.check()
 
 
 @pytest.mark.usefixtures("real_get")
-def test_ipv4_only_server_answers_fast(ipv4_server: int) -> None:
-    measured: dict[str, list[float]] = {}
-    for host in ("localhost", "127.0.0.1"):
+def test_ipv4_only_server_answers_fast_on_127_0_0_1(ipv4_server: int) -> None:
+    timings = _Timings()
+    for host in ("127.0.0.1", "localhost"):
         url = f"http://{host}:{ipv4_server}"
-        measured[f"probe {host}"] = _times_ms(partial(local_probe.answers, f"{url}/api/tags"), True)
-        # The trigger path's own POST (providers.base.post_json), as a provider sends a draft
-        # to a local Ollama: does ``localhost`` pay for a refused ::1 first?
+        ipv4 = host == "127.0.0.1"
+        probe = partial(local_probe.answers, f"{url}/api/tags")
+        timings.run(f"probe {host}", probe, True, _bound(ipv4, _TIMEOUT_MS + _MARGIN_MS))
+        # The trigger path's own POST, as a provider sends a draft to a local Ollama: on
+        # Windows ``localhost`` pays for a refused ::1 first, hence the 127.0.0.1 defaults.
         post = partial(base.post_json, "Ollama", f"{url}/api/chat", 5.0, json={"model": "m"})
-        measured[f"post_json {host}"] = _times_ms(post, {"models": []})
-    _check_bound(measured)
+        timings.run(f"post_json {host}", post, {"models": []}, _bound(ipv4, None))
+    timings.check()
