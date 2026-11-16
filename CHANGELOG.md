@@ -131,6 +131,12 @@ All notable changes to this project are documented here. The format follows
   (`git show v0.25.0:docs/prompt-candidates/PLAN.md`).
 
 ### Fixed
+- `promptmend doctor` now reports a match file you edited after a deploy as `modified`, not
+  `foreign`, when Espanso's folder is reached through a link (#339), such as a
+  `~/.config/espanso` linked from a dotfiles repository (or, on Windows, a folder spelled in
+  another case). Unedited files were already `in sync`. doctor now compares the folder the
+  link points to, as a deploy records it, as the interface's Triggers tab does; it still
+  prints the folder as Espanso gives it.
 - An `improve` trigger can no longer outlive its time limit (#307). A watchdog ends the run by
   the limit plus 2 seconds, counted from the start of the `promptmend` command's own code (not
   Python's start-up before it), with the usual `[promptmend: … timed out after …s]` marker,
