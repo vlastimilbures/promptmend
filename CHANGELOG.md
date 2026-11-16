@@ -20,6 +20,13 @@ All notable changes to this project are documented here. The format follows
   `note:` line from `config validate`, whose exit code it does not change.
 - Match files: the `-iok-` comment names "a national ID number", and the cloud triggers'
   comments say "where your organisation's policy permits" (#231).
+- The pro tier's time limit, `PROMPT_PRO_TIMEOUT_SECONDS`, now defaults to 45 seconds, not 60
+  (#311, the owner's choice). Pro calls finish well within that in the
+  [benchmark](https://github.com/vlastimilbures/promptmend/blob/main/docs/benchmark.md#at-a-glance) and on a scanned Windows laptop (p95 about 21 s,
+  #304), and Espanso stays blocked, with no feedback, for as long as a stalled call lasts. To keep 60, run
+  `promptmend config set PROMPT_PRO_TIMEOUT_SECONDS 60` (or set it in the environment or the
+  `PROMPTMEND_ENV` file). The `-if-` form still offers 30, 60 and 120 s for one call; its
+  `default` choice follows the setting.
 - Ollama and LM Studio: the default `OLLAMA_BASE_URL` is now `http://127.0.0.1:11434` and
   `LMSTUDIO_BASE_URL` `http://127.0.0.1:1234/v1`, not `localhost` (#365). Windows tries
   `localhost` as `::1` first, where these servers do not listen by default, and waits about
@@ -33,6 +40,31 @@ All notable changes to this project are documented here. The format follows
   deprecated 1.10.0 and its bot refuses it. No field changed: 1.28.0 only adds optional ones.
   CI's `frozen-windows` job now installs a pinned winget-cli (v1.29.380, SHA-256 checked)
   before `winget validate`, since the runner's v1.11 knows schemas only up to 1.10.0.
+- Windows: the exe (`promptmend-<version>-windows-x64.zip`, the one-command install's default
+  channel and the WinGet package) is now built on Python 3.14 instead of 3.12 (#348), from
+  the next release on. On Windows with Python 3.12 the interface's background work (its
+  checks, the update check, the setup plan) ran far slower while it was open. CI's
+  `frozen-windows` job builds and tests the zip on the same Python, and
+  `scripts/build_windows.py build` refuses a Python older than 3.13; the release checks the
+  exe's Python too.
+- Windows, uv channel: the one-command install with `PROMPTMEND_CHANNEL=uv` and
+  `scripts/install_windows.ps1` now install on Python 3.13 or later (`--python ">=3.13"`),
+  one uv finds or downloads (#348). uv picks the Python again on every `--force` install, so
+  the update command `promptmend doctor` and the interface's About screen give on Windows
+  carries the same option, as docs/install.md's uv section and Update table do. macOS and
+  Linux are unchanged. The interface's 3.12 workaround stays for a uv install that still
+  runs 3.12.
+
+### Fixed
+- Settings: a malformed base URL (`OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`,
+  `OPENROUTER_BASE_URL`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`) is now refused when the
+  settings load (#368): one that is not `http://` or `https://`, has no host, an unclosed
+  `[` (`http://[::1`) or a bad port (`:99999`, `:abc`). Before, it was accepted and
+  `promptmend doctor` (`local_servers`) crashed with a traceback on it. Such a value now
+  stops every rewrite trigger with a marker until it is fixed, even one for a provider you
+  do not use (`-p-` still pastes the persona), and `promptmend config validate` names it;
+  the error names the setting but never quotes the URL. doctor's `local_servers` says the
+  URL is not used and does not probe it (nor the default repair mode puts in its place).
 
 ### Fixed
 - `promptmend config set PROMPT_PROFILE_OVERRIDES …` (and the interface's Settings pane)
