@@ -11,7 +11,13 @@ from typing import Any
 from . import config_files
 from .config_files import CONFIG_VERSION, VERSION_KEY, ConfigFileError, SecretStoreError
 from .providers.registry import PROVIDERS
-from .redaction import InvalidExtraPattern, compile_extra, safe_repr, set_user_patterns
+from .redaction import (
+    GATE_PACKS,
+    InvalidExtraPattern,
+    compile_extra,
+    safe_repr,
+    set_user_patterns,
+)
 
 
 def _parse_value(raw: str) -> str:
@@ -371,6 +377,16 @@ def _builtin_profiles(raw: str) -> tuple[str, ...]:
     return names
 
 
+def _gate_packs(raw: str) -> tuple[str, ...]:
+    """PROMPT_GATE_PACKS: a comma-separated list of redaction.GATE_PACKS names, duplicates
+    dropped; empty turns every pack off. An unknown name is an error, never a pack silently
+    left out of the gate."""
+    names = tuple(dict.fromkeys(name.strip().lower() for name in raw.split(",") if name.strip()))
+    if any(name not in GATE_PACKS for name in names):
+        raise ValueError(f"empty or a comma-separated list of {', '.join(GATE_PACKS)}")
+    return names
+
+
 def _regexes(raw: str) -> str:
     """PROMPT_EXTRA_PATTERNS, kept as text (the gate and the history compile it), but
     rejected here if an entry is not a valid regex. There is no timing probe for a
@@ -574,6 +590,10 @@ class Settings:
     # Extra `;`-separated regexes the data-protection gate blocks on, e.g. internal project
     # code names or customer-ID formats. Compiled by redaction.compile_extra().
     extra_patterns: str = _env("PROMPT_EXTRA_PATTERNS", "", _regexes)
+    # The locale-specific pattern packs the gate scans with besides the built-in patterns
+    # (redaction.GATE_PACKS; `vn`: Vietnamese ID numbers and confidentiality labels). Empty
+    # turns them off, which weakens the gate.
+    gate_packs: tuple[str, ...] = _env("PROMPT_GATE_PACKS", "vn", _gate_packs)
     # Local usage history (history.py): metadata only, never prompt, clipboard, output,
     # persona or key text, kept in user_data_dir() on this device. false records nothing.
     history: bool = _env("PROMPT_HISTORY", "true", _bool)

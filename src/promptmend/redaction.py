@@ -4,7 +4,8 @@ import base64
 import binascii
 import bisect
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Collection
+from typing import NamedTuple
 
 # Patterns that suggest content should not leave the device for a cloud model.
 # These are heuristics, not a guarantee: a draft blocked only for SOFT_FINDINGS can be sent
@@ -43,126 +44,200 @@ _WITH_LETTER = r"(?=[^\s\"']{0,256}[A-Za-z])"
 _NOT_A_DESCRIPTION = r"(?![^\s\"']{0,64}-[a-z]{3,20}\b)"
 
 # A confidentiality label as a line holds it: "Confidential", "Highly confidential",
-# "Internal use only", Vietnamese "Mật" (secret), "Nội bộ" (internal).
-_LABEL = (
-    r"(?:(?:strictly|highly|company|proprietary and)\s)?"
-    r"(?:confidential|restricted|internal(?: use)? only|tối mật|tuyệt mật|mật|nội bộ)"
-)
+# "Internal use only"; in the vn pack, Vietnamese "Mật" (secret), "Nội bộ" (internal).
+_LABEL_PREFIX = r"(?:(?:strictly|highly|company|proprietary and)\s)?"
+_LABEL = _LABEL_PREFIX + r"(?:confidential|restricted|internal(?: use)? only)"
+_VN_LABEL = _LABEL_PREFIX + r"(?:tối mật|tuyệt mật|mật|nội bộ)"
 
-_PATTERNS: dict[str, re.Pattern[str]] = {
+
+def _label_lines(label: str) -> str:
+    """A label alone on a line ("# Confidential", "Nội bộ"), or opening one before ':' or a
+    dash ("**Confidential**: Q3", "Restricted - board only"; not "Restricted-access")."""
+    return (
+        rf"^[^\w\n]{{0,6}}{label}[^\w\n]{{0,6}}$"
+        rf"|^[^\w\n]{{0,6}}{label}[*_\"]{{0,3}}\s{{0,2}}(?::|\s-|-(?!\w)|[\]\)\u2013\u2014])"
+    )
+
+
+# Between a classification field's name and its value: "Classification: Restricted",
+# "Độ mật: Mật".
+_FIELD_SEP = r"[*_\"]{0,3}\s{0,2}:\s{0,2}[*_\"]{0,3}"
+_FIELD_VALUES = r"(?:highly confidential|confidential|restricted|internal|secret)\b"
+_VN_FIELD_VALUES = r"(?:tối mật|tuyệt mật|mật)\b"
+
+# Named groups of locale-specific patterns (PROMPT_GATE_PACKS, config.Settings.gate_packs).
+# A pack adds patterns under the same finding names as before it was a pack, so the history,
+# the markers and SOFT_FINDINGS see no difference; with every pack on (the default), scan()
+# finds exactly what it found when the patterns were built in. `vn`: Vietnamese national ID
+# numbers (CCCD, CMND, passport) and confidentiality labels. A Vietnamese password ("mật
+# khẩu là ...") is a secret in any locale and stays in password_value.
+VN = "vn"
+GATE_PACKS = (VN,)
+
+
+class _Rule(NamedTuple):
+    name: str
+    pattern: re.Pattern[str]
+    # The gate pack that holds it; "" for a built-in pattern, always on.
+    pack: str = ""
+
+
+# In the order scan() reports findings. Two rules may share a finding name (a pack's part of
+# confidential_label follows the built-in one); the name is reported once, at its first rule.
+_RULES: tuple[_Rule, ...] = (
     # Separators copied from PDFs and web pages: up to three spaces, tabs, dots, slashes,
     # underscores, hyphens, dashes or minus signs, or one line break (see _is_card).
-    "payment_card": re.compile(
-        r"\b(?:\d(?:[ \t./_\u2010-\u2015\u2212-]{1,3}|[ \t]?\r?\n)?){13,19}\b"
+    _Rule(
+        "payment_card",
+        re.compile(r"\b(?:\d(?:[ \t./_\u2010-\u2015\u2212-]{1,3}|[ \t]?\r?\n)?){13,19}\b"),
     ),
     # A CCCD citizen ID: checked against its province and century digits (see _is_cccd).
-    "vietnam_id_12": re.compile(r"\b\d{12}\b"),
+    _Rule("vietnam_id_12", re.compile(r"\b\d{12}\b"), VN),
     # A 9-digit CMND or passport number, only next to a word that names the document; a bare
     # "ID" or "số" (number) is too common before ticket and contract numbers.
-    "vietnam_id_9": re.compile(
-        r"\b(?:CMND|CCCD|(?-i:CMT)|chứng minh (?:nhân dân|thư)|căn cước(?: công dân)?|hộ chiếu"
-        r"|passport|national ID|ID card)\D{0,20}\d{9}\b",
-        re.IGNORECASE,
+    _Rule(
+        "vietnam_id_9",
+        re.compile(
+            r"\b(?:CMND|CCCD|(?-i:CMT)|chứng minh (?:nhân dân|thư)|căn cước(?: công dân)?|hộ chiếu"
+            r"|passport|national ID|ID card)\D{0,20}\d{9}\b",
+            re.IGNORECASE,
+        ),
+        VN,
     ),
-    "email": re.compile(r"\b[\w.+-]{1,64}@[\w-]{1,63}\.[\w.-]{1,253}\b"),
+    _Rule("email", re.compile(r"\b[\w.+-]{1,64}@[\w-]{1,63}\.[\w.-]{1,253}\b")),
     # Vendor keys contain '-'/'_' after a short prefix (sk-or-v1-, sk-ant-api03-, sk-proj-),
     # so the key bodies allow both.
-    "openrouter_key": re.compile(r"\bsk-or-v1-[0-9a-f]{32}"),
-    "anthropic_key": re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20}"),
-    "openai_key": re.compile(r"\bsk-(?!or-|ant-)[A-Za-z0-9_-]{20}"),
-    "stripe_key": re.compile(r"\b[spr]k_(?:live|test)_[A-Za-z0-9]{16}"),
-    "github_token": re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22})"),
-    "gitlab_token": re.compile(r"\bglpat-[A-Za-z0-9_-]{20}"),
-    "huggingface_token": re.compile(r"\bhf_[A-Za-z0-9]{34}"),
-    "slack_token": re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10}"),
-    "google_api_key": re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),
-    "xai_key": re.compile(r"\bxai-[A-Za-z0-9]{20}"),
+    _Rule("openrouter_key", re.compile(r"\bsk-or-v1-[0-9a-f]{32}")),
+    _Rule("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20}")),
+    _Rule("openai_key", re.compile(r"\bsk-(?!or-|ant-)[A-Za-z0-9_-]{20}")),
+    _Rule("stripe_key", re.compile(r"\b[spr]k_(?:live|test)_[A-Za-z0-9]{16}")),
+    _Rule(
+        "github_token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22})")
+    ),
+    _Rule("gitlab_token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20}")),
+    _Rule("huggingface_token", re.compile(r"\bhf_[A-Za-z0-9]{34}")),
+    _Rule("slack_token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10}")),
+    _Rule("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}")),
+    _Rule("xai_key", re.compile(r"\bxai-[A-Za-z0-9]{20}")),
     # AKIA: long-term keys; ASIA: temporary (STS) keys.
-    "aws_access_key": re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+    _Rule("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     # header.payload is enough: the header's run must end at its dot, so it is read whole
     # (possessive: no backtracking into it), and one longer than the bound counts as a match.
     # Past the dot, a payload that is base64url JSON too (eyJ + 7) shows it exists; the
     # signature is not needed.
-    "jwt": re.compile(r"\beyJ[A-Za-z0-9_-]{10,8192}+(?:\.eyJ[A-Za-z0-9_-]{7}|[A-Za-z0-9_-])"),
+    _Rule(
+        "jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,8192}+(?:\.eyJ[A-Za-z0-9_-]{7}|[A-Za-z0-9_-])")
+    ),
     # PEM, OpenSSH and PGP (`-----BEGIN PGP PRIVATE KEY BLOCK-----`) private keys.
     # A label longer than the bound counts as a match.
-    "pem_private_key": re.compile(
-        r"-----BEGIN (?:[A-Z ]{0,64}PRIVATE KEY(?: BLOCK)?-----|[A-Z ]{65})"
+    _Rule(
+        "pem_private_key",
+        re.compile(r"-----BEGIN (?:[A-Z ]{0,64}PRIVATE KEY(?: BLOCK)?-----|[A-Z ]{65})"),
     ),
     # The token's first 16 characters, one of them a letter, digit or underscore.
-    "bearer_token": re.compile(
-        r"\bBearer\s{1,256}(?=[.-]{0,15}[A-Za-z0-9_])[A-Za-z0-9._-]{16}", re.IGNORECASE
+    _Rule(
+        "bearer_token",
+        re.compile(r"\bBearer\s{1,256}(?=[.-]{0,15}[A-Za-z0-9_])[A-Za-z0-9._-]{16}", re.IGNORECASE),
     ),
     # scheme://user:password@host
-    "url_credentials": re.compile(
-        r"\b[a-z][a-z0-9+.-]{0,31}://[^\s/:@]{0,256}:[^\s/@]{1,256}@", re.IGNORECASE
+    _Rule(
+        "url_credentials",
+        re.compile(r"\b[a-z][a-z0-9+.-]{0,31}://[^\s/:@]{0,256}:[^\s/@]{1,256}@", re.IGNORECASE),
     ),
     # password=..., DB_PASSWORD: ..., "clientSecret": "...", SECRET_KEY = '...'. The name may
     # follow '_' or '-' (access_token, AWS_SECRET_ACCESS_KEY), where \b would not match. A
     # password needs 6 characters with a digit, any other secret 8 with a digit and a letter.
-    "secret_assignment": re.compile(
-        _NAME_START
-        + rf"(?:{_PW_WORDS}{_ASSIGN}{_NOT_A_DESCRIPTION}{_WITH_DIGIT}[^\s\"']{{6}}"
-        + rf"|{_KEY_WORDS}{_ASSIGN}{_WITH_DIGIT}{_WITH_LETTER}[^\s\"']{{8}})",
-        re.IGNORECASE,
+    _Rule(
+        "secret_assignment",
+        re.compile(
+            _NAME_START
+            + rf"(?:{_PW_WORDS}{_ASSIGN}{_NOT_A_DESCRIPTION}{_WITH_DIGIT}[^\s\"']{{6}}"
+            + rf"|{_KEY_WORDS}{_ASSIGN}{_WITH_DIGIT}{_WITH_LETTER}[^\s\"']{{8}})",
+            re.IGNORECASE,
+        ),
     ),
     # "the password for the admin account is: Winter2026!", and the Vietnamese "mật khẩu (wifi)
     # là ..." or "mật khẩu đăng nhập: ...". Up to a few words may sit between name and value.
-    "password_value": re.compile(
-        _NAME_START
-        + rf"{_PW_WORDS}(?:\s{{1,4}}[^\s:=]{{1,20}}){{0,4}}?\s{{1,4}}(?:is|was)(?:\s{{0,4}}:)?"
-        + rf"\s{{1,4}}[\"']?{_NOT_A_DESCRIPTION}{_WITH_DIGIT}[^\s\"']{{6}}"
-        + r"|\b(?:mật\s{1,4}khẩu|mk)(?:\s{1,4}[^\s:=]{1,20}){0,3}?\s{0,4}(?:là|[:=])\s{0,4}[\"']?"
-        + rf"{_WITH_DIGIT}[^\s\"']{{6}}",
-        re.IGNORECASE,
+    _Rule(
+        "password_value",
+        re.compile(
+            _NAME_START
+            + rf"{_PW_WORDS}(?:\s{{1,4}}[^\s:=]{{1,20}}){{0,4}}?\s{{1,4}}(?:is|was)(?:\s{{0,4}}:)?"
+            + rf"\s{{1,4}}[\"']?{_NOT_A_DESCRIPTION}{_WITH_DIGIT}[^\s\"']{{6}}"
+            + r"|\b(?:mật\s{1,4}khẩu|mk)(?:\s{1,4}[^\s:=]{1,20}){0,3}?\s{0,4}(?:là|[:=])"
+            + rf"\s{{0,4}}[\"']?{_WITH_DIGIT}[^\s\"']{{6}}",
+            re.IGNORECASE,
+        ),
     ),
     # The base64 must decode to user:password (see _is_basic_auth), or "Basic understanding"
     # would match.
-    "basic_auth": re.compile(r"\bBasic\s{1,4}([A-Za-z0-9+/]{4,512}={0,2})", re.IGNORECASE),
+    _Rule("basic_auth", re.compile(r"\bBasic\s{1,4}([A-Za-z0-9+/]{4,512}={0,2})", re.IGNORECASE)),
     # curl -u user:password, --user=user:password, also after a "\" line continuation; "-u
     # user" alone makes curl prompt instead. Anchored on the option, which is rare, rather
     # than on "curl"; _after_curl() then checks the command it belongs to.
-    "curl_user": re.compile(r"\s(?:-u|--user)(?:\s{1,4}|=)?[\"']?[^\s:\"']{1,64}:(?!\$)[^\s\"']"),
-    "npm_token": re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"),
+    _Rule(
+        "curl_user",
+        re.compile(r"\s(?:-u|--user)(?:\s{1,4}|=)?[\"']?[^\s:\"']{1,64}:(?!\$)[^\s\"']"),
+    ),
+    _Rule("npm_token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
     # Azure storage/service-bus connection strings and SAS URL signatures.
-    "azure_key": re.compile(
-        r"(?:AccountKey|SharedAccessKey)=[A-Za-z0-9+/]{20}|[?&;]sig=[A-Za-z0-9%+/=]{20}",
-        re.IGNORECASE,
+    _Rule(
+        "azure_key",
+        re.compile(
+            r"(?:AccountKey|SharedAccessKey)=[A-Za-z0-9+/]{20}|[?&;]sig=[A-Za-z0-9%+/=]{20}",
+            re.IGNORECASE,
+        ),
     ),
     # Checked against the country's length and the mod-97 checksum (see _is_iban). A lookahead,
     # so every start is a candidate and an invalid IBAN cannot swallow a valid one after it.
-    "iban": re.compile(r"(?=\b([A-Z]{2}\d{2}(?:[ -]{0,2}[A-Z0-9]){11,30})\b)", re.IGNORECASE),
+    _Rule(
+        "iban", re.compile(r"(?=\b([A-Z]{2}\d{2}(?:[ -]{0,2}[A-Z0-9]){11,30})\b)", re.IGNORECASE)
+    ),
     # A classification label, not the word in prose ("Output restricted to 5 bullets", "an
-    # NDA defines confidential information", "bảo mật" = security, "mật độ" = density):
-    # upper case, at the start of a line followed by ':' or a dash, in brackets, or a phrase
-    # used only as a label. Vietnamese: "tài liệu mật" (secret document), "tối mật" (top
+    # NDA defines confidential information"): upper case, at the start of a line followed by
+    # ':' or a dash, in brackets, or a phrase used only as a label.
+    _Rule(
+        "confidential_label",
+        re.compile(
+            # Upper case anywhere.
+            r"(?-i:\b(?:CONFIDENTIAL|RESTRICTED|INTERNAL(?: USE)? ONLY|DO NOT DISTRIBUTE)\b)"
+            rf"|{_label_lines(_LABEL)}"
+            r"|\[(?:strictly confidential|confidential|restricted|internal(?: use)? only)\]"
+            r"|\b(?:internal(?: use)? only|(?:strictly|highly|company) confidential"
+            r"|proprietary and confidential|do not distribute|not for distribution)\b"
+            # A classification field: "Classification: Restricted".
+            rf"|\b(?:classification|sensitivity){_FIELD_SEP}{_FIELD_VALUES}",
+            re.IGNORECASE | re.MULTILINE,
+        ),
+    ),
+    # The vn pack's labels, the same shapes in Vietnamese, not the word in prose ("bảo mật" =
+    # security, "mật độ" = density): "tài liệu mật" (secret document), "tối mật" (top
     # secret), "lưu hành nội bộ" (internal circulation); not "mật khẩu" (password).
-    "confidential_label": re.compile(
-        # Upper case anywhere.
-        r"(?-i:\b(?:CONFIDENTIAL|RESTRICTED|INTERNAL(?: USE)? ONLY|DO NOT DISTRIBUTE"
-        r"|TỐI MẬT|TUYỆT MẬT|MẬT|NỘI BỘ)\b)"
-        # Alone on a line ("# Confidential", "Nội bộ"), or opening one before ':' or a dash
-        # ("**Confidential**: Q3", "Restricted - board only"; not "Restricted-access").
-        rf"|^[^\w\n]{{0,6}}{_LABEL}[^\w\n]{{0,6}}$"
-        rf"|^[^\w\n]{{0,6}}{_LABEL}[*_\"]{{0,3}}\s{{0,2}}(?::|\s-|-(?!\w)|[\]\)\u2013\u2014])"
-        r"|\[(?:strictly confidential|confidential|restricted|internal(?: use)? only)\]"
-        r"|\b(?:internal(?: use)? only|(?:strictly|highly|company) confidential"
-        r"|proprietary and confidential|do not distribute|not for distribution)\b"
-        # A classification field: "Classification: Restricted", "Độ mật: Mật".
-        r"|\b(?:classification|sensitivity|độ mật)[*_\"]{0,3}\s{0,2}:\s{0,2}[*_\"]{0,3}"
-        r"(?:highly confidential|confidential|restricted|internal|secret|tối mật|tuyệt mật|mật)\b"
-        r"|\b(?:tài liệu|văn bản|thông tin)\s{1,2}(?:tối mật|tuyệt mật|mật)\b"
-        r"(?!\s{1,2}(?:khẩu|độ|ong|mã|thiết|thư|mía))"
-        r"|\b(?:tối mật|tuyệt mật|lưu hành nội bộ)\b",
-        re.IGNORECASE | re.MULTILINE,
+    _Rule(
+        "confidential_label",
+        re.compile(
+            r"(?-i:\b(?:TỐI MẬT|TUYỆT MẬT|MẬT|NỘI BỘ)\b)"
+            rf"|{_label_lines(_VN_LABEL)}"
+            # "Độ mật: Mật", and a Vietnamese value or field name with an English counterpart.
+            rf"|\b(?:classification|sensitivity|độ mật){_FIELD_SEP}{_VN_FIELD_VALUES}"
+            rf"|\bđộ mật{_FIELD_SEP}{_FIELD_VALUES}"
+            r"|\b(?:tài liệu|văn bản|thông tin)\s{1,2}(?:tối mật|tuyệt mật|mật)\b"
+            r"(?!\s{1,2}(?:khẩu|độ|ong|mã|thiết|thư|mía))"
+            r"|\b(?:tối mật|tuyệt mật|lưu hành nội bộ)\b",
+            re.IGNORECASE | re.MULTILINE,
+        ),
+        VN,
     ),
     # An email next to a password-like word: "jane@example.com:Summer2024!", "login
     # jane@example.com / Summer2024". Hard, unlike a bare email.
-    "credential_pair": re.compile(
-        r"\b[\w.+-]{1,64}@[\w-]{1,63}\.[\w.-]{1,253}(?:\s{0,4}[:/,|]\s{0,4}|\s{1,4})"
-        rf"{_NOT_A_DESCRIPTION}{_WITH_DIGIT}{_WITH_LETTER}[^\s\"']{{6}}"
+    _Rule(
+        "credential_pair",
+        re.compile(
+            r"\b[\w.+-]{1,64}@[\w-]{1,63}\.[\w.-]{1,253}(?:\s{0,4}[:/,|]\s{0,4}|\s{1,4})"
+            rf"{_NOT_A_DESCRIPTION}{_WITH_DIGIT}{_WITH_LETTER}[^\s\"']{{6}}"
+        ),
     ),
-}
+)
 
 
 def _luhn_prefixes(digits: str) -> tuple[list[int], list[int]]:
@@ -459,13 +534,21 @@ def is_bare_token(text: str) -> bool:
     return "digit" in classes and len(classes) >= 3
 
 
-def scan(text: str, extra: tuple[re.Pattern[str], ...] = ()) -> list[str]:
+def scan(
+    text: str, extra: tuple[re.Pattern[str], ...] = (), packs: Collection[str] = GATE_PACKS
+) -> list[str]:
     """Return the names of any sensitive patterns found in text.
 
     Both the raw and the normalized text are scanned, so normalization can only add
     findings. User-defined ``extra`` patterns are reported as custom_1, custom_2, ... so
-    the pattern text never appears in the output.
+    the pattern text never appears in the output. ``packs`` names the gate packs whose
+    patterns apply besides the built-in ones: every pack unless the caller passes the
+    user's PROMPT_GATE_PACKS (the gate does), so a check that hides a value errs towards
+    hiding it.
     """
+    unknown = set(packs) - set(GATE_PACKS)
+    if unknown:
+        raise ValueError(f"unknown gate pack: {', '.join(sorted(unknown))}")
     texts = dict.fromkeys((text, _normalize(text)))
 
     def found(pattern: re.Pattern[str], validate: Callable[[re.Match[str]], bool] | None) -> bool:
@@ -473,9 +556,11 @@ def scan(text: str, extra: tuple[re.Pattern[str], ...] = ()) -> list[str]:
             return any(pattern.search(t) for t in texts)
         return any(validate(m) for t in texts for m in pattern.finditer(t))
 
-    findings = [name for name, p in _PATTERNS.items() if found(p, _VALIDATORS.get(name))]
-    findings += [f"custom_{i}" for i, p in enumerate(extra, 1) if found(p, None)]
-    return findings
+    on = [rule for rule in _RULES if not rule.pack or rule.pack in packs]
+    findings = dict.fromkeys(
+        rule.name for rule in on if found(rule.pattern, _VALIDATORS.get(rule.name))
+    )
+    return [*findings, *(f"custom_{i}" for i, p in enumerate(extra, 1) if found(p, None))]
 
 
 # Findings a user may send once with --allow-flagged (-iok-): labels and identifiers that are
@@ -484,7 +569,9 @@ def scan(text: str, extra: tuple[re.Pattern[str], ...] = ()) -> list[str]:
 SOFT_FINDINGS = frozenset({"confidential_label", "vietnam_id_12", "vietnam_id_9", "email", "iban"})
 
 
-def scan_draft(text: str, extra: tuple[re.Pattern[str], ...] = ()) -> list[str]:
+def scan_draft(
+    text: str, extra: tuple[re.Pattern[str], ...] = (), packs: Collection[str] = GATE_PACKS
+) -> list[str]:
     """scan(), plus `bare_token` when the whole draft is one secret-like word. Only the gate
     uses it: safe_repr() must still quote a short single-word setting value as-is."""
-    return scan(text, extra) + (["bare_token"] if is_bare_token(text) else [])
+    return scan(text, extra, packs) + (["bare_token"] if is_bare_token(text) else [])

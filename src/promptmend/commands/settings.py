@@ -72,6 +72,7 @@ _PERSONA_INPUTS = frozenset(
         "PROMPT_PRO_PROFILE",
         "PROMPT_PROFILE_OVERRIDES",
         "PROMPT_EXTRA_PATTERNS",
+        "PROMPT_GATE_PACKS",
         "PROMPT_LOCAL_ONLY",
         "PROMPT_GATE_LOCAL",
     }

@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 ### Changed
+- Data-protection gate: the Vietnamese patterns (the `vietnam_id_12` and `vietnam_id_9`
+  national ID numbers and the Vietnamese confidentiality labels) are now a named pattern pack,
+  `vn`, turned on by the new setting `PROMPT_GATE_PACKS` (a comma-separated list of packs;
+  default `vn`, #231). With the default the gate flags exactly what it flagged before, under
+  the same finding names, so no install is weakened by the upgrade. An empty value turns the
+  pack off, which weakens the gate (docs/privacy.md "Pattern packs"); an unknown pack name is
+  rejected when settings load. A Vietnamese password (`mật khẩu là …`) stays flagged whatever
+  the setting. `doctor`, `config validate` and the interface scan the persona with the same
+  packs.
+- Match files: the `-iok-` comment names "a national ID number", and the cloud triggers'
+  comments say "where your organisation's policy permits" (#231).
 - Ollama and LM Studio: the default `OLLAMA_BASE_URL` is now `http://127.0.0.1:11434` and
   `LMSTUDIO_BASE_URL` `http://127.0.0.1:1234/v1`, not `localhost` (#365). Windows tries
   `localhost` as `::1` first, where these servers do not listen by default, and waits about

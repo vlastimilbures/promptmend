@@ -475,7 +475,7 @@ def persona_findings(settings: config.Settings) -> list[str]:
     the key patterns, as `config set` checks every value with the same scan()."""
     from .redaction import compile_extra, scan
 
-    return scan(settings.persona, compile_extra(settings.extra_patterns))
+    return scan(settings.persona, compile_extra(settings.extra_patterns), settings.gate_packs)
 
 
 def _persona_stays_local(settings: config.Settings) -> bool:
