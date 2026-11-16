@@ -46,8 +46,8 @@ Espanso match files.
 | uv from a GitHub Release wheel | Yes | Yes | Yes | `uv tool install --force …` |
 
 PyPI and the Homebrew tap carry releases from 0.19.0 on, the GitHub Release wheels from 0.16
-on, and `install.ps1` from the release after 0.19.0 on; it installs the exe from the release
-after 0.25.0 on (before, it always used uv). There is no Scoop or WinGet package yet: a WinGet
+on, and `install.ps1` from the release after 0.19.0 on; it installs the exe from 0.26.0
+on (before, it always used uv). There is no Scoop or WinGet package yet: a WinGet
 package of the same exe is being prepared (see [The exe](#the-exe)).
 To run the code from a git checkout instead, see
 [Install from a checkout](#install-from-a-checkout).
