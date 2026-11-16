@@ -64,7 +64,8 @@ def test_another_host_is_never_asked(fake_http: FakeHttp) -> None:
 # only: Windows retries a refused loopback connect for about 2 s and tries ``localhost`` as ::1
 # first (CI run 43870172511: a closed 127.0.0.1 probe 512-660 ms, a closed localhost one
 # 1010-1152 ms, a post_json to localhost 2-4 s). There the probe is pinned loosely to its own
-# TIMEOUT, and post_json, which has no short timeout, is checked for its result only.
+# TIMEOUT, and the post_json cases that cannot be fast (no short timeout) are not run: they
+# would cost about 8 s a job and pin nothing a bounded case does not already show.
 
 TRIES = 3
 FAST_MS = 300.0
@@ -74,7 +75,7 @@ _MARGIN_MS = 1000.0
 
 
 def _bound(fast_everywhere: bool, windows: float | None) -> float | None:
-    """FAST_MS, or on Windows ``windows`` (None: the result only) unless fast everywhere."""
+    """FAST_MS, or on Windows ``windows`` (None: not run) unless fast everywhere."""
     return windows if _WINDOWS and not fast_everywhere else FAST_MS
 
 
@@ -90,14 +91,18 @@ class _Timings:
     """Each case's times and bound, checked together so a failure reports them all."""
 
     def __init__(self) -> None:
-        self.cases: dict[str, tuple[list[float], float | None]] = {}
+        self.cases: dict[str, tuple[list[float], float]] = {}
+        self.skipped: list[str] = []
 
     def run(
         self, name: str, call: Callable[[], object], expected: object, bound: float | None
     ) -> None:
-        """Run ``call`` (TRIES times when bounded, else once) and check each result."""
+        """Run ``call`` TRIES times and check each result; skip it when ``bound`` is None."""
+        if bound is None:
+            self.skipped.append(name)
+            return
         times = []
-        for _ in range(TRIES if bound is not None else 1):
+        for _ in range(TRIES):
             started = time.perf_counter()
             result = call()
             times.append((time.perf_counter() - started) * 1000)
@@ -107,15 +112,11 @@ class _Timings:
     def check(self) -> None:
         report = "; ".join(
             f"{name}: median {statistics.median(ms):.0f} ms of {[round(t) for t in ms]}"
-            f" (bound {'none' if bound is None else f'{bound:.0f} ms'})"
+            f" (bound {bound:.0f} ms)"
             for name, (ms, bound) in self.cases.items()
-        )
+        ) + "".join(f"; {name}: not run here" for name in self.skipped)
         print(f"\n[#365 timings, {sys.platform}] {report}")
-        slow = [
-            name
-            for name, (ms, bound) in self.cases.items()
-            if bound is not None and statistics.median(ms) > bound
-        ]
+        slow = [name for name, (ms, bound) in self.cases.items() if statistics.median(ms) > bound]
         assert not slow, f"over the bound on {sys.platform}: {slow}; {report}"
 
 
@@ -172,7 +173,9 @@ def test_closed_port_probe_ends_within_its_timeout() -> None:
         probe = partial(local_probe.answers, f"{url}/api/tags")
         bound = _bound(False, attempts * _TIMEOUT_MS + _MARGIN_MS)
         timings.run(f"probe {host} closed", probe, False, bound)
-        # A trigger's POST when Ollama is not running (a refused loopback is not retried).
+        # A trigger's POST when Ollama is not running. post_json makes no retry of its own
+        # for a loopback URL, but Windows retries the refused connect at the socket level, so
+        # there it takes about 2 s per address and is not run.
         refused = partial(_refused_post, f"{url}/api/chat")
         timings.run(f"post_json {host} closed", refused, "refused", _bound(False, None))
     timings.check()
