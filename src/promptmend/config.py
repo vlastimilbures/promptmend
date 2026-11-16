@@ -497,7 +497,7 @@ class Settings:
     # that reject the field); Anthropic and OpenAI have their own (anthropic_temperature,
     # openai_temperature).
     temperature: float | None = _env("PROMPT_TEMPERATURE", "0.2", _temperature)
-    ollama_base_url: str = _env("OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_base_url: str = _env("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     ollama_model: str = _env("OLLAMA_MODEL", "qwen3:8b")
     ollama_think: bool = _env("OLLAMA_THINK", "false", _bool)
     # options.num_ctx, the context window in tokens: Ollama truncates a prompt longer
@@ -540,7 +540,7 @@ class Settings:
     # Built-in profiles that a same-named file in the user profile directory replaces
     # (prompt_builder.user_profiles_dir()). Empty: such a file is ignored, never a silent swap.
     profile_overrides: tuple[str, ...] = _env("PROMPT_PROFILE_OVERRIDES", "", _builtin_profiles)
-    lmstudio_base_url: str = _env("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+    lmstudio_base_url: str = _env("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
     lmstudio_model: str = _env("LMSTUDIO_MODEL", "local-model")
     anthropic_base_url: str = _env("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
     anthropic_model: str = _env("ANTHROPIC_MODEL", "claude-sonnet-5")

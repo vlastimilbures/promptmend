@@ -378,10 +378,11 @@ def _servers(monkeypatch: pytest.MonkeyPatch, answering: set[str]) -> doctor.Che
             raise OSError("refused")
 
     monkeypatch.setattr(local_probe, "_get", get)
-    settings = ConfigLayers.resolve(strict=False).settings()
-    check = doctor._local_servers_check(settings, assets.triggers(), True)
+    layers = ConfigLayers.resolve(strict=False)
+    settings = layers.settings()
+    check = doctor._local_servers_check(layers, settings, assets.triggers(), True)
     # Asked at the same time (#315), so in either order.
-    assert sorted(asked) == ["http://localhost:11434/api/tags", "http://localhost:1234/v1/models"]
+    assert sorted(asked) == ["http://127.0.0.1:11434/api/tags", "http://127.0.0.1:1234/v1/models"]
     return check
 
 
@@ -410,8 +411,9 @@ def test_local_servers_are_asked_at_the_same_time(monkeypatch: pytest.MonkeyPatc
         barrier.wait()
 
     monkeypatch.setattr(local_probe, "_get", get)
-    settings = ConfigLayers.resolve(strict=False).settings()
-    check = doctor._local_servers_check(settings, assets.triggers(), True)
+    layers = ConfigLayers.resolve(strict=False)
+    settings = layers.settings()
+    check = doctor._local_servers_check(layers, settings, assets.triggers(), True)
     assert check.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
 
 
@@ -428,9 +430,11 @@ def test_a_probe_that_raises_never_stops_the_other(monkeypatch: pytest.MonkeyPat
         return True
 
     monkeypatch.setattr(local_probe, "answers", answers)
-    settings = ConfigLayers.resolve(strict=False).settings()
+    layers = ConfigLayers.resolve(strict=False)
+    settings = layers.settings()
     check = doctor._safely(
-        "local_servers", lambda: doctor._local_servers_check(settings, assets.triggers(), True)
+        "local_servers",
+        lambda: doctor._local_servers_check(layers, settings, assets.triggers(), True),
     )
     assert (check.status, check.message) == ("fail", "check failed: RuntimeError: probe bug")
     assert len(asked) == 2
@@ -493,13 +497,122 @@ def test_local_servers_never_ask_another_host(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setenv("OLLAMA_BASE_URL", "https://ollama.example.com")
     monkeypatch.setattr(local_probe, "_get", lambda url: pytest.fail(f"asked {url}"))
-    settings = ConfigLayers.resolve(strict=False).settings()
+    layers = ConfigLayers.resolve(strict=False)
+    settings = layers.settings()
     only = [t for t in assets.triggers() if t.trigger == "-il-"]
-    check = doctor._local_servers_check(settings, only, True)
+    check = doctor._local_servers_check(layers, settings, only, True)
     assert check.message == "Ollama (-il-) is not on this machine; not asked"
     assert check.data["servers"]["ollama"]["answers"] is None
-    none = doctor._local_servers_check(settings, [], False)
+    none = doctor._local_servers_check(layers, settings, [], False)
     assert none.message == "no trigger uses Ollama or LM Studio"
+
+
+def test_local_servers_on_localhost_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#365: Windows tries localhost as ::1 first, about 2 s per call to a server on 127.0.0.1
+    only; the check says so, and how to set the URL, without warning."""
+    from promptmend import local_probe
+
+    monkeypatch.setattr(local_probe, "_get", lambda url: None)
+    triggers = assets.triggers()
+
+    def check(plat: str = "win32") -> doctor.Check:
+        layers = ConfigLayers.resolve(strict=False)
+        return doctor._local_servers_check(layers, layers.settings(), triggers, True, plat)
+
+    quiet = check()
+    assert quiet.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
+    assert quiet.data["slow_localhost"] == []
+    # Set in the real environment: `config set` would not override it.
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434/")
+    monkeypatch.setenv("LMSTUDIO_BASE_URL", "http://user:pw@LOCALHOST:1234/v1")
+    slow = check()
+    assert slow.status == doctor.INFO
+    assert slow.message == (
+        "Ollama answers (-il-); on Windows each -il- call may wait about 2 s for ::1 at "
+        "localhost: set OLLAMA_BASE_URL to http://127.0.0.1:11434/ in the environment; "
+        "LM Studio answers (-ilm-); on Windows each -ilm- call may wait about 2 s for ::1 at "
+        "localhost: use 127.0.0.1 for localhost in LMSTUDIO_BASE_URL, set in the environment"
+    )
+    assert "pw" not in slow.message
+    assert slow.data["slow_localhost"] == ["OLLAMA_BASE_URL", "LMSTUDIO_BASE_URL"]
+    assert doctor.Report((slow,)).to_json()["checks"]["local_servers"]["data"][
+        "slow_localhost"
+    ] == ["OLLAMA_BASE_URL", "LMSTUDIO_BASE_URL"]
+    # Elsewhere localhost costs nothing.
+    other = check("darwin")
+    assert other.message == "Ollama answers (-il-); LM Studio answers (-ilm-)"
+    assert other.data["slow_localhost"] == []
+
+
+def test_localhost_note_says_where_to_change_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy mode's .env is edited (`config set` refuses there); only a config.toml value
+    gets the `config set` command."""
+    from promptmend import local_probe
+
+    monkeypatch.setattr(local_probe, "_get", lambda url: None)
+    only = [t for t in assets.triggers() if t.trigger == "-il-"]
+
+    def message() -> str:
+        layers = ConfigLayers.resolve(strict=False)
+        return doctor._local_servers_check(layers, layers.settings(), only, True, "win32").message
+
+    legacy = Path(os.environ["PROMPTMEND_ENV"])
+    legacy.write_text("OLLAMA_BASE_URL=http://localhost:11434\n", "utf-8")
+    assert message().endswith(
+        f"set OLLAMA_BASE_URL to http://127.0.0.1:11434 in {legacy.expanduser()}"
+    )
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    config.settings_file().parent.mkdir(parents=True, exist_ok=True)
+    config.settings_file().write_text(
+        'config_version = 1\nOLLAMA_BASE_URL = "http://localhost:11434"\n', "utf-8"
+    )
+    assert message().endswith(
+        "set OLLAMA_BASE_URL to http://127.0.0.1:11434 "
+        "(`promptmend config set OLLAMA_BASE_URL http://127.0.0.1:11434`)"
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:99999",
+        "http://localhost:11434/?k=v",
+        "http://localhost:11434/#frag",
+        "http://localhost:11434/api",
+        # #365 review: a token in the path is never quoted back.
+        "http://localhost:11434/sk-or-v1-0123456789abcdef0123456789abcdef",
+    ],
+)
+def test_localhost_note_quotes_no_odd_url(url: str) -> None:
+    note = doctor._localhost_note("OLLAMA_BASE_URL", url, ["-il-"], "file:x.toml")
+    assert note.endswith(": use 127.0.0.1 for localhost in OLLAMA_BASE_URL, set in x.toml")
+    assert "sk-or" not in note
+
+
+def test_localhost_note_quotes_the_default_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    toml = f"file:{config.settings_file()}"
+    ollama = doctor._localhost_note("OLLAMA_BASE_URL", "http://localhost", ["-il-"], toml)
+    assert ollama.endswith(
+        "set OLLAMA_BASE_URL to http://127.0.0.1 "
+        "(`promptmend config set OLLAMA_BASE_URL http://127.0.0.1`)"
+    )
+    lmstudio = doctor._localhost_note(
+        "LMSTUDIO_BASE_URL", "http://localhost:4321/v1/", ["-ilm-"], toml
+    )
+    assert lmstudio.endswith(
+        "set LMSTUDIO_BASE_URL to http://127.0.0.1:4321/v1/ (`promptmend "
+        "config set LMSTUDIO_BASE_URL http://127.0.0.1:4321/v1/`)"
+    )
+    # A URL the gate would call a key (a user pattern, say) is never quoted, whatever its shape.
+    from promptmend.commands import common
+
+    monkeypatch.setattr(common, "looks_like_a_key", lambda value: True)
+    keyish = doctor._localhost_note(
+        "LMSTUDIO_BASE_URL", "http://localhost:1234/v1", ["-ilm-"], toml
+    )
+    assert keyish.endswith(": use 127.0.0.1 for localhost in LMSTUDIO_BASE_URL")
 
 
 def test_cli_path_names_the_windows_exe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

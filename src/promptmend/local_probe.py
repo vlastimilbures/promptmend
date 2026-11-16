@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from .providers.base import is_loopback
 
-# Seconds per phase: a loopback server answers at once, and nothing listening refuses at once.
+# Seconds per phase. A loopback server answers at once. Where nothing listens, macOS and Linux
+# refuse at once, but Windows retries a refused connect for about 2 s, so there a probe of
+# 127.0.0.1 waits out this timeout and one of localhost (::1 first) twice (#365).
 TIMEOUT = 0.5
 
 
