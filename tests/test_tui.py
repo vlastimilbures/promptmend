@@ -2232,11 +2232,62 @@ def test_triggers_say_when_espanso_cannot_name_its_folder(espanso: FakeRunner) -
     drive(scenario)
 
 
+# An older deployed -ip- still names OpenRouter: the Triggers tab shows that provider until a
+# redeploy, and Home warns, when PROMPT_PRO_PROVIDER names another (#278).
+def test_triggers_show_an_older_deployed_ip(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from promptmend import assets
+
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "anthropic")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
+    old = '"--trigger-id", "ip", "--provider", "openrouter", "--tier"'
+    text = assets.read_match("prompts-llm.yml").replace('"--trigger-id", "ip", "--tier"', old)
+    (espanso.root / "match" / "prompts-llm.yml").write_text(text, "utf-8")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("4")
+        rows = table_rows(app, "triggers", "#triggers")
+        assert rows["-ip-"][1:3] == ["openrouter until redeployed", "pro"]
+        assert rows["-if-"][1] == "openrouter"
+        pro = next(line for line in _home_text(app).splitlines() if "Pro (-ip-)" in line)
+        assert "openrouter · openai/gpt-6-luna" in pro
+        assert "redeploy" in pro
+
+    drive(scenario)
+
+
+# Without a plan (here: the launcher cannot be resolved) the State still reads the deployed
+# triggers from the folder doctor used, so Home and doctor agree (#278).
+def test_gather_reads_the_deployed_triggers_without_a_plan(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from promptmend import assets
+    from promptmend.tui import state as state_module
+
+    old = '"--trigger-id", "ip", "--provider", "openrouter", "--tier"'
+    text = assets.read_match("prompts-llm.yml").replace('"--trigger-id", "ip", "--tier"', old)
+    (espanso.root / "match" / "prompts-llm.yml").write_text(text, "utf-8")
+
+    def no_plan(*_: object) -> deploy.Plan:
+        raise deploy.DeployError("no launcher")
+
+    monkeypatch.setattr(state_module, "_plan", no_plan)
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", "anthropic")
+    gathered = state_module.gather()
+    assert gathered.plan is None
+    assert gathered.deployed is not None
+    assert {t.trigger: t.provider for t in gathered.deployed}["-ip-"] == "openrouter"
+    check = next(c for c in gathered.report.checks if c.id == "pro_provider")
+    assert check.status == "warn"
+
+
 def test_triggers_show_fixed_providers_and_deploy(espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await pilot.press("4")
         rows = table_rows(app, "triggers", "#triggers")
         assert rows["-i-"][1:5] == ["openrouter", "standard", "PROMPT_PROFILE", "missing"]
+        assert rows["-ip-"][1:3] == ["PROMPT_PRO_PROVIDER", "pro"]
         assert rows["-il-"][1:4] == ["ollama", "standard", "general"]
         assert rows["-ic-"][4] == "commented out"
         assert "PROMPT_PROVIDER does not change these" in str(
@@ -2627,7 +2678,8 @@ def test_triggers_match_the_match_files() -> None:
         for m in yaml.safe_load(path.read_text("utf-8"))["matches"]
     }
     assert {t for t, item in found.items() if item.active} == shipped
-    assert (found["-ip-"].provider, found["-ip-"].tier) == ("openrouter", "pro")
+    assert (found["-ip-"].provider, found["-ip-"].tier) == (None, "pro")  # PROMPT_PRO_PROVIDER
+    assert (found["-if-"].provider, found["-if-"].tier) == ("openrouter", "pro")
     assert (found["-ilm-"].provider, found["-ilm-"].profile) == ("lmstudio", "general")
     assert (found["-ic-"].active, found["-ic-"].provider) == (False, "anthropic")
     assert (found["-io-"].active, found["-io-"].provider) == (False, "openai")

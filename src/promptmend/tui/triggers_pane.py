@@ -9,7 +9,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Static
 
-from .. import deploy
+from .. import deploy, doctor
 from ..factory import PROVIDER_LABELS
 from . import teach
 from .base import Pane, add_row, button_row, manifest_digest, plan_digest
@@ -34,8 +34,9 @@ class TriggersPane(Pane):
     def compose(self) -> ComposeResult:
         yield Static(
             "Each trigger names its provider in its command line, so PROMPT_PROVIDER does not "
-            "change these. An empty PROMPT_PRO_PROFILE means PROMPT_PROFILE. A local trigger "
-            "stays deployed while its server is down: State says what it needs.",
+            "change these; -ip- runs on PROMPT_PRO_PROVIDER. An empty PROMPT_PRO_PROFILE means "
+            "PROMPT_PROFILE. A local trigger stays deployed while its server is down: State "
+            "says what it needs.",
             classes="note",
             markup=False,
         )
@@ -59,11 +60,16 @@ class TriggersPane(Pane):
         unread = "checking" if state.failed is None else "not checked"
         unknown = "unknown" if state.full else unread
         down = _servers_down(state)
+        stale = doctor.stale_pro_pins(state.deployed or [], state.settings)
         table = self.query_one("#triggers", DataTable)
         table.clear()
         for t in state.triggers:
             if t.command == "improve":
-                provider = t.provider or "PROMPT_PROVIDER"
+                provider = t.provider or (
+                    "PROMPT_PRO_PROVIDER" if t.tier == "pro" else "PROMPT_PROVIDER"
+                )
+                if t.trigger in stale:  # an older deployed -ip-: what Espanso runs for now
+                    provider = f"{stale[t.trigger]} until redeployed"
                 profile = t.profile or (
                     "PROMPT_PRO_PROFILE" if t.tier == "pro" else "PROMPT_PROFILE"
                 )

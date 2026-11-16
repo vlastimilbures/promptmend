@@ -6,7 +6,41 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Added
+- The pro tier can run on Anthropic or OpenAI directly, not only through OpenRouter (#278).
+  The new setting `PROMPT_PRO_PROVIDER` (`openrouter`, the default, `anthropic` or `openai`;
+  empty means `openrouter`) picks which API `-ip-` and `promptmend improve --tier pro` call
+  when the call names no provider; for `-ip-` it applies once the new match file is
+  deployed. It is not `OPENROUTER_PRO_PROVIDER`, the endpoint pin inside OpenRouter. On
+  OpenRouter the pro tier keeps its `OPENROUTER_PRO_*` settings; on Anthropic and OpenAI it
+  runs that provider's own model, effort and output cap (`OPENAI_MODEL` is already the pro
+  model, `gpt-6-luna`), with `PROMPT_PRO_TIMEOUT_SECONDS` and `PROMPT_PRO_PROFILE` on every
+  provider. Anthropic is not benchmarked as the pro tier. It is gated like any cloud call
+  and refused by `PROMPT_LOCAL_ONLY=true`. `--provider anthropic --tier pro` and `--provider
+  openai --tier pro`, refused before, now run that provider's pro tier (in the interface's
+  Try tab too); `--effort` stays refused for Anthropic. With the settings left as they are,
+  the pro tier runs exactly as before. See
+  [the pro tier](https://github.com/vlastimilbures/promptmend/blob/main/docs/usage.md#the-pro-tier).
+- `promptmend doctor` has a `pro_provider` check (`doctor --json`: `pro_provider`,
+  `deployed`, `stale`): it warns when the deployed `-ip-` is older and still names a
+  provider other than the `PROMPT_PRO_PROVIDER` you set, so the setting does not reach it
+  until `promptmend espanso deploy`. Home's Pro row says the same and shows the provider the
+  deployed `-ip-` really calls, and the Triggers tab shows it as `… until redeployed`. Home's
+  Rewrites and Pro rows now name the provider of the deployed trigger, so they match doctor;
+  a match file deployed by 0.7.0 to 0.20.0 (the shell `cmd:` form) is read too, for these
+  rows and doctor's `keys` check.
+
 ### Changed
+- `-ip-` no longer passes `--provider openrouter`, so it follows `PROMPT_PRO_PROVIDER`
+  (OpenRouter by default, as before; #278), and its label is now `PromptMend: rewrite on the
+  pro tier`. Deploy updates the match file; one you edited keeps the old line and stays on
+  OpenRouter. `-if-` still names OpenRouter, since its model list is OpenRouter's. A bare
+  `promptmend improve --tier pro` now runs on `PROMPT_PRO_PROVIDER`, not `PROMPT_PROVIDER`
+  (as `-ip-` always ran on OpenRouter): with `PROMPT_PROVIDER` set to a provider without the
+  pro tier, it was refused before; with `PROMPT_PROVIDER=anthropic` or `openai`, it now runs
+  OpenRouter's pro tier unless `PROMPT_PRO_PROVIDER` says otherwise. Home, the Triggers tab,
+  `promptmend doctor` (`keys`) and setup name the pro trigger's provider the same way, and
+  doctor's `keys` message now reads `-ip- uses OpenAI` for a single trigger (not `use`).
 - The API keys' file is now called "the secrets file" wherever PromptMend shows it (the
   `secrets` command's help and messages, `setup`, doctor and `config validate` findings, the
   interface), no longer "the secret store" (#284). It is `secrets.toml`, as before; the docs

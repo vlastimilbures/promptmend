@@ -202,7 +202,7 @@ promptmend config set PROMPT_LOCAL_ONLY true    # optional: refuse every cloud c
 | Trigger | What it does | Provider |
 |---------|--------------|----------|
 | `-i-` | Rewrites the clipboard into the golden template | OpenRouter |
-| `-ip-` | The same rewrite on the pro tier (a reasoning model, slower) | OpenRouter |
+| `-ip-` | The same rewrite on the pro tier (a reasoning model, slower) | OpenRouter (or Anthropic or OpenAI: `PROMPT_PRO_PROVIDER`) |
 | `-if-` | The same rewrite; a form picks model, effort, tokens and timeout | OpenRouter |
 | `-iok-` | `-i-`, sent once despite a flagged label, ID, email or IBAN | OpenRouter |
 | `-il-` | General prompt improvement, fully local | Ollama |

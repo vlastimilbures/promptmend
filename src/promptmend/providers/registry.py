@@ -46,10 +46,14 @@ class ProviderSpec:
     # The Settings field of its reasoning effort, which --effort also sets; None: it has none,
     # and --effort is refused for it.
     effort: str | None = None
-    # OpenRouter's own API: the pro tier (--tier pro, OPENROUTER_PRO_*), endpoint routing and
-    # the nested `reasoning` field, X-Title, the cost in each reply, the bench hooks and the
-    # -iok- trigger. A spec without it sends its effort as a top-level `reasoning_effort`.
+    # OpenRouter's own API: the pro tier's own settings (OPENROUTER_PRO_*), endpoint routing
+    # and the nested `reasoning` field, X-Title, the cost in each reply, the bench hooks and
+    # the -iok- trigger. A spec without it sends its effort as a top-level `reasoning_effort`.
     router: bool = False
+    # Has the pro tier (--tier pro, PROMPT_PRO_PROVIDER): config.Settings.tier_preset(). On a
+    # ``router`` the tier swaps in OPENROUTER_PRO_*; on another provider it keeps the
+    # provider's own model, effort and cap, and swaps in only the pro time limit and profile.
+    pro: bool = False
     # Where doctor asks a local server whether it answers, below its base URL.
     probe_path: str | None = None
     # The typed readers behind the accessors below, one per setting named above: the base
@@ -151,6 +155,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
             cap="openrouter_max_tokens",
             effort="openrouter_reasoning_effort",
             router=True,
+            pro=True,
             read_url=lambda c: c.openrouter_base_url,
             read_model=lambda c: c.openrouter_model,
             read_key=lambda c: c.openrouter_api_key,
@@ -166,6 +171,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
             key="ANTHROPIC_API_KEY",
             cap="anthropic_max_tokens",
             temperature="anthropic_temperature",
+            pro=True,
             read_url=lambda c: c.anthropic_base_url,
             read_model=lambda c: c.anthropic_model,
             read_key=lambda c: c.anthropic_api_key,
@@ -183,6 +189,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
             temperature="openai_temperature",
             cap_field="max_completion_tokens",
             effort="openai_reasoning_effort",
+            pro=True,
             read_url=lambda c: c.openai_base_url,
             read_model=lambda c: c.openai_model,
             read_key=lambda c: c.openai_api_key,

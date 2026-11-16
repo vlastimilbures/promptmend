@@ -373,6 +373,7 @@ _ROUND_TRIP = {
     "OPENROUTER_PRO_REASONING_EFFORT": "high",
     "OPENROUTER_PRO_MAX_TOKENS": "3000",
     "PROMPT_PRO_TIMEOUT_SECONDS": "90",
+    "PROMPT_PRO_PROVIDER": "openai",
     "PROMPT_PRO_PROFILE": "general",
     "PROMPT_PROFILE_OVERRIDES": "general,default",
     "LMSTUDIO_BASE_URL": "http://127.0.0.1:1300/v1",
@@ -413,6 +414,9 @@ def test_round_trip_covers_every_setting() -> None:
         ("PROMPT_GATE_PACKS", " VN, vn "),
         ("PROMPT_PROFILE_OVERRIDES", "default"),
         ("PROMPT_PROFILE_OVERRIDES", ""),
+        ("PROMPT_PRO_PROVIDER", "anthropic"),
+        ("PROMPT_PRO_PROVIDER", " OpenRouter "),
+        ("PROMPT_PRO_PROVIDER", ""),
     ],
 )
 def test_saved_setting_round_trips(saved_mode: Path, name: str, raw: str) -> None:
