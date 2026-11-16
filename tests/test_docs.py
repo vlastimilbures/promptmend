@@ -110,7 +110,7 @@ _FLAG = re.compile(r"(?<![\w-])(--?[a-zA-Z][\w-]*)")
 # `promptmend config get NAME` / `set NAME VALUE`: the later spans are siblings.
 _SIBLINGS = re.compile(r"`promptmend ([^`]+)`((?:\s*/\s*`[^`]+`)+)")
 # Options the docs name for other tools: uv, the bench, the retired installer option.
-_OTHER_TOOLS_FLAGS = {"--force", "--no-cache", "--persona", "--suite", "--with-config"}
+_OTHER_TOOLS_FLAGS = {"--force", "--no-cache", "--persona", "--python", "--suite", "--with-config"}
 # A line or span that runs another tool on the package (`uv tool install promptmend -c …`,
 # `brew upgrade promptmend`) names no promptmend command.
 _OTHER_TOOL = re.compile(r"^\s*(?:uv|uvx|brew|winget|gh|pip)\s")
