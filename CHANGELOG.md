@@ -31,6 +31,31 @@ All notable changes to this project are documented here. The format follows
   `--json` adds a `timing` key (`schema_version` stays 1); plain `doctor` is unchanged.
 
 ### Changed
+- Windows: the one-command install (`install.ps1`) now installs the frozen
+  `promptmend.exe` by default (#185), which started 1.7 to 2.2 times faster than the uv
+  install on a machine with endpoint scanning (#304). **Rerunning install.ps1 to update now
+  installs the exe, next to an existing uv install; set `PROMPTMEND_CHANNEL=uv` to keep
+  updating a uv install.** It then warns that both are installed and the triggers still call
+  the uv one, and names the switch steps by the exe's full path. It downloads
+  `promptmend-<version>-windows-x64.zip` from the same Release and refuses it, changing
+  nothing, unless its SHA-256 is the one the release workflow wrote into that `install.ps1`
+  (the release now renders the installer from the zip it built and checks the hash again
+  before attaching both). The hash catches a corrupted or swapped download; it ships in the
+  same release, so `gh attestation verify` remains the check of where the files came from.
+  It unpacks the zip next to `%LOCALAPPDATA%\Programs\promptmend` and checks that every file
+  arrived and the new exe starts, then swaps the folders (the old one renamed away and put
+  back if the swap fails; interrupted, it is put back when possible, otherwise the next run
+  keeps the `promptmend.old-…` folder and says so; renames retry while a scanner holds a
+  file, and folders an interrupted run left are swept once an hour old); while a `promptmend.exe` from that folder runs,
+  it stops and changes nothing. It adds the folder to the user PATH once (an unexpanded
+  `%VARIABLE%` there stays one) and runs the exe's `promptmend doctor --no-clipboard`. It
+  still never runs setup or a deploy. `PROMPTMEND_CHANNEL=uv` keeps the previous uv install (`PROMPTMEND_WHEEL` implies
+  it), any other channel is refused, and `PROMPTMEND_ZIP` installs a local zip. The exe is
+  not signed yet. `doctor` reports such an exe as the `installer` channel and names the
+  one-command install as its update (`doctor --json` keeps `schema_version` 1). The frozen
+  build is now compiled with `optimize=1`. docs/install.md: the exe is the recommended Windows
+  channel ("The exe", no longer a preview), with uv as the alternative and the update,
+  uninstall and switch-from-uv steps.
 - The interface paints Home at once (#317): the rows that need only the settings (what `-i-`
   and `-ip-` run, the output mode) appear first, and the match files and Espanso, the usage
   history and the checks say `checking` until `doctor` and the deploy plan are read, then the

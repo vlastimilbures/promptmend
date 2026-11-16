@@ -32,20 +32,23 @@ upgrading from an older release. The README's
 
 ## Choose a channel
 
-Every channel installs the same release files: the sdist or wheel that the release workflow
-built and tested, with the exact dependency versions from `uv.lock`. Each installs the CLI
-only; [Set up](#set-up) then writes the Espanso match files.
+Every channel installs the same release files that the release workflow built and tested:
+the sdist or wheel, with the exact dependency versions from `uv.lock`, or on Windows the
+frozen build made from them. Each installs the CLI only; [Set up](#set-up) then writes the
+Espanso match files.
 
 | Channel | macOS | Windows | Linux | Updates with |
 |---------|-------|---------|-------|--------------|
 | Homebrew tap | Recommended | — | Yes | `brew upgrade promptmend` |
-| One-command install (`install.ps1`) | — | Recommended | — | The same command again |
+| One-command install (`install.ps1`), the exe | — | Recommended | — | The same command again |
+| One-command install with `PROMPTMEND_CHANNEL=uv` | — | Yes | — | The same command again |
 | uv from PyPI | Yes | Yes | Recommended | `uv tool install --force …` |
 | uv from a GitHub Release wheel | Yes | Yes | Yes | `uv tool install --force …` |
 
 PyPI and the Homebrew tap carry releases from 0.19.0 on, the GitHub Release wheels from 0.16
-on, and `install.ps1` from the release after 0.19.0 on. There is no Scoop or WinGet package
-yet: a WinGet package is being prepared, see [Portable zip](#portable-zip-preview).
+on, and `install.ps1` from the release after 0.19.0 on; it installs the exe from the release
+after 0.25.0 on (before, it always used uv). There is no Scoop or WinGet package yet: a WinGet
+package of the same exe is being prepared (see [The exe](#the-exe)).
 To run the code from a git checkout instead, see
 [Install from a checkout](#install-from-a-checkout).
 
@@ -128,35 +131,65 @@ one of the two shortcuts, or remove the portable folder once the installed Espan
 
 ### One command (recommended)
 
-Paste this into PowerShell or a Command Prompt. It needs no Python or uv first:
+Paste this into PowerShell or a Command Prompt. It needs no Python or uv:
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://github.com/vlastimilbures/promptmend/releases/latest/download/install.ps1 | iex"
 ```
 
 `install.ps1` is attached to each GitHub Release from the release after 0.19.0 on (0.19.0
-does not have it), with that release's version filled in, and attested like the other release
-files. You can
+does not have it), with that release's version and the SHA-256 of its Windows zip filled in,
+and attested like the other release files. You can
 [read it](https://github.com/vlastimilbures/promptmend/blob/main/scripts/install.ps1) first.
 It prints each command before running it, and:
 
-1. installs uv if it is missing (`winget install --id astral-sh.uv -e`, or uv's official
-   installer where there is no winget);
-2. installs the wheel attached to that same Release with its `constraints.txt`, with
-   `--force` (PyPI is not used);
-3. runs `uv tool update-shell`, so a new terminal finds `promptmend` (in Windows Terminal,
-   only once every window was closed);
-4. runs `promptmend doctor --no-clipboard`, which lists what [Set up](#set-up) still has to do.
+1. downloads `promptmend-<version>-windows-x64.zip` from that same Release ([the
+   exe](#the-exe)) and refuses it, changing nothing, unless its SHA-256 is the one the
+   release recorded in `install.ps1`. That catches a corrupted or swapped download; the hash
+   ships in the same release, so to check where the files came from, verify them with
+   `gh attestation verify` (see [Verify a download](#verify-a-download));
+2. unpacks it into a new folder next to `%LOCALAPPDATA%\Programs\promptmend`, checks that
+   every file arrived and runs the new `promptmend.exe --version` once, then swaps the
+   folders: the old one is renamed away, the new one takes its name, and the old one is
+   deleted (or renamed back if the swap fails; if it is interrupted, put back when possible,
+   otherwise the next run keeps the `promptmend.old-…` folder and tells you). While a `promptmend.exe`
+   from that folder runs (the interface, or a trigger), it stops and changes nothing;
+3. adds `%LOCALAPPDATA%\Programs\promptmend` to your user PATH (once), so a new terminal
+   finds `promptmend` (in Windows Terminal, only once every window was closed);
+4. runs the new exe's `promptmend doctor --no-clipboard`, which lists what [Set up](#set-up)
+   still has to do.
 
 It never runs `promptmend setup` or `promptmend espanso deploy`: it only names them as the
-next step. It says so when it replaces an editable install from a checkout.
+next step. If a uv install of promptmend is still there, it warns that both are installed
+and the triggers still call the uv one, and names the steps to switch to the exe by its full
+path (see [Switch from a uv install](#switch-from-a-uv-install)). Rerunning the command on a
+machine that has only a uv install therefore installs the exe beside it: set
+`PROMPTMEND_CHANNEL=uv` (below) to keep updating the uv install instead.
 
-To install another release, set the version in PowerShell first and run the `irm … | iex`
-part in that same window. 0.19.0 is the oldest release it accepts.
+The exe is not signed yet. Defender or another endpoint protection product may scan it,
+which makes the first start slower, or block it. If your machine refuses it, use the uv
+channel below.
+
+To install another release, use that release's own `install.ps1`
+(`…/releases/download/v<version>/install.ps1` in place of
+`…/releases/latest/download/install.ps1`): the exe channel takes only the zip whose hash its
+`install.ps1` holds. With `PROMPTMEND_CHANNEL=uv`, `PROMPTMEND_VERSION` picks the release
+instead (0.19.0 is the oldest it accepts).
+
+### One command with uv
+
+Set the channel in PowerShell first and run the `irm … | iex` part in that same window:
 
 ```powershell
-$env:PROMPTMEND_VERSION = "<version>"
+$env:PROMPTMEND_CHANNEL = "uv"
+$env:PROMPTMEND_VERSION = "<version>"   # optional: another release than the newest
 ```
+
+It then installs uv if it is missing (`winget install --id astral-sh.uv -e`, or uv's
+official installer where there is no winget), installs the wheel attached to the same Release
+with its `constraints.txt` and `--force` (PyPI is not used), and runs `uv tool update-shell`
+and `promptmend doctor --no-clipboard`. It says so when it replaces an editable install from a
+checkout. A `PROMPTMEND_CHANNEL` other than `exe` or `uv` is refused.
 
 ### uv
 
@@ -169,14 +202,17 @@ uv tool update-shell
 Then close every Windows Terminal window and open a new one, so it finds `promptmend` (see
 [Espanso on Windows](#espanso-on-windows)).
 
-### Portable zip (preview)
+### The exe
 
 From the release after 0.21.0 on, each GitHub Release also carries
 `promptmend-<version>-windows-x64.zip`, attested like the other release files: the CLI built
-with PyInstaller as a folder that brings its own Python, so it needs neither Python nor uv.
-It is what the coming WinGet package (`vlastimilbures.PromptMend`) will install; until that
-package is published, the zip is for trying out. It is not signed, so SmartScreen or
-Defender may warn the first time it runs.
+with PyInstaller as a folder that brings its own Python, so it needs neither Python nor uv,
+and a trigger starts one process instead of a launcher and an interpreter. On a machine whose
+antivirus scans every file a process opens, it started about twice as fast as a uv install.
+The one-command install above puts it in place; the coming WinGet package
+(`vlastimilbures.PromptMend`) will install the same zip. It is not signed (see above).
+
+To place it by hand instead:
 
 1. Unzip it to `%LOCALAPPDATA%\Programs`, so the exe is
    `%LOCALAPPDATA%\Programs\promptmend\promptmend.exe`; it needs the `_internal` folder next
@@ -186,10 +222,10 @@ Defender may warn the first time it runs.
 2. Run its `setup` from that folder (`.\promptmend.exe setup` in PowerShell), so the match
    files call that exe.
 
-To update, delete the old `%LOCALAPPDATA%\Programs\promptmend` folder, then unzip the new
-release to the same place: the path stays the same, so the match files keep working. Once the
-WinGet package is published,
-`winget upgrade vlastimilbures.PromptMend` updates it instead, and `doctor` names that command.
+`doctor` reports an exe in `%LOCALAPPDATA%\Programs\promptmend` as the `installer` channel
+and names the one-command install as its update; an exe anywhere else is the `script`
+channel. Once the WinGet package is published, `winget upgrade vlastimilbures.PromptMend`
+updates a WinGet install, and `doctor` names that command.
 
 ## Linux
 
@@ -211,7 +247,7 @@ trigger pastes a `[promptmend: Clipboard unavailable: …]` marker instead of a 
 Each [GitHub Release](https://github.com/vlastimilbures/promptmend/releases) carries the
 sdist, the wheel and `constraints.txt` (the wheel and constraints from 0.16 on),
 `install.ps1` from the release after 0.19.0 and the
-[portable Windows zip](#portable-zip-preview) from the release after 0.21.0, each with a build
+[Windows zip](#the-exe) from the release after 0.21.0, each with a build
 provenance attestation. To check the files before installing them:
 
 1. Download them: `gh release download v<version> -R vlastimilbures/promptmend`.
@@ -265,11 +301,12 @@ command below for your channel when a newer release exists.
 | Channel | Update command |
 |---------|----------------|
 | Homebrew | `brew update && brew upgrade promptmend` |
-| One-command install | The same `irm … \| iex` command again, with `PROMPTMEND_VERSION` unset |
+| One-command install (the exe, `installer` in `doctor`) | `powershell -ExecutionPolicy ByPass -c "irm https://github.com/vlastimilbures/promptmend/releases/latest/download/install.ps1 \| iex"` again; close the interface first |
+| One-command install with uv | The same command again, with `PROMPTMEND_CHANNEL=uv` set and `PROMPTMEND_VERSION` unset. Without `PROMPTMEND_CHANNEL=uv` it now installs the exe beside the uv install (see [Switch from a uv install](#switch-from-a-uv-install)) |
 | uv from PyPI | `uv tool install --force promptmend -c <latest constraints URL>` (below) |
 | uv from a Release wheel | The install command with the new version and `--force` |
 | WinGet (once published) | `winget upgrade vlastimilbures.PromptMend` |
-| Portable zip | Unzip the new release over the same folder |
+| The exe, unzipped by hand | Delete the old `%LOCALAPPDATA%\Programs\promptmend` folder and unzip the new release to the same place, or run the one-command install |
 | A checkout ([below](#install-from-a-checkout)) | `git pull`, then rerun `./scripts/install_macos.sh` (`.\scripts\install_windows.ps1` on Windows) |
 
 With uv, install the new release over the old one with its own `constraints.txt`; `--force`
@@ -281,9 +318,10 @@ uv tool install --force promptmend -c https://github.com/vlastimilbures/promptme
 promptmend doctor
 ```
 
-The one-command install puts the newest release over the old one with the same launcher, so
-the match files keep working. `uv tool upgrade promptmend` does not move such an install,
-since uv pins the wheel's URL: run the command again instead.
+The one-command install puts the newest release over the old one with the same launcher
+(`%LOCALAPPDATA%\Programs\promptmend\promptmend.exe`, or uv's with `PROMPTMEND_CHANNEL=uv`),
+so the match files keep working. `uv tool upgrade promptmend` does not move a uv install
+made by it, since uv pins the wheel's URL: run the command again instead.
 
 The tap's formula is updated by hand after each release, so Homebrew can trail the GitHub
 Release and PyPI by a while: `doctor` may name a release that `brew upgrade` does not offer
@@ -306,6 +344,26 @@ To move from one channel to another (say from uv to Homebrew):
 
 Run from the new install, `doctor` warns while the matches still call the old launcher, or
 while the old `promptmend` comes first on `PATH` (`path_shadow`).
+
+### Switch from a uv install
+
+A Windows install made with uv (`install.ps1` before the exe, or `uv tool install`) keeps
+working next to the exe, and the triggers keep calling it until you deploy again. After the
+one-command install (which prints these steps when it finds the uv install):
+
+1. Run the exe's setup, so the match files call the exe (`promptmend.exe espanso deploy` only
+   rewrites the match files):
+
+   ```powershell
+   & "$env:LOCALAPPDATA\Programs\promptmend\promptmend.exe" setup
+   ```
+
+2. `uv tool uninstall promptmend`. Until then the uv one may come first on `PATH`, which
+   `doctor` reports as `path_shadow`.
+
+Your settings, keys and usage history stay: both installs use the same folders. To keep the
+uv install instead, delete `%LOCALAPPDATA%\Programs\promptmend` (and its PATH entry) and
+update with `PROMPTMEND_CHANNEL=uv` set ([One command with uv](#one-command-with-uv)).
 
 ## Uninstall
 
@@ -332,8 +390,12 @@ Espanso's rendering error.
    data folder stay until you delete them (see
    [Files and folders](configuration.md#files-and-folders)).
 4. Uninstall through the channel you installed with:
-   - uv, including the Windows one-command install: `uv tool uninstall promptmend`. uv stays;
-     `winget uninstall --id astral-sh.uv -e` removes it if winget installed it.
+   - The Windows one-command install (the exe): close the interface, delete the
+     `%LOCALAPPDATA%\Programs\promptmend` folder, and remove that folder from your user PATH
+     (Settings, "Edit environment variables for your account").
+   - uv, including the one-command install with `PROMPTMEND_CHANNEL=uv`: `uv tool uninstall
+     promptmend`. uv stays; `winget uninstall --id astral-sh.uv -e` removes it if winget
+     installed it.
    - Homebrew: `brew uninstall promptmend`, and `brew untap vlastimilbures/tap` if nothing
      else from the tap is installed.
 

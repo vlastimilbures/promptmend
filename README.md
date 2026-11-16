@@ -144,9 +144,14 @@ Or with [uv](https://docs.astral.sh/uv/getting-started/installation/):
 powershell -ExecutionPolicy ByPass -c "irm https://github.com/vlastimilbures/promptmend/releases/latest/download/install.ps1 | iex"
 ```
 
-It needs no Python first: it installs uv if needed, then the latest release, and runs
-`promptmend doctor`. Or with uv: see
-[docs/install.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/install.md#windows).
+It needs no Python or uv: it installs the latest release as a self-contained
+`promptmend.exe` in `%LOCALAPPDATA%\Programs\promptmend` (checked against the SHA-256 the
+release recorded, added to your PATH), then runs `promptmend doctor`. The exe is not signed
+yet, so Defender or other endpoint protection may scan or block it. To install with uv
+instead (or keep updating an earlier uv install), first run `$env:PROMPTMEND_CHANNEL = "uv"`
+in PowerShell (`set PROMPTMEND_CHANNEL=uv` in a Command Prompt), or see
+[docs/install.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/install.md#windows),
+which also covers switching from a uv install.
 
 **Linux**: use the uv line above, plus `xclip`, `xsel` or `wl-clipboard` for the clipboard.
 
