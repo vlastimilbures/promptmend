@@ -17,10 +17,8 @@ leaves your machine, and sends it to the model with the rewrite instructions. Es
 the result in place of the trigger. If something went wrong, you get a readable
 `[promptmend: …]` message, never a blank.
 
-It works the same on macOS and Windows, with [OpenRouter](https://openrouter.ai),
-[Anthropic](https://www.anthropic.com), [OpenAI](https://openai.com),
-[Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai). A full-screen terminal
-interface and plain commands set it up and manage it.
+It works the same on macOS and Windows. A full-screen terminal interface and plain commands
+set it up and manage it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/vlastimilbures/promptmend/main/docs/flow-dark.svg">
@@ -31,18 +29,15 @@ interface and plain commands set it up and manage it.
 
 - **Golden-template rewrite.** Any draft becomes
   `CONTEXT / GOAL / INSTRUCTIONS / CONSTRAINTS / INPUTS / OUTPUTS`.
-- **Two tiers.** `-i-` answers in seconds; `-ip-` uses a reasoning model for hard drafts.
-- **Five providers.** OpenRouter, Anthropic, OpenAI, Ollama and LM Studio; fully local if you
-  like.
+- **Two tiers.** `-i-` answers in seconds; `-ip-` uses a reasoning model for hard drafts, on
+  OpenRouter, Anthropic or OpenAI.
+- **Five providers.** [OpenRouter](https://openrouter.ai), [Anthropic](https://www.anthropic.com),
+  [OpenAI](https://openai.com), [Ollama](https://ollama.com) and
+  [LM Studio](https://lmstudio.ai); fully local if you like.
 - **Data-protection gate.** Keys, cards, IDs, emails and your own patterns never leave unless
   you override.
 - **Your persona, once.** `PROMPT_PERSONA` opens every rewrite with your role.
-- **Never a blank paste.** Errors arrive inline as `[promptmend: …]`. While the CLI runs,
-  up to about its time limit, Espanso shows nothing.
 - **Clean output.** No reasoning block, control characters or invisible Unicode.
-- **Interface and commands.** A full-screen interface, headless commands and
-  `promptmend doctor`.
-- **Benchmarked defaults.** Models and prompt chosen by a bundled benchmark.
 
 ## Screenshot
 
@@ -153,7 +148,7 @@ in PowerShell (`set PROMPTMEND_CHANNEL=uv` in a Command Prompt), or see
 [docs/install.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/install.md#windows),
 which also covers switching from a uv install.
 
-**Linux**: use the uv line above, plus `xclip`, `xsel` or `wl-clipboard` for the clipboard.
+**Linux**: use the uv line above.
 
 To update, use the channel you installed with, then run `promptmend doctor`. Before you
 uninstall, run `promptmend espanso detach`, or every trigger fails once the CLI is gone.
@@ -202,7 +197,7 @@ promptmend config set PROMPT_LOCAL_ONLY true    # optional: refuse every cloud c
 | Trigger | What it does | Provider |
 |---------|--------------|----------|
 | `-i-` | Rewrites the clipboard into the golden template | OpenRouter |
-| `-ip-` | The same rewrite on the pro tier (a reasoning model, slower) | OpenRouter (or Anthropic or OpenAI: `PROMPT_PRO_PROVIDER`) |
+| `-ip-` | The same rewrite on the pro tier (a reasoning model, slower) | OpenRouter by default; Anthropic or OpenAI with `PROMPT_PRO_PROVIDER` |
 | `-if-` | The same rewrite; a form picks model, effort, tokens and timeout | OpenRouter |
 | `-iok-` | `-i-`, sent once despite a flagged label, ID, email or IBAN | OpenRouter |
 | `-il-` | General prompt improvement, fully local | Ollama |
@@ -214,6 +209,8 @@ promptmend config set PROMPT_LOCAL_ONLY true    # optional: refuse every cloud c
 - It sends whatever is on the clipboard, so copy the draft first.
 - Do not type or switch windows while it runs. Or set `PROMPT_OUTPUT=clipboard` to get the
   rewrite on the clipboard instead.
+- On Anthropic (`PROMPT_PRO_PROVIDER=anthropic`, `--provider anthropic`) the default model is
+  `claude-sonnet-5-5`; on OpenAI it is `gpt-6-luna`.
 
 More: [docs/usage.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/usage.md)
 (profiles per trigger, clipboard output, the `-if-` form, your own triggers).
@@ -257,8 +254,8 @@ The common changes:
 ```bash
 promptmend config set OPENROUTER_MODEL google/gemini-3.5-flash-lite      # the -i- model
 promptmend config set PROMPT_PERSONA "I am working as a Head of Data at Example Corp."
+promptmend config set PROMPT_PRO_PROVIDER anthropic  # -ip- on Anthropic instead of OpenRouter
 promptmend config set PROMPT_OUTPUT clipboard   # copy the rewrite instead of pasting it
-promptmend config set PROMPT_LOCAL_ONLY true    # refuse every cloud call
 promptmend config set PROMPT_HISTORY false      # keep no usage history
 ```
 
@@ -272,22 +269,15 @@ More: [docs/configuration.md](https://github.com/vlastimilbures/promptmend/blob/
 
 ## Privacy
 
-Cloud triggers send your clipboard to OpenRouter (and the endpoint that serves the model), to
-Anthropic or to OpenAI. So does Ollama or LM Studio at another address, or an Ollama `cloud`
-model. Each such call carries:
-
-- the draft, after the data-protection gate and the removal of invisible characters;
-- the system prompt: the profile's instructions and your persona, which the gate does not scan;
-- the model name and request settings;
-- the API key, only as the authentication header of its own provider.
-
-The gate blocks keys, tokens, passwords, payment cards, some national ID numbers, emails, IBANs,
-confidentiality labels and your own patterns. `-iok-` sends one flagged draft on purpose when
-every finding is a label, ID, email or IBAN.
-
-`PROMPT_LOCAL_ONLY=true` refuses every cloud call, and the local triggers keep everything on
-your machine. On macOS and Windows, clipboard items a password manager marks as concealed are
-refused. The usage history is metadata only and never leaves this device.
+Cloud triggers send the draft, the system prompt (the profile and your persona) and the model
+settings to OpenRouter (and the endpoint that serves the model), Anthropic or OpenAI; so does
+Ollama or LM Studio at another address, or an Ollama `cloud` model. Before any of that, the
+data-protection gate blocks keys, tokens, passwords, payment cards, some national ID numbers
+(pattern packs, `PROMPT_GATE_PACKS`), emails, IBANs, confidentiality labels and your own
+patterns; `-iok-` sends one flagged draft on purpose when every finding is a label, ID, email
+or IBAN. The gate does not scan the system prompt. `PROMPT_LOCAL_ONLY=true` refuses every
+cloud call, clipboard items a password manager marks as concealed are refused (macOS and
+Windows), and the usage history is metadata only and never leaves this device.
 
 **The gate is a heuristic safety net, not a compliance control: use cloud triggers only where
 your organisation's policy allows.**
@@ -300,7 +290,7 @@ More: [docs/privacy.md](https://github.com/vlastimilbures/promptmend/blob/main/d
 A bundled benchmark chose the defaults. It scores every rewrite mechanically for template
 fidelity, prompt injection, language edge cases, latency and real cost. `-i-` runs
 `google/gemini-3.5-flash-lite` on `google-ai-studio/flex` (effort `minimal`). `-ip-` runs
-`openai/gpt-6-luna` on `openai` (effort `low`).
+`openai/gpt-6-luna` on `openai` (effort `low`) through OpenRouter.
 
 More: [docs/benchmark.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/benchmark.md)
 (the scores, timings and costs, and how to run it).
