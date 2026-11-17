@@ -293,7 +293,9 @@ def stub_provider(monkeypatch: pytest.MonkeyPatch) -> StubProvider:
 def history_rows(monkeypatch: pytest.MonkeyPatch) -> HistoryRows:
     """Gives history writes a generous time budget (the real ~0.25 s drops writes on a loaded
     CI runner) and returns a reader: history_rows("operations") lists that table of the
-    per-test usage history as dicts, [] when nothing was written."""
+    per-test usage history as dicts, [] when nothing was written. A write that still missed
+    its budget is in the spool, not lost: the reader replays it first, as stats, export and
+    doctor do, so a slow runner cannot leave a database file without its tables behind."""
     import sqlite3
     from contextlib import closing
 
@@ -304,6 +306,7 @@ def history_rows(monkeypatch: pytest.MonkeyPatch) -> HistoryRows:
 
     def read(table: str) -> list[dict[str, Any]]:
         path = history.history_path()
+        history.HistoryStore(path).replay()
         if not path.is_file():
             return []
         with closing(sqlite3.connect(path)) as conn:
