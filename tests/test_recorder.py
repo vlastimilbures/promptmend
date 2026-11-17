@@ -66,6 +66,29 @@ def test_direct_call_is_recorded(stub_provider: StubProvider, history_rows: Hist
     assert op["latency_ms"] >= 0
 
 
+# A first write that misses its budget inside the transaction (a loaded CI runner) leaves the
+# database file without its tables and the record in the spool; the reader replays the spool
+# as stats and doctor do, so the record is still found (main's test run 43995754048).
+def test_history_rows_finds_a_spooled_record(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, history_rows: HistoryRows
+) -> None:
+    calls: list[int] = []
+    real = history._migrate
+
+    def slow_once(conn: sqlite3.Connection) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise TimeoutError("history write budget spent")
+        real(conn)
+
+    monkeypatch.setattr(history, "_migrate", slow_once)
+    assert _run(LOCAL) == "improved"
+    path = history.history_path()
+    assert path.is_file()
+    assert path.with_name(history.SPOOL_NAME).is_file()
+    assert _only_op(history_rows)["outcome"] == "ok"
+
+
 @pytest.mark.parametrize(
     ("value", "origin", "stored"),
     [
