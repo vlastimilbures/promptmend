@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.27.0 - 2026-11-17
+
 ### Added
 - The pro tier can run on Anthropic or OpenAI directly, not only through OpenRouter (#278).
   The new setting `PROMPT_PRO_PROVIDER` (`openrouter`, the default, `anthropic` or `openai`;
