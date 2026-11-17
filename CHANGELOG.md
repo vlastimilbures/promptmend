@@ -119,7 +119,7 @@ All notable changes to this project are documented here. The format follows
   before `winget validate`, since the runner's v1.11 knows schemas only up to 1.10.0.
 - Windows: the exe (`promptmend-<version>-windows-x64.zip`, the one-command install's default
   channel and the WinGet package) is now built on Python 3.14 instead of 3.12 (#348), from
-  the next release on. On Windows with Python 3.12 the interface's background work (its
+  0.27.0 on. On Windows with Python 3.12 the interface's background work (its
   checks, the update check, the setup plan) ran far slower while it was open. CI's
   `frozen-windows` job builds and tests the zip on the same Python, and
   `scripts/build_windows.py build` refuses a Python older than 3.13; the release checks the
@@ -131,6 +131,9 @@ All notable changes to this project are documented here. The format follows
   carries the same option, as docs/install.md's uv section and Update table do. macOS and
   Linux are unchanged. The interface's 3.12 workaround stays for a uv install that still
   runs 3.12.
+- README: shorter where it repeated itself (the providers, the highlights, the
+  configuration example, a one-paragraph privacy section), and it now says that `-ip-` can
+  run on Anthropic or OpenAI (`PROMPT_PRO_PROVIDER`) and names Anthropic's default model.
 
 ### Fixed
 - A connection or transport failure's marker (`… request failed: …`) now repeats the
@@ -154,9 +157,7 @@ All notable changes to this project are documented here. The format follows
   stops every rewrite trigger with a marker until it is fixed, even one for a provider you
   do not use (`-p-` still pastes the persona), and `promptmend config validate` names it;
   the error names the setting but never quotes the URL. doctor's `local_servers` says the
-  URL is not used and does not probe it (nor the default repair mode puts in its place).
-
-### Fixed
+  URL is not used and does not probe it (nor the default that repair mode puts in its place).
 - `promptmend config set PROMPT_PROFILE_OVERRIDES …` (and the interface's Settings pane)
   wrote the list to `config.toml` as a TOML array, which settings then refused to read: every
   trigger pasted `[promptmend: PROMPT_PROFILE_OVERRIDES in config.toml must be text, a number
