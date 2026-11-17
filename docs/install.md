@@ -188,7 +188,7 @@ $env:PROMPTMEND_VERSION = "<version>"   # optional: another release than the new
 It then installs uv if it is missing (`winget install --id astral-sh.uv -e`, or uv's
 official installer where there is no winget), installs the wheel attached to the same Release
 with its `constraints.txt` and `--force` (PyPI is not used) on Python 3.13 or later (from
-the release after 0.26.0 on; see [uv](#windows) below), and runs `uv tool update-shell`
+0.27.0 on; see [uv](#windows) below), and runs `uv tool update-shell`
 and `promptmend doctor --no-clipboard`. It says so when it replaces an editable install from a
 checkout. While a `promptmend` from uv's tool folder runs (the interface, or a trigger), or
 uv's `promptmend.exe` launcher, it stops before uv runs and changes nothing (see
@@ -215,7 +215,7 @@ interface's background work (its checks, the update check, the setup plan) runs 
 while it is open (#348); the interface works around it, but 3.13 does not have the problem.
 uv picks the Python again on every `--force` install, so the update below passes it too, as
 `install.ps1` and `install_windows.ps1` do. `promptmend doctor --json` shows the Python an
-install uses (`checks.version.data.python`). From the release after 0.26.0 on, the exe
+install uses (`checks.version.data.python`). From 0.27.0 on, the exe
 brings its own Python 3.14, so this does not apply to it (0.26.0's exe has 3.12).
 
 ### The exe
