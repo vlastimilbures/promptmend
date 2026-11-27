@@ -27,7 +27,7 @@ import typer
 
 from . import pipeline, recorder
 from .config import CLIPBOARD, Settings, check_provider_options, loading_limit
-from .factory import PROVIDER_NAMES
+from .factory import PROVIDER_NAMES, timeout_hint
 from .providers.base import split_stop_note, timed_out_message
 from .providers.registry import PROVIDERS
 from .sanitize import clean
@@ -217,12 +217,11 @@ class Watchdog:
         elif expired:
             text = f"starting up took {took:.1f}s, {limit}"
         elif loading >= _SLOW_LOAD:
-            text = (
-                f"{timed_out_message(label, cfg.timeout)}, {loading:.1f}s of it loading the "
-                "settings"
-            )
+            loaded = f", {loading:.1f}s of it loading the settings"
+            text = timed_out_message(label, cfg.timeout, timeout_hint(cfg), loaded)
         else:
-            text = timed_out_message(label, cfg.timeout)
+            # The provider's own timed-out marker has the same text (make_provider()).
+            text = timed_out_message(label, cfg.timeout, timeout_hint(cfg))
         with self._lock:
             if self._state == _FIRED:
                 return None
@@ -395,7 +394,14 @@ def run_improve(
             # The rewrite comes back cleaned, which matters here too: --copy and clipboard
             # output put it on the clipboard.
             result = pipeline.rewrite(
-                raw, provider, cfg, profile, ran, allow_flagged=allow_flagged, observer=rec.observer
+                raw,
+                provider,
+                cfg,
+                profile,
+                ran,
+                allow_flagged=allow_flagged,
+                observer=rec.observer,
+                source=source,
             )
     except typer.Exit:
         # proceed()'s: the watchdog has ended the run, so no marker of its own follows.

@@ -53,6 +53,10 @@ class AnthropicProvider:
     # its registry spec's name and label.
     name: str = "anthropic"
     label: str = "Anthropic"
+    # The next steps its failure markers name, decided by make_provider() from the call's
+    # settings (factory.timeout_hint(), cap_hint()); empty names none.
+    timeout_hint: str = ""
+    cap_hint: str = ""
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
@@ -87,6 +91,7 @@ class AnthropicProvider:
             headers=headers,
             json=payload,
             meter=meter,
+            timeout_hint=self.timeout_hint,
         )
 
         try:
@@ -104,5 +109,5 @@ class AnthropicProvider:
             raise ProviderError(f"{self.label} response was malformed") from exc
 
         return finalize_content(
-            content, self.label, stop_reason=data.get("stop_reason"), capped=True
+            content, self.label, stop_reason=data.get("stop_reason"), cap_hint=self.cap_hint
         )

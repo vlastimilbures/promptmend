@@ -249,7 +249,10 @@ def test_plaintext_cloud_url_is_gate_blocked(
 
 
 def test_missing_key_is_an_error_marker(fake_http: FakeHttp, history_rows: HistoryRows) -> None:
-    assert _run(CLOUD) == "[promptmend: OPENROUTER_API_KEY is not configured]"
+    # The conftest default is legacy mode (PROMPTMEND_ENV), where `secrets set` refuses.
+    assert _run(CLOUD) == (
+        "[promptmend: OPENROUTER_API_KEY is not set: add it to the .env that PROMPTMEND_ENV names]"
+    )
     assert _outcome(history_rows) == "error_marker"
 
 

@@ -518,7 +518,12 @@ def test_trigger_processes_against_a_slow_stub() -> None:
             assert (proc.returncode, proc.stderr) == (0, b""), trigger
             out = proc.stdout.decode("utf-8")
             assert seconds <= LIMIT + WATCHDOG_MARGIN + SLACK, trigger
-            if out == f"[promptmend: {timed_out_message(label, LIMIT)}]":
+            args = SCRIPT_VARS[trigger]
+            tier = args[args.index("--tier") + 1] if "--tier" in args else "standard"
+            # The pro tier names its own limit setting (-ip-, -if- with its timeout at default).
+            setting = "PROMPT_PRO_TIMEOUT_SECONDS" if tier == "pro" else "PROMPT_TIMEOUT_SECONDS"
+            hint = f"try again, or raise {setting}"
+            if out == f"[promptmend: {timed_out_message(label, LIMIT, hint)}]":
                 # The watchdog may end a run on a slow runner before its request goes out.
                 assert late[trigger].requests <= 1, trigger
             else:

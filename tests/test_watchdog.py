@@ -39,7 +39,11 @@ if TYPE_CHECKING:
 runner = CliRunner()
 
 LIMIT = 1.0
-MARKER = f"[promptmend: OpenRouter timed out after {LIMIT}s]"
+# The next step a timed-out marker ends with: a call that passed --timeout (as these do) is
+# told to pass a longer one; one on the configured limit, to raise that setting (#398).
+FLAG_HINT = "try again with a longer --timeout"
+SETTING_HINT = "try again, or raise PROMPT_TIMEOUT_SECONDS"
+MARKER = f"[promptmend: OpenRouter timed out after {LIMIT}s: {FLAG_HINT}]"
 # Process start-up and teardown on a loaded CI runner (windows-latest above all), on top of
 # limit + margin. The cases it guards would otherwise run for 30 s or forever.
 SLACK = 8.0
@@ -70,7 +74,7 @@ def exits(monkeypatch: pytest.MonkeyPatch) -> Exits:
 def _watchdog(provider: str = "openrouter") -> tuple[Watchdog, recorder.Recorder]:
     rec = recorder.Recorder("improve", "i")
     watch = Watchdog(rec, Rewrite())
-    watch._marker = f"[promptmend: {timed_out_message('OpenRouter', LIMIT)}]"
+    watch._marker = f"[promptmend: {timed_out_message('OpenRouter', LIMIT, FLAG_HINT)}]"
     return watch, rec
 
 
@@ -197,6 +201,47 @@ def test_failures_still_exit(monkeypatch: pytest.MonkeyPatch, exits: Exits) -> N
     assert exits.codes == [0]
 
 
+# The provider's own timeout and the watchdog print the same marker for the same call, its
+# next step included: the setting of the call's tier, or --timeout when the call passed it.
+@pytest.mark.parametrize(
+    ("provider", "tier", "timeout", "hint"),
+    [
+        ("ollama", "standard", None, SETTING_HINT),
+        ("openrouter", "standard", None, SETTING_HINT),
+        ("openrouter", "pro", None, "try again, or raise PROMPT_PRO_TIMEOUT_SECONDS"),
+        ("anthropic", "pro", None, "try again, or raise PROMPT_PRO_TIMEOUT_SECONDS"),
+        ("openrouter", "pro", "default", "try again, or raise PROMPT_PRO_TIMEOUT_SECONDS"),
+        ("openrouter", "pro", "7", FLAG_HINT),
+        ("ollama", "standard", "7", FLAG_HINT),
+    ],
+)
+def test_provider_and_watchdog_word_the_same_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_http: FakeHttp,
+    provider: str,
+    tier: str,
+    timeout: str | None,
+    hint: str,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    cfg = Settings().for_call(tier, provider=provider, timeout=timeout)
+    fake_http.exc = _read_timeout()
+    with pytest.raises(base.ProviderError) as caught:
+        factory.make_provider(provider, cfg).generate("a draft", "s")
+    watch, _ = _watchdog()
+    watch.arm(cfg, provider)
+    watch.cancel()
+    assert watch._marker == f"[promptmend: {caught.value}]"
+    assert str(caught.value).endswith(f"s: {hint}")
+
+
+def _read_timeout() -> Exception:
+    import httpx
+
+    return httpx.ReadTimeout("slow")
+
+
 # arm() words the marker after the provider's label, a name it does not know generically, and
 # never asks threading for a wait past TIMEOUT_MAX.
 @pytest.mark.parametrize(
@@ -208,7 +253,7 @@ def test_arm_words_marker(provider: str, label: str) -> None:
     cfg = Settings(timeout=1e300)
     watch.arm(cfg, provider)
     try:
-        assert watch._marker == f"[promptmend: {label} timed out after 1e+300s]"
+        assert watch._marker == f"[promptmend: {label} timed out after 1e+300s: {SETTING_HINT}]"
         assert watch._timer is not None
         assert watch._timer.interval == threading.TIMEOUT_MAX
     finally:
@@ -314,7 +359,7 @@ def test_blocking_name_lookup_in_process(
     assert time.monotonic() - started < 10
     assert result.exit_code == 0
     assert result.stdout == ""  # the run's own marker was never printed
-    assert capfd.readouterr().out == "[promptmend: OpenRouter timed out after 1.0s]"
+    assert capfd.readouterr().out == f"[promptmend: OpenRouter timed out after 1.0s: {FLAG_HINT}]"
     assert fake.codes == [0]
     (op,) = history_rows("operations")
     assert (op["outcome"], op["trigger_id"], op["profile_id"]) == ("error_marker", "-i-", "default")
@@ -368,7 +413,7 @@ def test_no_provider_call_after_the_marker(
     monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
     result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")
-    assert capfd.readouterr().out == "[promptmend: Ollama timed out after 0.05s]"
+    assert capfd.readouterr().out == f"[promptmend: Ollama timed out after 0.05s: {FLAG_HINT}]"
     assert stub_provider.calls == []
 
 
@@ -504,7 +549,7 @@ def test_no_request_after_marker_while_building(
     args = ["improve", "--provider", "openrouter", "--source", "argument", "--text", "x"]
     result = runner.invoke(app, [*args, "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")
-    assert capfd.readouterr().out == "[promptmend: OpenRouter timed out after 0.05s]"
+    assert capfd.readouterr().out == f"[promptmend: OpenRouter timed out after 0.05s: {FLAG_HINT}]"
     assert fake_http.requests == []
 
 
@@ -660,7 +705,7 @@ def test_attempt_begun_before_the_marker_sends_before_it(
     args = ["improve", "--provider", "openrouter", "--source", "argument", "--text", "x"]
     result = runner.invoke(app, [*args, "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")
-    assert capfd.readouterr().out == "[promptmend: OpenRouter timed out after 0.05s]"
+    assert capfd.readouterr().out == f"[promptmend: OpenRouter timed out after 0.05s: {FLAG_HINT}]"
     assert events == ["begun", "request", "marker", "exit"]
 
 
@@ -741,10 +786,17 @@ def test_arm_loading_words_its_marker() -> None:
             0.0,
             3.0,
             30.0,
-            r"Ollama timed out after 30\.0s, 3\.\ds of it loading the settings",
+            r"Ollama timed out after 30\.0s, 3\.\ds of it loading the settings: try again, or "
+            r"raise PROMPT_TIMEOUT_SECONDS",
             False,
         ),
-        (3.0, 0.0, 30.0, r"Ollama timed out after 30\.0s", False),
+        (
+            3.0,
+            0.0,
+            30.0,
+            r"Ollama timed out after 30\.0s: try again, or raise PROMPT_TIMEOUT_SECONDS",
+            False,
+        ),
         (
             0.0,
             5.0,
@@ -888,7 +940,10 @@ def test_slow_load_then_stall_in_process(
     result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "30"])
     assert (result.exit_code, result.stdout) == (0, "")
     out = capfd.readouterr().out
-    pattern = r"\[promptmend: Ollama timed out after 30\.0s, \d+\.\ds of it loading the settings\]"
+    pattern = (
+        r"\[promptmend: Ollama timed out after 30\.0s, \d+\.\ds of it loading the settings: "
+        r"try again with a longer --timeout\]"
+    )
     assert re.fullmatch(pattern, out)
     assert stub_provider.calls == []
 

@@ -28,6 +28,12 @@ class OllamaProvider:
     # its registry spec's name and label.
     name: str = "ollama"
     label: str = "Ollama"
+    # The next steps its failure markers name, decided by make_provider() from the call's
+    # settings (factory.timeout_hint(), cap_hint(); ``local_server`` names a local server
+    # such as Ollama for a refused loopback connection); empty names none.
+    timeout_hint: str = ""
+    cap_hint: str = ""
+    local_server: str = ""
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
@@ -54,7 +60,13 @@ class OllamaProvider:
             else None
         )
         data = post_json(
-            self.label, f"{self.base_url}/api/chat", self.timeout, json=payload, meter=meter
+            self.label,
+            f"{self.base_url}/api/chat",
+            self.timeout,
+            json=payload,
+            meter=meter,
+            timeout_hint=self.timeout_hint,
+            local_server=self.local_server,
         )
 
         try:
@@ -63,5 +75,5 @@ class OllamaProvider:
             raise ProviderError(f"{self.label} response was malformed") from exc
 
         return finalize_content(
-            content, self.label, stop_reason=data.get("done_reason"), capped=bool(self.max_tokens)
+            content, self.label, stop_reason=data.get("done_reason"), cap_hint=self.cap_hint
         )

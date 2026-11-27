@@ -40,6 +40,12 @@ class OpenAICompatibleProvider:
     name: str = "openai-compatible"
     usage: UsageParser = field(default=openai_usage, repr=False, compare=False)
     local: bool = False
+    # The next steps its failure markers name, decided by make_provider() from the call's
+    # settings (factory.timeout_hint(), cap_hint(); ``local_server`` names a local server
+    # such as Ollama for a refused loopback connection); empty names none.
+    timeout_hint: str = ""
+    cap_hint: str = ""
+    local_server: str = ""
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
@@ -71,6 +77,8 @@ class OpenAICompatibleProvider:
             headers=headers,
             json=payload,
             meter=meter,
+            timeout_hint=self.timeout_hint,
+            local_server=self.local_server,
         )
         if self.on_response is not None:
             self.on_response(data)
@@ -88,5 +96,5 @@ class OpenAICompatibleProvider:
             content,
             self.label,
             stop_reason=choice.get("finish_reason"),
-            capped=bool(self.max_tokens),
+            cap_hint=self.cap_hint,
         )
