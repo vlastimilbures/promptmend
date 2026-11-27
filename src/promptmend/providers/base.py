@@ -304,11 +304,11 @@ def timed_out_message(label: str, timeout: float, hint: str = "", detail: str = 
 
 def _host_port(url: str) -> str:
     """``host:port`` of ``url`` for a marker, from the parsed host and port alone (the netloc
-    may hold a user name and password); an IPv6 host is bracketed, and a URL without a port
-    shows its host alone."""
+    may hold a user name and password); an IPv6 host is bracketed, without its zone id, and a
+    URL without a port shows its host alone."""
     try:
         parts = urlsplit(url)
-        host, port = parts.hostname or "", parts.port
+        host, port = (parts.hostname or "").partition("%")[0], parts.port
     except ValueError:
         return ""
     if ":" in host:
@@ -350,10 +350,23 @@ def _tls_failure(exc: BaseException) -> ssl.SSLCertVerificationError | None:
     try."""
     import ssl  # httpx has loaded it already
 
+    return _cause(exc, ssl.SSLCertVerificationError)
+
+
+def _tls_error(exc: BaseException) -> bool:
+    """Whether a TLS error of any kind caused ``exc``: the server answered, so it is running
+    (an https base URL for a server that speaks plain HTTP ends this way)."""
+    import ssl  # httpx has loaded it already
+
+    return _cause(exc, ssl.SSLError) is not None
+
+
+def _cause[E: BaseException](exc: BaseException, kind: type[E]) -> E | None:
+    """The first ``kind`` in ``exc``'s chain of causes, ``exc`` itself included."""
     seen: set[int] = set()
     cause: BaseException | None = exc
     while cause is not None and id(cause) not in seen:
-        if isinstance(cause, ssl.SSLCertVerificationError):
+        if isinstance(cause, kind):
             return cause
         seen.add(id(cause))
         cause = cause.__cause__ or cause.__context__
@@ -429,7 +442,7 @@ def _exchange(
         loopback = is_loopback(url)
         if tls is not None:
             message = tls_message(label, tls)
-        elif loopback:
+        elif loopback and not _tls_error(exc):
             message = refused_message(label, url, wording.local_server)
         else:
             message = _failed(label, exc)

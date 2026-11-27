@@ -946,6 +946,7 @@ def test_refused_without_a_local_server(fake_http: FakeHttp) -> None:
         ("http://127.0.0.1:11434/api/chat", "127.0.0.1:11434"),
         ("http://user:secret@localhost:1234/v1", "localhost:1234"),
         ("http://[::1]:11434", "[::1]:11434"),
+        ("http://[::1%25" + "x" * 300 + "]:11434", "[::1]:11434"),
         ("http://localhost/v1", "localhost"),
     ],
 )
@@ -955,6 +956,23 @@ def test_refused_names_host_and_port(fake_http: FakeHttp, url: str, where: str) 
         post_json("LM Studio", url, 5, json={}, local_server="LM Studio")
     assert str(caught.value) == f"LM Studio is not running on {where}: start it, then try again"
     assert "secret" not in str(caught.value)
+
+
+# A TLS error that is not a certificate failure (an https base URL for a server that speaks
+# plain HTTP) came from a server that is running: the marker keeps the reason and does not say
+# to start it. Still not retried, and still counted as refused.
+def test_loopback_tls_error_is_not_a_stopped_server(fake_http: FakeHttp) -> None:
+    import ssl
+
+    error = httpx.ConnectError("[SSL: WRONG_VERSION_NUMBER] wrong version number")
+    error.__cause__ = ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number")
+    fake_http.queue(error, OK)
+    with pytest.raises(ProviderError) as caught:
+        post_json("Ollama", "https://127.0.0.1:11434/api/chat", 5, json={}, local_server="Ollama")
+    assert "is not running" not in str(caught.value)
+    assert str(caught.value).startswith("Ollama request failed: ")
+    assert "WRONG_VERSION_NUMBER" in str(caught.value)
+    assert len(fake_http.calls) == 1
 
 
 def test_refused_message_without_a_parsable_port() -> None:

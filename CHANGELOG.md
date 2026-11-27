@@ -30,12 +30,13 @@ All notable changes to this project are documented here. The format follows
 - The five failure markers a new user meets most often name the next step (#398), and none
   names a flag the call did not pass. A missing key says `is not set` and to run
   `promptmend secrets set OPENROUTER_API_KEY` in a terminal (with `PROMPTMEND_ENV` set: to add
-  it to the `.env` that variable names) instead of `is not configured`. An empty clipboard says `The clipboard has no
-  text: copy your draft, then type the trigger again`; stdin, `--text` and the interface's
-  Try tab keep `Input is empty`. A local server that refuses the connection says `Ollama is
-  not running on 127.0.0.1:11434: start it, then try again` (LM Studio likewise; a cloud
-  provider's base URL on this computer says `no server is running on …`) instead of the HTTP
-  library's text. A timeout ends `try again, or raise PROMPT_TIMEOUT_SECONDS`
+  it to the `.env` that variable names) instead of `is not configured`. An empty clipboard
+  says `The clipboard has no text: copy your draft, then type the trigger again`; stdin,
+  `--text` and the interface's Try tab keep `Input is empty`. A local server that refuses
+  the connection says `Ollama is not running on 127.0.0.1:11434: start it, then try again`
+  (LM Studio likewise; a cloud provider's base URL on this computer says `no server is
+  running on …`) instead of the HTTP library's text; a TLS error from a server that is
+  running keeps its reason. A timeout ends `try again, or raise PROMPT_TIMEOUT_SECONDS`
   (`PROMPT_PRO_TIMEOUT_SECONDS` on the pro tier, `try again with a longer --timeout` when the
   call passed `--timeout`), from the provider and the watchdog alike. A reply that used its
   whole output cap before writing any text names the cap setting (`OPENROUTER_MAX_TOKENS`,
