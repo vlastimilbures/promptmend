@@ -254,11 +254,47 @@ def _luhn_prefixes(digits: str) -> tuple[list[int], list[int]]:
     return sums
 
 
+# Card brands as (first prefix, last prefix, lengths); a prefix range compares as text of
+# equal length. Visa, Mastercard, American Express, Discover, JCB, Diners Club, UnionPay. One
+# random number in ten passes Luhn, so an unseparated run (a millisecond timestamp, an ID in a
+# log) counts only with a brand's prefix and length. No Maestro: 50 and 56-69 at 12-19 digits
+# would let most of those runs back in.
+_CARD_BRANDS: tuple[tuple[str, str, Collection[int]], ...] = (
+    ("4", "4", (13, 16, 19)),  # Visa
+    ("51", "55", (16,)),  # Mastercard
+    ("2221", "2720", (16,)),  # Mastercard 2-series
+    ("34", "34", (15,)),  # American Express
+    ("37", "37", (15,)),  # American Express
+    ("6011", "6011", range(16, 20)),  # Discover
+    ("644", "649", range(16, 20)),  # Discover
+    ("65", "65", range(16, 20)),  # Discover
+    ("3528", "3589", range(16, 20)),  # JCB
+    ("300", "305", range(14, 20)),  # Diners Club
+    ("3095", "3095", range(14, 20)),  # Diners Club
+    ("36", "36", range(14, 20)),  # Diners Club
+    ("38", "39", range(14, 20)),  # Diners Club
+    ("62", "62", range(16, 20)),  # UnionPay
+)
+
+
+def _is_brand(digits: str) -> bool:
+    """Whether a digit run has a card brand's prefix and length. \\d also matches digits of
+    other scripts (Arabic-Indic, Devanagari), which NFKC does not fold: the prefix is read
+    by value."""
+    head = digits[:4] if digits.isascii() else "".join(str(int(ch)) for ch in digits[:4])
+    return any(
+        len(digits) in lengths and first <= head[: len(first)] <= last
+        for first, last, lengths in _CARD_BRANDS
+    )
+
+
 def _is_card(match: re.Match[str]) -> bool:
     """Whether 13-19 digits in consecutive digit groups pass the Luhn checksum. The regex
     is greedy, so a card followed by "\n2." or next to a short number is one match;
     checking each group window finds the card inside it. A card wraps over one line at
-    most. A match holds at most 19 digits, so only a few windows are long enough."""
+    most. A match holds at most 19 digits, so only a few windows are long enough. A window
+    that holds an unseparated run of 13+ digits (always so for a window of one group) also
+    needs a card brand's prefix and length (_CARD_BRANDS)."""
     digits, starts, ends, lines = "", [], [], []
     line = 0
     for part in re.split(r"(\D+)", match.group()):
@@ -272,13 +308,21 @@ def _is_card(match: re.Match[str]) -> bool:
     sums = _luhn_prefixes(digits)
     # A card's groups have 4+ digits except maybe the last (4-4-4-4, 4-6-5, 4-4-4-4-3); a window
     # of shorter groups is a phone list or dates, where some window passes Luhn by chance.
+    # A group of 13+ digits is an unseparated run, not a card's group: a window with one needs
+    # a brand, or a timestamp and a number ("1732700000000 4521") would look grouped. A card
+    # wrapped late ("4111111111111\n111") has its brand's prefix and length and is still found.
     next_short = [len(ends)] * (len(ends) + 1)
+    next_long = [len(ends)] * (len(ends) + 1)
     for k in range(len(ends) - 1, -1, -1):
-        next_short[k] = k if ends[k] - starts[k] < 4 else next_short[k + 1]
+        size = ends[k] - starts[k]
+        next_short[k] = k if size < 4 else next_short[k + 1]
+        next_long[k] = k if size >= 13 else next_long[k + 1]
     for i, start in enumerate(starts):
         first = bisect.bisect_left(ends, start + 13, i)
         last = min(bisect.bisect_right(ends, start + 19, i), next_short[i] + 1)
         for j in range(first, last):
+            if j >= next_long[i] and not _is_brand(digits[start : ends[j]]):
+                continue
             prefix = sums[(len(digits) - ends[j]) % 2]
             if lines[j] - lines[i] <= 1 and (prefix[ends[j]] - prefix[start]) % 10 == 0:
                 return True

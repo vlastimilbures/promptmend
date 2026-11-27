@@ -1,4 +1,5 @@
 import base64
+import random
 import re
 import time
 from collections.abc import Iterable
@@ -362,6 +363,155 @@ def test_detects_card_before_non_luhn_digit_run() -> None:
 )
 def test_detects_card_behind_unicode_separators(text: str) -> None:
     assert "payment_card" in scan(text)
+
+
+# Published test numbers, one or more per brand in redaction._CARD_BRANDS (#397).
+BRAND_TEST_CARDS = [
+    pytest.param("4222222222222", id="visa-13"),
+    pytest.param("4111111111111111", id="visa-16"),
+    pytest.param("4111111111111111110", id="visa-19"),
+    pytest.param("5555555555554444", id="mastercard"),
+    pytest.param("2223003122003222", id="mastercard-2-series"),
+    pytest.param("378282246310005", id="amex-37"),
+    pytest.param("343434343434343", id="amex-34"),
+    pytest.param("6011111111111117", id="discover-6011"),
+    pytest.param("6445644564456445", id="discover-644"),
+    pytest.param("6510000000000000002", id="discover-65-19"),
+    pytest.param("3530111333300000", id="jcb"),
+    pytest.param("30569309025904", id="diners-305"),
+    pytest.param("36227206271667", id="diners-36"),
+    pytest.param("38520000023237", id="diners-38"),
+    pytest.param("6200000000000005", id="unionpay"),
+]
+
+
+def _grouped(digits: str) -> str:
+    return " ".join(digits[k : k + 4] for k in range(0, len(digits), 4))
+
+
+# A real card is found unseparated (it has a brand's prefix and length) and grouped.
+@pytest.mark.parametrize("digits", BRAND_TEST_CARDS)
+def test_detects_each_card_brand(digits: str) -> None:
+    assert "payment_card" in scan(f"card {digits}")
+    assert "payment_card" in scan(f"card {_grouped(digits)}")
+
+
+# An unseparated Luhn-valid run with no brand's prefix and length is not a card (#397); the
+# same digits grouped still are, as before.
+@pytest.mark.parametrize(
+    "digits",
+    [
+        pytest.param("1234567812345670", id="no-brand-prefix"),
+        pytest.param("3700000000000007", id="amex-prefix-16-digits"),
+        pytest.param("550000000000004", id="mastercard-prefix-15-digits"),
+    ],
+)
+def test_unseparated_luhn_run_needs_a_brand(digits: str) -> None:
+    assert "payment_card" not in scan(f"id {digits}")
+    assert "payment_card" in scan(f"id {_grouped(digits)}")
+
+
+def _luhn_number(prefix: str, length: int) -> str:
+    """``prefix`` padded with zeros to ``length`` digits, the last one the Luhn check digit."""
+    body = prefix.ljust(length - 1, "0")
+    doubled = (int(ch) * (2 - k % 2) for k, ch in enumerate(reversed(body)))
+    total = sum(d - 9 if d > 9 else d for d in doubled)
+    return body + str(-total % 10)
+
+
+# The edges of each brand's prefix range and its lengths, on Luhn-valid unseparated runs.
+@pytest.mark.parametrize(
+    ("prefix", "length", "card"),
+    [
+        ("4", 13, True),
+        ("4", 15, False),
+        ("4", 16, True),
+        ("4", 17, False),
+        ("4", 18, False),
+        ("4", 19, True),
+        ("50", 16, False),
+        ("51", 16, True),
+        ("55", 16, True),
+        ("56", 16, False),
+        ("2220", 16, False),
+        ("2221", 16, True),
+        ("2720", 16, True),
+        ("2721", 16, False),
+        ("34", 15, True),
+        ("34", 16, False),
+        ("35", 15, False),
+        ("37", 15, True),
+        ("6011", 16, True),
+        ("6012", 16, False),
+        ("643", 16, False),
+        ("644", 16, True),
+        ("649", 19, True),
+        ("65", 15, False),
+        ("65", 16, True),
+        ("3527", 16, False),
+        ("3528", 16, True),
+        ("3589", 19, True),
+        ("3590", 16, False),
+        ("300", 14, True),
+        ("305", 19, True),
+        ("306", 14, False),
+        ("3095", 14, True),
+        ("3096", 14, False),
+        ("36", 13, False),
+        ("36", 14, True),
+        ("38", 14, True),
+        ("39", 14, True),
+        ("62", 15, False),
+        ("62", 16, True),
+        ("63", 16, False),
+    ],
+)
+def test_card_brand_edges(prefix: str, length: int, card: bool) -> None:
+    assert ("payment_card" in scan(f"id {_luhn_number(prefix, length)}")) is card
+
+
+# A 13+ digit run is not a card's group: a timestamp and a number next to it are not a grouped
+# card, though 17327000000001354 and 13541732700000000 pass Luhn.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ts=1732700000000 1354",
+        "ts=1732700000000-1354",
+        "ts=1732700000000\n1354",
+        "ts=1354 1732700000000",
+        "12 1354 1732700000000 12",
+    ],
+)
+def test_long_run_is_not_a_card_group(text: str) -> None:
+    assert "payment_card" not in scan(text)
+
+
+# A card wrapped after its 13th digit has a brand's prefix and length, so it is still found.
+@pytest.mark.parametrize("text", ["4111111111111\n111", "4111111111111 111", "37828224631000 5"])
+def test_detects_card_with_a_long_first_group(text: str) -> None:
+    assert "payment_card" in scan(text)
+
+
+# Digits of another script that NFKC does not fold (Arabic-Indic, Devanagari) still carry the
+# brand's prefix.
+@pytest.mark.parametrize("zero", [0x0660, 0x06F0, 0x0966], ids=hex)
+def test_card_brand_in_other_digit_scripts(zero: int) -> None:
+    script = str.maketrans("0123456789", "".join(chr(zero + n) for n in range(10)))
+    assert "payment_card" in scan("4111111111111111".translate(script))
+    assert "payment_card" not in scan("1234567812345670".translate(script))
+
+
+# Millisecond timestamps and long IDs in logs are rarely blocked as cards (#397: 10% before).
+def test_timestamps_and_ids_are_rarely_cards() -> None:
+    rng = random.Random(397)  # noqa: S311 - test data, not a secret
+    stamps = [rng.randint(1_577_836_800_000, 2_082_758_399_999) for _ in range(10_000)]
+    ids = [rng.randint(10**17, 10**18 - 1) for _ in range(10_000)]
+    stamp_hits = sum("payment_card" in scan_draft(f"ts={n}") for n in stamps)
+    id_hits = sum("payment_card" in scan_draft(f'{{"id": {n}}}') for n in ids)
+    # Measured: 0 timestamps (no 13-digit brand starts with 1 or 2) and about 0.7% of IDs.
+    # A brand table a little too wide gives 130 or more ID hits.
+    assert stamp_hits < 50  # 0.5%
+    assert id_hits < 120  # 1.2%
 
 
 # A zero-width space inside a vendor key does not hide it.
@@ -818,8 +968,6 @@ def test_safe_repr_honours_user_patterns(monkeypatch: pytest.MonkeyPatch) -> Non
 # fold gives, for every ASCII code point and for random ASCII strings (controls, tabs and
 # newlines included), so the gate's findings cannot change.
 def test_normalize_ascii_fast_path_equals_the_fold() -> None:
-    import random
-
     from promptmend import redaction
 
     for code in range(128):
