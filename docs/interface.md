@@ -128,15 +128,24 @@ setup only once it knows nothing is installed. Everything that needs only your s
 
 ## Settings tab
 
-The Settings tab (`2`) lists every setting and both API keys, grouped (Output, Keys, Privacy,
+The Settings tab (`2`) lists every setting and the three API keys, grouped (Output, Keys, Privacy,
 Models, History). Each row has a dot, the name, the value and where the value comes
 from (`config.toml`, `secrets.toml`, `.env`, `environment` or `default`):
 
-- a green `●` is a switch that is on, a key that is set, or a value that is not the default;
-- a grey `○` and a dimmed row is a switch that is off, a key that is not set, or a default.
+- a filled `●`, in the theme's accent colour, is a value you set: it comes from
+  `config.toml`, the secrets file, a `.env` or the environment, even when it is the same as
+  the default. A switch you set to off has one too;
+- a hollow `○` is the built-in default, which is in effect as it is, or a key that is not set.
 
-The dot is a glyph as well as a colour, so it reads in the high-contrast theme and with
-`NO_COLOR` too. Keys show only `set` or `not set`, and `PROMPT_PERSONA` only `<set, hidden>`.
+Nothing in a row is dimmed because its value is the default: only the word `default` in the
+last column is muted. On the cursor row the whole line takes the cursor bar's text colour,
+the dot and `default` included. A switch says on or off in its value only. The dot is a glyph
+as well as a colour, so it reads in the high-contrast theme and with `NO_COLOR` too. An empty
+value is shown as what it does, for example `none`, `not sent` (an effort or temperature),
+`any endpoint` (an endpoint pin), `as standard`, `as PROMPT_PROFILE`, `Ollama's own` or `off`
+(`PROMPT_GATE_PACKS`). Where an empty value makes the next call fail (a provider, a profile
+or a model left empty), it shows `empty`. Keys show only `set` or `not set`, and
+`PROMPT_PERSONA` only `<set, hidden>`.
 The line under the list explains the setting under the cursor, says where its value comes
 from and gives the command that changes it in a terminal.
 
@@ -146,7 +155,7 @@ The list has the focus when the tab opens. Its keys:
 |-----|--------|
 | Up, Down, `j`, `k` | Move |
 | Space | Switch a true/false setting, saved at once |
-| Enter | Switch a true/false setting; pick from a list (the current value marked); type a value (prefilled, the persona too), checked as the CLI reads it: a rejected value or one that looks like a key stays in the dialog with the reason, and nothing is saved. On a key's row, the Set key dialog |
+| Enter | Switch a true/false setting; pick from a list (the current value and the default marked `(current)` and `(default)`); type a value (prefilled, the persona too), checked as the CLI reads it: a rejected value or one that looks like a key stays in the dialog with the reason, and nothing is saved. Both dialogs have a **Use default** button, the same as `u`. On a key's row, the Set key dialog |
 | `u` | Back to the default (`config unset`). On a key's row, the Remove key dialog. Only while the list has the focus |
 | `/` | Filter by name or group; Escape clears it and goes back to the list |
 

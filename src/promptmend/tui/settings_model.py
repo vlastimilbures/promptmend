@@ -1,8 +1,9 @@
 """What the Settings tab lists: every setting in a group, with its kind (a switch, a
-choice, a number or text), its choices and a one-line help, and the rows worked out from a
-State. Pure, with no Textual, so a test can check it without the interface:
-`tests/test_tui_settings_model.py` ties it to `config.env_names()` and parses every choice
-with the config parser."""
+choice, a number or text), its choices, a one-line help and the word an empty value shows,
+and the rows worked out from a State. A row's dot says one thing only: the value is set by
+you (config.toml, the secrets file or the environment), not the built-in default. Pure, with
+no Textual, so a test can check it without the interface: `tests/test_tui_settings_model.py`
+ties it to `config.env_names()` and parses every choice with the config parser."""
 
 from __future__ import annotations
 
@@ -33,7 +34,11 @@ BOOL, CHOICE, INT, TEXT, KEY = "bool", "choice", "int", "text", "key"
 # State: the user's profiles change.
 PROFILE_CHOICES = ("<profiles>",)
 HIDDEN = "<set, hidden>"
-EMPTY = "(empty)"
+# The empty-value words that are not the plain "none" (Meta.empty). BROKEN is for a setting
+# whose parser takes an empty value although the next call then fails (no provider, profile
+# or model): the row must not look valid.
+NOT_SENT = "not sent"
+BROKEN = "empty"
 
 
 @dataclass(frozen=True)
@@ -43,10 +48,21 @@ class Meta:
     kind: str
     help: str
     choices: tuple[str, ...] = ()
+    # What an empty value is shown as, saying what it does: in the list, as the pick list's
+    # empty choice and on the edit dialog's Default line. Never one of ``choices``.
+    empty: str = "none"
 
 
-def _m(group: str, name: str, kind: str, help_: str, choices: Sequence[str] = ()) -> Meta:
-    return Meta(name, group, kind, help_, tuple(choices))
+def _m(
+    group: str,
+    name: str,
+    kind: str,
+    help_: str,
+    choices: Sequence[str] = (),
+    *,
+    empty: str = "none",
+) -> Meta:
+    return Meta(name, group, kind, help_, tuple(choices), empty)
 
 
 _OUT, _KEYS, _PRIV, _MOD, _HIST = ("Output", "Keys", "Privacy", "Models", "History")
@@ -67,10 +83,17 @@ SETTINGS: tuple[Meta, ...] = (
         CHOICE,
         "The profile (system prompt) a rewrite uses.",
         PROFILE_CHOICES,
+        empty=BROKEN,
     ),
     _m(_OUT, "PROMPT_PERSONA", TEXT, "Who you are, opening the rewrite's CONTEXT; never shown."),
     _m(_OUT, "PROMPT_TIMEOUT_SECONDS", TEXT, "Seconds before a rewrite call gives up."),
-    _m(_OUT, "PROMPT_TEMPERATURE", TEXT, "Temperature (not Anthropic, OpenAI); empty: none."),
+    _m(
+        _OUT,
+        "PROMPT_TEMPERATURE",
+        TEXT,
+        "Temperature (not Anthropic, OpenAI); empty: not sent.",
+        empty=NOT_SENT,
+    ),
     _m(_KEYS, "OPENROUTER_API_KEY", KEY, "OpenRouter's API key, kept in the secrets file."),
     _m(_KEYS, "ANTHROPIC_API_KEY", KEY, "Anthropic's API key, kept in the secrets file."),
     _m(_KEYS, "OPENAI_API_KEY", KEY, "OpenAI's API key, kept in the secrets file."),
@@ -83,14 +106,16 @@ SETTINGS: tuple[Meta, ...] = (
         "PROMPT_GATE_PACKS",
         TEXT,
         "Pattern packs the gate scans with (vn); empty turns them off and weakens the gate.",
+        empty="off",
     ),
     _m(_PRIV, "PROMPT_UPDATE_CHECK", BOOL, "Ask PyPI once a day for a newer release."),
     _m(
         _PRIV,
         "OPENROUTER_DATA_COLLECTION",
         CHOICE,
-        "deny: only endpoints that never store the request; empty sends no field.",
+        "deny: only endpoints that never store the request; empty: not sent.",
         ("", *DATA_COLLECTION),
+        empty=NOT_SENT,
     ),
     _m(
         _MOD,
@@ -98,29 +123,50 @@ SETTINGS: tuple[Meta, ...] = (
         CHOICE,
         "Provider of a bare `promptmend improve` and the Try tab; -ip- uses PROMPT_PRO_PROVIDER.",
         PROVIDER_NAMES,
+        empty=BROKEN,
     ),
-    _m(_MOD, "OPENROUTER_MODEL", TEXT, "OpenRouter's model for -i-."),
+    _m(_MOD, "OPENROUTER_MODEL", TEXT, "OpenRouter's model for -i-.", empty=BROKEN),
     _m(_MOD, "OPENROUTER_BASE_URL", TEXT, "OpenRouter's API address (https)."),
-    _m(_MOD, "OPENROUTER_PROVIDER", TEXT, "The OpenRouter endpoint pinned; empty routes freely."),
+    _m(
+        _MOD,
+        "OPENROUTER_PROVIDER",
+        TEXT,
+        "The OpenRouter endpoint pinned; empty: any endpoint.",
+        empty="any endpoint",
+    ),
     _m(
         _MOD,
         "OPENROUTER_REASONING_EFFORT",
         CHOICE,
-        "Reasoning effort; empty sends none.",
+        "Reasoning effort; empty: not sent.",
         ("", *EFFORTS),
+        empty=NOT_SENT,
     ),
     _m(_MOD, "OPENROUTER_MAX_TOKENS", INT, "Output cap of an OpenRouter call, in tokens."),
     _m(_MOD, "OPENROUTER_ALLOW_FALLBACKS", BOOL, "Let OpenRouter use another endpoint if down."),
-    _m(_MOD, "OPENROUTER_PRO_MODEL", TEXT, "The pro tier's model (-ip-)."),
-    _m(_MOD, "OPENROUTER_PRO_PROVIDER", TEXT, "The pro tier's pinned endpoint."),
+    _m(_MOD, "OPENROUTER_PRO_MODEL", TEXT, "The pro tier's model (-ip-).", empty=BROKEN),
+    _m(
+        _MOD,
+        "OPENROUTER_PRO_PROVIDER",
+        TEXT,
+        "The pro tier's pinned endpoint; empty: any endpoint.",
+        empty="any endpoint",
+    ),
     _m(
         _MOD,
         "OPENROUTER_PRO_REASONING_EFFORT",
         CHOICE,
-        "The pro tier's reasoning effort; empty sends none.",
+        "The pro tier's reasoning effort; empty: not sent.",
         ("", *EFFORTS),
+        empty=NOT_SENT,
     ),
-    _m(_MOD, "OPENROUTER_PRO_MAX_TOKENS", TEXT, "The pro tier's output cap; empty: the same."),
+    _m(
+        _MOD,
+        "OPENROUTER_PRO_MAX_TOKENS",
+        TEXT,
+        "The pro tier's output cap; empty: as standard (OPENROUTER_MAX_TOKENS).",
+        empty="as standard",
+    ),
     _m(_MOD, "PROMPT_PRO_TIMEOUT_SECONDS", TEXT, "Seconds before a pro call gives up."),
     _m(
         _MOD,
@@ -128,13 +174,15 @@ SETTINGS: tuple[Meta, ...] = (
         CHOICE,
         "Which API -ip- calls, once deployed: OpenRouter, Anthropic or OpenAI.",
         PRO_PROVIDERS,
+        empty="as openrouter",
     ),
     _m(
         _MOD,
         "PROMPT_PRO_PROFILE",
         CHOICE,
-        "The pro tier's profile; empty uses PROMPT_PROFILE.",
+        "The pro tier's profile; empty: as PROMPT_PROFILE.",
         ("", *PROFILE_CHOICES),
+        empty="as PROMPT_PROFILE",
     ),
     _m(
         _MOD,
@@ -143,33 +191,53 @@ SETTINGS: tuple[Meta, ...] = (
         "Built-in profiles your own same-named file replaces.",
     ),
     _m(_MOD, "OLLAMA_BASE_URL", TEXT, "Ollama's address."),
-    _m(_MOD, "OLLAMA_MODEL", TEXT, "Ollama's model (-il-)."),
+    _m(_MOD, "OLLAMA_MODEL", TEXT, "Ollama's model (-il-).", empty=BROKEN),
     _m(_MOD, "OLLAMA_THINK", BOOL, "Let an Ollama model think before it answers."),
-    _m(_MOD, "OLLAMA_NUM_CTX", TEXT, "Ollama's context window in tokens; empty: Ollama's own."),
+    _m(
+        _MOD,
+        "OLLAMA_NUM_CTX",
+        TEXT,
+        "Ollama's context window in tokens; empty: Ollama's own.",
+        empty="Ollama's own",
+    ),
     _m(_MOD, "LMSTUDIO_BASE_URL", TEXT, "LM Studio's address."),
-    _m(_MOD, "LMSTUDIO_MODEL", TEXT, "LM Studio's model (-ilm-)."),
+    _m(_MOD, "LMSTUDIO_MODEL", TEXT, "LM Studio's model (-ilm-).", empty=BROKEN),
     _m(_MOD, "ANTHROPIC_BASE_URL", TEXT, "Anthropic's API address (https)."),
-    _m(_MOD, "ANTHROPIC_MODEL", TEXT, "Anthropic's model."),
+    _m(_MOD, "ANTHROPIC_MODEL", TEXT, "Anthropic's model.", empty=BROKEN),
     _m(_MOD, "ANTHROPIC_MAX_TOKENS", INT, "Output cap of an Anthropic call, in tokens."),
     _m(
         _MOD,
         "ANTHROPIC_EFFORT",
         CHOICE,
-        "Anthropic's effort (how much Claude thinks); empty: none sent.",
+        "Anthropic's effort (how much Claude thinks); empty: not sent.",
         ("", *ANTHROPIC_EFFORTS),
+        empty=NOT_SENT,
     ),
-    _m(_MOD, "ANTHROPIC_TEMPERATURE", TEXT, "Anthropic's sampling temperature; empty: none."),
+    _m(
+        _MOD,
+        "ANTHROPIC_TEMPERATURE",
+        TEXT,
+        "Anthropic's sampling temperature; empty: not sent.",
+        empty=NOT_SENT,
+    ),
     _m(_MOD, "OPENAI_BASE_URL", TEXT, "OpenAI's API address (https)."),
-    _m(_MOD, "OPENAI_MODEL", TEXT, "OpenAI's model."),
+    _m(_MOD, "OPENAI_MODEL", TEXT, "OpenAI's model.", empty=BROKEN),
     _m(
         _MOD,
         "OPENAI_REASONING_EFFORT",
         CHOICE,
-        "OpenAI's reasoning effort; empty: none sent.",
+        "OpenAI's reasoning effort; empty: not sent.",
         ("", *EFFORTS),
+        empty=NOT_SENT,
     ),
     _m(_MOD, "OPENAI_MAX_TOKENS", INT, "Output cap of an OpenAI call, in tokens."),
-    _m(_MOD, "OPENAI_TEMPERATURE", TEXT, "OpenAI's sampling temperature; empty: none."),
+    _m(
+        _MOD,
+        "OPENAI_TEMPERATURE",
+        TEXT,
+        "OpenAI's sampling temperature; empty: not sent.",
+        empty=NOT_SENT,
+    ),
     _m(_HIST, "PROMPT_HISTORY", BOOL, "Keep the local usage history (metadata only)."),
     _m(_HIST, "PROMPT_HISTORY_RETENTION_DAYS", INT, "Days a usage record is kept."),
 )
@@ -207,14 +275,18 @@ def source_name(source: str) -> str:
 
 @dataclass(frozen=True)
 class Row:
-    """One line of the list: ``on`` is the green dot (a switch on, a key set, a value that is
-    not the default); ``source`` the file name, ``where`` the full place for the help line."""
+    """One line of the list. ``custom`` is the filled dot: the value comes from config.toml,
+    the secrets file or the environment, not the built-in default (even when it is the same
+    text as the default); an unset key is never custom. ``switched_on`` is a switch's state,
+    which Space flips. ``source`` is the file name, ``where`` the full place for the help
+    line (both empty for an unset key)."""
 
     meta: Meta
     value: str
-    on: bool
+    custom: bool
     source: str
     where: str
+    switched_on: bool = False
 
     @property
     def name(self) -> str:
@@ -227,18 +299,10 @@ def _value(meta: Meta, entry: Entry) -> str:
     if meta.kind == BOOL:
         return "on" if entry.value.lower() == "true" else "off"
     if meta.name in common.PRIVATE:
-        return HIDDEN if entry.value else EMPTY
+        return HIDDEN if entry.value else meta.empty
     if not entry.value:
-        return EMPTY
+        return meta.empty
     return common.shown_value(meta.name, entry)
-
-
-def _on(meta: Meta, entry: Entry) -> bool:
-    if meta.kind == KEY:
-        return bool(entry.value)
-    if meta.kind == BOOL:
-        return entry.value.lower() == "true"
-    return entry.source != DEFAULT_SOURCE or entry.value != default(meta.name)
 
 
 def row(meta: Meta, entry: Entry) -> Row:
@@ -246,9 +310,10 @@ def row(meta: Meta, entry: Entry) -> Row:
     return Row(
         meta,
         _value(meta, entry),
-        _on(meta, entry),
+        not unset_key and entry.source != DEFAULT_SOURCE,
         "" if unset_key else source_name(entry.source),
         "" if unset_key else common.short_label(entry.source),
+        switched_on=meta.kind == BOOL and entry.value.lower() == "true",
     )
 
 

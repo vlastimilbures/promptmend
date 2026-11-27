@@ -31,6 +31,7 @@ BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
     "export": (("history", "export", "--format", "json", "-o", "<FILE>"),),
     "prune": (("history", "prune", "--older-than", "<DAYS>"),),
     "reset": (("history", "reset"),),
+    "use-default": (("config", "unset", "<NAME>"),),  # the Settings pick and edit dialogs
     "try-run": (
         (
             "improve",

@@ -1566,7 +1566,7 @@ def test_settings_set_a_key_never_shows_it(saved: Path, espanso: FakeRunner) -> 
         await fill(app, pilot, key_value=f"  {KEY} ")
         assert KEY not in app.export_screenshot()
         row = settings_rows(app)["OPENROUTER_API_KEY"]
-        assert (row.value, row.on, row.source) == ("set", True, "secrets.toml")
+        assert (row.value, row.custom, row.source) == ("set", True, "secrets.toml")
         assert KEY not in pane(app, "settings").last_message
         assert app.session[-1].command == "promptmend secrets set OPENROUTER_API_KEY"
 
@@ -1662,11 +1662,11 @@ def test_settings_space_toggles_history(saved: Path, espanso: FakeRunner) -> Non
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await open_tab(app, pilot, "settings")
         row = settings_rows(app)["PROMPT_HISTORY"]
-        assert (row.value, row.on, row.source) == ("on", True, "default")
+        assert (row.value, row.custom, row.source) == ("on", False, "default")
         await on_row(app, pilot, "PROMPT_HISTORY", "space")
         assert not _state(app).settings.history
         row = settings_rows(app)["PROMPT_HISTORY"]
-        assert (row.value, row.on, row.source) == ("off", False, "config.toml")
+        assert (row.value, row.custom, row.source) == ("off", True, "config.toml")
         assert app.session[-1].command == "promptmend config set PROMPT_HISTORY false"
         assert pane(app, "settings").last_message.startswith("PROMPT_HISTORY saved in ")
         # The cursor stays on the row after the reload; Enter on a switch toggles it too.
@@ -1688,8 +1688,12 @@ def test_settings_enter_picks_the_output_and_u_resets_it(saved: Path, espanso: F
         await on_row(app, pilot, "PROMPT_OUTPUT", "enter")
         screen = app.screen
         assert isinstance(screen, PickModal)
-        # The current value is marked and highlighted; Escape changes nothing.
-        assert screen.choices == [("paste  (current)", "paste"), ("clipboard", "clipboard")]
+        # The current value is marked and highlighted, as is the default; Escape changes
+        # nothing.
+        assert screen.choices == [
+            ("paste  (current, default)", "paste"),
+            ("clipboard", "clipboard"),
+        ]
         assert screen.query_one("#pick", OptionList).highlighted == 0
         await pilot.press("escape")
         await settle(pilot)
@@ -1697,7 +1701,7 @@ def test_settings_enter_picks_the_output_and_u_resets_it(saved: Path, espanso: F
         await pick(app, pilot, "PROMPT_OUTPUT", "clipboard")
         assert _state(app).settings.output == "clipboard"
         row = settings_rows(app)["PROMPT_OUTPUT"]
-        assert (row.value, row.on, row.source) == ("clipboard", True, "config.toml")
+        assert (row.value, row.custom, row.source) == ("clipboard", True, "config.toml")
         assert app.session[-1].command == "promptmend config set PROMPT_OUTPUT clipboard"
         # Home's Output row says it, and where to change it (#198).
         rows = {r.label: r for r in app.main.query_one("#home-pane", home_pane.HomePane).rows}
@@ -1711,13 +1715,196 @@ def test_settings_enter_picks_the_output_and_u_resets_it(saved: Path, espanso: F
         assert _state(app).settings.output == "paste"
         assert app.session[-1].command == "promptmend config unset PROMPT_OUTPUT"
         assert "removed from" in pane(app, "settings").last_message
-        assert settings_rows(app)["PROMPT_OUTPUT"].on is False
+        assert settings_rows(app)["PROMPT_OUTPUT"].custom is False
         await pilot.press("u")
         await settle(pilot)
         assert "nothing to do" in pane(app, "settings").last_message
 
     drive(scenario)
     assert "PROMPT_OUTPUT" not in (saved / "config.toml").read_text("utf-8")
+
+
+def test_settings_use_default_in_the_pick_dialog_resets(saved: Path, espanso: FakeRunner) -> None:
+    """#388: the pick dialog marks the default and offers Use default, which is `u` (config
+    unset): the same service, logged as its command."""
+    from promptmend.tui import teach
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pick(app, pilot, "PROMPT_OUTPUT", "clipboard")
+        await on_row(app, pilot, "PROMPT_OUTPUT", "enter")
+        screen = app.screen
+        assert isinstance(screen, PickModal)
+        assert screen.choices == [
+            ("paste  (default)", "paste"),
+            ("clipboard  (current)", "clipboard"),
+        ]
+        assert screen.query_one("#pick", OptionList).has_focus
+        button = screen.query_one("#use-default", Button)
+        assert button.tooltip == teach.tooltip("use-default")
+        assert button.tooltip == "In a terminal:\n$ promptmend config unset <NAME>"
+        await press(app, pilot, "#use-default")
+        assert not isinstance(app.screen, PickModal)
+        assert _state(app).settings.output == "paste"
+        assert app.session[-1].command == "promptmend config unset PROMPT_OUTPUT"
+        assert "removed from" in pane(app, "settings").last_message
+        assert settings_rows(app)["PROMPT_OUTPUT"].custom is False
+
+    drive(scenario)
+    assert "PROMPT_OUTPUT" not in (saved / "config.toml").read_text("utf-8")
+
+
+def test_settings_an_effort_pick_list_keeps_not_sent_apart_from_none(
+    saved: Path, espanso: FakeRunner
+) -> None:
+    """#388: an empty effort is `not sent`, never `none`, which is a real effort."""
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "OPENAI_REASONING_EFFORT", "enter")
+        screen = app.screen
+        assert isinstance(screen, PickModal)
+        assert screen.choices[:3] == [("not sent", ""), ("none", "none"), ("minimal", "minimal")]
+        assert ("low  (current, default)", "low") in screen.choices
+        await pilot.press("escape")
+        await settle(pilot)
+        assert app.session == []
+
+    drive(scenario)
+
+
+def test_settings_use_default_on_an_environment_value_unsets_nothing(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PROMPT_TIMEOUT_SECONDS", "40")
+    before = sorted((p, p.read_bytes()) for p in saved.rglob("*") if p.is_file())
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "PROMPT_TIMEOUT_SECONDS", "enter")
+        assert isinstance(app.screen, EditModal)
+        await press(app, pilot, "#use-default")
+        assert app.session[-1].command == "promptmend config unset PROMPT_TIMEOUT_SECONDS"
+        message = pane(app, "settings").last_message
+        assert message.endswith("nothing to do. It comes from environment.")
+        assert _state(app).settings.timeout == 40
+
+    drive(scenario)
+    assert sorted((p, p.read_bytes()) for p in saved.rglob("*") if p.is_file()) == before
+
+
+def test_settings_use_default_in_the_edit_dialog_resets(saved: Path, espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await edit_to(app, pilot, "PROMPT_TIMEOUT_SECONDS", "40")
+        assert settings_rows(app)["PROMPT_TIMEOUT_SECONDS"].custom
+        await pilot.press("enter")
+        await settle(pilot)
+        screen = app.screen
+        assert isinstance(screen, EditModal)
+        assert screen.query_one("#edit-value", Input).has_focus
+        assert "Default: 30" in screen.preview
+        # Escape still changes nothing; Use default resets, whatever the field holds.
+        await pilot.press("escape")
+        await settle(pilot)
+        assert app.session[-1].command == "promptmend config set PROMPT_TIMEOUT_SECONDS 40"
+        await pilot.press("enter")
+        await settle(pilot)
+        app.screen.query_one("#edit-value", Input).value = "55"
+        await press(app, pilot, "#use-default")
+        assert not isinstance(app.screen, EditModal)
+        assert _state(app).settings.timeout == 30
+        assert app.session[-1].command == "promptmend config unset PROMPT_TIMEOUT_SECONDS"
+        assert settings_rows(app)["PROMPT_TIMEOUT_SECONDS"].custom is False
+        # An empty default is shown as its word, not "(empty)".
+        await on_row(app, pilot, "OLLAMA_NUM_CTX", "enter")
+        assert "Default: Ollama's own" in app.screen.preview  # type: ignore[attr-defined]
+
+    drive(scenario)
+    assert "PROMPT_TIMEOUT_SECONDS" not in (saved / "config.toml").read_text("utf-8")
+
+
+def test_settings_use_default_resets_a_withheld_value(saved: Path, espanso: FakeRunner) -> None:
+    saved.mkdir(parents=True, exist_ok=True)
+    toml = saved / "config.toml"
+    toml.write_text(f'OLLAMA_MODEL = "{KEY}"\n', encoding="utf-8")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "OLLAMA_MODEL", "enter")
+        screen = app.screen
+        assert isinstance(screen, EditModal)
+        assert screen.query_one("#edit-value", Input).value == ""
+        await press(app, pilot, "#use-default")
+        assert app.session[-1].command == "promptmend config unset OLLAMA_MODEL"
+        assert _state(app).settings.ollama_model == settings_model.default("OLLAMA_MODEL")
+        assert KEY not in app.export_screenshot()
+
+    drive(scenario)
+    assert KEY not in toml.read_text("utf-8")
+
+
+def test_settings_a_theme_change_redraws_the_dot(saved: Path, espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pick(app, pilot, "PROMPT_OUTPUT", "clipboard")
+        await on_row(app, pilot, "PROMPT_PROFILE")
+        listing = settings_tab(app).query_one(settings_pane.SettingsList)
+
+        def dot_colour() -> str:
+            from rich.console import Console
+            from rich.table import Table
+
+            prompt = listing.get_option("PROMPT_OUTPUT").prompt
+            assert isinstance(prompt, Table)
+            segment = next(s for s in Console().render(prompt) if s.text == "●")
+            assert segment.style is not None
+            assert segment.style.color is not None
+            return segment.style.color.name
+
+        assert dot_colour() == app.current_theme.accent
+        app.action_toggle_contrast()
+        await settle(pilot)
+        assert app.theme == HIGH_CONTRAST.name
+        assert dot_colour() == HIGH_CONTRAST.accent
+
+    drive(scenario)
+
+
+def test_setting_line_dims_only_the_default_source() -> None:
+    """#388: a row at its default is not dimmed (only the word `default` is muted, and not
+    under the cursor); a value set by you has a filled dot in the accent, and in the bar's own
+    colour under the cursor."""
+    from rich.console import Console
+    from rich.style import Style
+
+    def parts(row: settings_model.Row, **kwargs: Any) -> dict[str, Style]:
+        line = settings_pane.setting_line(row, **kwargs)
+        segments = Console(width=80).render(line)
+        return {s.text.strip(): s.style or Style() for s in segments if s.text.strip()}
+
+    meta = settings_model.BY_NAME["PROMPT_TIMEOUT_SECONDS"]
+    at_default = settings_model.row(meta, config.Entry("30", config.DEFAULT_SOURCE))
+    seen = parts(at_default, cursor=False, accent="#ffa62b")
+    assert set(seen) == {"○", "PROMPT_TIMEOUT_SECONDS", "30", "default"}
+    assert {text for text, style in seen.items() if style.dim} == {"default"}
+    assert seen["○"].color is None
+    assert not seen["○"].bold
+
+    custom = settings_model.row(meta, config.Entry("40", config.ENV_SOURCE))
+    seen = parts(custom, cursor=False, accent="#ffa62b")
+    assert set(seen) == {"●", "PROMPT_TIMEOUT_SECONDS", "40", "environment"}
+    assert not any(style.dim for style in seen.values())
+    assert seen["●"].bold
+    assert seen["●"].color is not None
+    assert seen["●"].color.name == "#ffa62b"
+    # Under the cursor bar the dot is bold in the bar's text colour (with no accent too),
+    # and nothing is dimmed.
+    for kwargs in ({"cursor": True, "accent": "#ffa62b"}, {"cursor": False}):
+        dot = next(style for text, style in parts(custom, **kwargs).items() if "●" in text)
+        assert dot.bold
+        assert dot.color is None
+    assert not any(style.dim for style in parts(at_default, cursor=True).values())
+    # A value from a file named `default` is yours: filled, and its source not muted.
+    from_file = settings_model.row(meta, config.Entry("40", "file:/x/default"))
+    seen = parts(from_file, cursor=False, accent="#ffa62b")
+    assert from_file.source == "default"
+    assert "●" in seen
+    assert not any(style.dim for style in seen.values())
 
 
 def test_settings_r_reloads_and_never_resets(saved: Path, espanso: FakeRunner) -> None:
@@ -1898,10 +2085,10 @@ def test_settings_never_show_the_persona(
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await open_tab(app, pilot, "settings")
-        assert settings_rows(app)["PROMPT_PERSONA"].value == "(empty)"
+        assert settings_rows(app)["PROMPT_PERSONA"].value == "none"
         await edit_to(app, pilot, "PROMPT_PERSONA", persona)
         row = settings_rows(app)["PROMPT_PERSONA"]
-        assert (row.value, row.on) == ("<set, hidden>", True)
+        assert (row.value, row.custom) == ("<set, hidden>", True)
         assert persona not in app.export_screenshot()
         assert app.session[-1].command == "promptmend config set PROMPT_PERSONA <value withheld>"
         assert persona not in pane(app, "settings").last_message
@@ -2016,7 +2203,7 @@ def test_settings_profile_choices_include_your_own(saved: Path, espanso: FakeRun
         assert isinstance(screen, PickModal)
         values = [v for _, v in screen.choices]
         assert values[0] == ""
-        assert screen.choices[0][0] == "(empty)  (current)"
+        assert screen.choices[0][0] == "as PROMPT_PROFILE  (current, default)"
         assert {"default", "general", "mine"} <= set(values)
         await pilot.press("escape")
         await settle(pilot)
