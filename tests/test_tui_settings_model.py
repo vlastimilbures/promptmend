@@ -38,11 +38,89 @@ def test_every_setting_is_listed_exactly_once() -> None:
     assert sorted(names) == sorted(env_names())
     assert len(names) == len(set(names))
     assert {m.name for m in model.SETTINGS if m.kind == model.KEY} == set(secret_names())
+    # Every group has a row; the list shows the basic rows by group, then those behind the
+    # Advanced fold by group (#389), the groups in GROUPS' order each time.
     assert {m.group for m in model.SETTINGS} == set(model.GROUPS)
-    # Each group's rows are together, in the groups' order.
-    order = [m.group for m in model.SETTINGS]
-    assert sorted(order, key=model.GROUPS.index) == order
+    order = [(m.advanced, model.GROUPS.index(m.group)) for m in model.SETTINGS]
+    assert sorted(order) == order
+    assert model.ADVANCED_COUNT == 29
     assert all(m.help and "\n" not in m.help for m in model.SETTINGS)
+
+
+# The rows the list shows with the Advanced fold closed (#389), in order: a setting moved
+# into or out of the fold must change this on purpose.
+BASIC = (
+    ("Triggers", "OPENROUTER_MODEL"),
+    ("Triggers", "OPENROUTER_PRO_MODEL"),
+    ("Triggers", "PROMPT_PRO_PROVIDER"),
+    ("Triggers", "OPENROUTER_API_KEY"),
+    ("Output", "PROMPT_OUTPUT"),
+    ("Output", "PROMPT_PROFILE"),
+    ("Output", "PROMPT_PERSONA"),
+    ("Output", "PROMPT_TIMEOUT_SECONDS"),
+    ("Privacy", "PROMPT_LOCAL_ONLY"),
+    ("Privacy", "PROMPT_GATE_LOCAL"),
+    ("Privacy", "ALLOW_CLOUD_OVERRIDE"),
+    ("Privacy", "PROMPT_UPDATE_CHECK"),
+    ("History", "PROMPT_HISTORY"),
+    ("Anthropic", "ANTHROPIC_API_KEY"),
+    ("Anthropic", "ANTHROPIC_MODEL"),
+    ("OpenAI", "OPENAI_API_KEY"),
+    ("OpenAI", "OPENAI_MODEL"),
+    ("Ollama", "OLLAMA_MODEL"),
+    ("LM Studio", "LMSTUDIO_MODEL"),
+)
+
+
+# The rows behind the fold, in order.
+ADVANCED = (
+    *(("Output", n) for n in ("PROMPT_TEMPERATURE", "PROMPT_PROVIDER", "PROMPT_PRO_PROFILE")),
+    ("Output", "PROMPT_PROFILE_OVERRIDES"),
+    ("Output", "PROMPT_PRO_TIMEOUT_SECONDS"),
+    ("Privacy", "PROMPT_EXTRA_PATTERNS"),
+    ("Privacy", "PROMPT_GATE_PACKS"),
+    ("Privacy", "OPENROUTER_DATA_COLLECTION"),
+    ("History", "PROMPT_HISTORY_RETENTION_DAYS"),
+    ("OpenRouter", "OPENROUTER_BASE_URL"),
+    ("OpenRouter", "OPENROUTER_PROVIDER"),
+    ("OpenRouter", "OPENROUTER_REASONING_EFFORT"),
+    ("OpenRouter", "OPENROUTER_MAX_TOKENS"),
+    ("OpenRouter", "OPENROUTER_ALLOW_FALLBACKS"),
+    ("OpenRouter", "OPENROUTER_PRO_PROVIDER"),
+    ("OpenRouter", "OPENROUTER_PRO_REASONING_EFFORT"),
+    ("OpenRouter", "OPENROUTER_PRO_MAX_TOKENS"),
+    ("Anthropic", "ANTHROPIC_BASE_URL"),
+    ("Anthropic", "ANTHROPIC_MAX_TOKENS"),
+    ("Anthropic", "ANTHROPIC_EFFORT"),
+    ("Anthropic", "ANTHROPIC_TEMPERATURE"),
+    ("OpenAI", "OPENAI_BASE_URL"),
+    ("OpenAI", "OPENAI_REASONING_EFFORT"),
+    ("OpenAI", "OPENAI_MAX_TOKENS"),
+    ("OpenAI", "OPENAI_TEMPERATURE"),
+    ("Ollama", "OLLAMA_BASE_URL"),
+    ("Ollama", "OLLAMA_THINK"),
+    ("Ollama", "OLLAMA_NUM_CTX"),
+    ("LM Studio", "LMSTUDIO_BASE_URL"),
+)
+
+
+def test_the_basic_and_advanced_settings_are_pinned() -> None:
+    basic = tuple((m.group, m.name) for m in model.SETTINGS if not m.advanced)
+    assert basic == BASIC
+    assert tuple((m.group, m.name) for m in model.SETTINGS if m.advanced) == ADVANCED
+    # Every key is a basic row: a key is never behind the fold.
+    assert all(not m.advanced for m in model.SETTINGS if m.kind == model.KEY)
+    assert model.GROUPS == (
+        "Triggers",
+        "Output",
+        "Privacy",
+        "History",
+        "OpenRouter",
+        "Anthropic",
+        "OpenAI",
+        "Ollama",
+        "LM Studio",
+    )
 
 
 @pytest.mark.parametrize("meta", model.SETTINGS, ids=lambda m: m.name.lower())
@@ -191,7 +269,13 @@ def test_the_filter_matches_name_and_group_in_any_case() -> None:
         "PROMPT_HISTORY",
         "PROMPT_HISTORY_RETENTION_DAYS",
     ]
-    assert {r.meta.group for r in model.rows(state, "privacy")} == {"Privacy"}
+    privacy = model.rows(state, "privacy")
+    assert {r.meta.group for r in privacy} == {"Privacy"}
+    # Basic and advanced rows alike, in the list's order (#389).
+    assert [r.meta.advanced for r in privacy] == [False] * 4 + [True] * 3
+    assert {r.meta.group for r in model.rows(state, "OpenRouter")} >= {"Triggers", "OpenRouter"}
+    # The old Keys group is gone: "keys" matches no group and no name.
+    assert model.rows(state, "keys") == []
     assert model.rows(state, "  ") == model.rows(state)
     assert model.rows(state, "nothing-like-this") == []
 
@@ -200,3 +284,13 @@ def test_rows_are_frozen() -> None:
     row = model.rows(_state({}))[0]
     with pytest.raises(dataclasses.FrozenInstanceError):
         row.value = "x"  # type: ignore[misc]
+
+
+def test_the_docs_counts_match_the_model() -> None:
+    """docs/interface.md names the fold's and the count's numbers: they follow the model."""
+    text = (Path(__file__).resolve().parents[1] / "docs" / "interface.md").read_text("utf-8")
+    total = len(model.SETTINGS)
+    basic = total - model.ADVANCED_COUNT
+    assert f"{model.ADVANCED_COUNT} more settings" in text
+    assert f"{basic} of {total} settings" in text
+    assert f"{total} settings" in text

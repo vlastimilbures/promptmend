@@ -100,11 +100,12 @@ def _version_row(state: State) -> HomeRow:
     return HomeRow(OK, "Version", f"{installed_version()}{words.get(update.state, '')}")
 
 
-def _trigger_row(state: State, label: str, name: str) -> HomeRow:
+def trigger_row(state: State, label: str, name: str) -> HomeRow:
     """The provider and model a trigger runs (its command line names them; PROMPT_PROVIDER,
     or PROMPT_PRO_PROVIDER on the pro tier, only when it does not), and whether its key is
     there. The deployed match file's command line wins over the shipped one, since that is
-    what Espanso runs: an older -ip- still names OpenRouter (doctor.stale_pro_pins())."""
+    what Espanso runs: an older -ip- still names OpenRouter (doctor.stale_pro_pins()). The
+    Settings tab's two lines under Triggers show the same ``text`` and ``detail`` (#389)."""
     # Only an active deployed trigger whose command line was read; a commented-out copy or
     # one this release cannot read falls back to the shipped one.
     deployed = [t for t in state.deployed or [] if t.active and t.command is not None]
@@ -226,8 +227,8 @@ def home_rows(state: State) -> list[HomeRow]:
     output = state.settings.output
     return [
         _version_row(state),
-        _trigger_row(state, "Rewrites", "-i-"),
-        _trigger_row(state, "Pro (-ip-)", "-ip-"),
+        trigger_row(state, "Rewrites", "-i-"),
+        trigger_row(state, "Pro (-ip-)", "-ip-"),
         _triggers_row(state),
         _history_row(state),
         # Always names where to change it, though it is never a problem.
