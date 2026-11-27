@@ -238,7 +238,7 @@ class _Stub:
 # The gate scans with the packs it is given; its default is every pack.
 def test_gate_uses_its_packs() -> None:
     inner: Provider = _Stub()
-    with pytest.raises(GateBlocked, match="vietnam_id_12"):
+    with pytest.raises(GateBlocked, match="a 12-digit number shaped like a Vietnamese ID"):
         GatedProvider(inner, allow_override=False).generate("CCCD 001099012345", "s")
     assert GatedProvider(inner, allow_override=False, packs=()).generate("CCCD 001099012345", "s")
     assert scan_draft("CCCD 001099012345", packs=()) == []

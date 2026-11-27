@@ -29,7 +29,7 @@ from .prompt_builder import (
     system_prompt,
 )
 from .providers.base import ProviderError, split_stop_note
-from .redaction import redact_message
+from .redaction import describe, redact_message
 from .sanitize import clean
 
 if TYPE_CHECKING:
@@ -87,9 +87,10 @@ def read_input(source: str, text: str | None) -> str:
 
 def sent_despite_note(built: object) -> str:
     """A draft the gate let through with --allow-flagged says so where it is pasted, even when
-    the call failed after the gate, naming only the findings."""
+    the call failed after the gate, naming only what kind of thing each finding is."""
     if isinstance(built, GatedProvider) and built.sent_despite:
-        return f"[promptmend: sent despite: {', '.join(built.sent_despite)}]\n\n"
+        found = ", ".join(describe(f) for f in built.sent_despite)
+        return f"[promptmend: sent despite: {found}]\n\n"
     return ""
 
 

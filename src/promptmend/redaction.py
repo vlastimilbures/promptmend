@@ -79,6 +79,9 @@ GATE_PACK_COVERS = {VN: "Vietnamese national ID numbers and confidentiality labe
 
 class _Rule(NamedTuple):
     name: str
+    # What a marker calls the finding (describe()): a short noun phrase that fits a list in a
+    # sentence, without brackets. Two rules that share a name share the label.
+    label: str
     pattern: re.Pattern[str]
     # The gate pack that holds it; "" for a built-in pattern, always on.
     pack: str = ""
@@ -91,14 +94,21 @@ _RULES: tuple[_Rule, ...] = (
     # underscores, hyphens, dashes or minus signs, or one line break (see _is_card).
     _Rule(
         "payment_card",
+        "a payment card number",
         re.compile(r"\b(?:\d(?:[ \t./_\u2010-\u2015\u2212-]{1,3}|[ \t]?\r?\n)?){13,19}\b"),
     ),
     # A CCCD citizen ID: checked against its province and century digits (see _is_cccd).
-    _Rule("vietnam_id_12", re.compile(r"\b\d{12}\b"), VN),
+    _Rule(
+        "vietnam_id_12",
+        "a 12-digit number shaped like a Vietnamese ID",
+        re.compile(r"\b\d{12}\b"),
+        VN,
+    ),
     # A 9-digit CMND or passport number, only next to a word that names the document; a bare
     # "ID" or "số" (number) is too common before ticket and contract numbers.
     _Rule(
         "vietnam_id_9",
+        "a Vietnamese ID or passport number",
         re.compile(
             r"\b(?:CMND|CCCD|(?-i:CMT)|chứng minh (?:nhân dân|thư)|căn cước(?: công dân)?|hộ chiếu"
             r"|passport|national ID|ID card)\D{0,20}\d{9}\b",
@@ -106,44 +116,55 @@ _RULES: tuple[_Rule, ...] = (
         ),
         VN,
     ),
-    _Rule("email", re.compile(r"\b[\w.+-]{1,64}@[\w-]{1,63}\.[\w.-]{1,253}\b")),
+    _Rule("email", "an email address", re.compile(r"\b[\w.+-]{1,64}@[\w-]{1,63}\.[\w.-]{1,253}\b")),
     # Vendor keys contain '-'/'_' after a short prefix (sk-or-v1-, sk-ant-api03-, sk-proj-),
     # so the key bodies allow both.
-    _Rule("openrouter_key", re.compile(r"\bsk-or-v1-[0-9a-f]{32}")),
-    _Rule("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20}")),
-    _Rule("openai_key", re.compile(r"\bsk-(?!or-|ant-)[A-Za-z0-9_-]{20}")),
-    _Rule("stripe_key", re.compile(r"\b[spr]k_(?:live|test)_[A-Za-z0-9]{16}")),
+    _Rule("openrouter_key", "an API key (OpenRouter)", re.compile(r"\bsk-or-v1-[0-9a-f]{32}")),
+    _Rule("anthropic_key", "an API key (Anthropic)", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20}")),
+    _Rule("openai_key", "an API key (OpenAI)", re.compile(r"\bsk-(?!or-|ant-)[A-Za-z0-9_-]{20}")),
     _Rule(
-        "github_token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22})")
+        "stripe_key", "an API key (Stripe)", re.compile(r"\b[spr]k_(?:live|test)_[A-Za-z0-9]{16}")
     ),
-    _Rule("gitlab_token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20}")),
-    _Rule("huggingface_token", re.compile(r"\bhf_[A-Za-z0-9]{34}")),
-    _Rule("slack_token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10}")),
-    _Rule("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}")),
-    _Rule("xai_key", re.compile(r"\bxai-[A-Za-z0-9]{20}")),
+    _Rule(
+        "github_token",
+        "an access token (GitHub)",
+        re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22})"),
+    ),
+    _Rule("gitlab_token", "an access token (GitLab)", re.compile(r"\bglpat-[A-Za-z0-9_-]{20}")),
+    _Rule(
+        "huggingface_token", "an access token (Hugging Face)", re.compile(r"\bhf_[A-Za-z0-9]{34}")
+    ),
+    _Rule("slack_token", "an access token (Slack)", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10}")),
+    _Rule("google_api_key", "an API key (Google)", re.compile(r"\bAIza[0-9A-Za-z_-]{35}")),
+    _Rule("xai_key", "an API key (xAI)", re.compile(r"\bxai-[A-Za-z0-9]{20}")),
     # AKIA: long-term keys; ASIA: temporary (STS) keys.
-    _Rule("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    _Rule("aws_access_key", "an access key (AWS)", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     # header.payload is enough: the header's run must end at its dot, so it is read whole
     # (possessive: no backtracking into it), and one longer than the bound counts as a match.
     # Past the dot, a payload that is base64url JSON too (eyJ + 7) shows it exists; the
     # signature is not needed.
     _Rule(
-        "jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,8192}+(?:\.eyJ[A-Za-z0-9_-]{7}|[A-Za-z0-9_-])")
+        "jwt",
+        "a JSON Web Token",
+        re.compile(r"\beyJ[A-Za-z0-9_-]{10,8192}+(?:\.eyJ[A-Za-z0-9_-]{7}|[A-Za-z0-9_-])"),
     ),
     # PEM, OpenSSH and PGP (`-----BEGIN PGP PRIVATE KEY BLOCK-----`) private keys.
     # A label longer than the bound counts as a match.
     _Rule(
         "pem_private_key",
+        "a private key",
         re.compile(r"-----BEGIN (?:[A-Z ]{0,64}PRIVATE KEY(?: BLOCK)?-----|[A-Z ]{65})"),
     ),
     # The token's first 16 characters, one of them a letter, digit or underscore.
     _Rule(
         "bearer_token",
+        "a bearer token",
         re.compile(r"\bBearer\s{1,256}(?=[.-]{0,15}[A-Za-z0-9_])[A-Za-z0-9._-]{16}", re.IGNORECASE),
     ),
     # scheme://user:password@host
     _Rule(
         "url_credentials",
+        "a password in a URL",
         re.compile(r"\b[a-z][a-z0-9+.-]{0,31}://[^\s/:@]{0,256}:[^\s/@]{1,256}@", re.IGNORECASE),
     ),
     # password=..., DB_PASSWORD: ..., "clientSecret": "...", SECRET_KEY = '...'. The name may
@@ -151,6 +172,7 @@ _RULES: tuple[_Rule, ...] = (
     # password needs 6 characters with a digit, any other secret 8 with a digit and a letter.
     _Rule(
         "secret_assignment",
+        "a password or secret assigned to a name",
         re.compile(
             _NAME_START
             + rf"(?:{_PW_WORDS}{_ASSIGN}{_NOT_A_DESCRIPTION}{_WITH_DIGIT}[^\s\"']{{6}}"
@@ -162,6 +184,7 @@ _RULES: tuple[_Rule, ...] = (
     # là ..." or "mật khẩu đăng nhập: ...". Up to a few words may sit between name and value.
     _Rule(
         "password_value",
+        "a password written out",
         re.compile(
             _NAME_START
             + rf"{_PW_WORDS}(?:\s{{1,4}}[^\s:=]{{1,20}}){{0,4}}?\s{{1,4}}(?:is|was)(?:\s{{0,4}}:)?"
@@ -173,18 +196,24 @@ _RULES: tuple[_Rule, ...] = (
     ),
     # The base64 must decode to user:password (see _is_basic_auth), or "Basic understanding"
     # would match.
-    _Rule("basic_auth", re.compile(r"\bBasic\s{1,4}([A-Za-z0-9+/]{4,512}={0,2})", re.IGNORECASE)),
+    _Rule(
+        "basic_auth",
+        "a Basic auth password",
+        re.compile(r"\bBasic\s{1,4}([A-Za-z0-9+/]{4,512}={0,2})", re.IGNORECASE),
+    ),
     # curl -u user:password, --user=user:password, also after a "\" line continuation; "-u
     # user" alone makes curl prompt instead. Anchored on the option, which is rare, rather
     # than on "curl"; _after_curl() then checks the command it belongs to.
     _Rule(
         "curl_user",
+        "a password in a curl command",
         re.compile(r"\s(?:-u|--user)(?:\s{1,4}|=)?[\"']?[^\s:\"']{1,64}:(?!\$)[^\s\"']"),
     ),
-    _Rule("npm_token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
+    _Rule("npm_token", "an access token (npm)", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
     # Azure storage/service-bus connection strings and SAS URL signatures.
     _Rule(
         "azure_key",
+        "an access key (Azure)",
         re.compile(
             r"(?:AccountKey|SharedAccessKey)=[A-Za-z0-9+/]{20}|[?&;]sig=[A-Za-z0-9%+/=]{20}",
             re.IGNORECASE,
@@ -193,13 +222,16 @@ _RULES: tuple[_Rule, ...] = (
     # Checked against the country's length and the mod-97 checksum (see _is_iban). A lookahead,
     # so every start is a candidate and an invalid IBAN cannot swallow a valid one after it.
     _Rule(
-        "iban", re.compile(r"(?=\b([A-Z]{2}\d{2}(?:[ -]{0,2}[A-Z0-9]){11,30})\b)", re.IGNORECASE)
+        "iban",
+        "a bank account number (IBAN)",
+        re.compile(r"(?=\b([A-Z]{2}\d{2}(?:[ -]{0,2}[A-Z0-9]){11,30})\b)", re.IGNORECASE),
     ),
     # A classification label, not the word in prose ("Output restricted to 5 bullets", "an
     # NDA defines confidential information"): upper case, at the start of a line followed by
     # ':' or a dash, in brackets, or a phrase used only as a label.
     _Rule(
         "confidential_label",
+        "a confidentiality label",
         re.compile(
             # Upper case anywhere.
             r"(?-i:\b(?:CONFIDENTIAL|RESTRICTED|INTERNAL(?: USE)? ONLY|DO NOT DISTRIBUTE)\b)"
@@ -217,6 +249,7 @@ _RULES: tuple[_Rule, ...] = (
     # secret), "lưu hành nội bộ" (internal circulation); not "mật khẩu" (password).
     _Rule(
         "confidential_label",
+        "a confidentiality label",
         re.compile(
             r"(?-i:\b(?:TỐI MẬT|TUYỆT MẬT|MẬT|NỘI BỘ)\b)"
             rf"|{_label_lines(_VN_LABEL)}"
@@ -234,6 +267,7 @@ _RULES: tuple[_Rule, ...] = (
     # jane@example.com / Summer2024". Hard, unlike a bare email.
     _Rule(
         "credential_pair",
+        "an email address with a password",
         re.compile(
             r"\b[\w.+-]{1,64}@[\w-]{1,63}\.[\w.-]{1,253}(?:\s{0,4}[:/,|]\s{0,4}|\s{1,4})"
             rf"{_NOT_A_DESCRIPTION}{_WITH_DIGIT}{_WITH_LETTER}[^\s\"']{{6}}"
@@ -631,3 +665,17 @@ def scan_draft(
     """scan(), plus `bare_token` when the whole draft is one secret-like word. Only the gate
     uses it: safe_repr() must still quote a short single-word setting value as-is."""
     return scan(text, extra, packs) + (["bare_token"] if is_bare_token(text) else [])
+
+
+_LABELS = {rule.name: rule.label for rule in _RULES} | {"bare_token": "a single password-like word"}
+_CUSTOM = re.compile(r"custom_(\d{1,9})")
+
+
+def describe(name: str) -> str:
+    """The plain words a marker uses for a finding name from scan_draft(): "an email
+    address", "your pattern 2" for custom_2. The names themselves stay the stable form
+    (SOFT_FINDINGS, doctor, config validate); an unknown name is returned as it is."""
+    custom = _CUSTOM.fullmatch(name)
+    if custom:
+        return f"your pattern {custom.group(1)}"
+    return _LABELS.get(name, name)

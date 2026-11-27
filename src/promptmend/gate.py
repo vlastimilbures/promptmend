@@ -5,7 +5,7 @@ from collections.abc import Collection
 
 from .providers.base import Provider, ProviderError
 from .providers.registry import PROVIDERS
-from .redaction import GATE_PACKS, SOFT_FINDINGS, scan_draft
+from .redaction import GATE_PACKS, SOFT_FINDINGS, describe, scan_draft
 
 
 def _block_message(
@@ -15,27 +15,41 @@ def _block_message(
     name: str,
     relay: bool = False,
     gate_local: bool = False,
+    tier: str = "standard",
 ) -> str:
-    """The hint names what applies to this provider: -iok- is the OpenRouter trigger, and a
-    remote Ollama or LM Studio has no local trigger to fall back to. A loopback server gated
-    only by PROMPT_GATE_LOCAL (``relay``) is no cloud call, and -il-/-ilm- have no
-    --allow-flagged, so its message offers neither. With PROMPT_GATE_LOCAL on (``gate_local``)
-    a local trigger or model would block the same draft, so a cloud message offers none."""
+    """The message names the findings in plain words (describe()) and offers only what the
+    trigger that made this call can do. A one-off send is -iok-, the OpenRouter trigger on the
+    standard tier: so a pro-tier OpenRouter call (-ip-, -if-) is told that -iok- runs the
+    standard model, and no deployed trigger passes --allow-flagged to Anthropic, OpenAI or a
+    remote Ollama or LM Studio, so their message offers no one-off. Only when --allow-flagged
+    was passed and a hard finding stopped it does the message name the flag that was used.
+    A remote Ollama or LM Studio has no local trigger to fall back to ("a local model"). A
+    loopback server gated only by PROMPT_GATE_LOCAL (``relay``) is no cloud call, and -il-/-ilm-
+    have no --allow-flagged, so its message offers neither. With PROMPT_GATE_LOCAL on
+    (``gate_local``) a local trigger or model would block the same draft, so a cloud message
+    offers none."""
+    found = ", ".join(describe(f) for f in findings)
     if relay:
         return (
             "Blocked call to the local server (PROMPT_GATE_LOCAL=true gates it). Sensitive "
-            "content detected: " + ", ".join(findings) + ". Remove it, or set "
-            "PROMPT_GATE_LOCAL=false if the server runs the model itself."
+            f"content detected: {found}. Remove it, or set PROMPT_GATE_LOCAL=false if the "
+            "server runs the model itself."
         )
     spec = PROVIDERS.get(name)
-    once = "-iok-" if spec and spec.router else "--allow-flagged"
+    router = bool(spec and spec.router)
     local = "a local trigger (-il-)" if spec and spec.cloud else "a local model"
     alternative = "" if gate_local else f", or use {local}"
-    message = "Blocked cloud call. Sensitive content detected: " + ", ".join(findings) + ". "
-    if not hard:
-        return message + f"If it may leave this machine, send it once with {once}{alternative}."
-    if allow_flagged:
-        message += f"{once} never sends " + ", ".join(hard) + ". "
+    message = f"Blocked cloud call. Sensitive content detected: {found}. "
+    if not hard and router:
+        if tier == "pro":
+            return (
+                message + "If it may leave this machine, -iok- sends it once on the standard "
+                f"model. Otherwise remove it{alternative}."
+            )
+        return message + f"If it may leave this machine, send it once with -iok-{alternative}."
+    if hard and allow_flagged:
+        flag = "-iok-" if router else "--allow-flagged"
+        message += f"{flag} never sends " + ", ".join(describe(f) for f in hard) + ". "
     return message + f"Remove it{alternative}."
 
 
@@ -51,7 +65,9 @@ class GatedProvider:
     ``allow_flagged`` sends a draft once despite soft findings only (SOFT_FINDINGS); the
     caller shows ``sent_despite`` with the result. ``allow_override`` (ALLOW_CLOUD_OVERRIDE)
     turns the gate off for every finding. ``packs`` (PROMPT_GATE_PACKS) names the
-    locale-specific pattern packs scanned besides the built-in patterns."""
+    locale-specific pattern packs scanned besides the built-in patterns. ``tier``
+    (Settings.call_tier) only changes the block message's words. ``sent_despite`` keeps the
+    stable finding names; a marker shows them through describe()."""
 
     def __init__(
         self,
@@ -63,6 +79,7 @@ class GatedProvider:
         relay: bool = False,
         gate_local: bool = False,
         packs: Collection[str] = GATE_PACKS,
+        tier: str = "standard",
     ) -> None:
         self._inner = inner
         self._name = name
@@ -71,6 +88,7 @@ class GatedProvider:
         self._allow_override = allow_override
         self._extra_patterns = extra_patterns
         self._packs = packs
+        self._tier = tier
         self._allow_flagged = allow_flagged
         self.sent_despite: tuple[str, ...] = ()
 
@@ -81,7 +99,13 @@ class GatedProvider:
             hard = [f for f in findings if f not in SOFT_FINDINGS]
             if hard or not self._allow_flagged:
                 message = _block_message(
-                    findings, hard, self._allow_flagged, self._name, self._relay, self._gate_local
+                    findings,
+                    hard,
+                    self._allow_flagged,
+                    self._name,
+                    self._relay,
+                    self._gate_local,
+                    self._tier,
                 )
                 raise GateBlocked(message)
             self.sent_despite = tuple(findings)

@@ -42,6 +42,17 @@ All notable changes to this project are documented here. The format follows
   whole output cap before writing any text names the cap setting (`OPENROUTER_MAX_TOKENS`,
   `OPENROUTER_PRO_MAX_TOKENS` on the pro tier, `ANTHROPIC_MAX_TOKENS`, `OPENAI_MAX_TOKENS`)
   and says `raise --max-tokens` only when the call passed it.
+- The gate's block message names findings in plain words and offers only what the trigger
+  can do (#399). `Sensitive content detected: vietnam_id_12, bare_token` now reads `… a
+  12-digit number shaped like a Vietnamese ID, a single password-like word`, your own
+  patterns read `your pattern 1`, and the `sent despite:` note uses the same words. A
+  blocked `-ip-` or `-if-` through OpenRouter says that `-iok-` sends it once on the standard
+  model; Anthropic, OpenAI and a remote Ollama or LM Studio no longer suggest
+  `--allow-flagged`, which no trigger passes for them. `doctor` and `config validate` keep
+  the stable names. The gate's decisions are unchanged. docs/privacy.md
+  now says that upper-case label words and phrases such as *internal only* are flagged
+  anywhere, and docs/troubleshooting.md lists every finding with its known false positives,
+  such as 12-digit AWS account IDs.
 
 ### Fixed
 - The gate no longer blocks millisecond timestamps and long numeric IDs as card numbers

@@ -151,8 +151,11 @@ No code path builds a provider that can reach another machine without the gate.
 - Confidentiality labels written as labels: upper case (`CONFIDENTIAL`, `RESTRICTED`), alone
   on a line or opening one (`# Confidential`, `**Confidential**:`, `Restricted - …`), in
   brackets (`[restricted]`), a classification field (`Classification: Restricted`),
-  *highly/company/strictly confidential*, *internal only* and *do not distribute*. The words in
-  prose ("output restricted to 5 bullets", "confidential information") are not flagged.
+  *highly/company/strictly confidential*, *internal only* and *do not distribute*. Lower-case
+  label words in prose ("output restricted to 5 bullets", "confidential information") are not
+  flagged, but the upper-case words and phrases such as *internal only* or *do not
+  distribute* are flagged anywhere: "Summarise: the API is internal only for now" and "TODO:
+  RESTRICTED mode should be configurable" are both blocked as a confidentiality label.
 - National ID numbers and confidentiality labels in the formats of a [pattern
   pack](#pattern-packs) that is on (the `vn` pack, on by default).
 - Your own patterns from `PROMPT_EXTRA_PATTERNS` (below).
@@ -174,7 +177,9 @@ turns on (a comma-separated list; default `vn`):
   hành nội bộ*. The words in prose (*bảo mật*, *mật độ*, *mật khẩu*) are not flagged.
 
 A pack's findings keep their names (`vietnam_id_12`, `vietnam_id_9`, `confidential_label`),
-and passwords in Vietnamese (`mật khẩu là …`) are flagged whatever the setting.
+and passwords in Vietnamese (`mật khẩu là …`) are flagged whatever the setting. About 2.5% of
+random 12-digit numbers, such as AWS account IDs outside an ARN, also have a valid province
+and century code, so the pack flags them as a 12-digit number shaped like a Vietnamese ID.
 
 To turn the packs off, set the list empty:
 
@@ -196,10 +201,12 @@ Add your own `;`-separated, case-insensitive regexes:
 promptmend config set PROMPT_EXTRA_PATTERNS "project[- ]falcon;CUST-\d{6}"
 ```
 
-A match is reported as `custom_1`, `custom_2`, … so the pattern itself never appears in the
-message. An entry that is not a valid regex is rejected when settings load: `config validate`,
-`config set` and `doctor` report it by position (`entry 2 (custom_2)`), and every rewrite
-trigger prints a marker until it is fixed (`-p-` still pastes the persona).
+A match is reported by its position, so the pattern itself never appears in the message: a
+marker says `your pattern 1`, `your pattern 2` and so on, while `doctor` and
+`config validate` use the names `custom_1`, `custom_2`. An entry that is not a valid regex
+is rejected when settings load: `config validate`, `config set` and `doctor` report it by
+position (`entry 2 (custom_2)`), and every rewrite trigger prints a marker until it is fixed
+(`-p-` still pastes the persona).
 
 Keep each pattern simple. It runs on every draft and on each value written to the usage
 history, and Python's regex engine can take exponential time on a pattern with nested
@@ -208,12 +215,19 @@ fixed count (`CUST-\d{6}`) or a bounded repeat (`\w{1,20}`).
 
 ### Overriding a block
 
-A blocked draft pastes `[promptmend: Blocked cloud call. Sensitive content detected: …]`
-instead of calling the API.
+A blocked draft pastes a message such as `[promptmend: Blocked cloud call. Sensitive content
+detected: a payment card number. Remove it, or use a local trigger (-il-).]` instead of
+calling the API. It names each finding in plain words (the [full
+list](troubleshooting.md#what-the-gate-finds)), never the text, and offers only what the
+trigger can do.
 
 - When every finding is a label, a national ID number, an email address or an IBAN, you can send
   that one draft with `-iok-` (`--allow-flagged`). The paste then starts with
-  `[promptmend: sent despite: …]`, and the next draft is checked as usual.
+  `[promptmend: sent despite: an email address, a confidentiality label]` (the kinds found),
+  and the next draft is checked as usual.
+- `-iok-` runs the standard-tier OpenRouter model, so a blocked `-ip-` or `-if-` through
+  OpenRouter says `-iok- sends it once on the standard model`. Anthropic, OpenAI and a
+  remote Ollama or LM Studio have no such trigger, so their message offers none.
 - Keys, tokens, passwords, cards, private keys, a bare token and your own
   `PROMPT_EXTRA_PATTERNS` are never sent this way.
 - `ALLOW_CLOUD_OVERRIDE=true` turns the gate off for every finding and every later call; prefer

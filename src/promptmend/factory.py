@@ -192,6 +192,7 @@ def _gate(
         name=name,
         relay=not remote,
         gate_local=cfg.gate_local,
+        tier=cfg.call_tier,
     )
 
 
