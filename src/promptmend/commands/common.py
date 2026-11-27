@@ -18,7 +18,7 @@ import typer
 
 from .. import config
 from ..config import DEFAULT_SOURCE, ENV_SOURCE, ConfigLayers, Entry, Settings, secret_names
-from ..redaction import safe_repr
+from ..redaction import redact_message, safe_repr
 
 # Exit codes (docs/commands.md). 2 is Click's own usage error (an unknown option, a bad value).
 OK = 0
@@ -45,7 +45,10 @@ class CommandError(Exception):
 def guard[**P, R](func: Callable[P, R]) -> Callable[P, R]:
     """Turn any failure into `error: …` on stderr and a non-zero exit, never a traceback: a
     broken config, a full disk or a bug all end the same readable way. Service errors carry a
-    message meant for the user (never a secret value); anything else is named as unexpected."""
+    message meant for the user (never a secret value); anything else is named as unexpected.
+    Both pass through redaction.redact_message(), as a trigger marker does, since people paste
+    this text into bug reports; a CommandError's text is this project's own and is shown as
+    it is."""
 
     @functools.wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -69,9 +72,9 @@ def guard[**P, R](func: Callable[P, R]) -> Callable[P, R]:
         except CommandError as exc:
             fail(str(exc), exc.code)
         except expected as exc:
-            fail(str(exc) or type(exc).__name__)
+            fail(redact_message(str(exc) or type(exc).__name__))
         except Exception as exc:
-            fail(f"unexpected {type(exc).__name__}: {exc}")
+            fail(redact_message(f"unexpected {type(exc).__name__}: {exc}"))
 
     return wrapper
 

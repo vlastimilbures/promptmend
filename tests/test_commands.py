@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import typer
 
 # typer vendors click (no click package): get_command() returns its classes.
 from typer._click.core import Command, Context, Parameter
@@ -1008,6 +1009,72 @@ def test_espanso_deploy_dry_run_and_no_terminal(espanso: Path, fake_run: FakeRun
     result = _run("espanso", "deploy", *where)
     assert result.exit_code == common.NEEDS_TERMINAL
     assert not list((espanso / "match").iterdir())
+
+
+def _boom(*args: object, **kwargs: object) -> None:
+    raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize(
+    ("argv", "target", "name"),
+    [
+        (["status"], deploy, "plan"),
+        (["deploy", "--yes"], deploy, "plan"),
+        (["detach", "--yes"], deploy.Manifest, "load"),
+    ],
+)
+def test_espanso_commands_run_under_the_guard(
+    espanso: Path,
+    fake_run: FakeRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    target: object,
+    name: str,
+) -> None:
+    """An unexpected failure is one `error:` line, never a traceback (#401)."""
+    monkeypatch.setattr(target, name, _boom)
+    where = ["--espanso-dir", str(espanso)] + (
+        ["--launcher", LAUNCHER] if argv[0] != "detach" else []
+    )
+    result = _run("espanso", *argv, *where)
+    assert result.exit_code == common.FAILED
+    assert isinstance(result.exception, SystemExit)
+    errors = [line for line in result.stderr.splitlines() if line.startswith("error:")]
+    assert errors == ["error: unexpected RuntimeError: boom"]
+    assert "Traceback" not in result.output
+    assert not list((espanso / "match").iterdir())
+    assert _changes(fake_run.calls) == []
+
+
+@pytest.mark.parametrize("kind", [ValueError, RuntimeError])
+def test_guard_redacts_a_key_in_the_message(
+    kind: type[Exception], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Expected and unexpected errors are redacted like a trigger marker (#401)."""
+
+    @common.guard
+    def command() -> None:
+        raise kind(f"the value {KEY} is not valid")
+
+    with pytest.raises(typer.Exit) as raised:
+        command()
+    assert raised.value.exit_code == common.FAILED
+    err = capsys.readouterr().err
+    assert err.startswith("error: ")
+    assert "is not valid" in err
+    assert KEY not in err
+    assert KEY[:16] not in err
+
+
+def test_guard_keeps_a_command_error_as_written(capsys: pytest.CaptureFixture[str]) -> None:
+    @common.guard
+    def command() -> None:
+        raise common.CommandError(f"PROMPTMEND_ENV is set ({LAUNCHER})", common.USAGE)
+
+    with pytest.raises(typer.Exit) as raised:
+        command()
+    assert raised.value.exit_code == common.USAGE
+    assert capsys.readouterr().err == f"error: PROMPTMEND_ENV is set ({LAUNCHER})\n"
 
 
 # --- setup --------------------------------------------------------------------------------
