@@ -27,6 +27,7 @@ from promptmend.history import HistoryStore
 from promptmend.tui import (
     base,
     history_pane,
+    home,
     home_pane,
     profiles_pane,
     settings_model,
@@ -116,14 +117,16 @@ def drive(
     scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]],
     *,
     settled: bool = True,
+    size: tuple[int, int] = SIZE,
     **kwargs: Any,
 ) -> ManageApp:
-    """Run ``scenario`` on a ManageApp(**kwargs), once every load has ended (``settled``)
-    or at once (a scenario whose loader blocks waits itself, see until())."""
+    """Run ``scenario`` on a ManageApp(**kwargs) in a ``size`` terminal, once every load has
+    ended (``settled``) or at once (a scenario whose loader blocks waits itself, see
+    until())."""
     app = ManageApp(**kwargs)
 
     async def main() -> None:
-        async with app.run_test(size=SIZE) as pilot:
+        async with app.run_test(size=size) as pilot:
             if settled:
                 await settle(pilot)
             await scenario(app, pilot)
@@ -1253,17 +1256,37 @@ def settings_rows(app: ManageApp) -> dict[str, settings_model.Row]:
 
 
 async def on_row(app: ManageApp, pilot: Pilot[int], name: str, *keys: str) -> None:
-    """Open Settings, put the list's cursor on ``name`` and press ``keys`` there."""
+    """Open Settings, put the list's cursor on ``name`` and press ``keys`` there. A setting
+    behind the Advanced fold (#389) is reached as a user would: Enter on the fold line first."""
     await pilot.press("2")
     await settle(pilot)
-    listing = settings_tab(app).query_one(settings_pane.SettingsList)
+    settings = settings_tab(app)
+    listing = settings.query_one(settings_pane.SettingsList)
     assert listing.has_focus
+    if name not in settings.rows and settings_model.BY_NAME[name].advanced:
+        await open_fold(app, pilot)
     listing.highlighted = listing.get_option_index(name)
     await pilot.pause()
     assert settings_tab(app).cursor == name
     if keys:
         await pilot.press(*keys)
         await settle(pilot)
+
+
+async def to_fold(app: ManageApp, pilot: Pilot[int]) -> None:
+    """Put the Settings list's cursor on the Advanced fold line, its last line."""
+    listing = settings_tab(app).query_one(settings_pane.SettingsList)
+    listing.highlighted = listing.get_option_index(settings_pane.FOLD)
+    await pilot.pause()
+    assert settings_tab(app).cursor == settings_pane.FOLD
+
+
+async def open_fold(app: ManageApp, pilot: Pilot[int]) -> None:
+    """Enter on the Advanced fold line: the advanced settings show."""
+    await to_fold(app, pilot)
+    await pilot.press("enter")
+    await settle(pilot)
+    assert settings_tab(app).advanced
 
 
 async def edit_to(app: ManageApp, pilot: Pilot[int], name: str, value: str) -> None:
@@ -2105,41 +2128,439 @@ def test_settings_never_show_the_persona(
     assert persona in (saved / "config.toml").read_text("utf-8")
 
 
+def option_ids(app: ManageApp) -> list[str | None]:
+    """The Settings list's lines, by option id: headings, summary lines, settings, the fold."""
+    listing = settings_tab(app).query_one(settings_pane.SettingsList)
+    return [listing.get_option_at_index(n).id for n in range(listing.option_count)]
+
+
 def test_settings_filter(espanso: FakeRunner) -> None:
+    total = len(settings_model.SETTINGS)
+    basic = sum(not m.advanced for m in settings_model.SETTINGS)
+
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await open_tab(app, pilot, "settings")
         settings = settings_tab(app)
         count = settings.query_one("#settings-count", Static)
-        assert str(count.render()) == f"{len(settings_model.SETTINGS)} settings"
+        assert str(count.render()) == f"{basic} of {total} settings"
         await on_row(app, pilot, "PROMPT_OUTPUT", "slash")
         assert settings.query_one(settings_pane.FilterInput).has_focus
         await pilot.press(*"hist")
         await settle(pilot)
+        # Every match shows, one behind the closed fold too; no fold line, no summary lines.
         assert list(settings.rows) == ["PROMPT_HISTORY", "PROMPT_HISTORY_RETENTION_DAYS"]
-        assert str(count.render()) == f"2 of {len(settings_model.SETTINGS)}"
+        assert option_ids(app) == [
+            "group:basic:History",
+            "PROMPT_HISTORY",
+            "PROMPT_HISTORY_RETENTION_DAYS",
+        ]
+        assert not settings.advanced
+        assert str(count.render()) == f"2 of {total}"
         assert settings.cursor == "PROMPT_HISTORY"
         # A group's name matches too; Enter and Down go back to the list, keeping the filter.
         await pilot.press("enter")
         assert settings.query_one(settings_pane.SettingsList).has_focus
-        await pilot.press("slash", *"keys")  # the filter's text is selected: typing replaces it
+        await pilot.press("slash", *"privacy")  # the filter's text is selected: typing replaces it
         await settle(pilot)
-        assert list(settings.rows) == ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+        assert list(settings.rows) == [
+            "PROMPT_LOCAL_ONLY",
+            "PROMPT_GATE_LOCAL",
+            "ALLOW_CLOUD_OVERRIDE",
+            "PROMPT_UPDATE_CHECK",
+            "PROMPT_EXTRA_PATTERNS",
+            "PROMPT_GATE_PACKS",
+            "OPENROUTER_DATA_COLLECTION",
+        ]
+        assert option_ids(app).count("group:basic:Privacy") == 1  # one heading for both
         await pilot.press("down")
         assert settings.query_one(settings_pane.SettingsList).has_focus
         await pilot.press("slash", *"zzz")
         await settle(pilot)
         assert settings.rows == {}
+        assert option_ids(app) == []
         assert "No setting matches 'zzz'" in str(settings.query_one("#settings-help").render())
         # Nothing to act on: the keys do nothing.
         settings.toggle()
         settings.edit()
         settings.reset()
         assert app.session == []
-        # Escape clears it and goes back to the list.
+        # Escape clears it and goes back to the list, the fold closed as before.
         await pilot.press("escape")
         await settle(pilot)
         assert settings.query_one(settings_pane.SettingsList).has_focus
+        assert len(settings.rows) == basic
+        assert option_ids(app)[-1] == settings_pane.FOLD
+        assert str(count.render()) == f"{basic} of {total} settings"
+
+    drive(scenario)
+
+
+def test_settings_a_filter_finds_an_advanced_row_and_clearing_closes_the_fold(
+    saved: Path, espanso: FakeRunner
+) -> None:
+    """#389: the filter searches all 48 whatever the fold; cleared, the fold is as it was,
+    and the cursor on a setting it hides goes to the fold line."""
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "PROMPT_OUTPUT", "slash", *"num_ctx", "enter")
+        settings = settings_tab(app)
+        assert not settings.advanced
+        assert list(settings.rows) == ["OLLAMA_NUM_CTX"]
+        assert settings.cursor == "OLLAMA_NUM_CTX"
+        assert settings_pane.FOLD not in option_ids(app)
+        assert not any(str(i).startswith("summary:") for i in option_ids(app))
+        # It can be changed from there, through config set as ever.
+        await edit_to(app, pilot, "OLLAMA_NUM_CTX", "8192")
+        assert _state(app).settings.ollama_num_ctx == 8192
+        assert list(settings.rows) == ["OLLAMA_NUM_CTX"]
+        await pilot.press("slash", "escape")
+        await settle(pilot)
+        assert not settings.advanced
+        assert "OLLAMA_NUM_CTX" not in settings.rows
+        assert settings.cursor == settings_pane.FOLD
+        # With the fold open, clearing a filter leaves it open.
+        await pilot.press("enter")
+        await settle(pilot)
+        await pilot.press("slash", *"think", "escape")
+        await settle(pilot)
+        assert settings.advanced
         assert len(settings.rows) == len(settings_model.SETTINGS)
+
+    drive(scenario)
+
+
+@pytest.mark.parametrize("query", ["prompt", "o", "privacy", "openrouter"])
+def test_settings_a_filter_shows_each_group_once(espanso: FakeRunner, query: str) -> None:
+    """#389: under a filter there is no fold line, so each group has one heading, its basic
+    matches first, then its advanced ones."""
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "PROMPT_OUTPUT", "slash", *query, "enter")
+        settings = settings_tab(app)
+        ids = option_ids(app)
+        headings = [str(i).rsplit(":", 1)[1] for i in ids if str(i).startswith("group:")]
+        assert headings
+        assert len(headings) == len(set(headings))
+        assert headings == sorted(headings, key=settings_model.GROUPS.index)
+        shown = [settings_model.BY_NAME[n] for n in settings.rows]
+        assert [n for n in ids if n in settings_model.BY_NAME] == list(settings.rows)
+        assert shown == sorted(
+            shown, key=lambda m: (settings_model.GROUPS.index(m.group), m.advanced)
+        )
+        assert {m.name for m in shown} == {r.name for r in settings_model.rows(_state(app), query)}
+
+    drive(scenario)
+
+
+def in_view(app: ManageApp, option_id: str) -> bool:
+    """Whether the Settings list's line ``option_id`` is on screen (one line per option)."""
+    listing = settings_tab(app).query_one(settings_pane.SettingsList)
+    line = listing.get_option_index(option_id)
+    return listing.scroll_y <= line < listing.scroll_y + listing.size.height
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [("pagedown", "pageup"), ("end", "home"), ("k", "j")],
+    ids=["page", "end-home", "k-j"],
+)
+def test_settings_the_summary_lines_come_back_into_view(
+    espanso: FakeRunner, keys: tuple[str, ...]
+) -> None:
+    """#389, review: the heading and summary lines are never highlighted, so moving back to
+    the first setting scrolls them into view with it."""
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "OPENROUTER_MODEL")
+        listing = settings_tab(app).query_one(settings_pane.SettingsList)
+        await pilot.press(keys[0])
+        await pilot.pause()
+        assert listing.scroll_y > 0
+        await pilot.press(*keys[1:])
+        await pilot.pause()
+        assert settings_tab(app).cursor == "OPENROUTER_MODEL"
+        assert listing.scroll_y == 0
+        for line in ("group:basic:Triggers", "summary:-i-", "summary:-ip-"):
+            assert in_view(app, line)
+
+    drive(scenario, size=(80, 24))
+
+
+def test_settings_moving_up_into_a_group_shows_its_heading(espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "PROMPT_OUTPUT")
+        await pilot.press("end")
+        await pilot.pause()
+        await on_row(app, pilot, "PROMPT_GATE_LOCAL", "up")
+        assert settings_tab(app).cursor == "PROMPT_LOCAL_ONLY"
+        assert in_view(app, "group:basic:Privacy")
+        assert in_view(app, "PROMPT_LOCAL_ONLY")
+
+    drive(scenario, size=(80, 24))
+
+
+@pytest.mark.parametrize("key", ["r", "t"])
+def test_settings_a_refill_keeps_the_open_fold_at_the_top(espanso: FakeRunner, key: str) -> None:
+    """#389, review: on the open fold's line, a reload or a theme change keeps the fold line at
+    the top with the advanced rows below it."""
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "OPENROUTER_MODEL", "end", "enter")
+        settings = settings_tab(app)
+        listing = settings.query_one(settings_pane.SettingsList)
+        assert settings.advanced
+        fold = listing.get_option_index(settings_pane.FOLD)
+        assert listing.scroll_y == fold
+        await pilot.press(key)
+        await settle(pilot)
+        assert settings.advanced
+        assert settings.cursor == settings_pane.FOLD
+        assert listing.scroll_y == fold
+        assert in_view(app, "PROMPT_TEMPERATURE")
+        # Closed again, it is the list's last line, in view at the bottom.
+        await pilot.press("enter")
+        await settle(pilot)
+        assert in_view(app, settings_pane.FOLD)
+
+    drive(scenario, size=(80, 24))
+
+
+def test_settings_first_screen_shows_what_the_triggers_run(espanso: FakeRunner) -> None:
+    """#389, at 80x24: with the fold closed the list fits two screens, and the first shows
+    the Triggers heading, its two lines and the four settings under it."""
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
+        await pilot.press("2")
+        await settle(pilot)
+        listing = settings_tab(app).query_one(settings_pane.SettingsList)
+        height = listing.size.height
+        assert height >= 10
+        ids = option_ids(app)
+        assert len(ids) <= 2 * height
+        assert ids[-1] == settings_pane.FOLD
+        assert listing.scroll_y == 0
+        first = [
+            "group:basic:Triggers",
+            "summary:-i-",
+            "summary:-ip-",
+            "OPENROUTER_MODEL",
+            "OPENROUTER_PRO_MODEL",
+            "PROMPT_PRO_PROVIDER",
+            "OPENROUTER_API_KEY",
+        ]
+        assert ids[: len(first)] == first
+        assert len(first) <= height
+        assert settings_tab(app).cursor == "OPENROUTER_MODEL"
+        # The fold line says how many settings it holds.
+        fold = str(listing.get_option(settings_pane.FOLD).prompt)
+        assert fold.endswith(f"▸ Advanced: {settings_model.ADVANCED_COUNT} more settings")
+
+    drive(scenario, size=(80, 24))
+
+
+def summary_words(app: ManageApp, trigger: str) -> str:
+    """A summary line under Triggers as plain text, its spaces squeezed."""
+    from rich.console import Console
+
+    listing = settings_tab(app).query_one(settings_pane.SettingsList)
+    console = Console(width=200, record=True, file=io.StringIO())
+    console.print(listing.get_option(f"summary:{trigger}").prompt)
+    return " ".join(console.export_text().split())
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        {},
+        {"OPENROUTER_API_KEY": KEY},
+        {"OPENROUTER_API_KEY": KEY, "PROMPT_PRO_PROVIDER": "anthropic"},
+        {"OPENROUTER_API_KEY": KEY, "PROMPT_PRO_PROVIDER": "openai"},
+        {"OPENROUTER_API_KEY": KEY, "PROMPT_LOCAL_ONLY": "true"},
+    ],
+    ids=["no-key", "key", "pro-anthropic", "pro-openai", "local-only"],
+)
+def test_settings_summary_lines_say_what_home_says(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, environ: dict[str, str]
+) -> None:
+    """#389: the two lines under Triggers are Home's Rewrites and Pro rows, word for word;
+    a key not set or a refused provider is said in words, never the key."""
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
+        await pilot.press("2")
+        await settle(pilot)
+        # Home's own rows, found by their labels: a wrong label in SUMMARY fails here.
+        rows = {r.label: r for r in home.home_rows(_state(app))}
+        for trigger, label in (("-i-", "Rewrites"), ("-ip-", "Pro (-ip-)")):
+            row = rows[label]
+            assert summary_words(app, trigger) == " ".join(
+                f"{trigger} {row.text} {row.detail}".split()
+            )
+        words = summary_words(app, "-i-") + summary_words(app, "-ip-")
+        if "OPENROUTER_API_KEY" not in environ:
+            assert words.count("key not set") == 2
+        if environ.get("PROMPT_PRO_PROVIDER") == "anthropic":
+            assert summary_words(app, "-ip-").startswith("-ip- anthropic · ")
+            assert summary_words(app, "-ip-").endswith("key not set")
+            assert summary_words(app, "-i-").endswith("key set")
+        if environ.get("PROMPT_PRO_PROVIDER") == "openai":
+            assert summary_words(app, "-ip-").startswith("-ip- openai · ")
+            assert summary_words(app, "-ip-").endswith("key not set")
+        if environ.get("PROMPT_LOCAL_ONLY"):
+            assert words.count("refused") == 2
+        assert KEY not in words
+        screen = app.export_screenshot()
+        assert "OPENROUTER_PRO_MODEL" in screen  # the Settings tab's, not Home's
+        assert KEY not in screen
+
+    drive(scenario)
+
+
+def _summary_text(trigger: str, row: home.HomeRow) -> str:
+    from rich.console import Console
+
+    console = Console(width=200, record=True, file=io.StringIO())
+    console.print(settings_pane.summary_line(trigger, row))
+    return " ".join(console.export_text().split())
+
+
+def test_settings_summary_line_of_a_failing_row_without_detail() -> None:
+    """#389: a deployed trigger naming a provider no route knows is a FAIL with no detail;
+    its summary line says so in Home's status word, never looking healthy. A stale deployed
+    -ip- says redeploy, as Home does."""
+    from test_tui_home import _with_env, ready
+
+    unknown = [
+        dataclasses.replace(t, provider="nosuch") if t.trigger == "-i-" else t
+        for t in ready().triggers
+    ]
+    state = dataclasses.replace(ready(), deployed=unknown)
+    row = home.trigger_row(state, "Rewrites", "-i-")
+    assert (row.status, row.text, row.detail) == (home.FAIL, "nosuch", "")
+    assert _summary_text("-i-", row) == "-i- nosuch FAIL"
+    older = [
+        dataclasses.replace(t, provider="openrouter") if t.trigger == "-ip-" else t
+        for t in ready().triggers
+    ]
+    stale = _with_env(
+        dataclasses.replace(ready(), deployed=older),
+        OPENROUTER_API_KEY="-".join(("a", "b")),
+        PROMPT_PRO_PROVIDER="openai",
+    )
+    row = home.trigger_row(stale, "Pro (-ip-)", "-ip-")
+    assert row.status == home.WARN
+    assert _summary_text("-ip-", row) == f"-ip- {row.text} redeploy"
+    # An ok row with its detail, and a row still being checked, show only their own words.
+    ok = home.HomeRow(home.OK, "Rewrites", "ollama · qwen3:8b", "stays local")
+    assert _summary_text("-i-", ok) == "-i- ollama · qwen3:8b stays local"
+    waiting = home.HomeRow(home.WAIT, "Rewrites", "checking")
+    assert _summary_text("-i-", waiting) == "-i- checking"
+
+
+def test_settings_cursor_skips_the_summary_lines(espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "OPENROUTER_PRO_MODEL", "up")
+        settings = settings_tab(app)
+        assert settings.cursor == "OPENROUTER_MODEL"
+        listing = settings.query_one(settings_pane.SettingsList)
+        # Up from the first setting wraps to the fold line, past the summary lines.
+        for key in ("up", "home", "pageup", "down", "up"):
+            await pilot.press(key)
+            await pilot.pause()
+            highlighted = listing.highlighted
+            assert highlighted is not None
+            assert not str(listing.get_option_at_index(highlighted).id).startswith("summary:")
+            assert settings.cursor in (*settings.rows, settings_pane.FOLD)
+        await pilot.press("home", "up")
+        await pilot.pause()
+        assert settings.cursor == settings_pane.FOLD
+        await pilot.press("pagedown", "pageup", "pageup", "pageup")
+        await pilot.pause()
+        assert settings.cursor == "OPENROUTER_MODEL"
+        # Enter and Space on a summary line cannot happen: it is never highlighted.
+        assert listing.get_option("summary:-i-").disabled
+
+    drive(scenario)
+
+
+def test_settings_the_advanced_fold_opens_and_closes(saved: Path, espanso: FakeRunner) -> None:
+    """#389: Enter and Space on the fold line open and close it, the cursor staying there;
+    u there does nothing; it stays open across a save, a reload and a tab switch."""
+    total = len(settings_model.SETTINGS)
+    basic = total - settings_model.ADVANCED_COUNT
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await open_tab(app, pilot, "settings")
+        await pilot.press("2")
+        await settle(pilot)
+        settings = settings_tab(app)
+        listing = settings.query_one(settings_pane.SettingsList)
+        count = settings.query_one("#settings-count", Static)
+        help_line = settings.query_one("#settings-help", Static)
+        await to_fold(app, pilot)
+        assert "endpoint pins" in str(help_line.render())
+        assert "Enter or Space shows them." in str(help_line.render())
+        assert str(listing.get_option(settings_pane.FOLD).prompt).startswith("▶▸ Advanced")
+        for key, opened in (("enter", True), ("space", False), ("space", True)):
+            await pilot.press(key)
+            await settle(pilot)
+            assert settings.advanced is opened
+            assert settings.cursor == settings_pane.FOLD
+            assert listing.highlighted == listing.get_option_index(settings_pane.FOLD)
+            assert len(settings.rows) == (total if opened else basic)
+            shown = f"{total} settings" if opened else f"{basic} of {total} settings"
+            assert str(count.render()) == shown
+        prompt = str(listing.get_option(settings_pane.FOLD).prompt)
+        assert prompt == f"▶{settings_pane.FOLD_OPEN}"
+        assert "hides" in prompt
+        assert "Enter or Space hides them." in str(help_line.render())
+        # The advanced rows follow the fold line, under their own group headings.
+        ids = option_ids(app)
+        after = ids[ids.index(settings_pane.FOLD) + 1 :]
+        assert after[0] == "group:advanced:Output"
+        assert [i for i in after if i in settings_model.BY_NAME] == [
+            m.name for m in settings_model.SETTINGS if m.advanced
+        ]
+        assert len(ids) == len(set(ids))
+        # u on the fold line does nothing.
+        await pilot.press("u")
+        await settle(pilot)
+        assert app.session == []
+        assert settings.advanced
+        assert app.screen is app.main
+        # A save keeps the fold open and the cursor on the setting.
+        await on_row(app, pilot, "OLLAMA_THINK", "space")
+        assert _state(app).settings.ollama_think
+        assert settings.advanced
+        assert settings.cursor == "OLLAMA_THINK"
+        # So do a reload and a tab switch.
+        await pilot.press("r")
+        await settle(pilot)
+        await pilot.press("1")
+        await settle(pilot)
+        await pilot.press("2")
+        await settle(pilot)
+        assert settings.advanced
+        assert settings.cursor == "OLLAMA_THINK"
+
+    drive(scenario)
+
+
+def test_settings_every_setting_is_reachable(espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "PROMPT_HISTORY")
+        await open_fold(app, pilot)
+        settings = settings_tab(app)
+        listing = settings.query_one(settings_pane.SettingsList)
+        assert list(settings.rows) == [m.name for m in settings_model.SETTINGS]
+        for meta in settings_model.SETTINGS:
+            listing.highlighted = listing.get_option_index(meta.name)
+            await pilot.pause()
+            assert settings.cursor == meta.name
+            assert meta.help in str(settings.query_one("#settings-help").render())
 
     drive(scenario)
 

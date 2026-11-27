@@ -68,7 +68,7 @@ asks nothing (see [Commands](commands.md#management-commands)).
 | Key | Tab | What it shows and does |
 |-----|-----|------------------------|
 | `1` | Home | Whether you are ready, the most urgent problem and the session log |
-| `2` | Settings | Every setting and key in one list: switch, pick, edit or reset a setting, set or remove a key, run the Test call (see [Settings tab](#settings-tab)) |
+| `2` | Settings | What the triggers run, then every setting and key in one list, the rarely changed ones behind an Advanced fold: switch, pick, edit or reset a setting, set or remove a key, run the Test call (see [Settings tab](#settings-tab)) |
 | `3` | Profiles | Built-in and your own profiles; pick the default profile, edit a profile in `$VISUAL` or `$EDITOR` |
 | `4` | Triggers | The match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
 | `5` | History | Usage statistics by trigger, provider, model or day; export, prune, reset |
@@ -128,8 +128,24 @@ setup only once it knows nothing is installed. Everything that needs only your s
 
 ## Settings tab
 
-The Settings tab (`2`) lists every setting and the three API keys, grouped (Output, Keys, Privacy,
-Models, History). Each row has a dot, the name, the value and where the value comes
+The Settings tab (`2`) lists every setting and the three API keys, grouped: Triggers, Output,
+Privacy, History, then one group per provider (OpenRouter, Anthropic, OpenAI, Ollama, LM
+Studio; OpenRouter shows only with the fold open, as its key and models are under Triggers).
+Triggers comes first and answers "what do my triggers run": two lines say what `-i-` and
+`-ip-` run (the provider · the model, and `key set`, `key not set`, `refused` or another word
+for the key), exactly as Home's Rewrites and Pro rows say it, followed by
+`OPENROUTER_MODEL`, `OPENROUTER_PRO_MODEL`, `PROMPT_PRO_PROVIDER` and `OPENROUTER_API_KEY`.
+The two lines are not settings: the cursor skips them.
+
+The settings few people change (base URLs, token caps, efforts, temperatures, endpoint pins,
+the profile overrides and the like) sit behind the **Advanced** fold, the list's last line
+(`▸ Advanced: 29 more settings`). Enter or Space on it shows them below it, each under its
+group, and again hides them; the fold stays open or closed while the interface runs (a save, a
+reload or another tab keeps it) and starts closed. With the fold closed, the list fits two
+screens of an 80x24 terminal when the tab opens. The count on the right says how many
+settings are shown (`19 of 48 settings`, or `48 settings` with the fold open).
+
+Each setting's row has a dot, the name, the value and where the value comes
 from (`config.toml`, `secrets.toml`, `.env`, `environment` or `default`):
 
 - a filled `●`, in the theme's accent colour, is a value you set: it comes from
@@ -147,17 +163,17 @@ value is shown as what it does, for example `none`, `not sent` (an effort or tem
 or a model left empty), it shows `empty`. Keys show only `set` or `not set`, and
 `PROMPT_PERSONA` only `<set, hidden>`.
 The line under the list explains the setting under the cursor, says where its value comes
-from and gives the command that changes it in a terminal.
+from and gives the command that changes it in a terminal; on the fold line, what is behind it.
 
 The list has the focus when the tab opens. Its keys:
 
 | Key | Action |
 |-----|--------|
 | Up, Down, `j`, `k` | Move |
-| Space | Switch a true/false setting, saved at once |
-| Enter | Switch a true/false setting; pick from a list (the current value and the default marked `(current)` and `(default)`); type a value (prefilled, the persona too), checked as the CLI reads it: a rejected value or one that looks like a key stays in the dialog with the reason, and nothing is saved. Both dialogs have a **Use default** button, the same as `u`. On a key's row, the Set key dialog |
-| `u` | Back to the default (`config unset`). On a key's row, the Remove key dialog. Only while the list has the focus |
-| `/` | Filter by name or group; Escape clears it and goes back to the list |
+| Space | Switch a true/false setting, saved at once. On the fold line, show or hide the advanced settings |
+| Enter | On the fold line, show or hide the advanced settings. Elsewhere: switch a true/false setting; pick from a list (the current value and the default marked `(current)` and `(default)`); type a value (prefilled, the persona too), checked as the CLI reads it: a rejected value or one that looks like a key stays in the dialog with the reason, and nothing is saved. Both dialogs have a **Use default** button, the same as `u`. On a key's row, the Set key dialog |
+| `u` | Back to the default (`config unset`). On a key's row, the Remove key dialog; on the fold line, nothing. Only while the list has the focus |
+| `/` | Filter by name or group. The filter searches all 48 settings, the advanced ones too, whether the fold is open or not, and shows the count as `N of 48`; the fold line and the two Triggers lines are hidden while it holds text. Escape clears it and goes back to the list, the fold as it was |
 
 Every change is saved in `config.toml` as `promptmend config set` saves it (keys in the secrets
 file), and shows and logs its command (`$ promptmend config set PROMPT_OUTPUT clipboard`,

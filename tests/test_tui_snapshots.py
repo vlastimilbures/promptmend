@@ -240,6 +240,7 @@ def _shoot(
     loader: Callable[[str], State] = fixed_state,
     size: tuple[int, int] = SIZE,
     setup: int | None = None,
+    keys: tuple[str, ...] = (),
 ) -> str:
     # With ``setup``, the setup wizard as `setup` opens it, moved on that many steps.
     options = SetupOptions(standalone=True) if setup is not None else None
@@ -262,6 +263,10 @@ def _shoot(
                 app.theme = theme
             if key:
                 await pilot.press(key)
+            # Keys pressed on the tab ``key`` opened, each settled before the shot.
+            for pressed in keys:
+                await pilot.press(pressed)
+                await pilot.pause()
             for _ in range(setup or 0):
                 # The action, not Button.press(): a pressed button keeps its active style
                 # for a moment, so a shot would depend on the runner's speed.
@@ -305,6 +310,15 @@ def test_snapshot_settings(name: str, size: tuple[int, int]) -> None:
     svg = _shoot("2", loader=settings_state, size=size)
     assert "snapshot persona" not in svg
     _check(name, svg)
+
+
+# The Settings list with the Advanced fold open (#389): End puts the cursor on the fold line,
+# Enter opens it, which scrolls the line to the top with the advanced rows below it.
+def test_snapshot_settings_advanced() -> None:
+    _check(
+        "settings-advanced",
+        _shoot("2", loader=settings_state, size=(80, 24), keys=("end", "enter")),
+    )
 
 
 # The Settings list in the high-contrast theme (#388): the filled dot in its accent, nothing

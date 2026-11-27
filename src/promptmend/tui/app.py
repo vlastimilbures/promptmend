@@ -138,7 +138,9 @@ DataTable { height: auto; max-height: 14; margin-bottom: 1; }
 #settings-filter { border: none; height: 1; padding: 0 1; width: 1fr; }
 #settings-count { width: auto; color: $text-muted; padding: 0 1; }
 #settings-list { height: 1fr; min-height: 4; border: none; padding: 0; }
-#settings-list > .option-list--option-disabled { color: $text; text-style: bold; }
+/* Headings (bold in their own text) and the two lines under Triggers (italic) are disabled
+   options: in the normal text colour, not dimmed (#389). */
+#settings-list > .option-list--option-disabled { color: $text; }
 #settings-help { height: 2; }
 #settings-pane .buttons { margin-top: 0; }
 #settings-pane .buttons { height: 1; }

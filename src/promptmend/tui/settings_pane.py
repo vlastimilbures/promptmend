@@ -1,6 +1,12 @@
 """The Settings tab: every setting and key in one keyboard list, saved through the
 same services as `config set|unset` and `secrets set|remove`. Keys are shown only as set or
-not set, never their value, and the persona only as set."""
+not set, never their value, and the persona only as set.
+
+The list (#389) opens with Triggers: two lines saying what -i- and -ip- run, in Home's words
+(home.trigger_row()), then the settings that decide it. The rarely changed settings sit
+behind the Advanced fold, its last line; Enter or Space there shows or hides them. The fold
+and the two lines are display only: no setting, no command. A filter searches every setting,
+fold or not."""
 
 from __future__ import annotations
 
@@ -12,15 +18,17 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
+from textual.geometry import Region
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from .. import config_store, smoke
 from ..commands import common
+from ..commands import doctor as doctor_cmd
 from ..commands import settings as settings_cmd
 from ..config import secret_names
 from ..factory import PROVIDER_NAMES
-from . import settings_model, teach
+from . import home, settings_model, teach
 from .base import EXPECTED, Pane, button_row, error_message
 from .modals import USE_DEFAULT, ConfirmModal, EditModal, Field, FormModal, PickModal, UseDefault
 from .state import State
@@ -29,6 +37,16 @@ from .state import State
 # column the longest file name (secrets.toml).
 NAME_WIDTH = 31
 SOURCE_WIDTH = 12
+# A summary line's last column fits Home's longest key word (no key needed).
+SUMMARY_WIDTH = 13
+# The Advanced fold (#389): the list's last line, its option id, and its help.
+FOLD = "fold:advanced"
+FOLD_CLOSED = "▸ Advanced: {count} more settings"
+FOLD_OPEN = "▾ Advanced (Enter hides these settings)"
+# Short enough for one line at 70 columns.
+FOLD_HELP = "Base URLs, token caps, efforts, temperatures, endpoint pins and more."
+# The triggers the lines under Triggers summarise, with Home's row label for each.
+SUMMARY = (("-i-", "Rewrites"), ("-ip-", "Pro (-ip-)"))
 WITHHELD_CURRENT = (
     "The current value looks like a key, so it is not shown here. Saving an empty field "
     "keeps it; type a new value to replace it."
@@ -60,6 +78,35 @@ def setting_line(row: settings_model.Row, *, cursor: bool, accent: str | None = 
     return grid
 
 
+def summary_line(trigger: str, row: home.HomeRow) -> Table:
+    """One of the two lines under Triggers: what ``trigger`` runs, in Home's own words
+    (provider · model, then the key's state: `key set`, `key not set`, `refused`, …, or
+    Home's status word when it has none and is not ok). Not a
+    setting: no cursor, no dot; indented under the heading and in italics, never bold, so it
+    reads apart from the headings and from the setting rows."""
+    grid = Table.grid(padding=(0, 1), expand=True)
+    grid.add_column(width=3, no_wrap=True)
+    grid.add_column(width=4, no_wrap=True)
+    grid.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
+    grid.add_column(width=SUMMARY_WIDTH, no_wrap=True, overflow="ellipsis")
+    # A row that is not ok with no detail of its own (a provider no route knows) shows Home's
+    # status word there, so it never reads as healthy.
+    healthy = row.status in (home.OK, home.NOTE, home.WAIT)
+    detail = row.detail or ("" if healthy else doctor_cmd.LABEL[row.status][0])
+    grid.add_row("", *(Text(words, style="italic") for words in (trigger, row.text, detail)))
+    return grid
+
+
+def fold_line(*, opened: bool, cursor: bool) -> Text:
+    """The Advanced fold's line: closed, how many settings it holds; open, how to close it.
+    Its ▸ or ▾ sits in the dot's column, after the cursor's ▶."""
+    words = FOLD_OPEN if opened else FOLD_CLOSED.format(count=settings_model.ADVANCED_COUNT)
+    line = Text(no_wrap=True, overflow="ellipsis")
+    line.append("▶" if cursor else " ", style="bold")
+    line.append(words)
+    return line
+
+
 def _matching(choices: tuple[str, ...], value: str) -> int | None:
     """The index of the choice ``value`` is (as typed, or in lower case), or None."""
     return next((n for n, c in enumerate(choices) if c in (value, value.lower())), None)
@@ -82,6 +129,41 @@ class SettingsList(OptionList):
     @property
     def pane(self) -> SettingsPane:
         return self.query_ancestor(SettingsPane)
+
+    def action_page_up(self) -> None:
+        """Page Up, landing on the first setting rather than on nothing when only a heading
+        or a summary line is above it (Textual's own leaves no line highlighted)."""
+        # Not super().action_page_up(): Textual's is unannotated, which strict mypy refuses.
+        if self.highlighted is not None:
+            self._move_page(-1)
+        if self.highlighted is None:
+            self.action_first()
+
+    def scroll_to_highlight(self, top: bool = False) -> None:
+        """Scroll the highlighted option into view together with the disabled lines right
+        above it: its group's heading and, for the first setting, the Triggers heading and the
+        two summary lines. They are never highlighted, so Textual's own scroll (the least
+        needed) would leave them out of reach once scrolled away. ``top`` puts that block at
+        the top of the view."""
+        highlighted = self.highlighted
+        if highlighted is None or not self.is_mounted:
+            return
+        start = highlighted
+        while start > 0 and self.options[start - 1].disabled:
+            start -= 1
+        self._update_lines()
+        try:
+            first = self._index_to_line[start]
+            end = self._index_to_line[highlighted] + self._heights[highlighted]
+        except KeyError:
+            return
+        self.scroll_to_region(
+            Region(0, first, self.scrollable_content_region.width, end - first),
+            force=True,
+            animate=False,
+            top=top,
+            immediate=True,
+        )
 
     def action_switch(self) -> None:
         self.pane.toggle()
@@ -112,15 +194,18 @@ class FilterInput(Input):
 
 class SettingsPane(Pane):
     """Every setting and key in one keyboard list, grouped, each with a dot saying at
-    a glance whether you set it. Saves go through `config set`'s service (save_setting()), a reset
-    through `config unset`'s, keys through the Set key and Remove key dialogs; each change
-    shows and logs its command."""
+    a glance whether you set it; the rarely changed ones behind the Advanced fold. Saves go
+    through `config set`'s service (save_setting()), a reset through `config unset`'s, keys
+    through the Set key and Remove key dialogs; each change shows and logs its command."""
 
-    # The filter's text, and the rows it shows by name.
+    # The filter's text, and the setting rows shown, by name.
     filter_text = ""
     rows: dict[str, settings_model.Row]
-    # The row the ▶ is on.
+    # The setting the ▶ is on, or FOLD.
     cursor: str | None = None
+    # Whether the Advanced fold is open: kept while the app runs (a save, a reload, another
+    # tab), never saved; it starts closed.
+    advanced = False
     # A change was saved and the State that shows it is still loading (see waiting()).
     pending = False
 
@@ -146,40 +231,110 @@ class SettingsPane(Pane):
         self.pending = False
         self.fill()
 
+    def filtering(self) -> bool:
+        """Whether the filter holds text: then every matching setting shows, fold or not."""
+        return bool(self.filter_text.strip())
+
     def fill(self) -> None:
-        """Rebuild the list from the State and the filter, keeping the cursor's setting."""
+        """Rebuild the list from the State, the filter and the fold, keeping the cursor's
+        setting (or the fold line). A setting the fold now hides puts the cursor on the fold
+        line, which is where it went."""
         state = self.state
         if state is None:
             return
         listing = self.query_one(SettingsList)
-        found = settings_model.rows(state, self.filter_text)
-        self.rows = {row.name: row for row in found}
-        keep = self.cursor if self.cursor in self.rows else next(iter(self.rows), None)
-        options: list[Option] = []
-        group = None
+        everything = settings_model.rows(state, self.filter_text)
+        filtering = self.filtering()
+        shown = [r for r in everything if filtering or self.advanced or not r.meta.advanced]
+        if filtering:
+            # No fold line under a filter: one run per group, basic rows first (a stable sort).
+            shown.sort(key=lambda r: settings_model.GROUPS.index(r.meta.group))
+        self.rows = {row.name: row for row in shown}
+        # Without a filter, the fold line and the two lines under Triggers show.
+        fold = not filtering
+        keep: str | None
+        if self.cursor in self.rows or (fold and self.cursor == FOLD):
+            keep = self.cursor
+        elif fold and self.cursor in settings_model.BY_NAME:
+            keep = FOLD  # a setting the closed fold hides
+        else:
+            keep = next(iter(self.rows), None)
         accent = self.accent()
-        for row in found:
+        options: list[Option] = []
+        # A heading per run of one group. Its id names the part too: a group can head basic
+        # rows and, under the fold, advanced ones.
+        # Under a filter, ``shown`` is already in its order (one run per group).
+        basic = [row for row in shown if filtering or not row.meta.advanced]
+        behind = [row for row in shown if not filtering and row.meta.advanced]
+        group: str | None = None
+        for row in [*basic, *([None] if fold else []), *behind]:
+            if row is None:  # the fold line, between the basic rows and the advanced ones
+                fold_prompt = fold_line(opened=self.advanced, cursor=keep == FOLD)
+                options.append(Option(fold_prompt, id=FOLD))
+                group = None
+                continue
             if row.meta.group != group:
                 group = row.meta.group
-                options.append(
-                    Option(Text(group, style="bold"), id=f"group:{group}", disabled=True)
-                )
+                part = "advanced" if row.meta.advanced else "basic"
+                heading = Text(group, style="bold")
+                options.append(Option(heading, id=f"group:{part}:{group}", disabled=True))
+                if fold and group == settings_model.GROUPS[0] and not row.meta.advanced:
+                    options += self._summary(state)
             line = setting_line(row, cursor=row.name == keep, accent=accent)
             options.append(Option(line, id=row.name))
         listing.set_options(options)
         self.cursor = keep
         if keep is not None:
             listing.highlighted = listing.get_option_index(keep)
+        if keep == FOLD and self.advanced:
+            # On the open fold, its line goes to the top, with what it shows below it.
+            listing.scroll_to_highlight(top=True)
         total = len(settings_model.SETTINGS)
-        count = f"{total} settings" if not self.filter_text else f"{len(found)} of {total}"
+        if filtering:
+            count = f"{len(shown)} of {total}"
+        elif self.advanced:
+            count = f"{total} settings"
+        else:
+            count = f"{len(shown)} of {total} settings"
         self.query_one("#settings-count", Static).update(count)
         self.show_help()
 
+    @staticmethod
+    def _summary(state: State) -> list[Option]:
+        """The two lines under Triggers, from Home's own rows (home.trigger_row()): never
+        selectable, so the cursor skips them."""
+        return [
+            Option(
+                summary_line(trigger, home.trigger_row(state, label, trigger)),
+                id=f"summary:{trigger}",
+                disabled=True,
+            )
+            for trigger, label in SUMMARY
+        ]
+
+    def line(self, option_id: str, *, cursor: bool) -> Table | Text:
+        """The prompt of a line the cursor can be on: a setting or the fold."""
+        if option_id == FOLD:
+            return fold_line(opened=self.advanced, cursor=cursor)
+        return setting_line(self.rows[option_id], cursor=cursor, accent=self.accent())
+
+    def toggle_fold(self) -> None:
+        """Enter or Space on the fold line: show or hide the advanced settings, the cursor
+        staying on it; fill() puts the open fold's line at the top, so what it shows is in
+        view."""
+        self.advanced = not self.advanced
+        self.fill()
+
     def show_help(self) -> None:
         """The cursor row's help, and where its value comes from with the command that sets
-        it in a terminal."""
+        it in a terminal; on the fold line, what is behind it."""
         row = self.rows.get(self.cursor or "")
-        if row is None:
+        if self.cursor == FOLD:
+            text = Text(no_wrap=True, overflow="ellipsis")
+            text.append(f"{FOLD_HELP}\n")
+            verb = "hides" if self.advanced else "shows"
+            text.append(f"Rarely changed settings; Enter or Space {verb} them.", style="dim")
+        elif row is None:
             text = Text(f"No setting matches {self.filter_text!r}; Escape there clears it.")
         else:
             kind = row.meta.kind
@@ -195,16 +350,19 @@ class SettingsPane(Pane):
     @on(OptionList.OptionHighlighted, "#settings-list")
     def _moved(self, event: OptionList.OptionHighlighted) -> None:
         name = event.option.id
-        if name is None or name not in self.rows or name == self.cursor:
+        if name is None or not self._selectable(name) or name == self.cursor:
             return
-        listing, accent = self.query_one(SettingsList), self.accent()
-        if self.cursor in self.rows:
-            old = self.cursor or ""
-            line = setting_line(self.rows[old], cursor=False, accent=accent)
-            listing.replace_option_prompt(old, line)
-        listing.replace_option_prompt(name, setting_line(self.rows[name], cursor=True))
+        listing = self.query_one(SettingsList)
+        old = self.cursor
+        if old is not None and self._selectable(old):
+            listing.replace_option_prompt(old, self.line(old, cursor=False))
+        listing.replace_option_prompt(name, self.line(name, cursor=True))
         self.cursor = name
         self.show_help()
+
+    def _selectable(self, option_id: str) -> bool:
+        """Whether the cursor can be on ``option_id`` now: a shown setting or the fold."""
+        return option_id in self.rows or (option_id == FOLD and not self.filtering())
 
     @on(Input.Changed, "#settings-filter")
     def _filtered(self, event: Input.Changed) -> None:
@@ -227,7 +385,10 @@ class SettingsPane(Pane):
         return self.pending
 
     def toggle(self) -> None:
-        """Space: switch a bool and save it at once."""
+        """Space: switch a bool and save it at once; on the fold line, open or close it."""
+        if self.cursor == FOLD:
+            self.toggle_fold()
+            return
         row = self.current()
         if self.waiting():
             return
@@ -240,7 +401,11 @@ class SettingsPane(Pane):
 
     def edit(self) -> None:
         """Enter: a key's Set key dialog, a switch toggled, a choice picked from its list, or
-        a value typed in a field prefilled with the current one."""
+        a value typed in a field prefilled with the current one; on the fold line, open or
+        close it."""
+        if self.cursor == FOLD:
+            self.toggle_fold()
+            return
         row, state = self.current(), self.state
         if row is None or state is None or self.waiting():
             return

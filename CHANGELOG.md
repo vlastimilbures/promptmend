@@ -18,6 +18,15 @@ All notable changes to this project are documented here. The format follows
   line names the same word. The pick dialog marks the default as well as the current value,
   and the pick and edit dialogs have a Use default button (`config unset`, as `u` on the
   list).
+- Interface: the Settings tab shows what the triggers run first and folds the rest (#389).
+  Its first group, Triggers, has two lines saying what `-i-` and `-ip-` run (provider, model
+  and the key's state, in the words Home uses), then `OPENROUTER_MODEL`,
+  `OPENROUTER_PRO_MODEL`, `PROMPT_PRO_PROVIDER` and `OPENROUTER_API_KEY`. Output, Privacy and
+  History follow, then one group per provider instead of the Keys and Models groups. Base
+  URLs, token caps, efforts, temperatures, endpoint pins and the other rarely changed
+  settings (29 of the 48) sit behind an Advanced fold, the list's last line, which Enter or
+  Space opens and closes; closed, the list fits two screens at 80x24 when the tab opens.
+  The `/` filter still searches every setting, fold or not.
 
 ## 0.27.0 - 2026-11-17
 
