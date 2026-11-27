@@ -1,5 +1,6 @@
 """The interface's dialogs: a confirmation, a read-only text view (a diff), a small form, a
-list to pick from (a setting's choices) and one value to edit (a setting).
+list to pick from (a setting's choices) and one value to edit (a setting). The last two can
+offer a Use default button, which returns USE_DEFAULT: the caller resets the setting.
 
 A destructive action always goes through one of them: nothing is deleted, overwritten or
 deployed until its button is pressed, and Cancel (or Escape, or n) is the focused default.
@@ -8,9 +9,10 @@ The pick list, which changes nothing by itself, focuses its list instead.
 
 from __future__ import annotations
 
+import enum
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Final
 
 from rich.text import Text
 from textual import on
@@ -20,6 +22,17 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
+
+from . import teach
+
+
+class UseDefault(enum.Enum):
+    """What a pick or edit dialog returns for its Use default button."""
+
+    USE_DEFAULT = "use-default"
+
+
+USE_DEFAULT: Final = UseDefault.USE_DEFAULT
 
 
 @dataclass(frozen=True)
@@ -52,6 +65,12 @@ class _Dialog[T](ModalScreen[T]):
 
     def action_cancel(self) -> None:
         self.dismiss(self.cancel_value)
+
+    def cancel_row(self, *, use_default: bool) -> ComposeResult:
+        """Cancel, and Use default when asked for (its tooltip names `config unset`)."""
+        yield Button("Cancel", id="cancel")
+        if use_default:
+            yield Button("Use default", id="use-default", tooltip=teach.tooltip("use-default"))
 
 
 class ConfirmModal(_Dialog[bool]):
@@ -109,10 +128,11 @@ class TextModal(_Dialog[None]):
         self.dismiss(None)
 
 
-class PickModal(_Dialog[str | None]):
+class PickModal(_Dialog[str | UseDefault | None]):
     """A list to pick one line from (a setting's choices); returns the picked value, or None when
     cancelled. Picking changes nothing by itself, so the list has the focus when it opens
-    (Enter or a click picks); Escape or Cancel closes it."""
+    (Enter or a click picks); Escape or Cancel closes it. With ``use_default`` a Use default
+    button returns USE_DEFAULT."""
 
     def __init__(
         self,
@@ -121,8 +141,10 @@ class PickModal(_Dialog[str | None]):
         preview: str = "",
         *,
         selected: int | None = None,
+        use_default: bool = False,
     ) -> None:
         super().__init__(title, preview, None)
+        self.use_default = use_default
         # (label, value) pairs; a label is plain text, never markup.
         self.choices = choices
         # The choice highlighted as it opens (a setting's current value).
@@ -136,7 +158,7 @@ class PickModal(_Dialog[str | None]):
                 id="pick",
             )
             with Horizontal(classes="buttons"):
-                yield Button("Cancel", id="cancel")
+                yield from self.cancel_row(use_default=self.use_default)
 
     def on_mount(self) -> None:
         pick = self.query_one("#pick", OptionList)
@@ -152,19 +174,31 @@ class PickModal(_Dialog[str | None]):
     def _cancel(self) -> None:
         self.dismiss(None)
 
+    @on(Button.Pressed, "#use-default")
+    def _use_default(self) -> None:
+        self.dismiss(USE_DEFAULT)
 
-class EditModal(_Dialog[str | None]):
+
+class EditModal(_Dialog[str | UseDefault | None]):
     """One value to type, prefilled (a setting); returns it, or None when cancelled.
     ``check`` reads it as the CLI would: its message (a parser error) stays in the dialog, in
     the error colour, and nothing is returned until the value passes. The field has the focus:
-    Enter there saves, Escape cancels."""
+    Enter there saves, Escape cancels. With ``use_default`` a Use default button returns
+    USE_DEFAULT, whatever the field holds."""
 
     def __init__(
-        self, title: str, value: str, check: Callable[[str], str | None], preview: str = ""
+        self,
+        title: str,
+        value: str,
+        check: Callable[[str], str | None],
+        preview: str = "",
+        *,
+        use_default: bool = False,
     ) -> None:
         super().__init__(title, preview, None)
         self.value = value
         self.check = check
+        self.use_default = use_default
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
@@ -172,7 +206,7 @@ class EditModal(_Dialog[str | None]):
             yield Input(self.value, id="edit-value")
             yield Static("", id="edit-error", markup=False)
             with Horizontal(classes="buttons"):
-                yield Button("Cancel", id="cancel")
+                yield from self.cancel_row(use_default=self.use_default)
                 yield Button("Save", id="submit", variant="primary")
 
     def on_mount(self) -> None:
@@ -191,6 +225,10 @@ class EditModal(_Dialog[str | None]):
     @on(Button.Pressed, "#cancel")
     def _cancel(self) -> None:
         self.dismiss(None)
+
+    @on(Button.Pressed, "#use-default")
+    def _use_default(self) -> None:
+        self.dismiss(USE_DEFAULT)
 
 
 class FormModal(_Dialog[dict[str, str] | None]):

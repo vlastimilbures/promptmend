@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Changed
+- Interface: on the Settings tab a row at its built-in default no longer looks disabled
+  (#388). Names and values always have the normal text colour; only the word `default` in
+  the source column is muted. The dot means only "set by you": a filled `●`, in the theme's
+  accent colour instead of green, for a value from `config.toml`, the secrets file, a `.env`
+  or the environment (a switch set to off too), a hollow `○` for the default or a key that
+  is not set; on the cursor row the whole line takes the cursor bar's colour. An empty value
+  shows what it does (`none`, `not sent`, `any endpoint`, …) instead of `(empty)`, and an
+  empty provider, profile or model, which makes the next call fail, shows `empty`; each help
+  line names the same word. The pick dialog marks the default as well as the current value,
+  and the pick and edit dialogs have a Use default button (`config unset`, as `u` on the
+  list).
+
 ## 0.27.0 - 2026-11-17
 
 ### Added

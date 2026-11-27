@@ -22,7 +22,7 @@ from ..config import secret_names
 from ..factory import PROVIDER_NAMES
 from . import settings_model, teach
 from .base import EXPECTED, Pane, button_row, error_message
-from .modals import ConfirmModal, EditModal, Field, FormModal, PickModal
+from .modals import USE_DEFAULT, ConfirmModal, EditModal, Field, FormModal, PickModal, UseDefault
 from .state import State
 
 # The name column fits the longest setting (OPENROUTER_PRO_REASONING_EFFORT); the source
@@ -35,23 +35,34 @@ WITHHELD_CURRENT = (
 )
 
 
-def setting_line(row: settings_model.Row, *, cursor: bool) -> Table:
+def setting_line(row: settings_model.Row, *, cursor: bool, accent: str | None = None) -> Table:
     """One row of the Settings list: the cursor, the dot, the name, the value (cut
-    with … when narrow) and where it comes from. The dot is a glyph as well as a colour, so
-    it reads without colour too: a green ● for a switch on, a key set or a value that is not
-    the default; a grey ○ and a dimmed row otherwise."""
+    with … when narrow) and where it comes from. The name and the value always have the
+    normal text colour; only the source of a value at its built-in default (`default`) is
+    muted. The dot is a glyph as well as a colour, so it reads without colour too: a bold ●
+    when the value is set by you (``row.custom``), in ``accent`` (the theme's accent colour),
+    else a plain ○, neither bold nor dimmed. The cursor row is all in the cursor bar's own
+    text colour, the ● and `default` too: neither theme's accent reads on its bar (orange on
+    blue, magenta on yellow), nor a dimmed word."""
     grid = Table.grid(padding=(0, 1), expand=True)
     grid.add_column(width=2, no_wrap=True)
     grid.add_column(width=NAME_WIDTH, no_wrap=True, overflow="ellipsis")
     grid.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
     grid.add_column(width=SOURCE_WIDTH, no_wrap=True, overflow="ellipsis")
-    mark = Text("▶" if cursor else " ", style="bold")
-    mark.append("●" if row.on else "○", style="bold green" if row.on else "dim")
-    dim = "" if row.on else "dim"
-    grid.add_row(
-        mark, Text(row.name, style=dim), Text(row.value, style=dim), Text(row.source, style=dim)
-    )
+    mark = Text()
+    mark.append("▶" if cursor else " ", style="bold")
+    if row.custom:
+        mark.append("●", style="bold" if cursor or not accent else f"bold {accent}")
+    else:
+        mark.append("○")
+    source = Text(row.source, style="" if cursor or row.custom else "dim")
+    grid.add_row(mark, Text(row.name), Text(row.value), source)
     return grid
+
+
+def _matching(choices: tuple[str, ...], value: str) -> int | None:
+    """The index of the choice ``value`` is (as typed, or in lower case), or None."""
+    return next((n for n, c in enumerate(choices) if c in (value, value.lower())), None)
 
 
 class SettingsList(OptionList):
@@ -101,7 +112,7 @@ class FilterInput(Input):
 
 class SettingsPane(Pane):
     """Every setting and key in one keyboard list, grouped, each with a dot saying at
-    a glance what is on. Saves go through `config set`'s service (save_setting()), a reset
+    a glance whether you set it. Saves go through `config set`'s service (save_setting()), a reset
     through `config unset`'s, keys through the Set key and Remove key dialogs; each change
     shows and logs its command."""
 
@@ -123,6 +134,14 @@ class SettingsPane(Pane):
         yield button_row(("smoke", "Test call (local stub)"))
         yield self.result()
 
+    def setup(self) -> None:
+        # The filled dot is drawn in the theme's accent: a theme change redraws the rows.
+        self.watch(self.app, "theme", self.fill, init=False)
+
+    def accent(self) -> str | None:
+        """The active theme's accent colour, for the filled dot."""
+        return self.app.current_theme.accent
+
     def show(self, state: State) -> None:
         self.pending = False
         self.fill()
@@ -138,13 +157,15 @@ class SettingsPane(Pane):
         keep = self.cursor if self.cursor in self.rows else next(iter(self.rows), None)
         options: list[Option] = []
         group = None
+        accent = self.accent()
         for row in found:
             if row.meta.group != group:
                 group = row.meta.group
                 options.append(
                     Option(Text(group, style="bold"), id=f"group:{group}", disabled=True)
                 )
-            options.append(Option(setting_line(row, cursor=row.name == keep), id=row.name))
+            line = setting_line(row, cursor=row.name == keep, accent=accent)
+            options.append(Option(line, id=row.name))
         listing.set_options(options)
         self.cursor = keep
         if keep is not None:
@@ -176,10 +197,11 @@ class SettingsPane(Pane):
         name = event.option.id
         if name is None or name not in self.rows or name == self.cursor:
             return
-        listing = self.query_one(SettingsList)
+        listing, accent = self.query_one(SettingsList), self.accent()
         if self.cursor in self.rows:
             old = self.cursor or ""
-            listing.replace_option_prompt(old, setting_line(self.rows[old], cursor=False))
+            line = setting_line(self.rows[old], cursor=False, accent=accent)
+            listing.replace_option_prompt(old, line)
         listing.replace_option_prompt(name, setting_line(self.rows[name], cursor=True))
         self.cursor = name
         self.show_help()
@@ -210,7 +232,7 @@ class SettingsPane(Pane):
         if self.waiting():
             return
         if row is not None and row.meta.kind == settings_model.BOOL:
-            self.save(row.name, "false" if row.on else "true")
+            self.save(row.name, "false" if row.switched_on else "true")
 
     @on(OptionList.OptionSelected, "#settings-list")
     def _selected(self) -> None:
@@ -234,18 +256,25 @@ class SettingsPane(Pane):
 
     def _pick(self, meta: settings_model.Meta, current: str) -> None:
         choices = settings_model.choices(meta, self.state)
-        now = next((n for n, c in enumerate(choices) if c in (current, current.lower())), None)
-        labels = [
-            (f"{c or settings_model.EMPTY}{'  (current)' if n == now else ''}", c)
-            for n, c in enumerate(choices)
-        ]
+        now = _matching(choices, current)
+        default = _matching(choices, settings_model.default(meta.name))
 
-        def picked(value: str | None) -> None:
-            if value is not None:
+        def label(n: int, choice: str) -> str:
+            marks = ", ".join(m for m, at in (("current", now), ("default", default)) if n == at)
+            return f"{choice or meta.empty}  ({marks})" if marks else choice or meta.empty
+
+        labels = [(label(n, c), c) for n, c in enumerate(choices)]
+
+        def picked(value: str | UseDefault | None) -> None:
+            if value is USE_DEFAULT:
+                self.reset()
+            elif value is not None:
                 self.save(meta.name, value)
 
         preview = f"{meta.help}\nEnter picks · Escape cancels"
-        self.app.push_screen(PickModal(meta.name, labels, preview, selected=now), picked)
+        self.app.push_screen(
+            PickModal(meta.name, labels, preview, selected=now, use_default=True), picked
+        )
 
     def _type(self, meta: settings_model.Meta, current: str) -> None:
         name = meta.name
@@ -264,17 +293,18 @@ class SettingsPane(Pane):
                 return str(exc)
             return None
 
-        default = settings_model.default(name) or settings_model.EMPTY
+        default = settings_model.default(name) or meta.empty
         preview = f"{meta.help}\nDefault: {default}"
         if withheld:
             preview += f"\n{WITHHELD_CURRENT}"
 
-        def typed(new: str | None) -> None:
-            if new is None or (withheld and new == ""):
-                return
-            self.save(name, new)
+        def typed(new: str | UseDefault | None) -> None:
+            if new is USE_DEFAULT:
+                self.reset()
+            elif new is not None and not (withheld and new == ""):
+                self.save(name, new)
 
-        self.app.push_screen(EditModal(name, value, check, preview), typed)
+        self.app.push_screen(EditModal(name, value, check, preview, use_default=True), typed)
 
     def save(self, name: str, value: str) -> None:
         """Save through `config set`'s service; the command is logged (a private or key-like
@@ -291,7 +321,8 @@ class SettingsPane(Pane):
         self.attempt(save, command=teach.for_setting("set", name, shown_value))
 
     def reset(self) -> None:
-        """r: a key's Remove key dialog, or a setting back to its default (`config unset`)."""
+        """u (or Use default in a setting's dialog): a key's Remove key dialog, or a setting
+        back to its default (`config unset`)."""
         row = self.current()
         if row is None or self.waiting():
             return
@@ -304,7 +335,7 @@ class SettingsPane(Pane):
             removed, path = settings_cmd.unset_setting(name)
             self.pending = removed  # until show() reads it back
             if not removed:
-                elsewhere = f" It comes from {row.where}." if row.source != "default" else ""
+                elsewhere = f" It comes from {row.where}." if row.custom else ""
                 return f"{name} is not saved in {path}; nothing to do.{elsewhere}"
             notes = settings_cmd.after_save(name)
             return "; ".join([f"{name} removed from {path}; its default applies", *notes])

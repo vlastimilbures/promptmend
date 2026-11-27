@@ -307,6 +307,12 @@ def test_snapshot_settings(name: str, size: tuple[int, int]) -> None:
     _check(name, svg)
 
 
+# The Settings list in the high-contrast theme (#388): the filled dot in its accent, nothing
+# dimmed but the word `default`.
+def test_snapshot_settings_high_contrast() -> None:
+    _check("settings-high-contrast", _shoot("2", HIGH_CONTRAST.name, settings_state, (80, 24)))
+
+
 # The setup wizard: the first step, the provider list (80 columns) and the last step.
 @pytest.mark.parametrize(
     ("name", "steps", "size"),
