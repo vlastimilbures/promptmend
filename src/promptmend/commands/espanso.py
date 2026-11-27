@@ -1,8 +1,8 @@
 """`espanso deploy`, `status` and `detach`: thin Typer wrappers over the deploy service,
 mounted through cli._LAZY_COMMANDS like the other management commands, so a trigger never
-loads it; each command still imports deploy only when it runs, so `promptmend --help` does
-not load deploy either. make_plan() and restart() are public: setup's deploy step
-(commands/setup.py) uses them too."""
+loads it; each command imports deploy only when it runs. Each command runs under
+common.guard: an error is one `error:` line on stderr, never a traceback.
+make_plan() and restart() are public: setup's deploy step (commands/setup.py) uses them too."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import typer
+
+from .common import guard
 
 if TYPE_CHECKING:
     from ..deploy import Plan
@@ -27,11 +29,6 @@ _LAUNCHER = typer.Option(
 )
 _YES = typer.Option(False, "--yes", "-y", help="Apply without asking")
 _NO_RESTART = typer.Option(False, "--no-restart", help="Do not restart Espanso afterwards")
-
-
-def _fail(exc: Exception) -> typer.Exit:
-    typer.echo(f"error: {exc}", err=True)
-    return typer.Exit(1)
 
 
 def _espanso_root(espanso_dir: str | None) -> Path:
@@ -77,6 +74,7 @@ def restart(no_restart: bool) -> None:
 
 
 @espanso_app.command("status")
+@guard
 def espanso_status(
     espanso_dir: str | None = _ESPANSO_DIR,
     launcher: str | None = _LAUNCHER,
@@ -85,10 +83,7 @@ def espanso_status(
     """Report each match file: missing, in sync, stale, modified or foreign, then your own."""
     from .. import deploy
 
-    try:
-        the_plan = make_plan(espanso_dir, launcher)
-    except (deploy.DeployError, ValueError, OSError) as exc:
-        raise _fail(exc) from None
+    the_plan = make_plan(espanso_dir, launcher)
     for step in the_plan.steps:
         typer.echo(f"  {step.state:<9} {step.name}")
         if diff and step.state != deploy.IN_SYNC:
@@ -119,6 +114,7 @@ def _ask_choice(name: str, state: str) -> str:
 
 
 @espanso_app.command("deploy")
+@guard
 def espanso_deploy(
     espanso_dir: str | None = _ESPANSO_DIR,
     launcher: str | None = _LAUNCHER,
@@ -138,32 +134,32 @@ def espanso_deploy(
     from .. import deploy
     from .common import confirm
 
-    try:
-        if on_conflict is not None and on_conflict not in deploy.CHOICES:
-            raise deploy.DeployError(f"--on-conflict must be one of {', '.join(deploy.CHOICES)}")
-        the_plan = make_plan(espanso_dir, launcher)
-        if the_plan.is_noop:
-            typer.echo("Nothing to do: every match file is in sync.")
-            return
-        for step in the_plan.steps:
-            typer.echo(f"  {step.state:<9} {step.name}")
-            if step.state not in (deploy.IN_SYNC, deploy.MISSING):
-                typer.echo(step.diff(), nl=False)
-        for key in the_plan.orphans:
-            typer.echo(f"  forget    {key} (already gone)")
-        if dry_run:
-            typer.echo("Dry run: nothing was written.")
-            return
-        choices = {}
-        for step in the_plan.conflicts:
-            if on_conflict is not None or yes:
-                choices[step.name] = on_conflict or deploy.KEEP
-            else:
-                choices[step.name] = _ask_choice(step.name, step.state)
-        confirm("Apply this plan?", yes=yes)
-        outcome = deploy.apply(the_plan, choices)
-    except (deploy.DeployError, ValueError, OSError) as exc:
-        raise _fail(exc) from None
+    if on_conflict is not None and on_conflict not in deploy.CHOICES:
+        # A usage error (exit 2), raised before make_plan() reads or prints anything.
+        raise typer.BadParameter(
+            f"must be one of {', '.join(deploy.CHOICES)}", param_hint="'--on-conflict'"
+        )
+    the_plan = make_plan(espanso_dir, launcher)
+    if the_plan.is_noop:
+        typer.echo("Nothing to do: every match file is in sync.")
+        return
+    for step in the_plan.steps:
+        typer.echo(f"  {step.state:<9} {step.name}")
+        if step.state not in (deploy.IN_SYNC, deploy.MISSING):
+            typer.echo(step.diff(), nl=False)
+    for key in the_plan.orphans:
+        typer.echo(f"  forget    {key} (already gone)")
+    if dry_run:
+        typer.echo("Dry run: nothing was written.")
+        return
+    choices = {}
+    for step in the_plan.conflicts:
+        if on_conflict is not None or yes:
+            choices[step.name] = on_conflict or deploy.KEEP
+        else:
+            choices[step.name] = _ask_choice(step.name, step.state)
+    confirm("Apply this plan?", yes=yes)
+    outcome = deploy.apply(the_plan, choices)
     for line in outcome.lines:
         typer.echo(line)
     if outcome.changed:
@@ -183,6 +179,7 @@ def espanso_deploy(
 
 
 @espanso_app.command("detach")
+@guard
 def espanso_detach(
     keep_static: bool = typer.Option(
         True,
@@ -197,19 +194,16 @@ def espanso_detach(
     from .. import deploy
     from .common import confirm
 
-    try:
-        manifest = deploy.Manifest.load()
-        if not manifest.entries:
-            typer.echo("Nothing to do: promptmend has no deployed match files on record.")
-            return
-        mode = "the CLI-calling match files" if keep_static else "every deployed match file"
-        typer.echo(f"Detach removes {mode} that you have not edited:")
-        for target in sorted(manifest.entries):
-            typer.echo(f"  {target}")
-        confirm("Detach?", yes=yes)
-        outcome = deploy.detach(manifest, _espanso_root(espanso_dir), remove_all=not keep_static)
-    except (deploy.DeployError, OSError) as exc:
-        raise _fail(exc) from None
+    manifest = deploy.Manifest.load()
+    if not manifest.entries:
+        typer.echo("Nothing to do: promptmend has no deployed match files on record.")
+        return
+    mode = "the CLI-calling match files" if keep_static else "every deployed match file"
+    typer.echo(f"Detach removes {mode} that you have not edited:")
+    for target in sorted(manifest.entries):
+        typer.echo(f"  {target}")
+    confirm("Detach?", yes=yes)
+    outcome = deploy.detach(manifest, _espanso_root(espanso_dir), remove_all=not keep_static)
     for line in outcome.lines:
         typer.echo(line)
     if outcome.changed:

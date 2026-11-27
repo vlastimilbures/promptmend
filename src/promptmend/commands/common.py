@@ -18,7 +18,7 @@ import typer
 
 from .. import config
 from ..config import DEFAULT_SOURCE, ENV_SOURCE, ConfigLayers, Entry, Settings, secret_names
-from ..redaction import safe_repr
+from ..redaction import redact_message, safe_repr
 
 # Exit codes (docs/commands.md). 2 is Click's own usage error (an unknown option, a bad value).
 OK = 0
@@ -45,7 +45,9 @@ class CommandError(Exception):
 def guard[**P, R](func: Callable[P, R]) -> Callable[P, R]:
     """Turn any failure into `error: …` on stderr and a non-zero exit, never a traceback: a
     broken config, a full disk or a bug all end the same readable way. Service errors carry a
-    message meant for the user (never a secret value); anything else is named as unexpected."""
+    message meant for the user (never a secret value); anything else is named as unexpected.
+    Both pass through redacted(), since people paste this text into bug reports; a
+    CommandError's text is this project's own and is shown as it is."""
 
     @functools.wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -69,11 +71,20 @@ def guard[**P, R](func: Callable[P, R]) -> Callable[P, R]:
         except CommandError as exc:
             fail(str(exc), exc.code)
         except expected as exc:
-            fail(str(exc) or type(exc).__name__)
+            fail(redacted(str(exc) or type(exc).__name__))
         except Exception as exc:
-            fail(f"unexpected {type(exc).__name__}: {exc}")
+            fail(redacted(f"unexpected {type(exc).__name__}: {exc}"))
 
     return wrapper
+
+
+def redacted(message: str) -> str:
+    """An error's text as a management command or the interface shows it: a key, token,
+    password or card in it (and what the user's PROMPT_EXTRA_PATTERNS match) is described,
+    not repeated. Unlike a trigger marker it keeps an email address, a label or an ID number:
+    this is the user's own terminal, and a path such as ``…/GoogleDrive-jane@example.com/…``
+    is what tells them which file failed."""
+    return redact_message(message, secrets_only=True)
 
 
 def fail(message: str, code: int = FAILED) -> NoReturn:

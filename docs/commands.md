@@ -154,6 +154,9 @@ ordinary exit codes.
 - Colour is off when `NO_COLOR` is set or output is not a terminal.
 - An option or a mistyped argument that looks like a key is refused and never repeated in an
   error.
+- An error is one `error:` line. A key, token, password or card number in it, and anything
+  your `PROMPT_EXTRA_PATTERNS` match, is shown as `<redacted, N chars>`, so the line is safe
+  to paste into a bug report.
 
 ## Exit codes
 
