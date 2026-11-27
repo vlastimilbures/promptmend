@@ -62,7 +62,8 @@ NOTES = {
     "home-setup": "On a terminal it opens this same setup; --non-interactive asks nothing.",
     "edit-profile": "Shows where each profile is; open the file in your editor.",
     "export": "Or --format csv.",
-    "try-run": "Local stub runs it against a stub on 127.0.0.1 instead; no provider is called.",
+    "try-run": "Dry run runs it against a stub on 127.0.0.1 instead: no provider is called and "
+    "nothing is rewritten.",
 }
 # Buttons with no command of their own: they move around the interface or measure it.
 NO_COMMAND = {

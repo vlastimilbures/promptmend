@@ -149,6 +149,8 @@ DataTable { height: auto; max-height: 14; margin-bottom: 1; }
 #try-draft { height: 6; }
 #try-options { height: auto; margin-top: 1; }
 .try-option { width: 1fr; height: auto; margin-right: 1; }
+/* Wide enough for "Dry run (no rewrite)" on one line. */
+#try-target-option { width: 1.4fr; }
 #try-usage { margin-top: 1; color: $text-muted; }
 #try-result { height: 10; }
 ModalScreen { align: center middle; }
