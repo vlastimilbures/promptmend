@@ -15,8 +15,8 @@ import pytest
 import promptmend
 
 PACKAGE = Path(promptmend.__file__).parent
-# Typer-free: setup's core, the settings services and checks, and doctor.
-TYPER_FREE = ("setup_flow", "settings_service", "settings_checks", "doctor")
+# Typer-free: setup's core, the settings services and checks, doctor and the Try tab's run.
+TYPER_FREE = ("setup_flow", "settings_service", "settings_checks", "doctor", "try_run")
 # What a Typer-free module never imports: the frameworks, and the modules that load them.
 TYPER_MODULES = ("typer", "click", "textual", "promptmend.cli", "promptmend.trigger")
 COMMANDS = "promptmend.commands"

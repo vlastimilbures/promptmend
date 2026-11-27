@@ -109,7 +109,7 @@ def test_empty_clipboard_says_to_copy_the_draft(
 def test_too_long_input_reports_inline() -> None:
     result = improve("--provider", "ollama", "--source", "argument", "--text", "x" * 50_001)
     assert result.exit_code == 0
-    assert result.stdout == "[promptmend: Input is too long (50001 chars, max 50000)]"
+    assert result.stdout == "[promptmend: Input is too long (over 50000 chars)]"
 
 
 # stdin is read only up to one character past the limit, so a huge pipe is never loaded whole.

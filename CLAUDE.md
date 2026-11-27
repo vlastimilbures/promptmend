@@ -149,7 +149,7 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   `tui/`; it raises `ServiceError` (`usage` for exit 2). `settings_checks.py` holds the
   persona and gate-pack checks and `rewrites()`. No module outside `commands/`, `tui/` and
   `cli.py`'s lazy imports imports `promptmend.commands`, and `setup_flow`, `settings_service`,
-  `settings_checks` and `doctor` reach neither Typer nor `cli`/`trigger`
+  `settings_checks`, `doctor` and `try_run` reach neither Typer nor `cli`/`trigger`
   (`tests/test_layering.py`).
 - Adding a setting: a field and parser in `config.py`, a row in docs/configuration.md, a line
   in `.env.example` and an entry in `tui/settings_model.SETTINGS`; `tests/test_docs.py` and
@@ -161,9 +161,10 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
 
 `improve` and `persona` start on every keystroke trigger, so their import set is pinned by
 `tests/test_trigger_contract.py` (`FORBIDDEN`, ceilings). They run through `cli.py` (the Typer
-wiring), `trigger.py` (`emit()`, the watchdog, `run_improve()`), `pipeline.py` (the rewrite's steps,
-Typer-free, shared with the Try tab) and `sanitize.py`; none of them imports `cli`. New heavy
-imports go inside the function that needs them; `cli._LAZY_COMMANDS` loads a management
+wiring), `trigger.py` (`emit()`, the watchdog, `run_improve()`), `pipeline.py` (the rewrite's
+steps, Typer-free) and `sanitize.py`; none of them imports `cli`. The Try tab's run is
+`try_run.py` (Typer- and Textual-free, on top of `pipeline`, never on the trigger path). New
+heavy imports go inside the function that needs them; `cli._LAZY_COMMANDS` loads a management
 command only when it runs. `entry.self_command()` is the argv prefix for any child that runs
 the CLI again.
 
