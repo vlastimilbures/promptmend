@@ -262,6 +262,7 @@ FORBIDDEN = (
     "promptmend.commands",
     "promptmend.doctor",
     "promptmend.smoke",
+    "promptmend.try_run",
     "promptmend.config_store",
     "promptmend.update_check",
     "promptmend.local_probe",
@@ -670,6 +671,14 @@ def test_prompt_builder_imports_no_resources_or_zipfile(tmp_path: Path) -> None:
     loaded = _imports("promptmend.prompt_builder", tmp_path)
     assert "promptmend.prompt_builder" in loaded
     assert _loaded(loaded, ("importlib.resources", "zipfile", "bz2", "lzma")) == []
+
+
+# The Try tab's run (#408) is tested without an app: it imports neither Textual nor Typer.
+def test_try_run_imports_no_textual_typer_or_cli(tmp_path: Path) -> None:
+    loaded = _imports("promptmend.try_run", tmp_path)
+    assert "promptmend.try_run" in loaded
+    banned = ("textual", "typer", "click", "promptmend.cli", "promptmend.trigger")
+    assert _loaded(loaded, banned) == []
 
 
 def test_try_pane_does_not_import_cli(tmp_path: Path) -> None:

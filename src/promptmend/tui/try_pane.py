@@ -2,9 +2,10 @@
 result before any trigger pastes one.
 
 The draft is typed into the tab; the clipboard is never read or written. The rewrite runs in
-process, in a worker thread, through pipeline.rewrite() (so the draft never appears in a command
-line or the process list), and with it through factory.make_provider() and its
-data-protection gate. By default it runs against the set-up smoke test's stub on 127.0.0.1
+process, in a worker thread, through try_run.run() and pipeline.rewrite() (so the draft never
+appears in a command line or the process list), and with it through factory.make_provider() and
+its data-protection gate; this pane only reads its widgets, loads the settings, asks, and shows
+the outcome. By default it runs against the set-up smoke test's stub on 127.0.0.1
 with a placeholder key: no provider is called and nothing is recorded. A real provider call
 first asks, naming the provider and the model, and is then recorded in the usage history as
 a direct call (no trigger), as `promptmend improve` typed in a terminal would be. The result
@@ -13,10 +14,7 @@ is shown as plain text, never read as markup.
 
 from __future__ import annotations
 
-import time
 from collections.abc import Sequence
-from dataclasses import dataclass
-from decimal import Decimal
 from typing import TYPE_CHECKING, ClassVar
 
 from textual import on
@@ -25,17 +23,16 @@ from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, Select, Static, TextArea
 
-from .. import pipeline, recorder, sanitize, smoke
+from .. import pipeline, sanitize, try_run
 from ..commands import common
 from ..config import TIERS, ConfigLayers, Settings, check_provider_options, model_setting
-from ..factory import PROVIDER_NAMES, check_base_url, leaves_machine
+from ..factory import PROVIDER_NAMES
 from ..prompt_builder import ADDED, PROFILES
 from . import teach
 from .base import Pane, button_row
 from .modals import ConfirmModal
 
 if TYPE_CHECKING:
-    from ..providers.usage import AttemptUsage
     from .state import State
 
 STUB = "stub"
@@ -56,57 +53,6 @@ class DraftArea(TextArea):
 
     def action_leave(self) -> None:
         self.screen.set_focus(None)
-
-
-@dataclass(frozen=True)
-class Outcome:
-    """A finished run: what to show, whether it failed, and the usage line."""
-
-    text: str
-    error: bool
-    usage: str
-    requests: int | None
-
-
-def _tokens(values: Sequence[int | None]) -> str:
-    known = [v for v in values if v is not None]
-    return str(sum(known)) if known else "unknown"
-
-
-def _cost(attempts: Sequence[AttemptUsage], *, stub: bool) -> str:
-    """Reported, unknown or not applicable: a cost nobody reported is never shown as 0."""
-    if stub:
-        return "not applicable (local stub)"
-    if all(a.cost_state == "not_applicable" for a in attempts):
-        return "not applicable (runs on this machine)"
-    totals: dict[str, Decimal] = {}
-    for usage in attempts:
-        if usage.charged_amount is not None and usage.charged_unit is not None:
-            totals[usage.charged_unit] = totals.get(usage.charged_unit, Decimal(0)) + (
-                usage.charged_amount
-            )
-    if not totals:
-        return "unknown"
-    shown = " + ".join(f"{amount} {unit}" for unit, amount in totals.items())
-    unreported = any(a.charged_amount is None and a.cost_state == "unknown" for a in attempts)
-    return f"{shown} reported{' (some unknown)' if unreported else ''}"
-
-
-def usage_line(attempts: Sequence[AttemptUsage], latency_ms: float, *, stub: bool) -> str:
-    """One line on what a run took: time, requests, tokens in and out, and cost."""
-    if not attempts:
-        return f"{latency_ms:.0f} ms · no request was sent"
-    inputs = [
-        None
-        if a.input_uncached is None and a.cache_read is None and a.cache_write is None
-        else (a.input_uncached or 0) + (a.cache_read or 0) + (a.cache_write or 0)
-        for a in attempts
-    ]
-    requests = f"{len(attempts)} request{'' if len(attempts) == 1 else 's'}"
-    return (
-        f"{latency_ms:.0f} ms · {requests} · tokens in {_tokens(inputs)}, "
-        f"out {_tokens([a.output for a in attempts])} · cost {_cost(attempts, stub=stub)}"
-    )
 
 
 def _profiles(names: Sequence[str]) -> list[tuple[str, str]]:
@@ -184,7 +130,8 @@ class TryPane(Pane):
             cfg = layers.settings().for_call(tier, provider=provider)
             check_provider_options(provider, tier, None)
         except Exception as exc:
-            self._finish(Outcome(sanitize.clean(pipeline.marker(exc)), True, "", None), None)
+            refused = try_run.Outcome(sanitize.clean(pipeline.marker(exc)), True, "", None)
+            self._finish(refused, None)
             return
         if target == STUB:
             self._start(draft, provider, profile, cfg, None)
@@ -250,91 +197,21 @@ class TryPane(Pane):
     def _call(
         self, draft: str, provider: str, profile: str | None, cfg: Settings, command: str | None
     ) -> None:
-        """In the worker: one rewrite, through make_provider() and its gate. ``command`` is
-        None for a stub run, which records nothing; a real run is recorded as improve."""
-        attempts: list[AttemptUsage] = []
-        ran = pipeline.Rewrite()
-        rec: recorder.Recorder | None = None
-        if command is not None:
-            rec = recorder.Recorder("improve")
-            rec.trigger = recorder.TRY_TAB
-            rec.track(cfg)
-            # Collected whether or not the history is on: the usage line shows them.
-            rec.attempts = attempts
-        try:
-            self._rewrite(draft, provider, profile, cfg, command, attempts, ran, rec)
-        finally:
-            if rec is not None:
-                # After the result is on screen, as improve records after printing, and even
-                # when showing it failed (the app quit meanwhile): a charged call is recorded.
-                rec.emitted()
-                rec.profile_id = ran.profile_id
-                rec.finish()
-        if rec is not None:
+        """In the worker: one run (try_run.run()). ``command`` is None for a stub run; the
+        outcome is shown before a real run is recorded, and the History tab then reloads."""
+        outcome = try_run.run(
+            draft,
+            provider,
+            profile,
+            cfg,
+            stub=command is None,
+            show=lambda shown: self.app.call_from_thread(self._finish, shown, command),
+        )
+        if outcome.recorded:
             # The History tab shows the new call.
             self.app.call_from_thread(self.manage.reload)
 
-    def _rewrite(
-        self,
-        draft: str,
-        provider: str,
-        profile: str | None,
-        cfg: Settings,
-        command: str | None,
-        attempts: list[AttemptUsage],
-        ran: pipeline.Rewrite,
-        rec: recorder.Recorder | None,
-    ) -> None:
-        """The call itself (timed alone) and the hand-off of its outcome to the screen."""
-        requests = 0
-        error = False
-        latency = 0.0
-        try:
-            if command is None:
-                # Gated (and refused under PROMPT_LOCAL_ONLY) as the real settings would be,
-                # though the stub settings point every provider at 127.0.0.1, and the real
-                # base URL checked first (an http:// cloud URL is refused for real too).
-                remote = leaves_machine(provider, cfg)
-                check_base_url(provider, cfg)
-                with smoke.stub_server() as stub:
-                    stub_cfg = smoke.stub_settings(cfg, stub.port)
-                    started = time.monotonic()
-                    try:
-                        text = pipeline.rewrite(
-                            draft,
-                            provider,
-                            stub_cfg,
-                            profile,
-                            ran,
-                            observer=attempts.append,
-                            force_remote=remote,
-                        )
-                    finally:
-                        # The call alone, not the stub's start or shutdown.
-                        latency = (time.monotonic() - started) * 1000
-                        requests = stub.requests
-            else:
-                started = time.monotonic()
-                try:
-                    text = pipeline.rewrite(
-                        draft, provider, cfg, profile, ran, observer=attempts.append
-                    )
-                finally:
-                    latency = (time.monotonic() - started) * 1000
-                requests = len(attempts)
-        except Exception as exc:
-            error = True
-            text = pipeline.marker(exc)
-            if rec is not None:
-                rec.outcome = pipeline.failure_outcome(exc, rec)
-        # Cleaned as improve's output is (trigger.emit()), the sent-despite note included.
-        shown = sanitize.clean(pipeline.sent_despite_note(ran.built) + text)
-        outcome = Outcome(
-            shown, error, usage_line(attempts, latency, stub=command is None), requests
-        )
-        self.app.call_from_thread(self._finish, outcome, command)
-
-    def _finish(self, outcome: Outcome, command: str | None) -> None:
+    def _finish(self, outcome: try_run.Outcome, command: str | None) -> None:
         self.running = False
         self.query_one("#try-run", Button).disabled = False
         self.query_one("#try-result", TextArea).load_text(outcome.text)

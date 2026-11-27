@@ -1,8 +1,8 @@
 """The domain steps of one rewrite, shared by the improve trigger (trigger.py) and the
-interface's Try tab (tui/try_pane.py): reading the draft (the clipboard, stdin or an
-argument, with the concealed-item check), rewrite() through factory.make_provider() and its
-gate, the marker that words a failure, its history outcome, the sent-despite note, and the
-delivery of a finished rewrite to the clipboard.
+interface's Try tab (try_run.py): reading the draft (the clipboard, stdin or an argument,
+with the concealed-item check), the one length rule (check_length()), rewrite() through
+factory.make_provider() and its gate, the marker that words a failure, its history outcome,
+the sent-despite note, and the delivery of a finished rewrite to the clipboard.
 
 It imports neither Typer nor the CLI, so the interface uses it without the command wiring
 and a Typer-free trigger entry (#313) can build on it. Printing (trigger.emit()) and
@@ -38,6 +38,14 @@ if TYPE_CHECKING:
 # A rough draft is a few hundred words; anything far larger is an accidental copy (a log,
 # a whole document) that should neither go to the cloud nor stall the gate's scan.
 MAX_DRAFT_CHARS = 50_000
+
+
+def check_length(draft: str) -> None:
+    """The one draft-length rule, for every source. Its wording names no exact count: stdin is
+    read only up to one character past the limit (read_input()), so its true length is never
+    known."""
+    if len(draft) > MAX_DRAFT_CHARS:
+        raise ProviderError(f"Input is too long (over {MAX_DRAFT_CHARS} chars)")
 
 
 class ClipboardUnavailable(ProviderError):
@@ -77,8 +85,7 @@ def read_input(source: str, text: str | None) -> str:
     if source == "stdin":
         # Bounded, so a piped multi-gigabyte file is never loaded whole just to be refused.
         draft = sys.stdin.read(MAX_DRAFT_CHARS + 1)
-        if len(draft) > MAX_DRAFT_CHARS:
-            raise ProviderError(f"Input is too long (over {MAX_DRAFT_CHARS} chars)")
+        check_length(draft)
         return draft
     if source == "argument":
         return text or ""
@@ -172,8 +179,7 @@ def rewrite(
     passes it. ``source`` is where improve read the draft (read_input()'s); an empty draft
     from the clipboard says to copy one, any other (the Try tab passes none) is empty input."""
     # Checked before cleaning, which would otherwise run over a pasted multi-megabyte log.
-    if len(raw) > MAX_DRAFT_CHARS:
-        raise ProviderError(f"Input is too long ({len(raw)} chars, max {MAX_DRAFT_CHARS})")
+    check_length(raw)
     draft = clean(raw)
     if not draft.strip():
         if source == "clipboard":

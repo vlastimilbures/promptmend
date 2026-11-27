@@ -410,6 +410,7 @@ promptmend/
 │   ├── trigger.py                improve's run: emit() (the single output sink), the watchdog
 │   ├── pipeline.py               the rewrite's steps (input, rewrite(), markers, delivery),
 │   │                             Typer-free, shared with the interface's Try tab
+│   ├── try_run.py                the Try tab's run (stub or real), no Textual
 │   ├── entry.py                  console-script entry: empty stderr for a trigger
 │   ├── commands/                 espanso, setup, config, secrets, profiles, stats, history,
 │   │                             doctor, ui: thin Typer wrappers over the services
