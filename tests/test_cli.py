@@ -540,7 +540,10 @@ def test_allow_flagged_sends_once_with_note(
     result = improve(
         "--provider", "openrouter", "--allow-flagged", "--text", draft, "--source", "argument"
     )
-    assert result.stdout == "[promptmend: sent despite: email, confidential_label]\n\nrewrite"
+    assert (
+        result.stdout
+        == "[promptmend: sent despite: an email address, a confidentiality label]\n\nrewrite"
+    )
     assert len(fake_http.requests) == 1
     assert "jane@" not in result.stdout
 
@@ -566,7 +569,7 @@ def test_allow_flagged_blocks_hard_finding(
         "--provider", "openrouter", "--allow-flagged", "--source", "argument", "--text", draft
     )
     assert result.stdout.startswith("[promptmend: Blocked cloud call.")
-    assert "-iok- never sends payment_card" in result.stdout
+    assert "-iok- never sends a payment card number" in result.stdout
     assert fake_http.requests == []
 
 
@@ -580,7 +583,7 @@ def test_allow_flagged_copy_has_no_note(
     monkeypatch.setattr(pyperclip, "copy", copied.append)
     args = ("--provider", "openrouter", "--allow-flagged", "--copy", "--source", "argument")
     result = improve(*args, "--text", "Output is CONFIDENTIAL")
-    assert result.stdout.startswith("[promptmend: sent despite: confidential_label]")
+    assert result.stdout.startswith("[promptmend: sent despite: a confidentiality label]")
     assert copied == ["rewrite"]
 
 
@@ -592,7 +595,7 @@ def test_allow_flagged_note_on_failed_call(
     fake_http.reply({"error": {"message": "bad key"}}, status_code=401)
     args = ("--provider", "openrouter", "--allow-flagged", "--source", "argument")
     result = improve(*args, "--text", "Output is CONFIDENTIAL")
-    assert result.stdout.startswith("[promptmend: sent despite: confidential_label]\n\n")
+    assert result.stdout.startswith("[promptmend: sent despite: a confidentiality label]\n\n")
     assert "HTTP 401" in result.stdout
 
 
@@ -1302,12 +1305,12 @@ def test_clipboard_output_sent_despite(
     fake_http.reply({"choices": [{"message": {"content": "rewrite"}}]})
     args = ("--provider", "openrouter", "--allow-flagged", "--source", "argument")
     result = improve(*args, "--text", "Output is CONFIDENTIAL")
-    assert result.stdout == "[promptmend: sent despite: confidential_label]"
+    assert result.stdout == "[promptmend: sent despite: a confidentiality label]"
     assert copied == ["rewrite"]
     fake_http.reply({"choices": [{"message": {"content": "half"}, "finish_reason": "length"}]})
     result = improve(*args, "--text", "Output is CONFIDENTIAL")
     assert result.stdout == (
-        "[promptmend: sent despite: confidential_label]\n\n"
+        "[promptmend: sent despite: a confidentiality label]\n\n"
         "[promptmend: the reply hit the model's output limit and is cut off]"
     )
     assert copied == ["rewrite", "half"]
@@ -1372,7 +1375,7 @@ def test_clipboard_output_copy_failure_with_sent_despite(
     args = ("--provider", "openrouter", "--allow-flagged", "--output", "clipboard")
     result = improve(*args, "--source", "argument", "--text", "Output is CONFIDENTIAL")
     assert result.stdout == (
-        "[promptmend: sent despite: confidential_label]\n\n"
+        "[promptmend: sent despite: a confidentiality label]\n\n"
         "[promptmend: Clipboard unavailable: no clipboard mechanism; the rewrite is pasted "
         "instead]\n\nrewrite"
     )

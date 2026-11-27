@@ -668,7 +668,7 @@ def test_gate_local_blocks_a_sensitive_draft(
 ) -> None:
     monkeypatch.setenv("PROMPT_GATE_LOCAL", "true")
     provider = make_provider(name, Settings())
-    with pytest.raises(ProviderError, match="Sensitive content detected: payment_card"):
+    with pytest.raises(ProviderError, match="Sensitive content detected: a payment card number"):
         provider.generate("card 4111 1111 1111 1111", "sys")
     assert fake_http.calls == []
 
@@ -679,7 +679,7 @@ def test_gate_local_follows_the_override_rules(
 ) -> None:
     monkeypatch.setenv("PROMPT_GATE_LOCAL", "true")
     flagged = make_provider("ollama", Settings(), allow_flagged=True)
-    with pytest.raises(ProviderError, match="payment_card"):
+    with pytest.raises(ProviderError, match="a payment card number"):
         flagged.generate("card 4111 1111 1111 1111", "sys")
     monkeypatch.setenv("ALLOW_CLOUD_OVERRIDE", "true")
     overridden = make_provider("ollama", Settings())
@@ -714,8 +714,8 @@ def test_gate_local_block_message(
         make_provider(name, Settings()).generate("write to jane@example.com", "sys")
     assert str(exc.value) == (
         "Blocked call to the local server (PROMPT_GATE_LOCAL=true gates it). Sensitive content "
-        "detected: email. Remove it, or set PROMPT_GATE_LOCAL=false if the server runs the "
-        "model itself."
+        "detected: an email address. Remove it, or set PROMPT_GATE_LOCAL=false if the server "
+        "runs the model itself."
     )
 
 
@@ -763,8 +763,30 @@ def test_gate_local_cloud_block_message(
     with pytest.raises(ProviderError) as exc:
         make_provider("openrouter", Settings()).generate("card 4111 1111 1111 1111", "sys")
     assert str(exc.value) == (
-        "Blocked cloud call. Sensitive content detected: payment_card. Remove it."
+        "Blocked cloud call. Sensitive content detected: a payment card number. Remove it."
     )
+    assert fake_http.requests == []
+
+
+# make_provider hands the gate Settings.call_tier: a pro-tier OpenRouter call (-ip-, -if-)
+# says that -iok- runs the standard model; a standard call keeps the plain offer.
+@pytest.mark.parametrize(
+    ("tier", "offer"),
+    [
+        ("pro", "-iok- sends it once on the standard model. Otherwise remove it"),
+        ("standard", "send it once with -iok-, or use a local trigger (-il-)."),
+    ],
+)
+def test_block_message_follows_the_call_tier(
+    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, tier: str, offer: str
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    cfg = Settings().for_call(tier, provider="openrouter")
+    assert cfg.call_tier == tier
+    with pytest.raises(ProviderError) as exc:
+        make_provider("openrouter", cfg).generate("write to jane@example.com", "sys")
+    assert offer in str(exc.value)
+    assert ("standard model" in str(exc.value)) == (tier == "pro")
     assert fake_http.requests == []
 
 

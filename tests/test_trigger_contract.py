@@ -93,7 +93,7 @@ def test_improve_settings_error_marker(
 # --allow-flagged opens the paste with the note, on success and when the call fails after
 # the gate let the draft through.
 DRAFT = "CONFIDENTIAL: summarise the board minutes for jane@example.com"
-NOTE = b"[promptmend: sent despite: email, confidential_label]\n\n"
+NOTE = b"[promptmend: sent despite: an email address, a confidentiality label]\n\n"
 
 
 FLAGGED = ["improve", "--provider", "openrouter", "--allow-flagged", "--source", "argument"]

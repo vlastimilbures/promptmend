@@ -168,7 +168,7 @@ def test_marker_is_cleaned_with_note(
     watch._fire()
     # What sys.stdout writes for "\n" here (see test_trigger_contract.EOL), spelled out.
     eol = b"\r\n" if sys.platform == "win32" else b"\n"
-    note = b"[promptmend: sent despite: email]" + eol + eol
+    note = b"[promptmend: sent despite: an email address]" + eol + eol
     assert capfdbinary.readouterr().out == note + b"[promptmend: x[201~ timed out]"
 
 
