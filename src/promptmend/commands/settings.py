@@ -8,7 +8,7 @@ import typer
 
 from .. import config, config_store, settings_service
 from ..config import ConfigLayers, env_names, secret_names
-from ..redaction import looks_like_a_key, safe_repr
+from ..redaction import safe_repr
 from . import common
 from .common import guard
 
@@ -105,7 +105,7 @@ def config_get(name: str = _NAME) -> None:
     layers, _ = settings_service.load_layers()
     common.show_findings(layers)
     value = layers.entries[name].value
-    if looks_like_a_key(value, user_patterns=name != settings_service.EXTRA_PATTERNS):
+    if settings_service.key_like(name, value):
         common.fail(
             f"{name} holds what looks like a key ({len(value)} chars), so it is not printed; "
             "move the key to `promptmend secrets set`"

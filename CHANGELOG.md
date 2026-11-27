@@ -55,8 +55,9 @@ All notable changes to this project are documented here. The format follows
   such as 12-digit AWS account IDs.
 - The Settings tab's edit dialog refuses a value that looks like a key with `config set`'s
   own words, which name `promptmend secrets set NAME` for an API key (#408): the dialog and
-  `config set` now make one check. With `PROMPTMEND_ENV` set, `config set` with a value the
-  setting cannot read names that value before the legacy-mode refusal (exit 1 either way).
+  `config set` now make one check. `config set` with a value the setting cannot read now
+  says so first: before the legacy-mode refusal when `PROMPTMEND_ENV` is set, and before the
+  error for a `config.toml` that cannot be read (exit 1 in every case).
 
 ### Fixed
 - The gate no longer blocks millisecond timestamps and long numeric IDs as card numbers

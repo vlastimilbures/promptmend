@@ -28,6 +28,7 @@ from .config import (
     Settings,
 )
 from .factory import PROVIDER_NAMES
+from .prompt_builder import PERSONA_PLACEHOLDER
 from .redaction import redact_words
 
 if TYPE_CHECKING:
@@ -220,9 +221,6 @@ def improve(
         )
     finally:
         watch.cancel()
-
-
-PERSONA_PLACEHOLDER = "I am working as [role] in [company]."
 
 
 def _persona_alone() -> str:

@@ -19,7 +19,7 @@ import pytest
 from typer.testing import CliRunner
 
 from promptmend import config, config_files, config_store
-from promptmend.cli import PERSONA_PLACEHOLDER, app
+from promptmend.cli import app
 from promptmend.config import ConfigLayers, Settings, env_names, secret_names
 from promptmend.config_files import FileSecretStore, SecretStoreError
 from promptmend.config_store import (
@@ -27,6 +27,7 @@ from promptmend.config_store import (
     ReadOnlyConfigError,
     StaleEditError,
 )
+from promptmend.prompt_builder import PERSONA_PLACEHOLDER
 
 if TYPE_CHECKING:
     from conftest import StubProvider

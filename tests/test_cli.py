@@ -12,13 +12,12 @@ import pyperclip
 import pytest
 from typer.testing import CliRunner
 
-import promptmend.cli as cli
 import promptmend.pipeline as pipeline
 from promptmend import config
 from promptmend.cli import app
 from promptmend.config import Settings
 from promptmend.pipeline import read_input
-from promptmend.prompt_builder import system_prompt
+from promptmend.prompt_builder import PERSONA_PLACEHOLDER, system_prompt
 from promptmend.providers.base import TRUNCATED_NOTE, ProviderError
 from promptmend.providers.registry import PROVIDERS
 
@@ -741,7 +740,7 @@ def test_persona_placeholder_when_the_persona_cannot_be_read(
         (directory / "config.toml").write_text('PROMPT_PERSONA = "I am a tester."\nx = = 1\n')
     else:
         (tmp_path / ".env").write_bytes('PROMPT_PERSONA="I am a tester."\n'.encode("utf-16"))
-    assert runner.invoke(app, ["persona"]).stdout == cli.PERSONA_PLACEHOLDER
+    assert runner.invoke(app, ["persona"]).stdout == PERSONA_PLACEHOLDER
 
 
 # A .env that is not UTF-8 is a marker on the trigger path, never silently skipped (#32).
@@ -1485,7 +1484,7 @@ def test_entry_keeps_stderr_empty_on_a_warning(
     if command == "improve":
         assert out.startswith("[promptmend: Unknown provider")
     else:
-        assert out == cli.PERSONA_PLACEHOLDER
+        assert out == PERSONA_PLACEHOLDER
 
 
 # What no warning filter catches (a direct write, logging's last resort, C code writing to

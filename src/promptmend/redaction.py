@@ -535,11 +535,6 @@ def set_user_patterns(patterns: tuple[re.Pattern[str], ...]) -> None:
     _user_patterns = patterns
 
 
-def user_patterns() -> tuple[re.Pattern[str], ...]:
-    """The user's PROMPT_EXTRA_PATTERNS, compiled, as set_user_patterns() set them last."""
-    return _user_patterns
-
-
 def looks_like_a_key(value: str, *, user_patterns: bool = True) -> bool:
     """A value the gate would block as a credential (an API key, a token, a password), or
     one the user's PROMPT_EXTRA_PATTERNS match (from the settings loaded last, see

@@ -64,6 +64,8 @@ ALIASES = {"default-pro": "default"}
 
 # Replaced in a profile by the rule for how CONTEXT opens (see PROMPT_PERSONA).
 PERSONA_TOKEN = "{{PERSONA_RULE}}"  # noqa: S105 - a template placeholder, not a secret
+# What the persona subcommand (the -p- snippet) prints when PROMPT_PERSONA is not set.
+PERSONA_PLACEHOLDER = "I am working as [role] in [company]."
 # Replaced by the persona and a space, or by nothing without one: the few-shot examples open
 # CONTEXT with it, so they show the persona opening the rule asks for.
 PERSONA_OPENING_TOKEN = "{{PERSONA_OPENING}}"  # noqa: S105 - a template placeholder

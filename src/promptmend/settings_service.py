@@ -28,6 +28,14 @@ KEY_LIKE = (
 )
 
 
+def key_like(name: str, value: str) -> bool:
+    """Whether ``value``, a value of setting ``name``, looks like a key
+    (redaction.looks_like_a_key()): the one rule for what is never saved in config.toml or
+    shown. PROMPT_EXTRA_PATTERNS' own value is checked without the user's patterns, which may
+    match their own text."""
+    return looks_like_a_key(value, user_patterns=name != EXTRA_PATTERNS)
+
+
 class ServiceError(Exception):
     """A refused change; the message says why and never holds a secret value. ``usage``
     marks a refusal of what was given (a secret's name, a key-like value), which a command
@@ -85,7 +93,7 @@ def check_setting(name: str, value: str) -> None:
     ``name``: not a secret and not a value that looks like a key (ServiceError, usage), and
     readable as the CLI reads it (the setting's own ValueError)."""
     _not_a_secret(name, "set")
-    if looks_like_a_key(value, user_patterns=name != EXTRA_PATTERNS):
+    if key_like(name, value):
         raise ServiceError(KEY_LIKE, usage=True)
     config_store.toml_value(name, value)
 

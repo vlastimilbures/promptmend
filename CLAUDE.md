@@ -144,11 +144,13 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
 - Legacy mode: with `PROMPTMEND_ENV` set (the conftest default) there is no `config.toml` and
   no secrets file, and `config set`/`secrets set` refuse.
 - What may be saved is decided once, in `settings_service.py` (`check_setting()`,
-  `save_setting()`, `unset_setting()`, `store_key()`, the legacy-mode refusal, repair-mode
-  `load_layers()`), Typer-free and shared by the commands, `setup_flow.py` and `tui/`; it
-  raises `ServiceError` (`usage` for exit 2). `settings_checks.py` holds the persona and
-  gate-pack checks. No module outside `commands/`, `tui/` and `cli.py` imports
-  `promptmend.commands` (`tests/test_setup_flow.py`).
+  `save_setting()`, `unset_setting()`, `store_key()`, `key_like()`, the legacy-mode refusal,
+  repair-mode `load_layers()`), Typer-free and shared by the commands, `setup_flow.py` and
+  `tui/`; it raises `ServiceError` (`usage` for exit 2). `settings_checks.py` holds the
+  persona and gate-pack checks and `rewrites()`. No module outside `commands/`, `tui/` and
+  `cli.py`'s lazy imports imports `promptmend.commands`, and `setup_flow`, `settings_service`,
+  `settings_checks` and `doctor` reach neither Typer nor `cli`/`trigger`
+  (`tests/test_layering.py`).
 - Adding a setting: a field and parser in `config.py`, a row in docs/configuration.md, a line
   in `.env.example` and an entry in `tui/settings_model.SETTINGS`; `tests/test_docs.py` and
   `tests/test_tui_settings_model.py` fail without the last three.

@@ -30,8 +30,7 @@ from pathlib import Path
 
 import promptmend
 from promptmend import assets, prompt_builder
-from promptmend.cli import PERSONA_PLACEHOLDER
-from promptmend.prompt_builder import PROFILES, system_prompt
+from promptmend.prompt_builder import PERSONA_PLACEHOLDER, PROFILES, system_prompt
 
 
 def _fail(message: str) -> None:

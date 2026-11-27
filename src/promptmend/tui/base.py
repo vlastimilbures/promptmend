@@ -6,7 +6,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-import typer
 from rich.text import Text
 from textual import work
 from textual.containers import Horizontal, VerticalScroll
@@ -15,7 +14,6 @@ from textual.widgets import Button, DataTable, Static
 from .. import config_store, deploy, history, settings_service
 from ..commands import common
 from ..config_files import SecretStoreError
-from ..redaction import looks_like_a_key
 from . import teach
 from .state import State
 
@@ -38,7 +36,6 @@ EXPECTED = (
     SecretStoreError,
     deploy.DeployError,
     history.HistoryError,
-    typer.BadParameter,
 )
 
 
@@ -101,7 +98,7 @@ class Reports(_Mixin):
         Settings and Profiles tabs: what was saved and after_save()'s warnings, under the
         command (a private or key-like value withheld). ``saved`` runs once the value is
         saved, before the warnings are read."""
-        private = name in common.PRIVATE or looks_like_a_key(value)
+        private = name in common.PRIVATE or settings_service.key_like(name, value)
         shown = teach.WITHHELD if private else value
 
         def save() -> str:

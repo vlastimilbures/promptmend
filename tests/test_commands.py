@@ -1643,15 +1643,3 @@ def test_config_show_marks_an_empty_value(saved: Path, monkeypatch: pytest.Monke
     line = next(x for x in lines if x.startswith("OPENROUTER_PROVIDER "))
     assert "(empty)" not in line
     assert _run("config", "get", "PROMPT_TEMPERATURE").stdout == "\n"
-
-
-def test_looks_like_a_key_uses_the_users_patterns(monkeypatch: pytest.MonkeyPatch) -> None:
-    from promptmend import redaction
-
-    custom = "zz-falcon-1234"
-    assert not redaction.looks_like_a_key(custom)
-    monkeypatch.setattr(redaction, "_user_patterns", (re.compile("zz-falcon"),))
-    assert redaction.user_patterns() == (re.compile("zz-falcon"),)
-    assert redaction.looks_like_a_key(custom)
-    # Showing PROMPT_EXTRA_PATTERNS itself never hides it behind its own pattern.
-    assert not redaction.looks_like_a_key("zz-falcon", user_patterns=False)

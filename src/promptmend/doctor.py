@@ -1201,8 +1201,8 @@ def timing(
     fails is reported, never raised. When the launcher's --version fails or prints another
     version, it is another CLI (or none), so its persona and improve are not run."""
     from . import smoke
-    from .cli import PERSONA_PLACEHOLDER
     from .entry import self_command
+    from .prompt_builder import PERSONA_PLACEHOLDER
 
     time_runs = timer or smoke.time_runs
     interpreter = self_command()

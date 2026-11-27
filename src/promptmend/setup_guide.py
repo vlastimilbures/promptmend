@@ -150,13 +150,8 @@ class DoneRow:
     text: str
 
 
-def rewrites(triggers: Sequence[assets.Trigger], settings: Settings) -> dict[str, list[str]]:
-    """Each provider the active rewrite triggers run on, with those triggers (as doctor)."""
-    return settings_checks.rewrites(list(triggers), settings)
-
-
 def provider_choices(settings: Settings, triggers: Sequence[assets.Trigger]) -> list[Choice]:
-    used = rewrites(triggers, settings)
+    used = settings_checks.rewrites(triggers, settings)
     refused = {r.name for r in factory.routes(settings) if r.refused}
     found = []
     # The Provider step lists the cloud providers first, in registry order (OpenRouter, the
@@ -192,7 +187,7 @@ def key_rows(
 ) -> list[KeyRow]:
     """Every key, with the triggers that need it; a key is needed when an active trigger or
     PROMPT_PROVIDER runs on its provider, unless PROMPT_LOCAL_ONLY refuses that provider."""
-    used = rewrites(triggers, settings)
+    used = settings_checks.rewrites(triggers, settings)
     rows = []
     for route in factory.routes(settings):
         if not route.key or route.key not in secret_names():

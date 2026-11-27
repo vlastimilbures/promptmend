@@ -20,7 +20,6 @@ import typer
 
 from .. import settings_service
 from ..config import DEFAULT_SOURCE, ENV_SOURCE, ConfigLayers, Entry, secret_names
-from ..redaction import looks_like_a_key as _looks_like_a_key
 from ..redaction import redact_message, safe_repr
 
 # Exit codes (docs/commands.md). 2 is Click's own usage error (an unknown option, a bad value).
@@ -193,11 +192,7 @@ def shown_value(name: str, entry: Entry) -> str:
     empty value set on purpose (PROMPT_TEMPERATURE= sends no temperature) reads "(empty)"
     rather than a blank; one left at an empty default stays blank."""
     own = name != settings_service.EXTRA_PATTERNS
-    if (
-        name in secret_names()
-        or name in PRIVATE
-        or _looks_like_a_key(entry.value, user_patterns=own)
-    ):
+    if name in secret_names() or name in PRIVATE or settings_service.key_like(name, entry.value):
         return "<set>" if entry.value else "<not set>"
     if not entry.value and entry.source != DEFAULT_SOURCE:
         return "(empty)"

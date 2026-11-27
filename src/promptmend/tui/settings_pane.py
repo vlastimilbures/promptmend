@@ -27,7 +27,6 @@ from ..commands import common
 from ..commands import doctor as doctor_cmd
 from ..config import secret_names
 from ..factory import PROVIDER_NAMES
-from ..redaction import looks_like_a_key
 from . import home, settings_model, teach
 from .base import EXPECTED, Pane, button_row, error_message
 from .modals import USE_DEFAULT, ConfirmModal, EditModal, Field, FormModal, PickModal, UseDefault
@@ -443,10 +442,9 @@ class SettingsPane(Pane):
 
     def _type(self, meta: settings_model.Meta, current: str) -> None:
         name = meta.name
-        own = name != settings_service.EXTRA_PATTERNS
         # A value that looks like a key is never shown, not even here: the field opens empty,
         # the dialog says why, and an empty submit then keeps the value (it is a cancel).
-        withheld = bool(current) and looks_like_a_key(current, user_patterns=own)
+        withheld = bool(current) and settings_service.key_like(name, current)
         value = "" if withheld else current
 
         def check(typed: str) -> str | None:

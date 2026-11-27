@@ -1,18 +1,20 @@
-"""What the effective settings mean, for doctor, `config validate`, setup and the interface: the
-persona the gate's patterns match, the gate packs PROMPT_GATE_PACKS leaves off, and the providers
-the rewrite triggers run on.
+"""What the effective settings mean: the persona the gate's patterns match, the gate packs
+PROMPT_GATE_PACKS leaves off, and the providers the rewrite triggers run on.
 
-Pure functions of a Settings (and the triggers): nothing here reads a file, prints or imports
-Typer, so doctor (doctor.py), the commands (commands/settings.py), setup (setup_guide.py) and
-the settings services (settings_service.py) share them without importing each other. Never on
-the trigger path (tests/test_trigger_contract.py)."""
+Doctor (doctor.py), `config validate` (commands/settings.py), setup (setup_guide.py) and the
+warnings after a save (settings_service.py) share these without importing each other. They
+take a Settings (and the triggers), print nothing and import no Typer; persona_used() reads
+the profile templates (prompt_builder.template(), the user's own profile files included).
+Never on the trigger path (tests/test_trigger_contract.py)."""
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 from . import assets, config
 
 
-def rewrites(triggers: list[assets.Trigger], settings: config.Settings) -> dict[str, list[str]]:
+def rewrites(triggers: Sequence[assets.Trigger], settings: config.Settings) -> dict[str, list[str]]:
     """Each provider the active rewrite triggers run on, with those triggers, in file order;
     a trigger naming no provider runs on PROMPT_PROVIDER (PROMPT_PRO_PROVIDER on the pro tier)."""
     found: dict[str, list[str]] = {}

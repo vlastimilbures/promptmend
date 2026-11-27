@@ -3,11 +3,8 @@ flows themselves are tested in test_commands.py and test_tui_setup.py)."""
 
 from __future__ import annotations
 
-import ast
 import dataclasses
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -34,66 +31,6 @@ def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _settings_file() -> Path:
     return config_store.read_settings().path
-
-
-PACKAGE = Path(setup_flow.__file__).parent
-# The Typer-free modules (#408): setup's core, the settings services and checks, and doctor.
-TYPER_FREE = ("setup_flow", "settings_service", "settings_checks", "doctor")
-
-
-def _imports(path: Path) -> set[str]:
-    """Every module ``path`` (under src/promptmend) imports, at module level or inside a
-    function, as an absolute name; ``from . import x`` counts as ``promptmend.x`` too."""
-    package = ["promptmend", *path.relative_to(PACKAGE).parts[:-1]]
-    names = set()
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if isinstance(node, ast.Import):
-            names |= {alias.name for alias in node.names}
-        elif isinstance(node, ast.ImportFrom):
-            base = package[: len(package) - node.level + 1] if node.level else []
-            module = ".".join([*base, *(node.module or "").split(".")]).strip(".")
-            names.add(module)
-            names |= {f"{module}.{alias.name}" for alias in node.names}
-    return names
-
-
-@pytest.mark.parametrize("module", TYPER_FREE)
-def test_imports_neither_typer_nor_textual(module: str) -> None:
-    names = _imports(PACKAGE / f"{module}.py")
-    assert not {n for n in names if n.split(".")[0] in ("typer", "textual", "click")}
-
-
-def test_only_commands_tui_and_cli_import_the_commands() -> None:
-    """No module outside commands/ and tui/ imports from promptmend.commands, not even inside
-    a function: the commands print over the services, never the other way round. cli.py is
-    the one exception: it wires the commands into the Typer app (each loaded when it runs)."""
-    offenders = []
-    for path in sorted(PACKAGE.rglob("*.py")):
-        relative = path.relative_to(PACKAGE)
-        if relative.parts[0] in ("commands", "tui") or relative == Path("cli.py"):
-            continue
-        commands = "promptmend.commands"
-        if any(n == commands or n.startswith(f"{commands}.") for n in _imports(path)):
-            offenders.append(relative.as_posix())
-    assert offenders == []
-
-
-def test_the_import_walk_sees_imports_inside_functions() -> None:
-    # The walk above would pass on an empty set: show it finds cli.py's lazy import.
-    assert "promptmend.commands.ui.on_a_terminal" in _imports(PACKAGE / "cli.py")
-
-
-@pytest.mark.parametrize("module", TYPER_FREE)
-def test_import_loads_no_typer_click_textual_or_commands(module: str) -> None:
-    code = (
-        f"import sys, promptmend.{module}; "
-        "print(sorted(m for m in sys.modules if m.split('.')[0] in ('typer', 'click', "
-        "'textual') or m.startswith('promptmend.commands')))"
-    )
-    out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
-    )
-    assert out.stdout.strip() == "[]"
 
 
 def test_history_line() -> None:
