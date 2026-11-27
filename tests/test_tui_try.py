@@ -14,16 +14,17 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pyperclip
 import pytest
-from test_tui_snapshots import fixed_state, quick_fixed_state
+from test_tui_snapshots import fixed_state, quick_of
 from textual.pilot import Pilot
 from textual.widgets import Button, Select, Static, TabbedContent, TextArea
 
 from promptmend import clipboard_guard, pipeline, prompt_builder, smoke, try_run
+from promptmend.config import ConfigLayers
 from promptmend.pipeline import MAX_DRAFT_CHARS
 from promptmend.tui import teach
 from promptmend.tui.app import ManageApp
 from promptmend.tui.modals import ConfirmModal
-from promptmend.tui.try_pane import CONFIGURED, REAL, TryPane
+from promptmend.tui.try_pane import CONFIGURED, REAL, STUB, TryPane
 
 if TYPE_CHECKING:
     from conftest import FakeHttp, HistoryRows
@@ -98,9 +99,17 @@ class Seen:
     home_session: str
 
 
-def drive(scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]]) -> Seen:
-    # A fixed State: the tab reads the (per-test) settings itself when it runs.
-    app = ManageApp(loader=lambda g, _first: fixed_state(g), quick_loader=quick_fixed_state)
+def drive(
+    scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]],
+    extra: dict[str, str] | None = None,
+) -> Seen:
+    """Run ``scenario`` on the Try tab. A fixed State (``extra`` added to its environment, read
+    again on each reload, so a scenario may change it): the tab reads the (per-test) settings
+    itself when it runs, and the State only for where "Run against" starts."""
+    app = ManageApp(
+        loader=lambda g, _first: fixed_state(g, extra),
+        quick_loader=lambda g: quick_of(fixed_state(g, extra)),
+    )
     seen: list[Seen] = []
 
     async def main() -> None:
@@ -131,12 +140,17 @@ def tab(app: ManageApp) -> TryPane:
 
 
 async def run(app: ManageApp, pilot: Pilot[int], draft: str, **picks: str) -> None:
-    """Type ``draft``, pick the options (target, provider, profile, tier) and press Run."""
+    """Type ``draft``, pick the options (provider, profile, tier, then the target, as a person
+    picks it after the provider) and press Run."""
     pane = tab(app)
     pane.query_one("#try-draft", TextArea).load_text(draft)
+    target = picks.pop("target", None)
     for name, value in picks.items():
         pane.query_one(f"#try-{name}", Select).value = value
     await pilot.pause()
+    if target is not None:
+        pane.query_one("#try-target", Select).value = target
+        await pilot.pause()
     await pilot.click("#try-run")
     await settle(pilot)
 
@@ -144,14 +158,14 @@ async def run(app: ManageApp, pilot: Pilot[int], draft: str, **picks: str) -> No
 @pytest.mark.usefixtures("loopback_only")
 def test_stub_run_shows_the_reply_and_records_nothing(history_rows: HistoryRows) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, DRAFT)
+        await run(app, pilot, DRAFT, target=STUB)
 
     seen = drive(scenario)
     assert seen.result == smoke.REPLY
     line = seen.usage
     assert "1 request" in line
     assert f"tokens in {smoke.INPUT_TOKENS}, out {smoke.OUTPUT_TOKENS}" in line
-    assert "cost not applicable (local stub)" in line
+    assert "cost not applicable (dry run)" in line
     assert seen.stub_requests == 1
     assert history_rows("operations") == []
     # The equivalent command would call the real provider: a stub run is not in the log.
@@ -163,7 +177,7 @@ def test_stub_run_shows_the_reply_and_records_nothing(history_rows: HistoryRows)
 @pytest.mark.parametrize("provider", ["ollama", "anthropic", "lmstudio"])
 def test_stub_run_with_each_provider_shape(provider: str) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, DRAFT, provider=provider, profile="general")
+        await run(app, pilot, DRAFT, provider=provider, profile="general", target=STUB)
 
     seen = drive(scenario)
     assert seen.result == smoke.REPLY
@@ -173,7 +187,7 @@ def test_stub_run_with_each_provider_shape(provider: str) -> None:
 @pytest.mark.usefixtures("loopback_only")
 def test_gate_blocks_a_key_before_the_stub_is_called() -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, f"Use the key {KEY} to call the API.")
+        await run(app, pilot, f"Use the key {KEY} to call the API.", target=STUB)
 
     seen = drive(scenario)
     assert seen.result.startswith("[promptmend: ")
@@ -199,7 +213,7 @@ def test_gate_blocks_a_key_before_the_stub_is_called() -> None:
 @pytest.mark.usefixtures("loopback_only")
 def test_empty_or_too_long_draft(draft: str, marker: str) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, draft)
+        await run(app, pilot, draft, target=STUB)
 
     seen = drive(scenario)
     assert seen.result == marker
@@ -209,7 +223,7 @@ def test_empty_or_too_long_draft(draft: str, marker: str) -> None:
 @pytest.mark.usefixtures("loopback_only")
 def test_pro_tier_on_another_provider_is_refused() -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, DRAFT, provider="ollama", tier="pro")
+        await run(app, pilot, DRAFT, provider="ollama", tier="pro", target=STUB)
 
     seen = drive(scenario)
     assert seen.result == (
@@ -366,7 +380,7 @@ def test_a_stub_run_does_not_reload_history() -> None:
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         reloads = counting_reloads(app)
-        await run(app, pilot, DRAFT)
+        await run(app, pilot, DRAFT, target=STUB)
         counts.append(len(reloads))
 
     seen = drive(scenario)
@@ -389,6 +403,8 @@ def test_one_run_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         pane = tab(app)
         pane.query_one("#try-draft", TextArea).load_text(DRAFT)
+        pane.query_one("#try-target", Select).value = STUB
+        await pilot.pause()
         await pilot.click("#try-run")
         await pilot.pause()
         during.append(pane.running)
@@ -411,7 +427,7 @@ def test_a_crashed_worker_frees_the_run_button(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(try_run, "usage_line", broken)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, DRAFT)
+        await run(app, pilot, DRAFT, target=STUB)
 
     seen = drive(scenario)
     assert not seen.running
@@ -571,7 +587,7 @@ def test_a_picked_profile_is_passed_and_named(
 
 def test_pro_tier_stub_run(loopback_only: list[str]) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, DRAFT, tier="pro")
+        await run(app, pilot, DRAFT, tier="pro", target=STUB)
 
     seen = drive(scenario)
     assert seen.result == smoke.REPLY
@@ -600,7 +616,7 @@ def test_a_stub_run_is_gated_as_the_real_call_would_be(
     monkeypatch.setenv("OLLAMA_MODEL", model)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, f"Use the key {KEY} to call the API.", provider="ollama")
+        await run(app, pilot, f"Use the key {KEY} to call the API.", provider="ollama", target=STUB)
 
     seen = drive(scenario)
     assert seen.result.startswith("[promptmend: ")
@@ -614,7 +630,7 @@ def test_a_stub_run_is_refused_under_local_only_as_the_real_call_would_be(
     monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, DRAFT)
+        await run(app, pilot, DRAFT, target=STUB)
 
     seen = drive(scenario)
     assert seen.result.startswith("[promptmend: PROMPT_LOCAL_ONLY=true")
@@ -628,7 +644,13 @@ def test_a_local_stub_run_stays_ungated(
     """A loopback Ollama is not gated for real (without PROMPT_GATE_LOCAL), nor for the stub."""
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, "Rename the helper and keep the tests green.", provider="ollama")
+        await run(
+            app,
+            pilot,
+            "Rename the helper and keep the tests green.",
+            provider="ollama",
+            target=STUB,
+        )
 
     seen = drive(scenario)
     assert seen.result == smoke.REPLY
@@ -660,12 +682,14 @@ def test_stub_latency_times_the_call_alone(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(smoke, "stub_server", slow_stop)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, DRAFT)
+        await run(app, pilot, DRAFT, target=STUB)
 
     seen = drive(scenario)
     entered, stopping = block
     # Both clocks are monotonic, so the reading order holds; +1 for the usage line's rounding.
-    assert int(seen.usage.split(" ms")[0]) <= (stopping - entered) * 1000 + 1
+    assert seen.usage.startswith(f"{try_run.DRY_RUN_NOTE} · ")
+    latency = seen.usage.removeprefix(f"{try_run.DRY_RUN_NOTE} · ").split(" ms")[0]
+    assert int(latency) <= (stopping - entered) * 1000 + 1
 
 
 @pytest.mark.parametrize(
@@ -686,9 +710,213 @@ def test_a_stub_run_checks_the_real_base_url(
     monkeypatch.setenv(name, value)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await run(app, pilot, DRAFT, provider=provider)
+        await run(app, pilot, DRAFT, provider=provider, target=STUB)
 
     seen = drive(scenario)
     assert seen.result == f"[promptmend: {name} must be an https:// URL]"
     assert seen.stub_requests == 0
     assert loopback_only == []
+
+
+# --- Where "Run against" starts (#391) ------------------------------------------------------
+
+# fixed_state has OPENROUTER_API_KEY set; this takes it away.
+NO_KEY = {"OPENROUTER_API_KEY": ""}
+
+
+def target(app: ManageApp) -> str:
+    return str(tab(app).query_one("#try-target", Select).value)
+
+
+async def pick(app: ManageApp, pilot: Pilot[int], name: str, value: str) -> None:
+    tab(app).query_one(f"#try-{name}", Select).value = value
+    await pilot.pause()
+
+
+def test_a_usable_provider_starts_at_the_real_provider_and_rewrites(
+    cloud: None, fake_http: FakeHttp, history_rows: HistoryRows
+) -> None:
+    """The key is set: Run asks first (nothing sent before the confirm), then rewrites."""
+    fake_http.reply(REPLY)
+    seen_target: list[str] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        seen_target.append(target(app))
+        await run(app, pilot, DRAFT)
+        assert isinstance(app.screen, ConfirmModal)
+        assert fake_http.requests == []
+        await pilot.press("y")
+        await settle(pilot)
+
+    seen = drive(scenario)
+    assert seen_target == [REAL]
+    assert len(fake_http.requests) == 1
+    assert seen.result == "A better prompt."
+    assert try_run.DRY_RUN not in seen.usage
+    assert seen.last_message == "Done: rewritten."
+    assert len(history_rows("operations")) == 1
+
+
+@pytest.mark.usefixtures("loopback_only")
+def test_a_cloud_provider_without_a_key_starts_at_the_dry_run(history_rows: HistoryRows) -> None:
+    """No key: the dry run, which says above its result and in its report that it is none."""
+    seen_target: list[str] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        seen_target.append(target(app))
+        await run(app, pilot, DRAFT)
+        # No dialog: a dry run calls no provider.
+        assert not isinstance(app.screen, ConfirmModal)
+
+    seen = drive(scenario, NO_KEY)
+    assert seen_target == [STUB]
+    assert seen.result == smoke.REPLY
+    assert seen.usage.startswith("Dry run (checks the wiring, no rewrite) · ")
+    assert seen.last_message == "Done: dry run, the stub answered (no rewrite)."
+    assert history_rows("operations") == []
+
+
+def test_the_dry_run_is_named_for_what_it_is() -> None:
+    seen: list[list[str]] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        options = tab(app).query_one("#try-target", Select)
+        seen.append([str(prompt) for prompt, _ in options._options])
+
+    drive(scenario)
+    assert seen == [["Dry run", "Real provider"]]
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [
+        # No key for the cloud providers: only a local one is usable.
+        (NO_KEY, {"openrouter": STUB, "anthropic": STUB, "ollama": REAL, "lmstudio": REAL}),
+        # PROMPT_LOCAL_ONLY refuses a cloud provider though its key is set.
+        (
+            {"PROMPT_LOCAL_ONLY": "true"},
+            {"openrouter": STUB, "anthropic": STUB, "ollama": REAL, "lmstudio": REAL},
+        ),
+        ({"ANTHROPIC_API_KEY": "-".join(("test", "key"))}, {"anthropic": REAL, "openai": STUB}),
+    ],
+    ids=["no-key", "local-only", "anthropic-key"],
+)
+def test_changing_the_provider_works_the_default_out_again(
+    extra: dict[str, str], expected: dict[str, str]
+) -> None:
+    seen: dict[str, str] = {}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        for provider in expected:
+            await pick(app, pilot, "provider", provider)
+            seen[provider] = target(app)
+
+    drive(scenario, extra)
+    assert seen == expected
+
+
+def test_a_target_picked_by_hand_survives_a_provider_change_and_a_reload() -> None:
+    seen: list[str] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        seen.append(target(app))  # the key is set
+        await pick(app, pilot, "target", STUB)
+        await pick(app, pilot, "provider", "ollama")  # usable, yet the pick stays
+        seen.append(target(app))
+        app.reload()
+        await settle(pilot)
+        seen.append(target(app))
+
+    drive(scenario)
+    assert seen == [REAL, STUB, STUB]
+
+
+def test_a_real_target_picked_by_hand_stays_for_a_provider_without_a_key(
+    cloud: None, fake_http: FakeHttp
+) -> None:
+    """Kept as picked, and still asks before the call."""
+    seen: list[str] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        seen.append(target(app))
+        await pick(app, pilot, "target", REAL)
+        await pick(app, pilot, "provider", "anthropic")
+        seen.append(target(app))
+        await run(app, pilot, DRAFT)
+        assert isinstance(app.screen, ConfirmModal)
+        await pilot.press("escape")
+        await settle(pilot)
+
+    drive(scenario, NO_KEY)
+    assert seen == [STUB, REAL]
+    assert fake_http.requests == []
+
+
+def test_a_reload_follows_a_key_set_elsewhere_until_a_pick() -> None:
+    """A key saved on the Settings tab: the reload moves the default to the real provider.
+    Once the dry run is picked by hand, a key changed again and a reload keep the pick."""
+    extra = dict(NO_KEY)
+    seen: list[str] = []
+
+    async def reload_with(app: ManageApp, pilot: Pilot[int], key: str) -> None:
+        extra["OPENROUTER_API_KEY"] = key
+        app.reload()
+        await settle(pilot)
+        seen.append(target(app))
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        seen.append(target(app))
+        await reload_with(app, pilot, "-".join(("test", "key")))
+        await pick(app, pilot, "target", STUB)
+        await reload_with(app, pilot, "")
+        await reload_with(app, pilot, "-".join(("other", "key")))
+
+    drive(scenario, extra)
+    assert seen == [STUB, REAL, STUB, STUB]
+
+
+def test_two_presses_open_one_dialog_and_one_send_is_one_call(
+    cloud: None, fake_http: FakeHttp, history_rows: HistoryRows, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run pressed twice before the dialog is up: one dialog, so one Send, one request; and
+    no second start while that run is under way, whoever asks."""
+    fake_http.reply(REPLY)
+    release = threading.Event()
+    real_run = try_run.run
+
+    def held(*args: Any, **kwargs: Any) -> try_run.Outcome:
+        release.wait(10)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(try_run, "run", held)
+    dialogs: list[int] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        pane = tab(app)
+        pane.query_one("#try-draft", TextArea).load_text(DRAFT)
+        assert target(app) == REAL
+        button = pane.query_one("#try-run", Button)
+        button.press()
+        button.press()
+        await pilot.pause()
+        pane._run()  # a third ask while the dialog is open
+        await pilot.pause()
+        dialogs.append(sum(isinstance(s, ConfirmModal) for s in app.screen_stack))
+        await pilot.press("y")
+        await pilot.pause()
+        assert pane.running
+        # The run is held: another y, Run or a direct start sends nothing more.
+        await pilot.press("y")
+        pane._run()
+        cfg = ConfigLayers.resolve().settings()
+        pane._start(DRAFT, "openrouter", None, cfg, COMMAND)
+        await pilot.pause()
+        dialogs.append(sum(isinstance(s, ConfirmModal) for s in app.screen_stack))
+        release.set()
+        await settle(pilot)
+
+    seen = drive(scenario)
+    assert dialogs == [1, 0]
+    assert len(fake_http.requests) == 1
+    assert seen.result == "A better prompt."
+    assert len(history_rows("operations")) == 1

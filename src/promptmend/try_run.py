@@ -8,6 +8,10 @@ and refused as the real settings would be, and records nothing. A real run is re
 usage history as `improve` from recorder.TRY_TAB, after its outcome was handed to the screen and
 even when showing it failed. The clipboard is never touched.
 
+usable() decides which run the tab starts at: the real provider when it could rewrite (its
+key set, or none needed, and PROMPT_LOCAL_ONLY not refusing it), else the dry run against the
+stub. Choosing the default calls nothing: the tab still asks before every real call.
+
 It imports neither Typer nor Textual, and the trigger path never imports it (smoke brings
 http.server), so it is tested without an app."""
 
@@ -21,10 +25,17 @@ from typing import TYPE_CHECKING
 
 from . import pipeline, recorder, sanitize, smoke
 from .factory import check_base_url, leaves_machine
+from .providers.registry import PROVIDERS
 
 if TYPE_CHECKING:
     from .config import Settings
     from .providers.usage import AttemptUsage
+
+
+# What a stub run is called wherever the tab names it: it checks the wiring, it never rewrites.
+DRY_RUN = "Dry run"
+# Above a stub run's result, so its fixed reply is never taken for a rewrite.
+DRY_RUN_NOTE = f"{DRY_RUN} (checks the wiring, no rewrite)"
 
 
 @dataclass(frozen=True)
@@ -49,7 +60,7 @@ def _tokens(values: Sequence[int | None]) -> str:
 def _cost(attempts: Sequence[AttemptUsage], *, stub: bool) -> str:
     """Reported, unknown or not applicable: a cost nobody reported is never shown as 0."""
     if stub:
-        return "not applicable (local stub)"
+        return "not applicable (dry run)"
     if all(a.cost_state == "not_applicable" for a in attempts):
         return "not applicable (runs on this machine)"
     totals: dict[str, Decimal] = {}
@@ -66,9 +77,11 @@ def _cost(attempts: Sequence[AttemptUsage], *, stub: bool) -> str:
 
 
 def usage_line(attempts: Sequence[AttemptUsage], latency_ms: float, *, stub: bool) -> str:
-    """One line on what a run took: time, requests, tokens in and out, and cost."""
+    """One line on what a run took: time, requests, tokens in and out, and cost; a stub run's
+    starts with DRY_RUN_NOTE."""
+    lead = f"{DRY_RUN_NOTE} · " if stub else ""
     if not attempts:
-        return f"{latency_ms:.0f} ms · no request was sent"
+        return f"{lead}{latency_ms:.0f} ms · no request was sent"
     inputs = [
         None
         if a.input_uncached is None and a.cache_read is None and a.cache_write is None
@@ -77,9 +90,21 @@ def usage_line(attempts: Sequence[AttemptUsage], latency_ms: float, *, stub: boo
     ]
     requests = f"{len(attempts)} request{'' if len(attempts) == 1 else 's'}"
     return (
-        f"{latency_ms:.0f} ms · {requests} · tokens in {_tokens(inputs)}, "
+        f"{lead}{latency_ms:.0f} ms · {requests} · tokens in {_tokens(inputs)}, "
         f"out {_tokens([a.output for a in attempts])} · cost {_cost(attempts, stub=stub)}"
     )
+
+
+def usable(provider: str, cfg: Settings) -> bool:
+    """Whether ``provider`` could rewrite a draft on ``cfg``: PROMPT_LOCAL_ONLY does not refuse
+    it (leaves_machine(), as make_provider() decides), and its key is set as the call reads it
+    (parsed, so a blank one is not; only whether it is, never its value), or it takes none
+    (Ollama, LM Studio). An unknown name is not usable. Builds no provider, makes no call."""
+    spec = PROVIDERS.get(provider)
+    if spec is None or (cfg.local_only and leaves_machine(provider, cfg)):
+        return False
+    key = spec.api_key(cfg)
+    return key is None or bool(key)
 
 
 def run(
@@ -92,7 +117,7 @@ def run(
     show: Callable[[Outcome], object] = lambda _: None,
 ) -> Outcome:
     """Rewrite ``draft`` with ``provider`` on ``cfg`` (the call's strict settings) and
-    ``profile`` (None: as configured), against the local stub when ``stub``. ``show`` gets the
+    ``profile`` (None: as configured), against the stub (a dry run) when ``stub``. ``show`` gets the
     outcome before a real run is recorded, as improve records after printing; the run is
     recorded even when ``show`` raises (which then propagates). Returns the outcome."""
     attempts: list[AttemptUsage] = []

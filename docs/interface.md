@@ -73,7 +73,7 @@ asks nothing (see [Commands](commands.md#management-commands)).
 | `4` | Triggers | The match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
 | `5` | History | Usage statistics by trigger, provider, model or day; export, prune, reset |
 | `6` | Diagnostics | Each provider's model, base URL, key and whether the draft leaves this machine; the settings layers and any problem in the settings files; the `doctor` checks |
-| `7` | Try | Rewrite a typed draft against a stub or a confirmed provider |
+| `7` | Try | Rewrite a typed draft with a confirmed provider, or check the wiring with a dry run |
 
 Every button's tooltip shows the command that does the same in a terminal, and every result
 starts with that command (`$ promptmend config set …`).
@@ -195,29 +195,36 @@ result before a trigger pastes one.
 ![The Try tab](try.svg)
 
 1. Type the draft.
-2. Pick where it runs (Local stub or Real provider), the provider, the profile and the tier.
+2. Pick the provider, the profile, the tier and where it runs (Real provider or Dry run).
    The profile starts at "as configured", which uses `PROMPT_PROFILE` (or `PROMPT_PRO_PROFILE`,
    if set, on the pro tier) exactly as a trigger does.
 3. Press Run. One run at a time.
 
-- **Local stub** (the default) answers on `127.0.0.1` with a placeholder key: no provider is
-  called and nothing is recorded.
-- **Real provider** first asks, naming the provider, model and base URL. A confirmed call may
-  be charged and is recorded in the [usage history](privacy.md#usage-history) as a direct
-  call with the trigger `-try-`, so `stats` tells it from `promptmend improve` typed in a
-  terminal. Home's session log shows it
+- **Real provider** first asks, naming the provider, model and base URL; nothing is sent
+  before you confirm. A confirmed call may be charged and is recorded in the
+  [usage history](privacy.md#usage-history) as a direct call with the trigger `-try-`, so
+  `stats` tells it from `promptmend improve` typed in a terminal. Home's session log shows it
   with the draft withheld.
+- **Dry run** only checks the wiring: a stub on `127.0.0.1` answers with a fixed
+  reply (`promptmend setup check: ok`) to a placeholder key, so no provider is called, nothing
+  is rewritten and nothing is recorded. The line above the result starts with
+  `Dry run (checks the wiring, no rewrite)`, and the report says so too.
+
+Where it runs starts at Real provider when the picked provider can be used: its API key is
+set, or it needs none (Ollama, LM Studio), and `PROMPT_LOCAL_ONLY` does not refuse it.
+Otherwise it starts at Dry run. It follows the provider you pick until you choose where it
+runs yourself; your choice then stays, also after a reload.
 
 The clipboard is never read or written, and the draft never goes into a command line. The
 settings are read as a trigger reads them, so an invalid one stops the run with its marker.
 
 Every run goes through the [data-protection gate](privacy.md#the-data-protection-gate): a
 draft the gate blocks shows the same `[promptmend: …]` marker a trigger would paste, and
-nothing is sent. A stub run is gated (and refused under `PROMPT_LOCAL_ONLY`) exactly as the
+nothing is sent. A dry run is gated (and refused under `PROMPT_LOCAL_ONLY`) exactly as the
 real call would be.
 
 Under the result, a line gives the time, the requests, the tokens in and out and the cost: as
-reported, `unknown` when the provider did not say, or `not applicable` for the stub and local
+reported, `unknown` when the provider did not say, or `not applicable` for a dry run and local
 models, never a made-up 0.
 
 ## Keys

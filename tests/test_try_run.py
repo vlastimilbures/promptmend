@@ -75,7 +75,7 @@ def test_stub_run_uses_the_placeholder_key_and_records_nothing(
     assert shown == [outcome]
     assert (outcome.text, outcome.error, outcome.requests) == (smoke.REPLY, False, 1)
     assert outcome.recorded is False
-    assert "cost not applicable (local stub)" in outcome.usage
+    assert "cost not applicable (dry run)" in outcome.usage
     (request,) = sent
     assert request.headers["authorization"] == f"Bearer {smoke.PLACEHOLDER_KEY}"
     assert REAL_KEY not in request.headers["authorization"]
@@ -216,3 +216,57 @@ def test_usage_line() -> None:
     assert usage_line([local], 1.0, stub=False).endswith(
         "cost not applicable (runs on this machine)"
     )
+    # A stub run is named for what it is, before anything else on the line (#391).
+    assert usage_line([], 3.2, stub=True) == (
+        "Dry run (checks the wiring, no rewrite) · 3 ms · no request was sent"
+    )
+    assert usage_line([unknown], 1.0, stub=True) == (
+        "Dry run (checks the wiring, no rewrite) · 1 ms · 1 request · tokens in unknown, "
+        "out unknown · cost not applicable (dry run)"
+    )
+
+
+# --- usable(): where the Try tab's "Run against" starts (#391) ------------------------------
+
+
+def usable(provider: str, environ: dict[str, str]) -> bool:
+    return try_run.usable(provider, ConfigLayers.resolve(environ, strict=False).settings())
+
+
+@pytest.mark.parametrize(
+    ("provider", "environ", "expected"),
+    [
+        ("openrouter", {"OPENROUTER_API_KEY": REAL_KEY}, True),
+        ("openrouter", {}, False),
+        ("openrouter", {"OPENROUTER_API_KEY": ""}, False),
+        # Judged as the call reads it: a blank key is parsed to "", so not set.
+        ("openrouter", {"OPENROUTER_API_KEY": "   "}, False),
+        # Another provider's key does not make this one usable.
+        ("anthropic", {"OPENROUTER_API_KEY": REAL_KEY}, False),
+        ("anthropic", {"ANTHROPIC_API_KEY": REAL_KEY}, True),
+        # A local provider takes no key.
+        ("ollama", {}, True),
+        ("lmstudio", {}, True),
+        # PROMPT_LOCAL_ONLY refuses a cloud provider, its key set or not, not a local one...
+        ("openrouter", {"OPENROUTER_API_KEY": REAL_KEY, "PROMPT_LOCAL_ONLY": "true"}, False),
+        ("ollama", {"PROMPT_LOCAL_ONLY": "true"}, True),
+        # ...but an Ollama that leaves the machine (a remote URL) too.
+        (
+            "ollama",
+            {"OLLAMA_BASE_URL": "https://ollama.example", "PROMPT_LOCAL_ONLY": "true"},
+            False,
+        ),
+        # ...and an Ollama cloud model, on a loopback URL.
+        ("ollama", {"OLLAMA_MODEL": "gpt-oss:120b-cloud", "PROMPT_LOCAL_ONLY": "true"}, False),
+        ("no-such-provider", {}, False),
+    ],
+)
+def test_usable(provider: str, environ: dict[str, str], expected: bool) -> None:
+    assert usable(provider, environ) is expected
+
+
+def test_an_empty_key_in_the_environment_beats_a_saved_one(tmp_path: Any) -> None:
+    saved = tmp_path / "saved.env"
+    saved.write_text(f"OPENROUTER_API_KEY={REAL_KEY}\n", encoding="utf-8")
+    assert usable("openrouter", {"PROMPTMEND_ENV": str(saved)})
+    assert not usable("openrouter", {"PROMPTMEND_ENV": str(saved), "OPENROUTER_API_KEY": ""})

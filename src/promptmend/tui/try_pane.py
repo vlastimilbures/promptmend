@@ -5,11 +5,15 @@ The draft is typed into the tab; the clipboard is never read or written. The rew
 process, in a worker thread, through try_run.run() and pipeline.rewrite() (so the draft never
 appears in a command line or the process list), and with it through factory.make_provider() and
 its data-protection gate; this pane only reads its widgets, loads the settings, asks, and shows
-the outcome. By default it runs against the set-up smoke test's stub on 127.0.0.1
-with a placeholder key: no provider is called and nothing is recorded. A real provider call
-first asks, naming the provider and the model, and is then recorded in the usage history as
-a direct call (no trigger), as `promptmend improve` typed in a terminal would be. The result
-is shown as plain text, never read as markup.
+the outcome. "Run against" starts at the real provider when try_run.usable() says the picked
+provider could rewrite (its key set or none needed, PROMPT_LOCAL_ONLY not refusing it), else at
+the dry run; it follows the provider picker until a target is picked by hand, which then stays,
+a reload included. A dry run goes to the set-up smoke test's stub on 127.0.0.1 with a
+placeholder key: no provider is called, nothing is recorded, and its usage line and report say
+it is no rewrite. A real provider call always first asks, naming the provider and the model,
+whatever the picker started at, and is then recorded in the usage history as a direct call (no
+trigger), as `promptmend improve` typed in a terminal would be. The result is shown as plain
+text, never read as markup.
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ if TYPE_CHECKING:
 
 STUB = "stub"
 REAL = "real"
-TARGETS = (("Local stub", STUB), ("Real provider", REAL))
+TARGETS = ((try_run.DRY_RUN, STUB), ("Real provider", REAL))
 # The profile picker's first choice: no --profile, so the call uses PROMPT_PROFILE (or, on the
 # pro tier, PROMPT_PRO_PROFILE when set), exactly as a trigger that names none.
 CONFIGURED = "(configured)"
@@ -62,18 +66,24 @@ def _profiles(names: Sequence[str]) -> list[tuple[str, str]]:
 class TryPane(Pane):
     # A run is under way (one at a time; Run is disabled meanwhile).
     running = False
+    # The confirm dialog of a real run is open: one at a time, so one Send is one call.
+    confirming = False
     # The provider picker starts at the configured one, once: a reload after a change
     # elsewhere keeps what was picked here.
     defaulted = False
     # The stub's request count of the last stub run (0 when the gate stopped it first).
     stub_requests: int | None = None
+    # "Run against" was picked by hand: it no longer follows the provider picker.
+    target_picked = False
+    # The target _default_target() last set (the picker starts at the dry run).
+    target_default = STUB
 
     def compose(self) -> ComposeResult:
         yield Static(
             "Type a draft and rewrite it as a trigger would. The clipboard is never read. "
-            "Local stub answers on 127.0.0.1 and calls no provider; a real provider asks "
-            "first, goes through the data-protection gate and is recorded in the usage "
-            "history as -try-.",
+            "Real provider asks first, goes through the data-protection gate and is recorded "
+            "in the usage history as -try-. Dry run, the default while the provider has no "
+            "key or is refused, checks the wiring: a stub on 127.0.0.1 answers, no rewrite.",
             classes="note",
             markup=False,
         )
@@ -109,13 +119,42 @@ class TryPane(Pane):
             profiles.value = picked
         else:
             profiles.value = CONFIGURED
+        # A key set elsewhere since: the default follows, unless a target was picked here.
+        self._default_target(state)
+
+    def _default_target(self, state: State | None) -> None:
+        """Start "Run against" at the real provider when the picked one is usable, else at
+        the dry run; a target picked by hand is kept. Only sets the picker: Run still asks
+        before a real call."""
+        if self.target_picked or state is None:
+            return
+        provider = self._value("#try-provider")
+        real = try_run.usable(provider, state.settings)
+        self.target_default = REAL if real else STUB
+        self.query_one("#try-target", Select).value = self.target_default
+
+    @on(Select.Changed, "#try-provider")
+    def _provider_changed(self) -> None:
+        self._default_target(self.state)
+
+    @on(Select.Changed, "#try-target")
+    def _target_changed(self, event: Select.Changed) -> None:
+        """A pick by hand: a value that is not the default set last and still the picker's.
+        The events of the defaults set here (and the picker's first value, posted on mount)
+        are either the default or already overtaken by a later one, so they never count.
+
+        The limit: a reload whose show() runs between a pick and its event reaching this pane
+        (a few message hops) puts the default back, and the pick is lost; picking again
+        keeps it."""
+        if event.value != self.target_default and event.value == event.select.value:
+            self.target_picked = True
 
     def _value(self, selector: str) -> str:
         return str(self.query_one(selector, Select).value)
 
     @on(Button.Pressed, "#try-run")
     def _run(self) -> None:
-        if self.running:
+        if self.running or self.confirming:
             return
         draft = self.query_one("#try-draft", TextArea).text
         target = self._value("#try-target")
@@ -150,9 +189,11 @@ class TryPane(Pane):
         )
 
         def done(yes: bool | None) -> None:
+            self.confirming = False
             if yes:
                 self._start(draft, provider, profile, cfg, command)
 
+        self.confirming = True
         self.app.push_screen(
             ConfirmModal(
                 f"Send this draft to {provider}?",
@@ -188,10 +229,16 @@ class TryPane(Pane):
     def _start(
         self, draft: str, provider: str, profile: str | None, cfg: Settings, command: str | None
     ) -> None:
+        if self.running:  # one run at a time, however it was asked for
+            return
         self.running = True
         self.query_one("#try-run", Button).disabled = True
-        where = "the local stub" if command is None else provider
-        self.query_one("#try-usage", Static).update(f"Rewriting with {where}…")
+        doing = (
+            f"{try_run.DRY_RUN} against the stub on 127.0.0.1…"
+            if command is None
+            else f"Rewriting with {provider}…"
+        )
+        self.query_one("#try-usage", Static).update(doing)
         self.background(lambda: self._call(draft, provider, profile, cfg, command))
 
     def _call(
@@ -221,7 +268,11 @@ class TryPane(Pane):
         if outcome.error:
             self.report(outcome.text, error=True, command=command)
         else:
-            done = "the local stub answered" if command is None else "rewritten"
+            done = (
+                f"{try_run.DRY_RUN.lower()}, the stub answered (no rewrite)"
+                if command is None
+                else "rewritten"
+            )
             self.report(f"Done: {done}.", command=command)
 
     def failed(self, exc: Exception) -> None:
