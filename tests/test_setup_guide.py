@@ -36,31 +36,52 @@ def test_steps_ask_cloud_or_local_first_and_never_the_provider() -> None:
     assert "provider" not in setup_guide.STEPS
 
 
+def _trigger(name: str, provider: str) -> assets.Trigger:
+    return assets.Trigger(name, "x.yml", True, "improve", provider)
+
+
+# Another match set than the shipped one: a label typed in rather than derived fails here.
+OTHER = [_trigger("-a-", "anthropic"), _trigger("-o-", "openai"), _trigger("-l-", "lmstudio")]
+
+
 def test_use_choices_name_the_triggers_from_the_match_files() -> None:
     choices = setup_guide.use_choices(assets.triggers(), _settings())
     assert [c.value for c in choices] == list(setup_guide.USES)
     by = {c.value: c for c in choices}
-    assert by["cloud"].title == "Cloud: an OpenRouter key"
-    assert by["cloud"].detail.startswith("-i- -iok- -ip- -if- · ")
-    assert by["local"].title == "Local: Ollama or LM Studio"
-    assert by["local"].detail == (
-        "-il- -ilm- · PROMPT_LOCAL_ONLY=true: the cloud triggers then refuse"
+    assert (by["cloud"].title, by["cloud"].detail) == (
+        "Cloud (OpenRouter)",
+        "-i- -iok- -ip- -if- · the draft leaves; needs a key",
+    )
+    assert (by["local"].title, by["local"].detail) == (
+        "Local (Ollama, LM Studio)",
+        "-il- -ilm- · PROMPT_LOCAL_ONLY=true: the rest refuse",
+    )
+    assert (by["both"].title, by["both"].detail) == (
+        "Both",
+        "every trigger above; needs the cloud key",
     )
     # Cloud and both are not stored: none is current unless PROMPT_LOCAL_ONLY is true.
     assert not any(c.current for c in choices)
     choices = setup_guide.use_choices(assets.triggers(), _settings(local_only=True))
     assert [c.value for c in choices if c.current] == ["local"]
+    other = {c.value: c for c in setup_guide.use_choices(OTHER, _settings())}
+    assert other["cloud"].title == "Cloud (Anthropic, OpenAI)"
+    assert other["cloud"].detail.startswith("-a- -o- · ")
+    assert other["local"].title == "Local (LM Studio)"
+    assert other["local"].detail.startswith("-l- · ")
 
 
 def test_local_note_names_what_is_refused_and_what_to_use() -> None:
-    note = setup_guide.local_note(assets.triggers(), _settings())
-    assert note.startswith(
-        "Local saves PROMPT_LOCAL_ONLY=true: -i-, -iok-, -ip-, -if- then answer with a "
-        "refusal marker instead of calling OpenRouter. The triggers to use are -il- (Ollama) "
-        "or -ilm- (LM Studio)."
+    assert setup_guide.local_note(assets.triggers(), _settings()) == (
+        "Local saves PROMPT_LOCAL_ONLY=true: -i-, -iok-, -ip- and -if- then paste a refusal "
+        "instead of sending your draft to OpenRouter. Use -il- (Ollama) or -ilm- (LM Studio). "
+        "Cloud or Both turns it off again."
     )
-    assert "an Ollama cloud model" in note
-    assert "cannot see a local server that passes the draft on" in note
+    assert setup_guide.local_note(OTHER, _settings(), headless=True) == (
+        "Local saves PROMPT_LOCAL_ONLY=true: -a- and -o- then paste a refusal instead of "
+        "sending your draft to Anthropic and OpenAI. Use -l- (LM Studio). `--use cloud` or "
+        "`--use both` turns it off again."
+    )
 
 
 def test_local_note_follows_where_a_local_server_is() -> None:
@@ -68,18 +89,33 @@ def test_local_note_follows_where_a_local_server_is() -> None:
     -il- too and the note does not offer it."""
     settings = _settings(ollama_base_url="http://192.0.2.7:11434")
     note = setup_guide.local_note(assets.triggers(), settings)
-    assert "-if-, -il- then answer with a refusal marker instead of calling OpenRouter, " in note
-    assert "Ollama" in note
-    assert "The triggers to use are -ilm- (LM Studio)." in note
+    assert (
+        "-if- and -il- then paste a refusal instead of sending your draft to OpenRouter and "
+        "Ollama." in note
+    )
+    assert " Use -ilm- (LM Studio). " in note
     by = {c.value: c for c in setup_guide.use_choices(assets.triggers(), settings)}
+    assert by["cloud"].title == "Cloud (OpenRouter, Ollama)"
+    assert by["local"].title == "Local (LM Studio)"
     assert by["local"].detail.startswith("-ilm- · ")
     every_one = _settings(
         ollama_base_url="http://192.0.2.7:11434", lmstudio_base_url="http://192.0.2.7:1234/v1"
     )
     note = setup_guide.local_note(assets.triggers(), every_one)
-    assert "The triggers to use are none: no trigger stays on this computer." in note
-    none_away = setup_guide.local_note([], _settings())
-    assert none_away.startswith("Local saves PROMPT_LOCAL_ONLY=true. The triggers to use are none")
+    assert (
+        " No trigger stays on this computer (OLLAMA_BASE_URL points elsewhere; "
+        "LMSTUDIO_BASE_URL points elsewhere). " in note
+    )
+    assert "Use " not in note
+    by = {c.value: c for c in setup_guide.use_choices(assets.triggers(), every_one)}
+    assert by["local"].title == "Local (none stays on this computer)"
+    cloud_model = setup_guide.local_note(
+        [_trigger("-l-", "ollama")], _settings(ollama_model="gpt-oss:120b-cloud")
+    )
+    assert "(OLLAMA_MODEL is a cloud model)" in cloud_model
+    assert setup_guide.local_note([], _settings()).startswith(
+        "Local saves PROMPT_LOCAL_ONLY=true. No trigger stays on this computer. "
+    )
 
 
 def test_smoke_runs_follow_the_answer_not_the_provider() -> None:
@@ -90,11 +126,101 @@ def test_smoke_runs_follow_the_answer_not_the_provider() -> None:
     assert setup_guide.smoke_runs("cloud", triggers, settings) == [cloud]
     assert setup_guide.smoke_runs("local", triggers, settings) == [local]
     assert setup_guide.smoke_runs("both", triggers, settings) == [cloud, local]
-    # No trigger on that path: the path itself, with no trigger to name.
+    # No trigger on that path: the cloud path itself, and no local run at all.
     assert setup_guide.smoke_runs("both", [], settings) == [
         setup_guide.SmokeRun(None, "openrouter"),
-        setup_guide.SmokeRun(None, "ollama"),
+        setup_guide.SmokeRun(None, None),
     ]
+
+
+def test_the_local_run_is_one_that_local_leaves_usable() -> None:
+    """The local run follows factory.leaves_machine(), as PROMPT_LOCAL_ONLY and the note do:
+    a remote Ollama or an Ollama cloud model is skipped for -ilm-, never tested as -il-."""
+    triggers = assets.triggers()
+    lmstudio = [setup_guide.SmokeRun("-ilm-", "lmstudio")]
+    remote = _settings(ollama_base_url="https://ollama.example.com")
+    assert setup_guide.smoke_runs("local", triggers, remote) == lmstudio
+    cloud_model = _settings(ollama_model="gpt-oss:120b-cloud")
+    assert setup_guide.smoke_runs("local", triggers, cloud_model) == lmstudio
+    nothing = _settings(
+        ollama_base_url="https://ollama.example.com", lmstudio_base_url="https://lm.example.com/v1"
+    )
+    runs = setup_guide.smoke_runs("local", triggers, nothing)
+    assert runs == [setup_guide.SmokeRun(None, None)]
+    assert setup_guide.smoke_intro(runs).startswith("Runs nothing on the local path (no trigger")
+    assert setup_guide.smoke_result(runs[0], True, "") == (
+        f"local: not run: {setup_guide.NO_LOCAL_TRIGGER}"
+    )
+
+
+def test_local_note_says_what_is_true_now() -> None:
+    triggers = assets.triggers()
+    assert setup_guide.local_note(triggers, _settings()).startswith(
+        "Local saves PROMPT_LOCAL_ONLY=true: -i-, -iok-, -ip- and -if- then paste"
+    )
+    already = setup_guide.local_note(triggers, _settings(local_only=True), already=True)
+    assert already.startswith("PROMPT_LOCAL_ONLY=true is set: -i-, -iok-, -ip- and -if- paste")
+    assert "Local saves" not in already
+    legacy = setup_guide.local_note(triggers, _settings(), legacy="/x/.env")
+    assert legacy.startswith(
+        "Local needs PROMPT_LOCAL_ONLY=true, which this setup cannot save: add it to /x/.env. "
+        "Then -i-, -iok-, -ip- and -if- paste a refusal"
+    )
+    assert "Cloud or both" not in legacy
+    assert setup_guide.local_note([], _settings(), already=True).startswith(
+        "PROMPT_LOCAL_ONLY=true is set. No trigger"
+    )
+    assert setup_guide.local_note([], _settings(), legacy="/x/.env") == (
+        "Local needs PROMPT_LOCAL_ONLY=true, which this setup cannot save: add it to /x/.env. "
+        "No trigger stays on this computer."
+    )
+
+
+def test_a_remote_ollama_is_not_called_a_cloud_api() -> None:
+    settings = _settings(ollama_base_url="https://ollama.example.com")
+    cloud = setup_guide.use_choices(assets.triggers(), settings)[0]
+    assert (cloud.title, cloud.detail) == (
+        "Cloud (OpenRouter, Ollama)",
+        "-i- -iok- -ip- -if- -il- · the draft leaves; needs a key",
+    )
+
+
+def test_next_step_names_a_trigger_the_answer_leaves_usable() -> None:
+    triggers = assets.triggers()
+    assert "type -i- and wait without typing or switching windows. The rewrite replaces the" in (
+        setup_guide.next_step("cloud", triggers, _settings())
+    )
+    assert "type -i- " in setup_guide.next_step("both", triggers, _settings())
+    local = setup_guide.next_step("local", triggers, _settings(local_only=True))
+    assert "type -il- " in local
+    assert "-i- " not in local
+    remote = _settings(local_only=True, ollama_base_url="https://ollama.example.com")
+    assert "type -ilm- " in setup_guide.next_step("local", triggers, remote)
+    clipboard = setup_guide.next_step("cloud", triggers, _settings(output="clipboard"))
+    assert "replaces the trigger" not in clipboard
+    assert "The rewrite then waits on the clipboard: paste it where you want it." in clipboard
+    nothing = _settings(
+        ollama_base_url="https://ollama.example.com", lmstudio_base_url="https://lm.example.com/v1"
+    )
+    assert setup_guide.next_step("local", triggers, nothing).startswith("Nothing to try yet: ")
+
+
+def test_use_problem_names_an_environment_variable() -> None:
+    assert setup_guide.use_problem(_settings(local_only=True), "local") is None
+    assert setup_guide.use_problem(_settings(), "cloud") is None
+    assert setup_guide.use_problem(_settings(), "local", from_env=True) == (
+        "local, but the environment variable PROMPT_LOCAL_ONLY overrides the saved value, so "
+        "the cloud triggers still send drafts off this computer wherever it is set: remove it "
+        "from the environment"
+    )
+    assert setup_guide.use_problem(_settings(local_only=True), "both", from_env=True) == (
+        "both, but the environment variable PROMPT_LOCAL_ONLY overrides the saved value, so "
+        "the cloud triggers refuse wherever it is set: remove it from the environment"
+    )
+    row = setup_guide.done_rows(_settings(), "local", [], None, None, from_env=True)[0]
+    assert not row.ok
+    assert "config set" not in row.text
+    assert row.text.endswith("remove it from the environment")
 
 
 def test_smoke_intro_and_result_name_the_trigger() -> None:
@@ -108,10 +234,14 @@ def test_smoke_intro_and_result_name_the_trigger() -> None:
     assert "(no active trigger takes it)" in setup_guide.smoke_intro(
         [setup_guide.SmokeRun(None, "ollama")]
     )
-    assert setup_guide.smoke_result(cloud, True, "ok") == "-i- (openrouter): passed: ok"
-    assert setup_guide.smoke_result(local, False, "down") == (
-        "-il- (ollama): failed (improve --provider ollama): down"
+    # Its promise: no provider is called and the real key is never sent.
+    assert setup_guide.smoke_intro([cloud]).endswith(
+        "against a stub server on 127.0.0.1 that answers like the provider. No provider is "
+        "called and your real key is never sent; it checks that the CLI starts and reads its "
+        "settings."
     )
+    assert setup_guide.smoke_result(cloud, True, "ok") == "-i- (openrouter): passed: ok"
+    assert setup_guide.smoke_result(local, False, "down") == "-il- (ollama): failed: down"
     assert setup_guide.smoke_result(setup_guide.SmokeRun(None, "ollama"), True, "ok") == (
         "ollama: passed: ok"
     )
@@ -224,21 +354,21 @@ def test_done_rows_check_the_answer_against_local_only() -> None:
 
     assert first(_settings(local_only=True), "local") == (
         True,
-        "local (PROMPT_LOCAL_ONLY=true refuses the cloud ones)",
+        "local (PROMPT_LOCAL_ONLY=true: the cloud triggers refuse)",
     )
     # Not saved (legacy mode, or an environment variable outranks config.toml): said, with
     # the fix, so no cloud trigger calls out unannounced.
     assert first(_settings(), "local") == (
         False,
-        "local, but PROMPT_LOCAL_ONLY is off, so the cloud ones still call out: "
-        "`promptmend config set PROMPT_LOCAL_ONLY true`",
+        "local, but PROMPT_LOCAL_ONLY is off, so the cloud triggers still send drafts off "
+        "this computer: `promptmend config set PROMPT_LOCAL_ONLY true`",
     )
     assert first(_settings(), "local", "/x/.env")[1].endswith(
         "add PROMPT_LOCAL_ONLY=true to /x/.env"
     )
     assert first(_settings(local_only=True), "cloud") == (
         False,
-        "cloud, but PROMPT_LOCAL_ONLY=true refuses the cloud ones: "
+        "cloud, but PROMPT_LOCAL_ONLY=true makes the cloud triggers refuse: "
         "`promptmend config unset PROMPT_LOCAL_ONLY`",
     )
     assert first(_settings(local_only=True), "both", "/x/.env")[1].endswith(

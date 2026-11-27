@@ -83,9 +83,9 @@ def _key_step(
             return
         _one_key(steps, name, writable=writable, from_stdin=True)
         return
-    rows = setup_flow.needed_keys(layers, settings)
+    rows = setup_flow.needed_keys(layers, settings, use)
     if not rows:
-        typer.echo(f"  {setup_guide.no_key_line(settings)}")
+        typer.echo(f"  {setup_guide.no_key_line(setup_guide.as_answered(settings, use))}")
         return
     for row in rows:
         typer.echo(f"  {setup_guide.key_line(row)}")
@@ -179,6 +179,9 @@ def _smoke_step(steps: _Steps, use: str) -> None:
     """One run per path of the answer's triggers (setup_guide.smoke_runs())."""
     settings = settings_service.load_layers()[1]
     for run in setup_guide.smoke_runs(use, assets.triggers(), settings):
+        if run.provider is None:  # local, but no trigger stays on this computer
+            steps.later(setup_guide.smoke_result(run, False, ""))
+            continue
         result = smoke.run(run.provider)
         line = setup_guide.smoke_result(run, result.ok, result.message)
         if result.ok:
@@ -208,8 +211,9 @@ def setup(
     provider: str | None = typer.Option(
         None,
         "--provider",
-        help=f"Deprecated, no trigger reads it (use --use): PROMPT_PROVIDER, "
-        f"{', '.join(PROVIDER_NAMES)}; --non-interactive only",
+        help="Deprecated, will be removed in a later release (use --use): saves "
+        f"PROMPT_PROVIDER ({', '.join(PROVIDER_NAMES)}), which no trigger reads; on a terminal "
+        "it is not saved",
     ),
     api_key_stdin: bool = typer.Option(
         False,
@@ -257,8 +261,6 @@ def setup(
     _one_of(use, "--use", setup_guide.USES)
     _one_of(output, "--output", OUTPUTS)
     _one_of(provider, "--provider", PROVIDER_NAMES)
-    if provider is not None and interactive:
-        raise typer.BadParameter(setup_guide.PROVIDER_ON_A_TERMINAL)
     for value, option in (
         (espanso_dir, "--espanso-dir"),
         (launcher, "--launcher"),
@@ -276,11 +278,15 @@ def setup(
                 launcher,
                 no_restart,
                 standalone=True,
-                use=use,
+                # The deprecated --provider is not saved here; it only preselects an answer.
+                use=use
+                if use is not None or provider is None
+                else (setup_flow.use_for_provider(provider)),
                 profile=profile,
                 output=output,
                 deploy=deploy_files,
                 smoke_test=smoke_test,
+                provider=provider,
             )
         )
         return
@@ -308,7 +314,15 @@ def setup(
     out = output if output is not None else settings.output
     typer.echo(f"  Triggers: {answer}; profile: {picked}; output: {out}")
     if answer == setup_guide.LOCAL:
-        typer.echo(f"  {setup_guide.local_note(assets.triggers(), settings)}")
+        # What is true here: saved now (--use local), set already (a re-run), or for the
+        # person to add (legacy mode, unless that .env already has it).
+        legacy = setup_flow.storage().legacy
+        already = use is None or bool(legacy and settings.local_only)
+        legacy = None if already else legacy
+        note = setup_guide.local_note(
+            assets.triggers(), settings, legacy=legacy, already=already, headless=True
+        )
+        typer.echo(f"  {note}")
     if provider is not None:
         typer.echo(f"  {setup_guide.PROVIDER_DEPRECATED}")
     choices = [("PROMPT_PROFILE", picked), ("PROMPT_OUTPUT", out)]
@@ -326,6 +340,10 @@ def setup(
         ]
         if unsaved:
             steps.later(f"set {', '.join(unsaved)} yourself")
+    if writable:
+        problem = setup_flow.use_problem(answer, *settings_service.load_layers())
+        if problem:
+            steps.later(problem)
 
     steps.heading("API keys")
     _key_step(steps, answer, provider, writable=writable, from_stdin=api_key_stdin)
@@ -356,5 +374,8 @@ def setup(
     if steps.todo:
         typer.echo(f"  Setup finished with {len(steps.todo)} thing(s) still to do (above).")
     else:
-        typer.echo(f"  Setup finished. {setup_guide.NEXT_STEP}")
+        settings = settings_service.load_layers()[1]
+        typer.echo(
+            f"  Setup finished. {setup_guide.next_step(answer, assets.triggers(), settings)}"
+        )
     typer.echo("  `promptmend doctor` checks everything again.")

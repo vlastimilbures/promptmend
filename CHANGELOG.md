@@ -72,24 +72,40 @@ All notable changes to this project are documented here. The format follows
   chars)`, as stdin already did, instead of `Input is too long (N chars, max 50000)`.
 - Setup asks which triggers you will use instead of a default provider (#390). Its Provider
   step saved `PROMPT_PROVIDER`, which no trigger reads: someone who picked Ollama still had
-  `-i-` send the draft to OpenRouter. The new Cloud or local step offers cloud (an OpenRouter
-  key: `-i-`, `-iok-`, `-ip-`, `-if-`), local (Ollama or LM Studio: `-il-`, `-ilm-`) or both;
-  local saves `PROMPT_LOCAL_ONLY=true` and says before Next that the cloud triggers then
-  answer with a refusal marker, and cloud or both remove that setting again. The trigger
-  names come from the match files. The API keys step follows the answer (after local no key
-  is needed), a new Output step picks paste or clipboard (`PROMPT_OUTPUT`), and the test runs
-  the path of the answer's triggers (`-i-`'s on OpenRouter, `-il-`'s on Ollama, both for
-  both) instead of `PROMPT_PROVIDER`'s. The steps are now Welcome, Cloud or local, API keys,
-  Profile, Output, Espanso, Test, Done; Done shows the answer (and flags a `PROMPT_LOCAL_ONLY`
-  that does not match it), the profile and the output. New options `--use cloud|local|both`
+  `-i-` send the draft to OpenRouter. The new Cloud or local step offers cloud
+  (`-i-`, `-iok-`, `-ip-`, `-if-` on OpenRouter), local (`-il-` on Ollama, `-ilm-` on LM
+  Studio) or both; local saves `PROMPT_LOCAL_ONLY=true` and says before Next that the cloud
+  triggers then paste a refusal, and cloud or both remove that setting again. The trigger
+  names and their providers come from the match files and your settings: an Ollama on
+  another computer or an Ollama cloud model counts as cloud, and local then offers only what
+  stays on this computer. The API keys step follows the answer (after local no key is
+  needed), a new Output step picks paste or clipboard (`PROMPT_OUTPUT`), and the test runs the
+  path of the first trigger the answer leaves usable (`-i-`'s for cloud, the first local
+  trigger's for local, both for both; nothing, and never a pass, when no trigger stays local)
+  instead of `PROMPT_PROVIDER`'s. The steps are now Welcome, Cloud or local, API keys,
+  Profile, Output, Espanso, Test, Done; Done shows the answer, the profile and the output,
+  flags a `PROMPT_LOCAL_ONLY` that does not match the answer (an environment variable that
+  overrides `config.toml` is named, with the fix to remove it), and says how to try the
+  trigger the answer leaves you, worded by the output. New options `--use cloud|local|both`
   and `--output paste|clipboard` answer those steps with `--non-interactive` and preselect
-  them on a terminal; without `--use` setup leaves `PROMPT_LOCAL_ONLY` as it is. A
-  `PROMPT_PROVIDER` that names no provider no longer stops `setup --non-interactive`.
+  them on a terminal; without `--use` setup leaves `PROMPT_LOCAL_ONLY` as it is.
+  `--non-interactive` prints a to-do line for the same mismatch. A `PROMPT_PROVIDER` that
+  names no provider no longer stops `setup --non-interactive`.
+- `setup --non-interactive --api-key-stdin` without `--provider` reads the cloud triggers' key
+  (OpenRouter's) instead of `PROMPT_PROVIDER`'s (#390). With local (`--use local`, or
+  `PROMPT_LOCAL_ONLY=true` already set and no `--use`) it fails with `takes no key`.
+- Setup writes each choice to `config.toml` whatever the environment says (#390). Espanso
+  does not start from your shell, so a shell variable that already gave the same value no
+  longer made setup skip the save; a choice at its built-in default removes the entry instead
+  of pinning it. When an environment variable overrides the saved value, setup says so.
 
 ### Deprecated
 - `setup --provider` (#390): with `--non-interactive` it still saves `PROMPT_PROVIDER` and
   `--api-key-stdin` reads that provider's key, with a note that no trigger reads it and that
-  `--use` replaces it; on a terminal, where the wizard has no step for it, it exits 2. It goes
+  `--use cloud|local|both` chooses your triggers. On a terminal it opens the wizard, which has
+  no step for it: Welcome says it was not saved and that `promptmend config set
+  PROMPT_PROVIDER <name>` saves it, and without `--use` the Cloud or local step starts on
+  local for Ollama or LM Studio and on cloud otherwise (a highlight; Next saves it). It goes
   in a later release.
 
 ### Fixed

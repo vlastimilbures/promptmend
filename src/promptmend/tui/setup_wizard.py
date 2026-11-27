@@ -44,7 +44,9 @@ class SetupOptions:
     """`setup`'s options the wizard honours; ``standalone`` when `setup` opened it (Done then
     quits), else it was opened from Home and closes back to it. ``use``, ``profile`` and
     ``output`` preselect a choice, ``deploy`` True puts the focus on Install (still a press)
-    and False skips that step, as ``smoke_test`` False skips the test."""
+    and False skips that step, as ``smoke_test`` False skips the test. ``provider`` is the
+    deprecated `setup --provider`: never saved here (no step sets it), only named on
+    Welcome."""
 
     espanso_dir: str | None = None
     launcher: str | None = None
@@ -55,6 +57,7 @@ class SetupOptions:
     output: str | None = None
     deploy: bool | None = None
     smoke_test: bool = True
+    provider: str | None = None
 
 
 def make_plan(options: SetupOptions) -> tuple[deploy.Plan, str | None]:
@@ -93,7 +96,12 @@ class SetupScreen(Screen[None]):
                         yield Static(setup_guide.WELCOME, markup=False)
                         yield Static("", id="setup-welcome-notes", classes="note", markup=False)
                     with VerticalScroll(id="setup-use"):
-                        yield Static(setup_guide.USE_INTRO, classes="note", markup=False)
+                        yield Static(
+                            setup_guide.USE_INTRO,
+                            id="setup-use-intro",
+                            classes="note",
+                            markup=False,
+                        )
                         yield OptionList(id="setup-uses")
                         yield Static("", id="setup-use-note", classes="note", markup=False)
                     with VerticalScroll(id="setup-keys"):
@@ -132,7 +140,7 @@ class SetupScreen(Screen[None]):
                         yield Horizontal(self._button("setup-run-test", "Run the test"))
                     with VerticalScroll(id="setup-done"):
                         yield Static("", id="setup-summary")
-                        yield Static(setup_guide.NEXT_STEP, id="setup-next", markup=False)
+                        yield Static("", id="setup-next", markup=False)
                         yield Horizontal(
                             self._button("setup-open", "Open PromptMend"),
                             self._button("setup-quit", "Quit"),
@@ -193,10 +201,19 @@ class SetupScreen(Screen[None]):
             notes.append(setup_guide.LEGACY_NOTE)
         elif where.unread:
             notes.append(where.unread)
+        if self.options.provider:
+            notes.append(setup_guide.provider_not_saved(self.options.provider))
         notes.append(setup_guide.history_line(state.settings.history))
         self.query_one("#setup-welcome-notes", Static).update("\n".join(notes))
+        # In legacy mode Next saves nothing: the note says what to add, or that it is set.
+        legacy = where.legacy if where.legacy and not state.settings.local_only else None
         self.query_one("#setup-use-note", Static).update(
-            setup_guide.local_note(state.triggers, state.settings)
+            setup_guide.local_note(
+                state.triggers,
+                state.settings,
+                legacy=legacy,
+                already=bool(where.legacy and state.settings.local_only),
+            )
         )
         self._fill(
             "#setup-uses",
@@ -215,7 +232,7 @@ class SetupScreen(Screen[None]):
             "#setup-outputs", setup_guide.output_choices(state.settings), self.options.output
         )
         self._show_test_intro(state)
-        self.keys = setup_guide.key_rows(state.layers, state.settings, state.triggers)
+        self._show_keys(state)
         legacy = where.legacy
         self.query_one("#setup-keys-intro", Static).update(
             setup_guide.legacy_keys_intro(legacy) if legacy else setup_guide.KEYS_INTRO
@@ -224,8 +241,6 @@ class SetupScreen(Screen[None]):
         for name in secret_names():
             self.query_one(f"#setup-key-{name}", Input).display = not legacy
         self.query_one("#setup-save-keys", Button).display = not legacy
-        for row in self.keys:
-            self.query_one(f"#setup-line-{row.name}", Static).update(setup_guide.key_line(row))
         servers = next((c for c in state.report.checks if c.id == "local_servers"), None)
         line = servers.message if servers else ""
         if not state.full:  # a quick State
@@ -243,6 +258,15 @@ class SetupScreen(Screen[None]):
         # Each stage of a reload comes here: the person's place (a typed key field, a
         # button) keeps the focus; it moves only when nothing in this step has it.
         self.go(self.at, refocus=not self._focus_in_step())
+
+    def _show_keys(self, state: State) -> None:
+        """The keys as the answer sets PROMPT_LOCAL_ONLY (setup_guide.as_answered()): after
+        local no cloud key is needed, whatever an environment variable says (Done flags
+        that mismatch)."""
+        answered = setup_guide.as_answered(state.settings, self.answer(state.settings))
+        self.keys = setup_guide.key_rows(state.layers, answered, state.triggers)
+        for row in self.keys:
+            self.query_one(f"#setup-line-{row.name}", Static).update(setup_guide.key_line(row))
 
     def _focus_in_step(self) -> bool:
         """Whether the focus is in the current step or on its Back/Next row."""
@@ -311,7 +335,12 @@ class SetupScreen(Screen[None]):
             focus = "#setup-deploy"
         if not refocus:
             return
-        if focus:
+        if focus and focus.startswith("#setup-") and step in ("use", "profile", "output"):
+            # The list sits under its question: focused without scrolling, so a step taller
+            # than the screen (a narrow terminal) still opens on its question.
+            target = self.query_one(focus)
+            self.call_after_refresh(lambda: target.focus(scroll_visible=False))
+        elif focus:
             self.call_after_refresh(self.query_one(focus).focus)
         else:
             self.call_after_refresh(self.query_one("#setup-next-step").focus)
@@ -340,6 +369,9 @@ class SetupScreen(Screen[None]):
     def action_next(self) -> None:
         if self.working:
             return
+        # Cleared before the save, not after: what a save says (an environment variable that
+        # overrides it, say) stays on screen on the step that follows.
+        self.report("")
         if self.at == "use" and not self._save_use():
             return
         if self.at == "keys" and not self._save_keys():
@@ -349,7 +381,6 @@ class SetupScreen(Screen[None]):
         if self.at == "output" and not self._save_picked("PROMPT_OUTPUT", "#setup-outputs"):
             return
         i = self.order.index(self.at) if self.at in self.order else 0
-        self.report("")
         self.go(self.order[min(i + 1, len(self.order) - 1)])
 
     @on(Button.Pressed, "#setup-back")
@@ -378,9 +409,12 @@ class SetupScreen(Screen[None]):
             return True
         if not self._save_picked(setup_flow.LOCAL_ONLY, "#setup-uses", setup_flow.local_only_value):
             return False
+        if option.id != self.use:
+            self.tested = None  # a result for another answer's path says nothing about this one
         self.use = option.id
         if self.manage.state is not None:
             self._show_test_intro(self.manage.state)
+            self._show_keys(self.manage.state)
         return True
 
     def _save_picked(self, name: str, selector: str, value_of: Callable[[str], str] = str) -> bool:
@@ -527,6 +561,9 @@ class SetupScreen(Screen[None]):
     def _run_test(self, runs: list[setup_guide.SmokeRun]) -> None:
         results = []
         for run in runs:
+            if run.provider is None:  # local, but no trigger stays on this computer
+                results.append((False, setup_guide.smoke_result(run, False, "")))
+                continue
             try:
                 result = smoke.run(run.provider)
                 ok, message = result.ok, result.message
@@ -550,19 +587,24 @@ class SetupScreen(Screen[None]):
         if state is None:
             return
         summary = Text()
+        use = self.answer(state.settings)
         for row in setup_guide.done_rows(
             state.settings,
-            self.answer(state.settings),
+            use,
             self.keys,
             self.plan,
             self.tested,
             setup_flow.storage().legacy,
             self.skipped,
+            from_env=setup_flow.local_only_from_env(state.layers),
         ):
             summary.append("✓ " if row.ok else "✗ ", style="green" if row.ok else "yellow")
             summary.append(f"{row.label}: ", style="bold")
             summary.append(f"{row.text}\n")
         self.query_one("#setup-summary", Static).update(summary)
+        self.query_one("#setup-next", Static).update(
+            setup_guide.next_step(use, state.triggers, state.settings)
+        )
         if focus:
             self.call_after_refresh(self.query_one("#setup-quit").focus)
 

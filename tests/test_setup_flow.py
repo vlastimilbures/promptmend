@@ -112,14 +112,56 @@ def test_output_choice_saves_and_unsets(saved: Path) -> None:
     assert config_store.read_settings().values == {}
 
 
-def test_a_local_only_environment_variable_outranks_the_answer(
+def _file() -> dict[str, object]:
+    return {k: v for k, v in config_store.read_settings().table.items() if k != "config_version"}
+
+
+def test_save_choice_writes_the_answer_whatever_the_environment_says(
     saved: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """config.toml is what the deployed triggers read (Espanso does not start from the
+    shell): an environment variable that already says true must not keep "local" unsaved."""
     monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
+    message, argv = setup_flow.save_choice("PROMPT_LOCAL_ONLY", "true")
+    assert message is not None
+    assert message.startswith("PROMPT_LOCAL_ONLY=true saved in ")
+    assert "the environment variable PROMPT_LOCAL_ONLY is set and overrides" in message
+    assert argv == ["set", "PROMPT_LOCAL_ONLY", "true"]
+    assert _file() == {"PROMPT_LOCAL_ONLY": True}
+    # Held by the file now: unchanged.
+    assert setup_flow.save_choice("PROMPT_LOCAL_ONLY", "true") == (None, [])
+
+
+def test_save_choice_removes_a_saved_value_the_environment_hides(
+    saved: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_store.save_settings(config_store.read_settings(), {"PROMPT_LOCAL_ONLY": "true"})
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "false")
     message, argv = setup_flow.save_choice("PROMPT_LOCAL_ONLY", "false")
     assert message is not None
-    assert "the environment variable PROMPT_LOCAL_ONLY is set and overrides" in message
-    assert argv == ["set", "PROMPT_LOCAL_ONLY", "false"]
+    assert message.startswith("PROMPT_LOCAL_ONLY removed from ")
+    assert argv == ["unset", "PROMPT_LOCAL_ONLY"]
+    assert _file() == {}
+
+
+def test_save_choice_never_pins_a_default(saved: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A default answer removes the file's entry, never writes it, even while an environment
+    variable makes another value apply (a pinned default would not beat it either)."""
+    for name, default, other in (
+        ("PROMPT_LOCAL_ONLY", "false", "true"),
+        ("PROMPT_OUTPUT", "paste", "clipboard"),
+        ("PROMPT_PROFILE", "default", "general"),
+        ("PROMPT_PROVIDER", "openrouter", "ollama"),
+    ):
+        monkeypatch.setenv(name, other)
+        assert setup_flow.save_choice(name, default) == (None, [])
+        config_store.save_settings(config_store.read_settings(), {name: other})
+        message, argv = setup_flow.save_choice(name, default)
+        assert argv == ["unset", name]
+        assert message is not None
+        assert "applies" not in message
+        assert f"the environment variable {name} is set and overrides" in message
+        assert _file() == {}
 
 
 def test_key_provider_follows_the_answer() -> None:
@@ -177,9 +219,16 @@ def test_choice_value_and_profile() -> None:
 def test_keys(saved: Path) -> None:
     assert setup_flow.stdin_key("openrouter") == "OPENROUTER_API_KEY"
     assert setup_flow.stdin_key("ollama") is None
-    rows = setup_flow.needed_keys(*settings_service.load_layers())
+    layers, settings = settings_service.load_layers()
+    rows = setup_flow.needed_keys(layers, settings, "cloud")
     assert [row.name for row in rows] == ["OPENROUTER_API_KEY"]
     assert all(row.needed for row in rows)
+    # The keys follow the answer, not an effective PROMPT_LOCAL_ONLY that disagrees with it.
+    assert setup_flow.needed_keys(layers, settings, "local") == []
+    local = dataclasses.replace(settings, local_only=True)
+    assert [row.name for row in setup_flow.needed_keys(layers, local, "both")] == [
+        "OPENROUTER_API_KEY"
+    ]
     message = setup_flow.save_keys([("OPENROUTER_API_KEY", KEY)])
     assert message.startswith("OPENROUTER_API_KEY saved")
     assert KEY not in message

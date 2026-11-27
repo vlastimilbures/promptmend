@@ -25,6 +25,7 @@ from promptmend import (
     __version__,
     assets,
     config,
+    config_store,
     deploy,
     doctor,
     history,
@@ -1164,7 +1165,26 @@ def test_setup_deploy_applies(
     assert _changes(fake_run.calls) == [["espanso", "restart"]]
     # Deprecated (#390): still saved for one release, with a note that no trigger reads it.
     assert 'PROMPT_PROVIDER = "ollama"' in (saved / "config.toml").read_text("utf-8")
-    assert f"  {setup_guide.PROVIDER_DEPRECATED}" in result.stdout
+    note = setup_guide.PROVIDER_DEPRECATED
+    assert f"  {note}" in result.stdout
+    # The note's facts, so an emptied or reworded constant fails here.
+    assert note.startswith("--provider is deprecated and will be removed in a later release")
+    assert "no trigger reads it" in note
+    assert "--use cloud|local|both" in note
+
+
+def test_setup_help_marks_provider_deprecated_and_names_use() -> None:
+    out = " ".join(_plain(_run("setup", "--help").stdout).split())
+    assert "--provider" in out
+    assert "Deprecated, will be removed in a later release (use --use): saves PROMPT_PROVIDER" in (
+        out
+    )
+    assert "which no trigger reads" in out
+    assert "--use" in out
+    assert (
+        "Which triggers you use: cloud, local, both (local saves PROMPT_LOCAL_ONLY=true; "
+        "cloud and both remove it)" in out
+    )
 
 
 def test_setup_smoke_failure_exits_1(
@@ -1388,6 +1408,144 @@ def test_setup_local_provider_takes_no_key(
 # --- setup: cloud or local, and the output (#390) -----------------------------------------
 
 
+def test_setup_provider_on_a_terminal_opens_the_wizard_and_saves_nothing(
+    saved: Path, espanso: Path, tty: None, monkeypatch: pytest.MonkeyPatch, fake_run: FakeRunner
+) -> None:
+    """Deprecated but still accepted for one release: on a terminal it opens the wizard, which
+    names it on Welcome and never saves it; a local provider only preselects Local."""
+    from promptmend.commands import ui as ui_cmd
+    from promptmend.tui.setup_wizard import SetupOptions
+
+    monkeypatch.setattr(common, "stdout_is_tty", lambda: True)
+    opened: list[SetupOptions] = []
+    monkeypatch.setattr(ui_cmd, "open_setup", opened.append)
+    assert _setup(espanso, "--provider", "ollama").exit_code == 0
+    assert _setup(espanso, "--provider", "anthropic").exit_code == 0
+    assert _setup(espanso, "--provider", "lmstudio", "--use", "cloud").exit_code == 0
+    assert [(o.provider, o.use) for o in opened] == [
+        ("ollama", "local"),
+        ("anthropic", "cloud"),
+        ("lmstudio", "cloud"),
+    ]
+    assert not (saved / "config.toml").exists()
+
+
+def test_setup_use_local_saves_although_the_shell_says_true(
+    saved: Path,
+    espanso: Path,
+    fake_run: FakeRunner,
+    smoke_ok: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Espanso does not start from the shell: config.toml must hold the answer."""
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
+    result = _setup(espanso, "--non-interactive", "--no-deploy", "--use", "local")
+    assert result.exit_code == 0, result.output
+    assert config_store.read_settings().table.get("PROMPT_LOCAL_ONLY") is True
+    assert "the environment variable PROMPT_LOCAL_ONLY is set and overrides" in result.stdout
+
+
+def test_setup_use_local_with_the_shell_saying_false_says_so(
+    saved: Path,
+    espanso: Path,
+    fake_run: FakeRunner,
+    smoke_ok: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "false")
+    result = _setup(espanso, "--non-interactive", "--no-deploy", "--use", "local")
+    assert result.exit_code == 0, result.output
+    assert config_store.read_settings().table.get("PROMPT_LOCAL_ONLY") is True
+    assert (
+        "to do: local, but the environment variable PROMPT_LOCAL_ONLY overrides the saved "
+        "value, so the cloud triggers still send drafts off this computer wherever it is set"
+        in result.stdout
+    )
+    # The keys follow the answer: the cloud key is neither needed nor left to do.
+    assert "OPENROUTER_API_KEY" not in result.stdout
+    assert "No key needed: PROMPT_LOCAL_ONLY=true refuses" in result.stdout
+    assert "Setup finished with 1 thing(s) still to do" in result.stdout
+
+
+def test_setup_use_cloud_removes_a_saved_local_only_the_shell_hides(
+    saved: Path,
+    espanso: Path,
+    fake_run: FakeRunner,
+    smoke_ok: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_store.save_settings(config_store.read_settings(), {"PROMPT_LOCAL_ONLY": "true"})
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "false")
+    result = _setup(espanso, "--non-interactive", "--no-deploy", "--use", "cloud")
+    assert result.exit_code == 0, result.output
+    assert "PROMPT_LOCAL_ONLY" not in config_store.read_settings().table
+    assert "PROMPT_LOCAL_ONLY removed from " in result.stdout
+
+
+@pytest.mark.parametrize(
+    "env",
+    [{"OLLAMA_BASE_URL": "https://ollama.example.com"}, {"OLLAMA_MODEL": "gpt-oss:120b-cloud"}],
+)
+def test_setup_local_tests_a_trigger_that_stays_local(
+    saved: Path,
+    espanso: Path,
+    fake_run: FakeRunner,
+    smoke_ok: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+) -> None:
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    result = _setup(espanso, "--non-interactive", "--no-deploy", "--use", "local")
+    assert result.exit_code == 0, result.output
+    assert smoke_ok == ["lmstudio"]
+    assert "ok: -ilm- (lmstudio): passed" in result.stdout
+    assert "type -ilm- and wait" in result.stdout
+
+
+def test_setup_local_with_no_local_trigger_runs_nothing(
+    saved: Path,
+    espanso: Path,
+    fake_run: FakeRunner,
+    smoke_ok: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_BASE_URL", "https://ollama.example.com")
+    monkeypatch.setenv("LMSTUDIO_BASE_URL", "https://lm.example.com/v1")
+    result = _setup(espanso, "--non-interactive", "--no-deploy", "--use", "local")
+    assert result.exit_code == 0, result.output
+    assert smoke_ok == []
+    assert f"to do: local: not run: {setup_guide.NO_LOCAL_TRIGGER}" in result.stdout
+    assert "ok:" not in result.stdout
+
+
+def test_setup_next_step_follows_the_answer_and_the_output(
+    saved: Path, espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
+) -> None:
+    config_store.save_secret("OPENROUTER_API_KEY", KEY)
+    result = _setup(espanso, "--non-interactive", "--no-deploy", "--use", "local")
+    assert "Setup finished. Try it: copy a rough draft, click into any text field, type -il- " in (
+        result.stdout
+    )
+    result = _setup(
+        espanso, "--non-interactive", "--no-deploy", "--use", "cloud", "--output", "clipboard"
+    )
+    assert "type -i- and wait without typing. The rewrite then waits on the clipboard" in (
+        result.stdout
+    )
+
+
+def test_setup_local_note_says_what_is_true(
+    saved: Path, espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
+) -> None:
+    result = _setup(espanso, "--non-interactive", "--no-deploy", "--use", "local")
+    assert "  Local saves PROMPT_LOCAL_ONLY=true: " in result.stdout
+    # A re-run that asks nothing: it is set, not saved again.
+    result = _setup(espanso, "--non-interactive", "--no-deploy")
+    assert "  PROMPT_LOCAL_ONLY=true is set: " in result.stdout
+    assert "Local saves" not in result.stdout
+
+
 def test_setup_use_local_refuses_the_cloud_triggers(
     saved: Path, espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
 ) -> None:
@@ -1395,7 +1553,7 @@ def test_setup_use_local_refuses_the_cloud_triggers(
     assert result.exit_code == 0, result.output
     assert "  Triggers: local; profile: default; output: paste" in result.stdout
     # What local does is said, with the triggers from the match files.
-    assert "-i-, -iok-, -ip-, -if- then answer with a refusal marker" in result.stdout
+    assert "-i-, -iok-, -ip- and -if- then paste a refusal instead of sending" in result.stdout
     assert "PROMPT_LOCAL_ONLY=true saved in " in result.stdout
     assert settings_service.load_layers()[1].local_only
     assert "No key needed: PROMPT_LOCAL_ONLY=true refuses" in result.stdout
@@ -1441,9 +1599,7 @@ def test_setup_both_paths_fail_alone(
     )
     result = _setup(espanso, "--non-interactive", "--use", "both", "--no-deploy")
     assert result.exit_code == 1
-    assert "-i- (openrouter): failed (improve --provider openrouter): openrouter said so" in (
-        result.stderr
-    )
+    assert "-i- (openrouter): failed: openrouter said so" in (result.stderr)
     assert "ok: -il- (ollama): passed: ollama said so" in result.stdout
 
 
@@ -1464,6 +1620,11 @@ def test_setup_in_legacy_mode_saves_neither_new_choice(
 ) -> None:
     result = _setup(espanso, "--non-interactive", "--use", "local", "--output", "clipboard")
     assert result.exit_code == 0, result.output
+    # Nothing can be saved here: the note says what to add, never that setup saves it.
+    assert "Local saves" not in result.stdout
+    assert "Local needs PROMPT_LOCAL_ONLY=true, which this setup cannot save: add it to " in (
+        result.stdout
+    )
     assert "to do: set PROMPT_LOCAL_ONLY=true, PROMPT_OUTPUT=clipboard yourself" in result.stdout
     assert not config.settings_file().exists()
     settings = settings_service.load_layers()[1]
@@ -1577,11 +1738,6 @@ def test_setup_option_errors(
     for option, value in (("--provider", "nope"), ("--use", "nope"), ("--output", "nope")):
         assert _setup(espanso, option, value).exit_code == 2
     assert _setup(espanso, "--profile", "nosuch").exit_code == 2
-    # The deprecated --provider has no step on a terminal, where nothing is saved unasked.
-    monkeypatch.setenv("COLUMNS", "400")  # the error panel wraps at the terminal width
-    result = _setup(espanso, "--provider", "ollama")
-    assert result.exit_code == 2
-    assert "pass --use cloud|local|both" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     assert opened == []
     assert _setup(espanso, "--non-interactive", "--profile", "nosuch").exit_code == 2
     # PROMPT_PROVIDER is no longer setup's business: a bad one does not stop it (doctor says).

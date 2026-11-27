@@ -327,13 +327,13 @@ def test_snapshot_settings_high_contrast() -> None:
     _check("settings-high-contrast", _shoot("2", HIGH_CONTRAST.name, settings_state, (80, 24)))
 
 
-# The setup wizard: the first step, the cloud-or-local question, the output choice (80
-# columns) and the last step.
+# The setup wizard: the first step, the cloud-or-local question and the output choice (each
+# whole at 80x24), and the last step.
 @pytest.mark.parametrize(
     ("name", "steps", "size"),
     [
         ("setup-welcome", 0, SIZE),
-        ("setup-use", 1, SIZE),
+        ("setup-use", 1, (80, 24)),
         ("setup-output", 4, (80, 24)),
         ("setup-done", 7, SIZE),
     ],

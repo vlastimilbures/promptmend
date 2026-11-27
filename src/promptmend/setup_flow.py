@@ -23,6 +23,7 @@ from . import assets, config, config_files, config_store, deploy, settings_servi
 from .config import setting_fields
 from .factory import PROVIDER_KEYS
 from .prompt_builder import system_prompt
+from .providers.registry import PROVIDERS
 
 DEFAULTS = {f.metadata["env"]: f.metadata["default"] for f in setting_fields()}
 
@@ -95,21 +96,39 @@ def choice_command(name: str, value: str) -> list[str]:
 
 
 def save_choice(name: str, value: str) -> tuple[str | None, list[str]]:
-    """Save one of the choices (PROMPT_LOCAL_ONLY from the answer, local_only_value()), for
-    both flows: an unchanged value writes
-    nothing (None, no command), and a default is not pinned but removed from config.toml, so a
-    later change of the default still applies. Else what was done, with the `config` command
-    that did it (choice_command(), or `set` when removing the default did not make it apply),
-    for the wizard's log."""
-    if current_choice(name) == value:
+    """Make config.toml hold one of the choices (PROMPT_LOCAL_ONLY from the answer,
+    local_only_value()), for both flows. config.toml is what the deployed triggers read:
+    Espanso does not start from your shell, so a variable exported there never reaches them,
+    and the effective value is no guide. Unchanged (None, no command) means the file already
+    holds ``value``, or holds nothing and ``value`` is the default. A default is never pinned
+    but removed from the file, so a later change of the default still applies (a pinned
+    default would not beat an environment variable either); any other value is written
+    whenever the file does not hold it. Else what was done, with the `config` command that
+    did it (choice_command()), for the wizard's log; when an environment variable still
+    makes the effective value differ, the message carries after_save()'s warning."""
+    held = config_store.read_settings().table
+    default = value == DEFAULTS[name]
+    if default and name not in held:
         return None, []
-    if value == DEFAULTS[name]:
-        removed, path = settings_service.unset_setting(name)
-        if removed and current_choice(name) == value:
-            return f"{name} removed from {path}; its default, {value}, applies", ["unset", name]
-    saved = settings_service.save_setting(name, value)
+    if not default and name in held and held[name] == config_store.toml_value(name, value):
+        return None, []
+    if default:
+        _, path = settings_service.unset_setting(name)
+        done = f"{name} removed from {path}"
+        if current_choice(name) == value:
+            done += f"; its default, {value}, applies"
+    else:
+        saved = settings_service.save_setting(name, value)
+        done = f"{name}={value} saved in {saved.path}"
     notes = settings_service.after_save(name)
-    return "; ".join([f"{name}={value} saved in {saved.path}", *notes]), ["set", name, value]
+    return "; ".join([done, *notes]), choice_command(name, value)
+
+
+def use_for_provider(provider: str) -> str:
+    """The answer the deprecated `setup --provider` preselects on a terminal (a highlight
+    only): local for a provider that is not a cloud API (Ollama, LM Studio), else cloud."""
+    spec = PROVIDERS.get(provider)
+    return setup_guide.CLOUD if spec is None or spec.cloud else setup_guide.LOCAL
 
 
 def check_profile(name: str, overrides: tuple[str, ...]) -> None:
@@ -176,10 +195,29 @@ def key_provider(use: str, settings: config.Settings) -> str | None:
     return setup_guide.smoke_runs(setup_guide.CLOUD, assets.triggers(), settings)[0].provider
 
 
-def needed_keys(layers: config.ConfigLayers, settings: config.Settings) -> list[setup_guide.KeyRow]:
+def local_only_from_env(layers: config.ConfigLayers) -> bool:
+    """Whether the effective PROMPT_LOCAL_ONLY comes from an environment variable, which
+    outranks config.toml wherever it is set (setup_guide.use_problem())."""
+    return layers.entries[LOCAL_ONLY].source == config.ENV_SOURCE
+
+
+def use_problem(
+    use: str, layers: config.ConfigLayers, settings: config.Settings, legacy: str | None = None
+) -> str | None:
+    """setup_guide.use_problem() for the settings now: both flows check the answer with it."""
+    return setup_guide.use_problem(
+        settings, use, legacy=legacy, from_env=local_only_from_env(layers)
+    )
+
+
+def needed_keys(
+    layers: config.ConfigLayers, settings: config.Settings, use: str
+) -> list[setup_guide.KeyRow]:
     """The keys `setup --non-interactive` reports: those an active trigger or the provider
-    needs, unless PROMPT_LOCAL_ONLY refuses it. The wizard lists every key."""
-    rows = setup_guide.key_rows(layers, settings, assets.triggers())
+    needs, unless PROMPT_LOCAL_ONLY as the answer ``use`` sets it refuses it (a mismatch with
+    the effective value has its own line, use_problem()). The wizard lists every key."""
+    answered = setup_guide.as_answered(settings, use)
+    rows = setup_guide.key_rows(layers, answered, assets.triggers())
     return [row for row in rows if row.needed]
 
 

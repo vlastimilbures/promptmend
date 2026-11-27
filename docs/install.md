@@ -293,8 +293,9 @@ After any install, run one of these in a terminal:
   `secrets.toml`), pick the default profile and paste or clipboard output (saved in
   `config.toml`), install the match files after seeing what changes, and run a smoke test of
   `improve` on your triggers' path against a stub on `127.0.0.1` (never a paid call, never
-  your real key). It ends with what
-  is left to do and how to try `-i-`. `promptmend setup --non-interactive` prints the same steps and asks nothing.
+  your real key). It ends with what is left to do and how to try a trigger your answer
+  leaves you (`-il-` after local, `-i-` otherwise). `promptmend setup --non-interactive`
+  prints the same steps and asks nothing.
 - `promptmend` opens the [full-screen interface](interface.md), which does the same through
   its tabs.
 
@@ -312,9 +313,11 @@ promptmend setup --non-interactive --use local --output clipboard --deploy   # n
 current settings stay. `--provider` is deprecated: it still saves `PROMPT_PROVIDER`, which no
 trigger reads, and says so; use `--use` instead.
 
-Without `--deploy`, the deploy stays a preview. Then copy a rough draft, type `-i-` in any
-text field and wait without typing or switching windows (see [Usage](usage.md), and the
-[list of triggers](usage.md#triggers) for what each one does and sends).
+Without `--deploy`, the deploy stays a preview. Then copy a rough draft, type the trigger
+setup names last (`-i-` for cloud or both, `-il-` for local) in any text field and wait
+without typing or switching windows; with clipboard output, paste the rewrite yourself (see
+[Usage](usage.md), and the [list of triggers](usage.md#triggers) for what each one does and
+sends).
 
 ## Update
 

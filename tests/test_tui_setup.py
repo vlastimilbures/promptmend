@@ -115,8 +115,8 @@ def test_wizard_walks_every_step_and_saves(
         assert "Step 2 of 8 · Cloud or local" in _text(app, "#setup-title")
         # What local does is said before Next, with the triggers from the match files.
         intro = _text(app, "#setup-use-note")
-        assert "-i-, -iok-, -ip-, -if- then answer with a refusal marker" in intro
-        assert "The triggers to use are -il- (Ollama) or -ilm- (LM Studio)." in intro
+        assert "-i-, -iok-, -ip- and -if- then paste a refusal instead of sending" in intro
+        assert "Use -il- (Ollama) or -ilm- (LM Studio)." in intro
         # Cloud and both are not stored: nothing is current, the highlight starts on cloud.
         assert _marked(app, "#setup-uses") == []
         assert _highlighted(app, "#setup-uses") == "cloud"
@@ -155,7 +155,7 @@ def test_wizard_walks_every_step_and_saves(
         await press(app, pilot, "#setup-next-step")
         assert wizard.at == "done"
         summary = _text(app, "#setup-summary")
-        assert "✓ Triggers: local (PROMPT_LOCAL_ONLY=true refuses the cloud ones)" in summary
+        assert "✓ Triggers: local (PROMPT_LOCAL_ONLY=true: the cloud triggers refuse)" in summary
         assert "✓ Profile: general" in summary
         assert "✓ Output: clipboard" in summary
         assert "OPENROUTER_API_KEY" not in summary
@@ -231,10 +231,131 @@ def test_wizard_test_failure_names_the_path(
         await press(app, pilot, "#setup-run-test")
         result = str(wizard.query_one(".result", Static).render())
         assert "-i- (openrouter): passed: fine" in result
-        assert "-il- (ollama): failed (improve --provider ollama): error: no python" in result
+        assert "-il- (ollama): failed: error: no python" in result
         assert wizard.tested is False
 
     drive(scenario, setup=_options(espanso))
+
+
+def test_wizard_local_saves_although_the_shell_says_true_and_says_so(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Espanso does not start from the shell, so config.toml must hold the answer; the
+    save's warning stays on screen on the next step."""
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "local")
+        assert wizard.at == "keys"
+        result = str(wizard.query_one(".result", Static).render())
+        assert "PROMPT_LOCAL_ONLY=true saved in " in result
+        assert "the environment variable PROMPT_LOCAL_ONLY is set and overrides" in result
+
+    app = drive(scenario, setup=_options(espanso))
+    assert config_store.read_settings().table.get("PROMPT_LOCAL_ONLY") is True
+    assert [entry.command for entry in app.session] == [
+        "promptmend config set PROMPT_LOCAL_ONLY true"
+    ]
+
+
+def test_wizard_done_names_an_environment_variable_that_disagrees(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "false")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "local")
+        # The keys follow the answer: no cloud key is asked for after local.
+        assert "not needed: PROMPT_LOCAL_ONLY=true refuses -i-" in _text(
+            app, "#setup-line-OPENROUTER_API_KEY"
+        )
+        wizard.go("done")
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "✗ Triggers: local, but the environment variable PROMPT_LOCAL_ONLY overrides" in (
+            summary
+        )
+        assert "remove it from the environment" in summary
+        assert "config set PROMPT_LOCAL_ONLY" not in summary
+        assert "OPENROUTER_API_KEY" not in summary
+        assert "type -il- " in _text(app, "#setup-next")
+
+    drive(scenario, setup=_options(espanso))
+    assert config_store.read_settings().table.get("PROMPT_LOCAL_ONLY") is True
+
+
+def test_wizard_test_result_goes_with_its_answer(
+    saved: Path, espanso: FakeRunner, smoke_ok: list[str]
+) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "cloud")
+        wizard.go("test")
+        await settle(pilot)
+        await press(app, pilot, "#setup-run-test")
+        assert wizard.tested is True
+        wizard.go("use")
+        await settle(pilot)
+        await _pick(app, pilot, "#setup-uses", "local")
+        assert wizard.tested is None
+        wizard.go("done")
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "✗ Test: not run" in summary
+        assert "✓ Test" not in summary
+
+    drive(scenario, setup=_options(espanso))
+    assert smoke_ok == ["openrouter"]
+
+
+def test_wizard_local_tests_the_trigger_that_stays_local(
+    saved: Path, espanso: FakeRunner, smoke_ok: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OLLAMA_BASE_URL", "https://ollama.example.com")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "local")
+        wizard.go("test")
+        await settle(pilot)
+        assert "(the path -ilm- takes)" in _text(app, "#setup-test-intro")
+        await press(app, pilot, "#setup-run-test")
+        monkeypatch.setenv("LMSTUDIO_BASE_URL", "https://lm.example.com/v1")
+        app.reload()
+        await settle(pilot)
+        assert "Runs nothing on the local path" in _text(app, "#setup-test-intro")
+        await press(app, pilot, "#setup-run-test")
+        assert wizard.tested is False
+        assert "local: not run: no trigger stays on this computer" in str(
+            wizard.query_one(".result", Static).render()
+        )
+
+    drive(scenario, setup=_options(espanso))
+    assert smoke_ok == ["lmstudio"]
+
+
+def test_wizard_names_the_deprecated_provider_and_saves_it_not(
+    saved: Path, espanso: FakeRunner
+) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        notes = _text(app, "#setup-welcome-notes")
+        assert "--provider is deprecated and will be removed in a later release" in notes
+        assert "this setup has no step for it, so PROMPT_PROVIDER was not saved" in notes
+        assert "no trigger reads it" in notes
+        assert "`promptmend config set PROMPT_PROVIDER ollama` saves it" in notes
+        await press(app, pilot, "#setup-next-step")
+        assert _highlighted(app, "#setup-uses") == "local"
+        assert wizard.at == "use"
+
+    drive(scenario, setup=_options(espanso, provider="ollama", use="local"))
+    assert not config.settings_file().exists()
 
 
 def test_wizard_unchanged_choice_writes_nothing(saved: Path, espanso: FakeRunner) -> None:
