@@ -178,10 +178,13 @@ class Pane(Reports, VerticalScroll):
 
 
 def error_message(exc: Exception) -> str:
-    """As commands/common.guard: a service error's own message; a bug named as unexpected."""
+    """As commands/common.guard: a service error's own message; a bug named as unexpected;
+    both redacted the same way (a CommandError's own text is not)."""
+    if isinstance(exc, common.CommandError):
+        return f"error: {exc}"
     if isinstance(exc, EXPECTED):
-        return f"error: {str(exc) or type(exc).__name__}"
-    return f"error: unexpected {type(exc).__name__}: {exc}"
+        return f"error: {common.redacted(str(exc) or type(exc).__name__)}"
+    return f"error: {common.redacted(f'unexpected {type(exc).__name__}: {exc}')}"
 
 
 def manifest_digest(manifest: deploy.Manifest) -> list[tuple[str, dict[str, Any]]]:

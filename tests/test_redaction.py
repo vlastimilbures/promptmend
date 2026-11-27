@@ -1003,3 +1003,19 @@ def test_normalize_folds_non_ascii() -> None:
     from promptmend import redaction
 
     assert redaction._normalize("\uff14\uff11\uff11\uff11\u200b") == "4111"
+
+
+# secrets_only (a management command's error text) keeps the soft findings and still hides a
+# secret, in one word or spread over several (#401).
+def test_redact_message_secrets_only() -> None:
+    from promptmend.redaction import redact_message
+
+    path = "Permission denied: '/Volumes/Team/internal only/jane@example.com/x.yml'"
+    assert redact_message(path, secrets_only=True) == path
+    assert redact_message(path) != path
+    key = "sk-or-v1-" + "ab12" * 8
+    assert redact_message(f"bad value {key} here", secrets_only=True) == (
+        f"bad value <redacted, {len(key)} chars> here"
+    )
+    spread = "the header was Bearer abcdefgh12345678 today"
+    assert redact_message(spread, secrets_only=True).startswith("<redacted, ")

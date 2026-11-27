@@ -1203,7 +1203,7 @@ def test_cli_deploy_bad_on_conflict(espanso: Path, fake_run: FakeRunner) -> None
     """A usage error (exit 2), refused before the plan is read or printed (#401)."""
     result = _cli("deploy", "--yes", "--on-conflict", "merge", *_where(espanso))
     assert result.exit_code == 2
-    assert "--on-conflict" in result.stderr
+    # The option's name is not asserted: on CI Typer colours it in pieces (GITHUB_ACTIONS).
     assert "must be one of keep, ours, side" in result.stderr
     assert "Traceback" not in result.output
     assert result.stdout == ""

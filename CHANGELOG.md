@@ -40,12 +40,12 @@ All notable changes to this project are documented here. The format follows
   any grouped number that passes the checksum (`4111 1111 1111 1111`) are still blocked as
   before. A card of another brand written without separators is no longer found. A Unix
   time with a fraction (`1732700000.123456`) still counts as a grouped number.
-- `promptmend espanso status`, `deploy` and `detach` never print a traceback (#401). Any
-  failure, an unexpected one too, ends as one `error:` line on stderr and exit code 1, as the
-  other management commands do. A bad `--on-conflict` value is now a usage error and exits 2
-  (it exited 1), before anything is read or printed. A management command's error text is
-  now redacted the way a trigger marker is: a key-like word in it is shown as
-  `<redacted, N chars>`.
+- `promptmend espanso status`, `deploy` and `detach` never print a traceback (#401). An
+  unexpected failure ends as one `error:` line on stderr and exit code 1, as in the other
+  management commands. A bad `--on-conflict` value is now a usage error and exits 2 (it
+  exited 1). In a management command's error text, and in the interface's, a key, token,
+  password or card number (and what your `PROMPT_EXTRA_PATTERNS` match) is shown as
+  `<redacted, N chars>`; an email address or a label in a path is kept.
 
 ## 0.27.0 - 2026-11-17
 

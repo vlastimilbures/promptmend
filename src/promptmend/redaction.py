@@ -517,22 +517,32 @@ def safe_repr(raw: str, *, user_patterns: bool = True) -> str:
 _WORD = re.compile(r"[^\s'\"(),\[\]]+")
 
 
-def redact_words(text: str) -> str:
+def _flagged(text: str, secrets_only: bool) -> bool:
+    findings = scan(text, _user_patterns)
+    return bool(set(findings) - SOFT_FINDINGS if secrets_only else findings)
+
+
+def redact_words(text: str, *, secrets_only: bool = False) -> str:
     """``text`` with every word scan() flags described instead of repeated: for messages
-    that quote what was typed (a usage error naming a stray argument), which may be a key."""
+    that quote what was typed (a usage error naming a stray argument), which may be a key.
+    ``secrets_only`` leaves the SOFT_FINDINGS (an email, a label, an ID number) as they are:
+    for a management command's error on a terminal, where a path such as
+    ``…/GoogleDrive-jane@example.com/…`` is what the user needs to read."""
     return _WORD.sub(
         lambda m: (
-            f"<redacted, {len(m.group())} chars>" if scan(m.group(), _user_patterns) else m.group()
+            f"<redacted, {len(m.group())} chars>"
+            if _flagged(m.group(), secrets_only)
+            else m.group()
         ),
         text,
     )
 
 
-def redact_message(text: str) -> str:
+def redact_message(text: str, *, secrets_only: bool = False) -> str:
     """redact_words(), and the whole ``text`` described when what is left still holds a
     secret spread over several words (``Bearer …``, ``password: …``, a spaced card number)."""
-    text = redact_words(text)
-    return f"<redacted, {len(text)} chars>" if scan(text, _user_patterns) else text
+    text = redact_words(text, secrets_only=secrets_only)
+    return f"<redacted, {len(text)} chars>" if _flagged(text, secrets_only) else text
 
 
 # Single tokens that are not secrets: a URL, an email, a path, a UUID, a lower-case slug

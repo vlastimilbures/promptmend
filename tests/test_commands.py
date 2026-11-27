@@ -1066,6 +1066,35 @@ def test_guard_redacts_a_key_in_the_message(
     assert KEY[:16] not in err
 
 
+# A management command's error keeps what the user needs to find the file: an email address in
+# a cloud-drive path, a folder named like a label. Only secrets are hidden (#401).
+def test_guard_keeps_an_email_and_a_label_in_a_path(capsys: pytest.CaptureFixture[str]) -> None:
+    path = "/Users/jane/Library/CloudStorage/GoogleDrive-jane.doe@example.com/CONFIDENTIAL/x.yml"
+
+    @common.guard
+    def command() -> None:
+        raise PermissionError(13, "Permission denied", path)
+
+    with pytest.raises(typer.Exit):
+        command()
+    assert capsys.readouterr().err == f"error: [Errno 13] Permission denied: '{path}'\n"
+
+
+# The interface words and redacts an error as the guard does.
+def test_interface_error_message_matches_the_guard() -> None:
+    from promptmend.tui.base import error_message
+
+    assert error_message(ValueError(f"the value {KEY} is not valid")) == (
+        f"error: the value <redacted, {len(KEY)} chars> is not valid"
+    )
+    unexpected = error_message(RuntimeError(f"bad {KEY}"))
+    assert unexpected.startswith("error: unexpected RuntimeError: bad <redacted")
+    assert KEY not in unexpected
+    assert error_message(common.CommandError("PROMPTMEND_ENV is set")) == (
+        "error: PROMPTMEND_ENV is set"
+    )
+
+
 def test_guard_keeps_a_command_error_as_written(capsys: pytest.CaptureFixture[str]) -> None:
     @common.guard
     def command() -> None:
