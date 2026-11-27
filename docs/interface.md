@@ -42,26 +42,33 @@ time.
 | Step | What you do |
 |------|-------------|
 | Welcome | Read what setup does and what the usage history keeps, and which `.env` it no longer reads, if one is left |
-| Provider | Pick the default provider from a list; each line says whether it is cloud or local, whether it needs a key, and which triggers use it |
+| Cloud or local | Say which triggers you will use: cloud (an OpenRouter key: `-i-`, `-iok-`, `-ip-`, `-if-`), local (Ollama or LM Studio: `-il-`, `-ilm-`) or both. Local saves `PROMPT_LOCAL_ONLY=true`, so the cloud triggers answer with a refusal marker instead of sending the draft; the step names them before you press Next. Cloud or both remove `PROMPT_LOCAL_ONLY` again |
+| API keys | Paste each key the triggers need (hidden); the step names the triggers each key is for, and after local says that none is needed |
 | Profile | Pick the default profile; each line says how it rewrites |
-| API keys | Paste each key the triggers need (hidden); the step names the triggers each key is for |
+| Output | Paste (the rewrite replaces the trigger) or clipboard (`PROMPT_OUTPUT`: the rewrite waits on the clipboard; see [Output](usage.md#output-paste-or-clipboard)) |
 | Espanso | See the match folder and each file in words (not installed yet, up to date, you edited it), then install them; a file you edited is kept |
-| Test | Run `improve` against a stub on `127.0.0.1`; no provider is called |
-| Done | A checklist of what is set and what is left, with the command for each, and how to try `-i-` |
+| Test | Run `improve` against a stub on `127.0.0.1` on the path your triggers take: OpenRouter's (`-i-`) for cloud, Ollama's (`-il-`) for local, both for both; no provider is called |
+| Done | A checklist of what is set and what is left (cloud or local, the profile, the output, the keys), with the command for each, and how to try `-i-` |
+
+Setup never asks for `PROMPT_PROVIDER`: each trigger names its own provider, and that setting
+only picks the provider of a bare `promptmend improve` and the Try tab (the Settings tab shows
+it under Advanced). On a re-run, local is marked current while `PROMPT_LOCAL_ONLY` is true;
+cloud and both are not stored, so neither is marked.
 
 Next and Back (or Escape) move between the steps; Enter on a list picks and moves on. Each
 change is made through the same code as its command and shows that command. With
 `PROMPTMEND_ENV` set, settings and keys stay in that file: Next moves on without saving a
-provider or profile and says so, the API keys step only says to add each key to that file, and
-Done names that file for a missing key.
+choice and says so, the API keys step only says to add each key to that file, and Done names
+that file for a missing key or a `PROMPT_LOCAL_ONLY` that does not match your answer.
 
-Options given to `setup` prefill the wizard: `--provider` and `--profile` preselect that
-choice (Next still saves it), `--deploy` puts the focus on the install button
+Options given to `setup` prefill the wizard: `--use`, `--profile` and `--output` preselect
+that choice (Next still saves it), `--deploy` puts the focus on the install button
 (nothing is written until you press it), and `--no-deploy` and `--no-smoke-test` leave out
-the Espanso and Test steps. `--non-interactive` (or `--plain`) runs without the wizard and
-asks nothing (see [Commands](commands.md#management-commands)).
+the Espanso and Test steps. The deprecated `--provider` has no step: on a terminal it is
+refused (exit 2). `--non-interactive` (or `--plain`) runs without the wizard and asks nothing
+(see [Commands](commands.md#management-commands)).
 
-![The setup's provider step](../tests/snapshots/setup-provider.svg)
+![The setup's cloud or local step](../tests/snapshots/setup-use.svg)
 
 ## Tabs
 

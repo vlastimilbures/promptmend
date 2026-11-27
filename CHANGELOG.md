@@ -70,6 +70,27 @@ All notable changes to this project are documented here. The format follows
 - A draft over the 50,000-character limit gets one marker wording from every source (#408):
   `--text`, the clipboard and the interface's Try tab now say `Input is too long (over 50000
   chars)`, as stdin already did, instead of `Input is too long (N chars, max 50000)`.
+- Setup asks which triggers you will use instead of a default provider (#390). Its Provider
+  step saved `PROMPT_PROVIDER`, which no trigger reads: someone who picked Ollama still had
+  `-i-` send the draft to OpenRouter. The new Cloud or local step offers cloud (an OpenRouter
+  key: `-i-`, `-iok-`, `-ip-`, `-if-`), local (Ollama or LM Studio: `-il-`, `-ilm-`) or both;
+  local saves `PROMPT_LOCAL_ONLY=true` and says before Next that the cloud triggers then
+  answer with a refusal marker, and cloud or both remove that setting again. The trigger
+  names come from the match files. The API keys step follows the answer (after local no key
+  is needed), a new Output step picks paste or clipboard (`PROMPT_OUTPUT`), and the test runs
+  the path of the answer's triggers (`-i-`'s on OpenRouter, `-il-`'s on Ollama, both for
+  both) instead of `PROMPT_PROVIDER`'s. The steps are now Welcome, Cloud or local, API keys,
+  Profile, Output, Espanso, Test, Done; Done shows the answer (and flags a `PROMPT_LOCAL_ONLY`
+  that does not match it), the profile and the output. New options `--use cloud|local|both`
+  and `--output paste|clipboard` answer those steps with `--non-interactive` and preselect
+  them on a terminal; without `--use` setup leaves `PROMPT_LOCAL_ONLY` as it is. A
+  `PROMPT_PROVIDER` that names no provider no longer stops `setup --non-interactive`.
+
+### Deprecated
+- `setup --provider` (#390): with `--non-interactive` it still saves `PROMPT_PROVIDER` and
+  `--api-key-stdin` reads that provider's key, with a note that no trigger reads it and that
+  `--use` replaces it; on a terminal, where the wizard has no step for it, it exits 2. It goes
+  in a later release.
 
 ### Fixed
 - The gate no longer blocks millisecond timestamps and long numeric IDs as card numbers

@@ -287,10 +287,13 @@ uv tool install \
 After any install, run one of these in a terminal:
 
 - `promptmend setup` walks you through it one step at a time on a full screen
-  ([Setup](interface.md#setup)): pick the provider and default profile from a list (saved in
-  `config.toml`), paste each API key the triggers need (hidden, saved in `secrets.toml`),
-  install the match files after seeing what changes, and run a smoke test of `improve`
-  against a stub on `127.0.0.1` (never a paid call, never your real key). It ends with what
+  ([Setup](interface.md#setup)): say whether you will use the cloud triggers (an OpenRouter
+  key), the local ones (Ollama or LM Studio; this saves `PROMPT_LOCAL_ONLY=true`, so the cloud
+  triggers refuse) or both, paste each API key those triggers need (hidden, saved in
+  `secrets.toml`), pick the default profile and paste or clipboard output (saved in
+  `config.toml`), install the match files after seeing what changes, and run a smoke test of
+  `improve` on your triggers' path against a stub on `127.0.0.1` (never a paid call, never
+  your real key). It ends with what
   is left to do and how to try `-i-`. `promptmend setup --non-interactive` prints the same steps and asks nothing.
 - `promptmend` opens the [full-screen interface](interface.md), which does the same through
   its tabs.
@@ -302,7 +305,12 @@ stdin and nothing is asked:
 
 ```bash
 promptmend setup --non-interactive --api-key-stdin --deploy < key.txt
+promptmend setup --non-interactive --use local --output clipboard --deploy   # no key
 ```
+
+`--use cloud|local|both` and `--output paste|clipboard` answer those steps; without them the
+current settings stay. `--provider` is deprecated: it still saves `PROMPT_PROVIDER`, which no
+trigger reads, and says so; use `--use` instead.
 
 Without `--deploy`, the deploy stays a preview. Then copy a rough draft, type `-i-` in any
 text field and wait without typing or switching windows (see [Usage](usage.md), and the

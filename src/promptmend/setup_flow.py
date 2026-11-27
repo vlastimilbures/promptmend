@@ -21,9 +21,8 @@ from pathlib import Path
 
 from . import assets, config, config_files, config_store, deploy, settings_service, setup_guide
 from .config import setting_fields
-from .factory import PROVIDER_KEYS, PROVIDER_NAMES
+from .factory import PROVIDER_KEYS
 from .prompt_builder import system_prompt
-from .redaction import safe_repr
 
 DEFAULTS = {f.metadata["env"]: f.metadata["default"] for f in setting_fields()}
 
@@ -53,18 +52,41 @@ def storage() -> Storage:
     return Storage(None, setup_guide.unread_env_note(config.unread_env_files()))
 
 
-# --- Provider and profile ------------------------------------------------------------------
+# --- The choices: cloud or local, profile, output (and the deprecated --provider) ---------
 
-# The setting each choice is, and how to read its Settings field.
+LOCAL_ONLY = "PROMPT_LOCAL_ONLY"
+
+# The setting each choice is, and how to read its Settings field as config.toml's text.
 _CHOICES: dict[str, Callable[[config.Settings], str]] = {
+    LOCAL_ONLY: lambda settings: str(settings.local_only).lower(),
     "PROMPT_PROVIDER": lambda settings: settings.provider,
     "PROMPT_PROFILE": lambda settings: settings.profile,
+    "PROMPT_OUTPUT": lambda settings: settings.output,
 }
 
 
+def choice_value(name: str, settings: config.Settings) -> str:
+    """The value of PROMPT_LOCAL_ONLY, PROMPT_PROVIDER, PROMPT_PROFILE or PROMPT_OUTPUT in
+    ``settings``, as config.toml holds it."""
+    return _CHOICES[name](settings)
+
+
 def current_choice(name: str) -> str:
-    """The effective value of PROMPT_PROVIDER or PROMPT_PROFILE."""
-    return _CHOICES[name](settings_service.load_layers()[1])
+    """The effective value of one of the choices (choice_value() of the settings now)."""
+    return choice_value(name, settings_service.load_layers()[1])
+
+
+def local_only_value(use: str) -> str:
+    """PROMPT_LOCAL_ONLY for the answer ``use`` (setup_guide.USES): true for local, else its
+    default, false, which save_choice() unsets rather than pins."""
+    return "true" if use == setup_guide.LOCAL else "false"
+
+
+def current_use(settings: config.Settings) -> str:
+    """The answer the settings give when none was picked (`setup --non-interactive` without
+    --use, or the wizard before its step): local while PROMPT_LOCAL_ONLY is true, else cloud
+    (cloud and both are not stored)."""
+    return setup_guide.LOCAL if settings.local_only else setup_guide.CLOUD
 
 
 def choice_command(name: str, value: str) -> list[str]:
@@ -73,7 +95,8 @@ def choice_command(name: str, value: str) -> list[str]:
 
 
 def save_choice(name: str, value: str) -> tuple[str | None, list[str]]:
-    """Save PROMPT_PROVIDER or PROMPT_PROFILE, for both flows: an unchanged value writes
+    """Save one of the choices (PROMPT_LOCAL_ONLY from the answer, local_only_value()), for
+    both flows: an unchanged value writes
     nothing (None, no command), and a default is not pinned but removed from config.toml, so a
     later change of the default still applies. Else what was done, with the `config` command
     that did it (choice_command(), or `set` when removing the default did not make it apply),
@@ -87,15 +110,6 @@ def save_choice(name: str, value: str) -> tuple[str | None, list[str]]:
     saved = settings_service.save_setting(name, value)
     notes = settings_service.after_save(name)
     return "; ".join([f"{name}={value} saved in {saved.path}", *notes]), ["set", name, value]
-
-
-def chosen_provider(option: str | None, settings: config.Settings) -> str:
-    """`setup --non-interactive`'s provider: ``option`` (--provider), else the current one; a
-    current value that is no provider raises ValueError (the command's usage error)."""
-    chosen = option if option is not None else settings.provider
-    if chosen not in PROVIDER_NAMES:
-        raise ValueError(f"PROMPT_PROVIDER {safe_repr(chosen)} is not a provider; pass --provider")
-    return chosen
 
 
 def check_profile(name: str, overrides: tuple[str, ...]) -> None:
@@ -114,15 +128,15 @@ class ChoicesSaved:
 
 
 def save_choices(
-    provider: str, profile: str, said: Callable[[str], None] = lambda _: None
+    choices: Sequence[tuple[str, str]], said: Callable[[str], None] = lambda _: None
 ) -> ChoicesSaved:
-    """`setup --non-interactive`'s Settings step: both choices, then, when neither changed and
-    there is no config.toml yet, an empty one, so a first run ends in saved mode even with
-    every default (config.toml is where settings go). ``said`` gets each change's line as it
-    is made, before the next write. The wizard saves each choice on its own step
-    (save_choice()) and writes no empty config.toml."""
+    """`setup --non-interactive`'s Settings step: each (setting, value) of ``choices`` in
+    order, then, when none changed and there is no config.toml yet, an empty one, so a first
+    run ends in saved mode even with every default (config.toml is where settings go).
+    ``said`` gets each change's line as it is made, before the next write. The wizard saves
+    each choice on its own step (save_choice()) and writes no empty config.toml."""
     messages: list[str] = []
-    for name, value in (("PROMPT_PROVIDER", provider), ("PROMPT_PROFILE", profile)):
+    for name, value in choices:
         try:
             message, _ = save_choice(name, value)
         except (ValueError, settings_service.ServiceError, config_store.ConfigStoreError) as exc:
@@ -153,9 +167,18 @@ def stdin_key(provider: str) -> str | None:
     return PROVIDER_KEYS.get(provider)
 
 
+def key_provider(use: str, settings: config.Settings) -> str | None:
+    """The provider whose key `setup --api-key-stdin` reads for the answer ``use``: the one
+    the cloud trigger the test runs takes (OpenRouter, -i-); None for local, which needs none.
+    The deprecated --provider still names its own instead."""
+    if use == setup_guide.LOCAL:
+        return None
+    return setup_guide.smoke_runs(setup_guide.CLOUD, assets.triggers(), settings)[0].provider
+
+
 def needed_keys(layers: config.ConfigLayers, settings: config.Settings) -> list[setup_guide.KeyRow]:
     """The keys `setup --non-interactive` reports: those an active trigger or the provider
-    needs (an Ollama default still leaves -i- on OpenRouter). The wizard lists every key."""
+    needs, unless PROMPT_LOCAL_ONLY refuses it. The wizard lists every key."""
     rows = setup_guide.key_rows(layers, settings, assets.triggers())
     return [row for row in rows if row.needed]
 

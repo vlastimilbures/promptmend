@@ -21,7 +21,17 @@ import typer
 from typer._click.core import Command, Context, Parameter
 from typer.testing import CliRunner, Result
 
-from promptmend import __version__, assets, config, deploy, doctor, history, settings_service, smoke
+from promptmend import (
+    __version__,
+    assets,
+    config,
+    deploy,
+    doctor,
+    history,
+    settings_service,
+    setup_guide,
+    smoke,
+)
 from promptmend.cli import app
 from promptmend.commands import common
 from promptmend.config import secret_names
@@ -1125,7 +1135,7 @@ def test_setup_non_interactive_end_to_end(saved: Path, espanso: Path, fake_run: 
     assert KEY not in result.output
     assert "Dry run: nothing was written." in result.stdout
     assert not list((espanso / "match").iterdir())
-    assert "ok: improve reached the stub" in result.stdout
+    assert "ok: -i- (openrouter): passed: improve reached the stub" in result.stdout
     assert "Usage history is on" in result.stdout
     assert "config set PROMPT_HISTORY false" in result.stdout
     assert _changes(fake_run.calls) == []  # no restart, nothing deployed
@@ -1140,7 +1150,7 @@ def test_setup_needs_a_terminal_or_non_interactive(espanso: Path) -> None:
     # The wizard needs stdout too: piped, it is refused, never asked line by line (#244).
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(common, "stdin_is_tty", lambda: True)
-        result = _setup(espanso, "--provider", "ollama")
+        result = _setup(espanso, "--use", "local")
     assert result.exit_code == common.NEEDS_TERMINAL
 
 
@@ -1152,7 +1162,9 @@ def test_setup_deploy_applies(
     assert result.exit_code == 0, result.output
     assert len(list((espanso / "match").iterdir())) == 3
     assert _changes(fake_run.calls) == [["espanso", "restart"]]
+    # Deprecated (#390): still saved for one release, with a note that no trigger reads it.
     assert 'PROMPT_PROVIDER = "ollama"' in (saved / "config.toml").read_text("utf-8")
+    assert f"  {setup_guide.PROVIDER_DEPRECATED}" in result.stdout
 
 
 def test_setup_smoke_failure_exits_1(
@@ -1189,8 +1201,11 @@ def test_setup_in_legacy_mode_writes_no_settings(
     assert not config.settings_file().exists()
 
 
-def test_setup_rejects_a_bad_provider(espanso: Path) -> None:
-    assert _setup(espanso, "--non-interactive", "--provider", "nope").exit_code == 2
+@pytest.mark.parametrize("option", ["--provider", "--use", "--output"])
+def test_setup_rejects_a_bad_choice(espanso: Path, option: str) -> None:
+    result = _setup(espanso, "--non-interactive", option, "nope")
+    assert result.exit_code == 2
+    assert f"{option} must be one of" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
 
 
 # --- the smoke test -----------------------------------------------------------------------
@@ -1250,9 +1265,9 @@ def test_smoke_and_setup_add_no_history_row(
     assert [(a["provider"], a["endpoint"]) for a in data["attempts"]] == [("ollama", "loopback")]
 
     assert smoke.run("ollama").ok
-    result = _setup(espanso, "--non-interactive", "--no-deploy", "--provider", "ollama")
+    result = _setup(espanso, "--non-interactive", "--no-deploy", "--use", "local")
     assert result.exit_code == 0, result.output
-    assert "ok: improve reached the stub" in result.stdout
+    assert "ok: -il- (ollama): passed: improve reached the stub" in result.stdout
     assert store.health().operations == 1
     assert _history_rows() == before
 
@@ -1361,11 +1376,99 @@ def smoke_ok(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 def test_setup_local_provider_takes_no_key(
     saved: Path, espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
 ) -> None:
-    args = ("--non-interactive", "--provider", "ollama", "--api-key-stdin")
-    result = _setup(espanso, *args, input=f"{KEY}\n")
+    for args in (("--use", "local"), ("--provider", "ollama")):
+        result = _setup(espanso, "--non-interactive", *args, "--api-key-stdin", input=f"{KEY}\n")
+        assert result.exit_code == 1
+        assert f"--api-key-stdin was given, but {args[1]} takes no key" in result.stderr
+        assert not (saved / "secrets.toml").exists()
+    # The test follows the answer (local, still saved), never PROMPT_PROVIDER.
+    assert smoke_ok == ["ollama", "ollama"]
+
+
+# --- setup: cloud or local, and the output (#390) -----------------------------------------
+
+
+def test_setup_use_local_refuses_the_cloud_triggers(
+    saved: Path, espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
+) -> None:
+    result = _setup(espanso, "--non-interactive", "--use", "local")
+    assert result.exit_code == 0, result.output
+    assert "  Triggers: local; profile: default; output: paste" in result.stdout
+    # What local does is said, with the triggers from the match files.
+    assert "-i-, -iok-, -ip-, -if- then answer with a refusal marker" in result.stdout
+    assert "PROMPT_LOCAL_ONLY=true saved in " in result.stdout
+    assert settings_service.load_layers()[1].local_only
+    assert "No key needed: PROMPT_LOCAL_ONLY=true refuses" in result.stdout
+    assert "OPENROUTER_API_KEY is not set" not in result.stdout
+    assert smoke_ok == ["ollama"]
+    assert "ok: -il- (ollama): passed" in result.stdout
+    # A re-run without --use keeps the answer: nothing about PROMPT_LOCAL_ONLY changes.
+    result = _setup(espanso, "--non-interactive")
+    assert "  Triggers: local;" in result.stdout
+    assert settings_service.load_layers()[1].local_only
+    assert smoke_ok == ["ollama", "ollama"]
+
+
+def test_setup_use_cloud_after_local_removes_local_only(
+    saved: Path, espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
+) -> None:
+    assert _setup(espanso, "--non-interactive", "--use", "local").exit_code == 0
+    result = _setup(espanso, "--non-interactive", "--use", "cloud")
+    assert result.exit_code == 0, result.output
+    assert "PROMPT_LOCAL_ONLY removed from " in result.stdout
+    assert "PROMPT_LOCAL_ONLY" not in (saved / "config.toml").read_text("utf-8")
+    assert not settings_service.load_layers()[1].local_only
+    assert "OPENROUTER_API_KEY: not set; needed by -i-" in result.stdout
+    assert smoke_ok == ["ollama", "openrouter"]
+    assert "ok: -i- (openrouter): passed" in result.stdout
+
+
+def test_setup_use_both_runs_both_paths_and_reads_the_openrouter_key(
+    saved: Path, espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
+) -> None:
+    result = _setup(espanso, "--non-interactive", "--use", "both", "--api-key-stdin", input=KEY)
+    assert result.exit_code == 0, result.output
+    assert smoke_ok == ["openrouter", "ollama"]
+    assert settings_service.load_layers()[0].entries["OPENROUTER_API_KEY"].value == KEY
+    assert KEY not in result.output
+
+
+def test_setup_both_paths_fail_alone(
+    saved: Path, espanso: Path, fake_run: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        smoke, "run", lambda p: smoke.SmokeResult(p == "ollama", "", 1, f"{p} said so")
+    )
+    result = _setup(espanso, "--non-interactive", "--use", "both", "--no-deploy")
     assert result.exit_code == 1
-    assert "takes no key" in result.stderr
-    assert not (saved / "secrets.toml").exists()
+    assert "-i- (openrouter): failed (improve --provider openrouter): openrouter said so" in (
+        result.stderr
+    )
+    assert "ok: -il- (ollama): passed: ollama said so" in result.stdout
+
+
+def test_setup_output_clipboard_and_back(
+    saved: Path, espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
+) -> None:
+    result = _setup(espanso, "--non-interactive", "--output", "clipboard", "--no-smoke-test")
+    assert result.exit_code == 0, result.output
+    assert "PROMPT_OUTPUT=clipboard saved in " in result.stdout
+    assert settings_service.load_layers()[1].output == "clipboard"
+    result = _setup(espanso, "--non-interactive", "--output", "paste", "--no-smoke-test")
+    assert "PROMPT_OUTPUT removed from " in result.stdout
+    assert "PROMPT_OUTPUT" not in (saved / "config.toml").read_text("utf-8")
+
+
+def test_setup_in_legacy_mode_saves_neither_new_choice(
+    espanso: Path, fake_run: FakeRunner, smoke_ok: list[str]
+) -> None:
+    result = _setup(espanso, "--non-interactive", "--use", "local", "--output", "clipboard")
+    assert result.exit_code == 0, result.output
+    assert "to do: set PROMPT_LOCAL_ONLY=true, PROMPT_OUTPUT=clipboard yourself" in result.stdout
+    assert not config.settings_file().exists()
+    settings = settings_service.load_layers()[1]
+    assert (settings.local_only, settings.output) == (False, "paste")
+    # The test still follows the answer.
     assert smoke_ok == ["ollama"]
 
 
@@ -1470,17 +1573,20 @@ def test_setup_option_errors(
     opened: list[object] = []
     monkeypatch.setattr(ui_cmd, "open_setup", opened.append)
     assert _setup(espanso, "--api-key-stdin").exit_code == 2
-    # On a terminal too, a bad --provider or --profile is refused before the wizard opens.
-    assert _setup(espanso, "--provider", "nope").exit_code == 2
+    # On a terminal too, a bad choice is refused before the wizard opens.
+    for option, value in (("--provider", "nope"), ("--use", "nope"), ("--output", "nope")):
+        assert _setup(espanso, option, value).exit_code == 2
     assert _setup(espanso, "--profile", "nosuch").exit_code == 2
+    # The deprecated --provider has no step on a terminal, where nothing is saved unasked.
+    monkeypatch.setenv("COLUMNS", "400")  # the error panel wraps at the terminal width
+    result = _setup(espanso, "--provider", "ollama")
+    assert result.exit_code == 2
+    assert "pass --use cloud|local|both" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     assert opened == []
     assert _setup(espanso, "--non-interactive", "--profile", "nosuch").exit_code == 2
+    # PROMPT_PROVIDER is no longer setup's business: a bad one does not stop it (doctor says).
     monkeypatch.setenv("PROMPT_PROVIDER", "nope")
-    # The error panel wraps at the terminal width, which differs on CI runners.
-    monkeypatch.setenv("COLUMNS", "400")
-    result = _setup(espanso, "--non-interactive")
-    assert result.exit_code == 2
-    assert "pass --provider" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert _setup(espanso, "--non-interactive", "--no-smoke-test").exit_code == 0
 
 
 def test_setup_in_legacy_mode_lists_what_to_set(
@@ -1488,7 +1594,7 @@ def test_setup_in_legacy_mode_lists_what_to_set(
 ) -> None:
     result = _setup(espanso, "--non-interactive", "--provider", "ollama")
     assert result.exit_code == 0
-    assert "to do: set PROMPT_PROVIDER=ollama" in result.stdout
+    assert "to do: set PROMPT_PROVIDER=ollama yourself" in result.stdout
 
 
 def test_smoke_reports_a_cli_that_cannot_start() -> None:

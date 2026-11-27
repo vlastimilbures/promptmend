@@ -164,11 +164,11 @@ def test_overrides_reach_every_provider() -> None:
     assert [s.name for s in PROVIDERS.values() if s.effort] == ["openrouter", "openai"]
 
 
-def test_setup_lists_every_provider_cloud_first() -> None:
-    choices = setup_guide.provider_choices(Settings(), assets.triggers())
-    assert [c.value for c in choices] == _ids(CLOUD) + _ids(LOCAL)
-    assert [c.title for c in choices] == [s.label for s in CLOUD + LOCAL]
-    assert all(c.detail.startswith(s.help) for c, s in zip(choices, CLOUD + LOCAL, strict=True))
+# Setup's "both" tests one cloud and one local provider, each a trigger's (#390).
+def test_setup_tests_a_cloud_and_a_local_provider() -> None:
+    runs = setup_guide.smoke_runs(setup_guide.BOTH, assets.triggers(), Settings())
+    assert [PROVIDERS[run.provider].cloud for run in runs] == [True, False]
+    assert all(run.trigger for run in runs)
 
 
 # The stub runs point every provider at 127.0.0.1 with the placeholder key, never the real one.

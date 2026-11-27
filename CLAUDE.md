@@ -188,7 +188,10 @@ the CLI again.
   key-like values.
 - `setup` on a terminal opens the wizard (its flags only prefill or skip steps; nothing is
   written without a press); `--non-interactive`/`--plain` asks nothing, deploys only with
-  `--deploy`, and always discloses the usage history (D-HIST-0).
+  `--deploy`, and always discloses the usage history (D-HIST-0). It never asks for
+  `PROMPT_PROVIDER` (no trigger reads it; `--provider` is deprecated, #390): it asks cloud,
+  local (`PROMPT_LOCAL_ONLY=true`) or both, and its keys step and test follow that answer's
+  triggers, whose names come from the match files.
 - `tests/test_commands.py` walks the whole command tree (no secret-named option, no key saved
   from a value, no traceback on broken config): add a new command to its `_commands()`.
 - `doctor` changes nothing except replaying the history spool and refreshing the

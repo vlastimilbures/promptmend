@@ -254,6 +254,9 @@ API), so `PROMPT_PROVIDER` does not make `-i-` local. To rule out cloud calls, s
 promptmend config set PROMPT_LOCAL_ONLY true
 ```
 
+Setup's Cloud or local step saves the same setting when you answer local (`promptmend setup
+--non-interactive --use local` without the wizard).
+
 Every trigger or command that would send the draft off your machine then pastes
 `[promptmend: PROMPT_LOCAL_ONLY=true: … would send the draft off this machine]` instead.
 
