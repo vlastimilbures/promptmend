@@ -133,7 +133,10 @@ No code path builds a provider that can reach another machine without the gate.
 ### What it blocks
 
 - Payment card numbers (Luhn-checked, also when split by double spaces, tabs, dashes or one
-  line break), IBANs (checksum-validated) and email addresses.
+  line break), IBANs (checksum-validated) and email addresses. A number written without
+  separators also needs the prefix and length of a card brand (Visa, Mastercard, American
+  Express, Discover, JCB, Diners Club, UnionPay), so a millisecond timestamp or a long ID in a
+  log is not taken for a card. Maestro is not in that list.
 - API keys (OpenRouter, Anthropic, OpenAI, Stripe, GitHub, GitLab, Hugging Face, Slack, Google,
   xAI, npm, AWS including temporary `ASIA…` keys), Azure storage keys and SAS signatures, JWTs,
   bearer and `Basic` credentials, `curl -u user:password`, PEM/OpenSSH/PGP private keys and

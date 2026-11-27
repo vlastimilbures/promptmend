@@ -28,6 +28,19 @@ All notable changes to this project are documented here. The format follows
   Space opens and closes; closed, the list fits two screens at 80x24 when the tab opens.
   The `/` filter still searches every setting, fold or not.
 
+### Fixed
+- The gate no longer blocks millisecond timestamps and long numeric IDs as card numbers
+  (#397). Any run of 13 to 19 digits that passed the Luhn checksum counted as
+  `payment_card`, which one random number in ten does, so about 10% of drafts with a
+  timestamp such as `ts=1732700000000` or an 18-digit ID were blocked, with no `-iok-` way
+  through. A number written without separators now also needs the prefix and length of a
+  card brand (Visa, Mastercard, American Express, Discover, JCB, Diners Club, UnionPay; not
+  Maestro), and so does a run of 13 or more digits together with the number next to it
+  (`1732700000000 4521`). A card of one of these brands, with or without separators, and
+  any grouped number that passes the checksum (`4111 1111 1111 1111`) are still blocked as
+  before. A card of another brand written without separators is no longer found. A Unix
+  time with a fraction (`1732700000.123456`) still counts as a grouped number.
+
 ## 0.27.0 - 2026-11-17
 
 ### Added
