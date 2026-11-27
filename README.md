@@ -165,8 +165,9 @@ More: [docs/install.md](https://github.com/vlastimilbures/promptmend/blob/main/d
    promptmend                 # or the full-screen interface
    ```
 
-   `setup` asks for the provider, the profile and the API key, then previews the Espanso
-   match files and deploys them only if you agree. It ends with a test call against a local
+   `setup` asks whether you use the cloud triggers, the local ones or both, then for the API
+   key, the profile and paste or clipboard output, previews the Espanso match files and
+   deploys them only if you agree. It ends with a test call against a local
    stub, never a paid call.
 2. Copy a rough draft.
 3. Type `-i-` in any text field. Wait a few seconds without typing or switching windows:
@@ -220,7 +221,7 @@ More: [docs/usage.md](https://github.com/vlastimilbures/promptmend/blob/main/doc
 | Command | What it does |
 |---------|--------------|
 | `promptmend` / `promptmend ui` | Opens the full-screen interface |
-| `promptmend setup` | First run: provider, profile, key, match files and a smoke test |
+| `promptmend setup` | First run: cloud or local, key, profile, output, match files and a smoke test |
 | `promptmend doctor` | Checks the install, settings, keys, Espanso, match files and history |
 | `promptmend config show` | Every setting, its value and where it comes from |
 | `promptmend config set NAME VALUE` | Saves a setting after checking it |

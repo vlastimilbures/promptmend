@@ -165,7 +165,10 @@ ModalScreen { align: center middle; }
 #setup-body { padding: 1 2; }
 #setup-title { text-style: bold; margin-bottom: 1; }
 #setup-steps { height: 1fr; }
-#setup-steps OptionList { height: auto; max-height: 14; }
+/* No border: the Cloud or local step (its question, three choices and the note) fits at
+   80x24 with the list focused; the highlight marks the choice. */
+#setup-steps OptionList { height: auto; max-height: 14; border: none; padding: 0; }
+#setup-use-intro, #setup-use-note { margin: 0; }
 #setup-welcome-notes { margin-top: 1; }
 #setup-steps Input { margin-bottom: 1; }
 #setup-next { margin-top: 1; text-style: bold; }

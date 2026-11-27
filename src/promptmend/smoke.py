@@ -196,19 +196,23 @@ def _stub_urls(port: int) -> dict[str, str]:
 
 
 def stub_env(port: int, environ: Mapping[str, str]) -> dict[str, str]:
-    """``environ`` with every provider pointed at the stub, placeholder keys and no history."""
+    """``environ`` with every provider pointed at the stub, placeholder keys, no history and
+    paste output: a run checks the wiring by what improve prints, and must never put the
+    stub's reply on the clipboard, whatever PROMPT_OUTPUT the person chose."""
     urls = _stub_urls(port)
     return {
         **environ,
         **{spec.url_setting: urls[name] for name, spec in PROVIDERS.items()},
         **{spec.key: PLACEHOLDER_KEY for spec in PROVIDERS.values() if spec.key},
         "PROMPT_HISTORY": "false",
+        "PROMPT_OUTPUT": "paste",
     }
 
 
 def stub_settings(cfg: Settings, port: int) -> Settings:
     """``cfg`` pointed at the stub as stub_env() points the environment: every provider's
-    base URL, placeholder keys and no history."""
+    base URL, placeholder keys and no history. Its output is left alone: its one user, the Try
+    tab (try_run.py), rewrites through pipeline.rewrite() and never delivers."""
     urls = _stub_urls(port)
     changes: dict[str, Any] = {spec.url_field: urls[name] for name, spec in PROVIDERS.items()}
     changes |= {spec.key_field: PLACEHOLDER_KEY for spec in PROVIDERS.values() if spec.key_field}

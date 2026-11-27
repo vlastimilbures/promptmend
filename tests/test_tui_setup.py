@@ -4,14 +4,16 @@ the real services into per-test folders; Espanso is a fake runner and the smoke 
 from __future__ import annotations
 
 import dataclasses
+import os
 from pathlib import Path
 
 import pytest
 from test_tui import KEY, FakeRunner, drive, press, settle
+from textual.containers import VerticalScroll
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Static
 
-from promptmend import config, config_store, deploy, settings_service, smoke
+from promptmend import config, config_store, deploy, prompt_builder, settings_service, smoke
 from promptmend.commands import common
 from promptmend.commands import setup as setup_cmd
 from promptmend.commands import ui as ui_cmd
@@ -75,6 +77,21 @@ async def _pick(app: ManageApp, pilot: Pilot[int], selector: str, value: str) ->
     await press(app, pilot, "#setup-next-step")
 
 
+def _highlighted(app: ManageApp, selector: str) -> str | None:
+    option = app.screen.query_one(selector, OptionList).highlighted_option
+    return option.id if option else None
+
+
+def _marked(app: ManageApp, selector: str) -> list[str]:
+    """The choices shown as (current)."""
+    options = app.screen.query_one(selector, OptionList)
+    return [
+        str(o.id)
+        for o in (options.get_option_at_index(i) for i in range(options.option_count))
+        if "(current)" in str(o.prompt)
+    ]
+
+
 def _options(espanso: FakeRunner, **kw: object) -> SetupOptions:
     return SetupOptions(espanso_dir=str(espanso.root), standalone=True, **kw)  # type: ignore[arg-type]
 
@@ -84,20 +101,42 @@ def test_wizard_walks_every_step_and_saves(
 ) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         wizard = _wizard(app)
-        assert wizard.order == ["welcome", "provider", "profile", "keys", "espanso", "test", "done"]
-        assert "Step 1 of 7" in _text(app, "#setup-title")
+        assert wizard.order == [
+            "welcome",
+            "use",
+            "keys",
+            "profile",
+            "output",
+            "espanso",
+            "test",
+            "done",
+        ]
+        assert "Step 1 of 8" in _text(app, "#setup-title")
         await press(app, pilot, "#setup-next-step")
-        assert wizard.at == "provider"
-        await _pick(app, pilot, "#setup-providers", "ollama")
+        assert wizard.at == "use"
+        assert "Step 2 of 8 · Cloud or local" in _text(app, "#setup-title")
+        # What local does is said before Next, with the triggers from the match files.
+        intro = _text(app, "#setup-use-note")
+        assert "-i-, -iok-, -ip- and -if- then paste a refusal instead of sending" in intro
+        assert "Use -il- (Ollama) or -ilm- (LM Studio)." in intro
+        # Cloud and both are not stored: nothing is current, the highlight starts on cloud.
+        assert _marked(app, "#setup-uses") == []
+        assert _highlighted(app, "#setup-uses") == "cloud"
+        await _pick(app, pilot, "#setup-uses", "local")
+        assert wizard.at == "keys"
+        assert settings_service.load_layers()[1].local_only
+        # The refused triggers need no key, and the line says why.
+        assert "not needed: PROMPT_LOCAL_ONLY=true refuses -i-" in _text(
+            app, "#setup-line-OPENROUTER_API_KEY"
+        )
+        await press(app, pilot, "#setup-next-step")
         assert wizard.at == "profile"
         await _pick(app, pilot, "#setup-profiles", "general")
-        assert wizard.at == "keys"
-        # Ollama is the provider, yet -i- still runs on OpenRouter: its key is asked for.
-        assert "needed by -i-" in _text(app, "#setup-line-OPENROUTER_API_KEY")
-        app.screen.query_one("#setup-key-OPENROUTER_API_KEY", Input).value = KEY
-        await press(app, pilot, "#setup-next-step")
+        assert wizard.at == "output"
+        assert "Espanso shows nothing while a rewrite runs" in _text(app, "#setup-output-intro")
+        assert _marked(app, "#setup-outputs") == ["paste"]
+        await _pick(app, pilot, "#setup-outputs", "clipboard")
         assert wizard.at == "espanso"
-        assert app.screen.query_one("#setup-key-OPENROUTER_API_KEY", Input).value == ""
         assert "not installed yet" in _text(app, "#setup-files")
         await press(app, pilot, "#setup-deploy")
         assert sorted(p.name for p in (espanso.root / "match").iterdir()) == [
@@ -108,32 +147,450 @@ def test_wizard_walks_every_step_and_saves(
         assert ["espanso", "restart"] in espanso.calls
         await press(app, pilot, "#setup-next-step")
         assert wizard.at == "test"
+        # The test takes the path of the answer's triggers, never PROMPT_PROVIDER's.
+        assert "`promptmend improve --provider ollama` (the path -il- takes)" in _text(
+            app, "#setup-test-intro"
+        )
         await press(app, pilot, "#setup-run-test")
         assert smoke_ok == ["ollama"]
+        assert "-il- (ollama): passed" in str(wizard.query_one(".result", Static).render())
         await press(app, pilot, "#setup-next-step")
         assert wizard.at == "done"
         summary = _text(app, "#setup-summary")
-        assert "✓ OPENROUTER_API_KEY: set" in summary
+        assert "✓ Triggers: local (PROMPT_LOCAL_ONLY=true: the cloud triggers refuse)" in summary
+        assert "✓ Profile: general" in summary
+        assert "✓ Output: clipboard" in summary
+        assert "OPENROUTER_API_KEY" not in summary
         assert "✓ Match files: installed" in summary
         assert "✓ Test: passed" in summary
         await press(app, pilot, "#setup-quit")
 
     app = drive(scenario, setup=_options(espanso))
     assert app.return_code == 0
-    layers, settings = settings_service.load_layers()
-    assert (settings.provider, settings.profile) == ("ollama", "general")
-    assert layers.entries["OPENROUTER_API_KEY"].value == KEY
+    settings = settings_service.load_layers()[1]
+    assert (settings.local_only, settings.profile, settings.output) == (
+        True,
+        "general",
+        "clipboard",
+    )
+    assert settings.provider == "openrouter"  # never asked
     commands = [entry.command for entry in app.session]
-    assert "promptmend config set PROMPT_PROVIDER ollama" in commands
+    assert commands[:3] == [
+        "promptmend config set PROMPT_LOCAL_ONLY true",
+        "promptmend config set PROMPT_PROFILE general",
+        "promptmend config set PROMPT_OUTPUT clipboard",
+    ]
     assert "promptmend espanso deploy" in commands
+
+
+def test_wizard_both_asks_for_the_key_and_tests_both_paths(
+    saved: Path, espanso: FakeRunner, smoke_ok: list[str]
+) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "both")
+        assert wizard.at == "keys"
+        assert "needed by -i-" in _text(app, "#setup-line-OPENROUTER_API_KEY")
+        app.screen.query_one("#setup-key-OPENROUTER_API_KEY", Input).value = KEY
+        await press(app, pilot, "#setup-next-step")
+        assert wizard.at == "profile"
+        assert app.screen.query_one("#setup-key-OPENROUTER_API_KEY", Input).value == ""
+        wizard.go("test")
+        await settle(pilot)
+        intro = _text(app, "#setup-test-intro")
+        assert "(the path -i- takes) and `promptmend improve --provider ollama`" in intro
+        await press(app, pilot, "#setup-run-test")
+        assert smoke_ok == ["openrouter", "ollama"]
+        wizard.go("done")
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "✓ Triggers: both" in summary
+        assert "✓ OPENROUTER_API_KEY: set" in summary
+
+    app = drive(scenario, setup=_options(espanso))
+    assert settings_service.load_layers()[0].entries["OPENROUTER_API_KEY"].value == KEY
+    assert not settings_service.load_layers()[1].local_only
     assert not any(KEY in entry.command or KEY in entry.message for entry in app.session)
+
+
+def test_wizard_test_failure_names_the_path(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake(provider: str) -> smoke.SmokeResult:
+        if provider == "ollama":
+            raise OSError("no python")
+        return smoke.SmokeResult(True, smoke.REPLY, 1, "fine")
+
+    monkeypatch.setattr(smoke, "run", fake)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "both")
+        wizard.go("test")
+        await settle(pilot)
+        await press(app, pilot, "#setup-run-test")
+        result = str(wizard.query_one(".result", Static).render())
+        assert "-i- (openrouter): passed: fine" in result
+        assert "-il- (ollama): failed: error: no python" in result
+        assert wizard.tested is False
+
+    drive(scenario, setup=_options(espanso))
+
+
+def test_wizard_local_saves_although_the_shell_says_true_and_says_so(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Espanso does not start from the shell, so config.toml must hold the answer; the
+    save's warning stays on screen on the next step."""
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "local")
+        assert wizard.at == "keys"
+        result = str(wizard.query_one(".result", Static).render())
+        # Only the warning is carried; what was saved, and where, is in the log.
+        assert "saved in" not in result
+        assert "the environment variable PROMPT_LOCAL_ONLY is set and overrides" in result
+        assert "PROMPT_LOCAL_ONLY=true saved in " in app.session[-1].message
+
+    app = drive(scenario, setup=_options(espanso))
+    assert config_store.read_settings().table.get("PROMPT_LOCAL_ONLY") is True
+    assert [entry.command for entry in app.session] == [
+        "promptmend config set PROMPT_LOCAL_ONLY true"
+    ]
+
+
+def test_wizard_done_names_an_environment_variable_that_disagrees(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "false")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "local")
+        # The keys follow the answer: no cloud key is asked for after local.
+        assert "not needed: PROMPT_LOCAL_ONLY=true refuses -i-" in _text(
+            app, "#setup-line-OPENROUTER_API_KEY"
+        )
+        wizard.go("done")
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "✗ Triggers: local, but the environment variable PROMPT_LOCAL_ONLY overrides" in (
+            summary
+        )
+        assert "remove it from the environment" in summary
+        assert "config set PROMPT_LOCAL_ONLY" not in summary
+        assert "OPENROUTER_API_KEY" not in summary
+        assert "type -il- " in _text(app, "#setup-next")
+
+    drive(scenario, setup=_options(espanso))
+    assert config_store.read_settings().table.get("PROMPT_LOCAL_ONLY") is True
+
+
+def test_wizard_test_result_goes_with_its_answer(
+    saved: Path, espanso: FakeRunner, smoke_ok: list[str]
+) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "cloud")
+        wizard.go("test")
+        await settle(pilot)
+        await press(app, pilot, "#setup-run-test")
+        assert wizard.tested is True
+        wizard.go("use")
+        await settle(pilot)
+        await _pick(app, pilot, "#setup-uses", "local")
+        assert wizard.tested is None
+        wizard.go("done")
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "✗ Test: not run" in summary
+        assert "✓ Test" not in summary
+
+    drive(scenario, setup=_options(espanso))
+    assert smoke_ok == ["openrouter"]
+
+
+def test_wizard_local_tests_the_trigger_that_stays_local(
+    saved: Path, espanso: FakeRunner, smoke_ok: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OLLAMA_BASE_URL", "https://ollama.example.com")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "local")
+        wizard.go("test")
+        await settle(pilot)
+        assert "(the path -ilm- takes)" in _text(app, "#setup-test-intro")
+        await press(app, pilot, "#setup-run-test")
+        monkeypatch.setenv("LMSTUDIO_BASE_URL", "https://lm.example.com/v1")
+        app.reload()
+        await settle(pilot)
+        assert "Nothing runs on the local path" in _text(app, "#setup-test-intro")
+        await press(app, pilot, "#setup-run-test")
+        assert wizard.tested is False
+        assert "local: not run: no trigger stays on this computer" in str(
+            wizard.query_one(".result", Static).render()
+        )
+
+    drive(scenario, setup=_options(espanso))
+    assert smoke_ok == ["lmstudio"]
+
+
+def test_wizard_names_the_deprecated_provider_and_saves_it_not(
+    saved: Path, espanso: FakeRunner
+) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        notes = _text(app, "#setup-welcome-notes")
+        assert "--provider is deprecated and will be removed in a later release" in notes
+        assert "this setup has no step for it, so PROMPT_PROVIDER was not saved" in notes
+        assert "no trigger reads it" in notes
+        assert "`promptmend config set PROMPT_PROVIDER ollama` saves it" in notes
+        await press(app, pilot, "#setup-next-step")
+        assert _highlighted(app, "#setup-uses") == "local"
+        assert wizard.at == "use"
+
+    drive(scenario, setup=_options(espanso, provider="ollama", use="local"))
+    assert not config.settings_file().exists()
+
+
+def _row_visible(app: ManageApp, step: str, selector: str) -> bool:
+    """Whether the list's highlighted choice shows: inside the list's own scroll view and the
+    step's. (Textual's line map is private; a test may read it, the wizard does not.)"""
+    options = app.screen.query_one(selector, OptionList)
+    scroller = app.screen.query_one(f"#setup-{step}", VerticalScroll)
+    index = options.highlighted
+    assert index is not None
+    in_list = options._index_to_line[index] - options.scroll_y
+    height = options._heights[index]
+    if in_list < 0 or in_list + height > options.scrollable_content_region.height:
+        return False
+    top = options.virtual_region.y + in_list
+    return scroller.scroll_y <= top and top + height <= scroller.scroll_y + scroller.size.height
+
+
+def test_wizard_shows_what_config_toml_holds_and_a_plain_next_writes_nothing(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The current value of each choice is config.toml's (or the default), whatever the shell
+    says: a re-run with a plain Next on every step writes nothing."""
+    saved.mkdir(parents=True, exist_ok=True)
+    (saved / "config.toml").write_text('PROMPT_OUTPUT = "clipboard"\n', "utf-8")
+    monkeypatch.setenv("PROMPT_OUTPUT", "paste")
+    monkeypatch.setenv("PROMPT_PROFILE", "general")
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        assert _marked(app, "#setup-uses") == []
+        assert _highlighted(app, "#setup-uses") == "cloud"
+        assert _marked(app, "#setup-profiles") == ["default"]
+        assert _marked(app, "#setup-outputs") == ["clipboard"]
+        assert _highlighted(app, "#setup-outputs") == "clipboard"
+        while wizard.at != "espanso":
+            await press(app, pilot, "#setup-next-step")
+        wizard.go("done")
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "✓ Profile: default (the environment variable PROMPT_PROFILE overrides it" in (
+            summary
+        )
+        assert (
+            "✓ Output: clipboard (the environment variable PROMPT_OUTPUT overrides it wherever "
+            "it is set: paste)" in summary
+        )
+        # Read back as cloud (config.toml holds no PROMPT_LOCAL_ONLY): the shell's true is a
+        # mismatch, not the answer.
+        assert "✗ Triggers: cloud, but the environment variable PROMPT_LOCAL_ONLY" in summary
+        assert "waits on the clipboard" in _text(app, "#setup-next")
+
+    app = drive(scenario, setup=_options(espanso))
+    assert app.session == []
+    assert (saved / "config.toml").read_text("utf-8") == 'PROMPT_OUTPUT = "clipboard"\n'
+
+
+def test_wizard_local_note_says_is_set_only_when_config_toml_holds_it(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        assert _text(app, "#setup-use-note").startswith("Local saves PROMPT_LOCAL_ONLY=true:")
+
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")  # the shell alone: not set for Espanso
+    drive(scenario, setup=_options(espanso))
+    monkeypatch.delenv("PROMPT_LOCAL_ONLY")
+    saved.mkdir(parents=True, exist_ok=True)
+    (saved / "config.toml").write_text("PROMPT_LOCAL_ONLY = true\n", "utf-8")
+
+    async def again(app: ManageApp, pilot: Pilot[int]) -> None:
+        note = _text(app, "#setup-use-note")
+        assert note.startswith("PROMPT_LOCAL_ONLY=true is set: -i-")
+        assert note.endswith("Cloud or Both turns it off again.")
+        assert _marked(app, "#setup-uses") == ["local"]
+
+    drive(again, setup=_options(espanso))
+
+
+def test_wizard_legacy_local_only_says_to_remove_it_from_the_file(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    legacy = Path(os.environ["PROMPTMEND_ENV"])
+    legacy.write_text("PROMPT_LOCAL_ONLY=true\n", "utf-8")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        note = _text(app, "#setup-use-note")
+        assert note.startswith("PROMPT_LOCAL_ONLY=true is set: ")
+        assert note.endswith(f"Remove it from {legacy} to turn it off.")
+        assert "turns it off again" not in note
+
+    drive(scenario, setup=_options(espanso))
+
+
+def test_wizard_clipboard_output_passes_the_test_and_leaves_the_clipboard(
+    saved: Path, espanso: FakeRunner, smoke_in_process: list[str]
+) -> None:
+    """The stub run prints its reply (paste output) whatever PROMPT_OUTPUT says, so it
+    passes and never copies the stub's reply."""
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        wizard.go("output")
+        await settle(pilot)
+        await _pick(app, pilot, "#setup-outputs", "clipboard")
+        wizard.go("test")
+        await settle(pilot)
+        await press(app, pilot, "#setup-run-test")
+        assert "-i- (openrouter): passed" in str(wizard.query_one(".result", Static).render())
+        assert wizard.tested is True
+
+    drive(scenario, setup=_options(espanso))
+    assert config_store.read_settings().table.get("PROMPT_OUTPUT") == "clipboard"
+    assert smoke_in_process == []
+
+
+@pytest.mark.parametrize("size", [(80, 24), (70, 24)])
+def test_wizard_a_carried_warning_never_hides_the_choice_enter_picks(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, size: tuple[int, int]
+) -> None:
+    monkeypatch.setenv("PROMPT_PROFILE", "default")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "local")
+        while wizard.at != "profile":
+            await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-profiles", "general")
+        assert wizard.at == "output"
+        result = str(wizard.query_one(".result", Static).render())
+        assert "the environment variable PROMPT_PROFILE is set and overrides" in result
+        assert "saved in" not in result
+        assert app.screen.focused is wizard.query_one("#setup-outputs", OptionList)
+        assert _row_visible(app, "output", "#setup-outputs")
+
+    drive(scenario, setup=_options(espanso), size=size)
+
+
+@pytest.mark.parametrize("step", ["use", "profile", "output"])
+def test_wizard_a_tall_message_still_shows_the_highlighted_choice(
+    saved: Path, espanso: FakeRunner, step: str
+) -> None:
+    """However many rows a carried message takes, the step scrolls (no further than needed)
+    to the choice the focused list has highlighted."""
+    lists = {"use": "#setup-uses", "profile": "#setup-profiles", "output": "#setup-outputs"}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        options = wizard.query_one(lists[step], OptionList)
+        options.highlighted = options.option_count - 1
+        wizard.report("", shown="\n".join(f"a warning line {n}" for n in range(9)))
+        wizard.go(step)
+        await settle(pilot)
+        assert app.screen.focused is options
+        assert _row_visible(app, step, lists[step])
+
+    drive(scenario, setup=_options(espanso), size=(80, 24))
+
+
+@pytest.mark.parametrize("pick", ["first", "last"])
+def test_wizard_a_profile_list_taller_than_the_screen_shows_the_highlighted_choice(
+    saved: Path, espanso: FakeRunner, pick: str
+) -> None:
+    """Many added profiles: the list is capped to the step's visible height and scrolls
+    inside itself to the highlighted choice."""
+    folder = prompt_builder.user_profiles_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    for n in range(20):
+        (folder / f"mine{n:02}.md").write_text("Rewrite the draft.", encoding="utf-8")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        options = wizard.query_one("#setup-profiles", OptionList)
+        assert options.option_count == 22
+        options.highlighted = 0 if pick == "first" else options.option_count - 1
+        wizard.go("profile")
+        await settle(pilot)
+        assert app.screen.focused is options
+        step = wizard.query_one("#setup-profile", VerticalScroll)
+        assert options.virtual_size.height > step.scrollable_content_region.height
+        assert _row_visible(app, "profile", "#setup-profiles")
+
+    drive(scenario, setup=_options(espanso), size=(80, 24))
+
+
+@pytest.mark.parametrize("size", [(80, 24), (70, 24)])
+@pytest.mark.parametrize("step", ["use", "profile", "output"])
+def test_wizard_a_list_step_that_fits_opens_on_its_question(
+    saved: Path, espanso: FakeRunner, size: tuple[int, int], step: str
+) -> None:
+    lists = {"use": "#setup-uses", "profile": "#setup-profiles", "output": "#setup-outputs"}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        wizard.go(step)
+        await settle(pilot)
+        assert app.screen.focused is wizard.query_one(lists[step], OptionList)
+        assert wizard.query_one(f"#setup-{step}", VerticalScroll).scroll_y == 0
+        assert _row_visible(app, step, lists[step])
+
+    drive(scenario, setup=_options(espanso), size=size)
+
+
+@pytest.mark.parametrize("size", [(80, 24), (70, 24)])
+def test_wizard_done_opens_at_the_top(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, size: tuple[int, int]
+) -> None:
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "false")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "local")
+        wizard.go("done")
+        await settle(pilot)
+        done = wizard.query_one("#setup-done", VerticalScroll)
+        assert done.max_scroll_y > 0  # taller than the screen, so opening at the top matters
+        assert done.scroll_y == 0
+        assert app.screen.focused is wizard.query_one("#setup-quit", Button)
+
+    drive(scenario, setup=_options(espanso), size=size)
 
 
 def test_wizard_unchanged_choice_writes_nothing(saved: Path, espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await press(app, pilot, "#setup-next-step")
-        await _pick(app, pilot, "#setup-providers", "openrouter")
+        await _pick(app, pilot, "#setup-uses", "cloud")
+        await press(app, pilot, "#setup-next-step")  # keys: none typed
         await _pick(app, pilot, "#setup-profiles", "default")
+        await _pick(app, pilot, "#setup-outputs", "paste")
+        assert _wizard(app).at == "espanso"
 
     app = drive(scenario, setup=_options(espanso))
     assert not config.settings_file().exists()
@@ -141,17 +598,58 @@ def test_wizard_unchanged_choice_writes_nothing(saved: Path, espanso: FakeRunner
 
 
 def test_wizard_default_choice_is_removed_not_pinned(saved: Path, espanso: FakeRunner) -> None:
-    config_store.save_settings(config_store.read_settings(), {"PROMPT_PROVIDER": "ollama"})
+    config_store.save_settings(
+        config_store.read_settings(), {"PROMPT_LOCAL_ONLY": "true", "PROMPT_OUTPUT": "clipboard"}
+    )
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
         await press(app, pilot, "#setup-next-step")
-        await _pick(app, pilot, "#setup-providers", "openrouter")
+        # A re-run reads the answer back: local is current while PROMPT_LOCAL_ONLY is true.
+        assert _marked(app, "#setup-uses") == ["local"]
+        assert _highlighted(app, "#setup-uses") == "local"
+        await _pick(app, pilot, "#setup-uses", "cloud")
+        assert wizard.at == "keys"
+        wizard.go("output")
+        await settle(pilot)
+        assert _highlighted(app, "#setup-outputs") == "clipboard"
+        await _pick(app, pilot, "#setup-outputs", "paste")
+        # Back from the next step returns to it, the new value now current.
+        await press(app, pilot, "#setup-back")
+        assert wizard.at == "output"
+        assert _marked(app, "#setup-outputs") == ["paste"]
 
     app = drive(scenario, setup=_options(espanso))
-    assert "PROMPT_PROVIDER" not in config_store.read_settings().table
-    assert settings_service.load_layers()[1].provider == "openrouter"
+    assert config_store.read_settings().values == {}
+    assert not settings_service.load_layers()[1].local_only
     # The log names the command that ran, not a `config set` (#237).
-    assert [entry.command for entry in app.session] == ["promptmend config unset PROMPT_PROVIDER"]
+    assert [entry.command for entry in app.session] == [
+        "promptmend config unset PROMPT_LOCAL_ONLY",
+        "promptmend config unset PROMPT_OUTPUT",
+    ]
+
+
+def test_wizard_shows_a_refused_save(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*_: object) -> None:
+        raise config_store.ConfigStoreError("read-only")
+
+    monkeypatch.setattr(config_store, "save_settings", refuse)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "local")
+        # Not saved: the step stays, says why and names the command it tried.
+        assert wizard.at == "use"
+        assert wizard.use is None
+        assert "read-only" in str(wizard.query_one(".result", Static).render())
+
+    app = drive(scenario, setup=_options(espanso))
+    assert [entry.command for entry in app.session] == [
+        "promptmend config set PROMPT_LOCAL_ONLY true"
+    ]
 
 
 def test_wizard_moves_on_in_legacy_env_mode(espanso: FakeRunner) -> None:
@@ -163,9 +661,7 @@ def test_wizard_moves_on_in_legacy_env_mode(espanso: FakeRunner) -> None:
         app.notify = lambda message, **kw: notes.append(message)  # type: ignore[method-assign]
         wizard = _wizard(app)
         await press(app, pilot, "#setup-next-step")
-        await _pick(app, pilot, "#setup-providers", "ollama")
-        assert wizard.at == "profile"
-        await _pick(app, pilot, "#setup-profiles", "default")  # unchanged: no note
+        await _pick(app, pilot, "#setup-uses", "local")
         assert wizard.at == "keys"
         # Keys go in that file too: no fields to type into, and Next moves on.
         assert "add each one there" in _text(app, "#setup-keys-intro")
@@ -174,16 +670,27 @@ def test_wizard_moves_on_in_legacy_env_mode(espanso: FakeRunner) -> None:
         assert not app.screen.query_one("#setup-save-keys", Button).display
         field.value = KEY
         await press(app, pilot, "#setup-next-step")
+        assert wizard.at == "profile"
+        await _pick(app, pilot, "#setup-profiles", "default")  # unchanged: no note
+        await _pick(app, pilot, "#setup-outputs", "clipboard")
         assert wizard.at == "espanso"
+        # The answer was not saved: Done says so, with what to add to that file.
+        wizard.go("done")
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "✗ Triggers: local, but PROMPT_LOCAL_ONLY is off" in summary
+        assert f"add PROMPT_LOCAL_ONLY=true to {settings_service.legacy_env()}" in summary
 
     app = drive(scenario, setup=_options(espanso))
+    legacy = settings_service.legacy_env()
     assert notes == [
-        f"PROMPT_PROVIDER not saved: PROMPTMEND_ENV is set, so settings stay in "
-        f"{settings_service.legacy_env()}; edit that file instead."
+        f"{name} not saved: PROMPTMEND_ENV is set, so settings stay in {legacy}; edit that "
+        "file instead."
+        for name in ("PROMPT_LOCAL_ONLY", "PROMPT_OUTPUT")
     ]
     assert app.session == []
     layers, settings = settings_service.load_layers()
-    assert settings.provider == "openrouter"
+    assert (settings.local_only, settings.output) == (False, "paste")
     assert layers.entries["OPENROUTER_API_KEY"].value != KEY
 
 
@@ -191,7 +698,7 @@ def test_wizard_back_and_escape(saved: Path, espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         wizard = _wizard(app)
         await press(app, pilot, "#setup-next-step")
-        assert wizard.at == "provider"
+        assert wizard.at == "use"
         await pilot.press("escape")
         await settle(pilot)
         assert wizard.at == "welcome"
@@ -223,7 +730,7 @@ def test_wizard_names_an_unread_dotenv(saved: Path, espanso: FakeRunner) -> None
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         wizard = _wizard(app)
-        assert wizard.order[:2] == ["welcome", "provider"]
+        assert wizard.order[:2] == ["welcome", "use"]
         assert f"{env} is no longer read" in _text(app, "#setup-welcome-notes")
 
     drive(scenario, setup=_options(espanso))
@@ -288,13 +795,14 @@ def test_setup_on_a_terminal_opens_the_wizard(
     assert result.exit_code == 0, result.output
     assert opened == [SetupOptions("/x", None, True, standalone=True)]
     # The other options prefill the wizard rather than switch to another mode (#244).
-    args = ["--provider", "ollama", "--profile", "general"]
+    args = ["--use", "local", "--profile", "general", "--output", "clipboard"]
     result = CliRunner().invoke(app, ["setup", *args, "--deploy", "--no-smoke-test"])
     assert result.exit_code == 0, result.output
     assert opened[1] == SetupOptions(
         standalone=True,
-        provider="ollama",
+        use="local",
         profile="general",
+        output="clipboard",
         deploy=True,
         smoke_test=False,
     )
@@ -303,7 +811,7 @@ def test_setup_on_a_terminal_opens_the_wizard(
     monkeypatch.setattr(smoke, "run", lambda p: smoke.SmokeResult(True, "", 1, "ok"))
     result = CliRunner().invoke(app, ["setup", "--plain"])
     assert result.exit_code == 0, result.output
-    assert "Provider: openrouter; profile: default" in result.stdout
+    assert "Triggers: cloud; profile: default; output: paste" in result.stdout
     assert len(opened) == 2
 
 
@@ -312,17 +820,24 @@ def test_wizard_options_prefill_and_skip_steps(
 ) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         wizard = _wizard(app)
-        assert wizard.order == ["welcome", "provider", "profile", "keys", "done"]
+        assert wizard.order == ["welcome", "use", "keys", "profile", "output", "done"]
         await press(app, pilot, "#setup-next-step")
-        assert wizard.at == "provider"
+        assert wizard.at == "use"
         # Preselected, not saved: Next saves it, as for a pick.
+        assert _highlighted(app, "#setup-uses") == "local"
         assert config_store.read_settings().values == {}
+        await press(app, pilot, "#setup-next-step")
+        assert wizard.at == "keys"
         await press(app, pilot, "#setup-next-step")
         assert wizard.at == "profile"
         await press(app, pilot, "#setup-next-step")
+        assert wizard.at == "output"
+        assert _highlighted(app, "#setup-outputs") == "clipboard"
+        await press(app, pilot, "#setup-next-step")
         assert config_store.read_settings().values == {
-            "PROMPT_PROVIDER": "ollama",
+            "PROMPT_LOCAL_ONLY": "true",
             "PROMPT_PROFILE": "general",
+            "PROMPT_OUTPUT": "clipboard",
         }
         wizard.go("done")
         await settle(pilot)
@@ -333,7 +848,12 @@ def test_wizard_options_prefill_and_skip_steps(
     drive(
         scenario,
         setup=_options(
-            espanso, provider="ollama", profile="general", deploy=False, smoke_test=False
+            espanso,
+            use="local",
+            profile="general",
+            output="clipboard",
+            deploy=False,
+            smoke_test=False,
         ),
     )
     assert smoke_ok == []

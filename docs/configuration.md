@@ -280,7 +280,7 @@ See [Privacy](privacy.md) for what each one changes.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `PROMPT_LOCAL_ONLY` | `false` | `true` refuses every provider that can send the draft off this machine |
+| `PROMPT_LOCAL_ONLY` | `false` | `true` refuses every provider that can send the draft off this machine. Setup's answer local sets it; cloud or both remove it |
 | `PROMPT_GATE_LOCAL` | `false` | `true` runs the gate for Ollama / LM Studio on `localhost` too (a local relay to a cloud API, or an `ollama cp` alias of a cloud model) |
 | `PROMPT_EXTRA_PATTERNS` | *(empty)* | Your own `;`-separated regexes for the gate |
 | `PROMPT_GATE_PACKS` | `vn` | Comma-separated pattern packs the gate also scans with (`vn`: Vietnamese ID numbers and labels); empty turns them off and weakens the gate |

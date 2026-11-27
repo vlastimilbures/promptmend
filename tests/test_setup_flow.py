@@ -65,7 +65,7 @@ def test_save_choice_saves_and_unsets_a_default(saved: Path) -> None:
     assert config_store.read_settings().values == {"PROMPT_PROVIDER": "ollama"}
     message, argv = setup_flow.save_choice("PROMPT_PROVIDER", "openrouter")
     assert message is not None
-    assert "its default, openrouter, applies" in message
+    assert "back to the built-in PROMPT_PROVIDER=openrouter" in message
     assert argv == ["unset", "PROMPT_PROVIDER"]
     assert config_store.read_settings().values == {}
     assert setup_flow.choice_command("PROMPT_PROFILE", "default") == ["unset", "PROMPT_PROFILE"]
@@ -76,13 +76,111 @@ def test_save_choice_saves_and_unsets_a_default(saved: Path) -> None:
     ]
 
 
+def test_local_only_follows_the_answer(saved: Path) -> None:
+    """#390: local saves PROMPT_LOCAL_ONLY=true; cloud and both remove it again, so its
+    default applies; an unchanged answer writes nothing."""
+    settings = settings_service.load_layers()[1]
+    assert setup_flow.current_use(settings) == "cloud"
+    assert [setup_flow.local_only_value(use) for use in setup_guide.USES] == [
+        "false",
+        "true",
+        "false",
+    ]
+    assert setup_flow.save_choice("PROMPT_LOCAL_ONLY", "false") == (None, [])
+    message, argv = setup_flow.save_choice("PROMPT_LOCAL_ONLY", "true")
+    assert message is not None
+    assert message.startswith("PROMPT_LOCAL_ONLY=true saved in ")
+    assert argv == ["set", "PROMPT_LOCAL_ONLY", "true"]
+    settings = settings_service.load_layers()[1]
+    assert settings.local_only
+    assert setup_flow.current_use(settings) == "local"
+    assert setup_flow.save_choice("PROMPT_LOCAL_ONLY", "true") == (None, [])
+    message, argv = setup_flow.save_choice("PROMPT_LOCAL_ONLY", "false")
+    assert message is not None
+    assert "back to the built-in PROMPT_LOCAL_ONLY=false" in message
+    assert argv == ["unset", "PROMPT_LOCAL_ONLY"]
+    assert "PROMPT_LOCAL_ONLY" not in config_store.read_settings().table
+
+
+def test_output_choice_saves_and_unsets(saved: Path) -> None:
+    message, argv = setup_flow.save_choice("PROMPT_OUTPUT", "clipboard")
+    assert message is not None
+    assert argv == ["set", "PROMPT_OUTPUT", "clipboard"]
+    assert setup_flow.current_choice("PROMPT_OUTPUT") == "clipboard"
+    _, argv = setup_flow.save_choice("PROMPT_OUTPUT", "paste")
+    assert argv == ["unset", "PROMPT_OUTPUT"]
+    assert config_store.read_settings().values == {}
+
+
+def _file() -> dict[str, object]:
+    return {k: v for k, v in config_store.read_settings().table.items() if k != "config_version"}
+
+
+def test_save_choice_writes_the_answer_whatever_the_environment_says(
+    saved: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """config.toml is what the deployed triggers read (Espanso does not start from the
+    shell): an environment variable that already says true must not keep "local" unsaved."""
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
+    message, argv = setup_flow.save_choice("PROMPT_LOCAL_ONLY", "true")
+    assert message is not None
+    assert message.startswith("PROMPT_LOCAL_ONLY=true saved in ")
+    assert "the environment variable PROMPT_LOCAL_ONLY is set and overrides" in message
+    assert argv == ["set", "PROMPT_LOCAL_ONLY", "true"]
+    assert _file() == {"PROMPT_LOCAL_ONLY": True}
+    # Held by the file now: unchanged.
+    assert setup_flow.save_choice("PROMPT_LOCAL_ONLY", "true") == (None, [])
+
+
+def test_save_choice_removes_a_saved_value_the_environment_hides(
+    saved: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_store.save_settings(config_store.read_settings(), {"PROMPT_LOCAL_ONLY": "true"})
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "false")
+    message, argv = setup_flow.save_choice("PROMPT_LOCAL_ONLY", "false")
+    assert message is not None
+    assert message.startswith("PROMPT_LOCAL_ONLY removed from ")
+    assert argv == ["unset", "PROMPT_LOCAL_ONLY"]
+    assert _file() == {}
+
+
+def test_save_choice_never_pins_a_default(saved: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A default answer removes the file's entry, never writes it, even while an environment
+    variable makes another value apply (a pinned default would not beat it either)."""
+    for name, default, other in (
+        ("PROMPT_LOCAL_ONLY", "false", "true"),
+        ("PROMPT_OUTPUT", "paste", "clipboard"),
+        ("PROMPT_PROFILE", "default", "general"),
+        ("PROMPT_PROVIDER", "openrouter", "ollama"),
+    ):
+        monkeypatch.setenv(name, other)
+        assert setup_flow.save_choice(name, default) == (None, [])
+        config_store.save_settings(config_store.read_settings(), {name: other})
+        message, argv = setup_flow.save_choice(name, default)
+        assert argv == ["unset", name]
+        assert message is not None
+        assert "applies" not in message
+        assert f"the environment variable {name} is set and overrides" in message
+        assert _file() == {}
+
+
+def test_key_provider_follows_the_answer() -> None:
+    settings = settings_service.load_layers()[1]
+    assert setup_flow.key_provider("local", settings) is None
+    assert setup_flow.key_provider("cloud", settings) == "openrouter"
+    assert setup_flow.key_provider("both", settings) == "openrouter"
+
+
 def test_save_choices_writes_an_empty_settings_file_once(saved: Path) -> None:
     lines: list[str] = []
-    first = setup_flow.save_choices("openrouter", "default", lines.append)
+    defaults = [("PROMPT_PROFILE", "default"), ("PROMPT_OUTPUT", "paste")]
+    first = setup_flow.save_choices(defaults, lines.append)
     assert first == setup_flow.ChoicesSaved(created=_settings_file())
     assert config_files.is_file(_settings_file())
-    assert setup_flow.save_choices("openrouter", "default") == setup_flow.ChoicesSaved()
-    changed = setup_flow.save_choices("ollama", "general", lines.append)
+    assert setup_flow.save_choices(defaults) == setup_flow.ChoicesSaved()
+    changed = setup_flow.save_choices(
+        [("PROMPT_LOCAL_ONLY", "true"), ("PROMPT_PROFILE", "general")], lines.append
+    )
     assert changed.created is None
     assert changed.error is None
     assert len(changed.messages) == 2
@@ -90,10 +188,12 @@ def test_save_choices_writes_an_empty_settings_file_once(saved: Path) -> None:
 
 
 def test_save_choices_stops_at_the_first_error(saved: Path) -> None:
-    result = setup_flow.save_choices("ollama", "sk-or-v1-" + "cd34" * 16)
+    result = setup_flow.save_choices(
+        [("PROMPT_OUTPUT", "clipboard"), ("PROMPT_PROFILE", "sk-or-v1-" + "cd34" * 16)]
+    )
     assert result.error is not None
     assert "looks like a key" in result.error
-    assert len(result.messages) == 1  # the provider was saved before
+    assert len(result.messages) == 1  # the output was saved before
 
 
 def test_save_choices_reports_a_failed_settings_file(
@@ -103,15 +203,14 @@ def test_save_choices_reports_a_failed_settings_file(
         raise config_store.ConfigStoreError("read-only")
 
     monkeypatch.setattr(config_store, "save_settings", refuse)
-    assert setup_flow.save_choices("openrouter", "default").error == "read-only"
+    assert setup_flow.save_choices([("PROMPT_PROFILE", "default")]).error == "read-only"
 
 
-def test_chosen_provider_and_profile() -> None:
+def test_choice_value_and_profile() -> None:
     settings = settings_service.load_layers()[1]
-    assert setup_flow.chosen_provider(None, settings) == settings.provider
-    assert setup_flow.chosen_provider("ollama", settings) == "ollama"
-    with pytest.raises(ValueError, match="is not a provider; pass --provider"):
-        setup_flow.chosen_provider(None, dataclasses.replace(settings, provider="nope"))
+    assert setup_flow.choice_value("PROMPT_PROVIDER", settings) == settings.provider
+    local = dataclasses.replace(settings, local_only=True)
+    assert setup_flow.choice_value("PROMPT_LOCAL_ONLY", local) == "true"
     setup_flow.check_profile("general", ())
     with pytest.raises(ValueError, match="nosuch"):
         setup_flow.check_profile("nosuch", ())
@@ -120,9 +219,16 @@ def test_chosen_provider_and_profile() -> None:
 def test_keys(saved: Path) -> None:
     assert setup_flow.stdin_key("openrouter") == "OPENROUTER_API_KEY"
     assert setup_flow.stdin_key("ollama") is None
-    rows = setup_flow.needed_keys(*settings_service.load_layers())
+    layers, settings = settings_service.load_layers()
+    rows = setup_flow.needed_keys(layers, settings, "cloud")
     assert [row.name for row in rows] == ["OPENROUTER_API_KEY"]
     assert all(row.needed for row in rows)
+    # The keys follow the answer, not an effective PROMPT_LOCAL_ONLY that disagrees with it.
+    assert setup_flow.needed_keys(layers, settings, "local") == []
+    local = dataclasses.replace(settings, local_only=True)
+    assert [row.name for row in setup_flow.needed_keys(layers, local, "both")] == [
+        "OPENROUTER_API_KEY"
+    ]
     message = setup_flow.save_keys([("OPENROUTER_API_KEY", KEY)])
     assert message.startswith("OPENROUTER_API_KEY saved")
     assert KEY not in message
@@ -202,10 +308,10 @@ def test_setup_reports_a_failed_settings_step(saved: Path, monkeypatch: pytest.M
         return real(*args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(config_store, "save_settings", second_fails)
-    args = ["--provider", "ollama", "--profile", "general", "--no-deploy", "--no-smoke-test"]
+    args = ["--use", "local", "--profile", "general", "--no-deploy", "--no-smoke-test"]
     result = CliRunner().invoke(app, ["setup", "--non-interactive", *args])
     assert result.exit_code == 1, result.output
-    assert "  PROMPT_PROVIDER=ollama saved in " in result.stdout
-    assert "PROMPT_PROFILE" not in result.stdout.split("Provider: ollama")[1].split("API keys")[0]
+    assert "  PROMPT_LOCAL_ONLY=true saved in " in result.stdout
+    assert "PROMPT_PROFILE" not in result.stdout.split("saved in ")[1].split("API keys")[0]
     assert "  failed: disk full" in result.stderr
     assert "settings failed" in result.stderr

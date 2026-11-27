@@ -24,9 +24,8 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class ProviderSpec:
     name: str
-    # How messages name it, and what the setup wizard says it is.
+    # How messages and setup name it.
     label: str
-    help: str
     # The wire format: providers/openai_compatible.py, anthropic.py or ollama.py.
     protocol: Literal["openai", "anthropic", "ollama"]
     # A cloud API: it always sends the draft off this machine (so it is always gated), needs
@@ -130,7 +129,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
         ProviderSpec(
             "ollama",
             "Ollama",
-            "local model on this machine, no key",
             "ollama",
             probe_path="/api/tags",
             read_url=lambda c: c.ollama_base_url,
@@ -139,7 +137,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
         ProviderSpec(
             "lmstudio",
             "LM Studio",
-            "local model on this machine, no key",
             "openai",
             probe_path="/models",
             read_url=lambda c: c.lmstudio_base_url,
@@ -148,7 +145,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
         ProviderSpec(
             "openrouter",
             "OpenRouter",
-            "cloud, many models through one key",
             "openai",
             cloud=True,
             key="OPENROUTER_API_KEY",
@@ -165,7 +161,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
         ProviderSpec(
             "anthropic",
             "Anthropic",
-            "cloud, Claude models, needs a key",
             "anthropic",
             cloud=True,
             key="ANTHROPIC_API_KEY",
@@ -181,7 +176,6 @@ PROVIDERS: dict[str, ProviderSpec] = {
         ProviderSpec(
             "openai",
             "OpenAI",
-            "cloud, GPT models, needs a key",
             "openai",
             cloud=True,
             key="OPENAI_API_KEY",

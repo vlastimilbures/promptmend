@@ -54,7 +54,6 @@ def test_spec_names_its_settings(spec: ProviderSpec) -> None:
     assert {spec.url_field, spec.model_field} <= SETTINGS_FIELDS
     prefix = spec.name.upper()
     assert {f"{prefix}_MODEL", f"{prefix}_BASE_URL"} <= set(env_names())
-    assert spec.help
     if spec.cap:
         assert spec.cap in SETTINGS_FIELDS
     if spec.temperature:
@@ -164,11 +163,18 @@ def test_overrides_reach_every_provider() -> None:
     assert [s.name for s in PROVIDERS.values() if s.effort] == ["openrouter", "openai"]
 
 
-def test_setup_lists_every_provider_cloud_first() -> None:
-    choices = setup_guide.provider_choices(Settings(), assets.triggers())
-    assert [c.value for c in choices] == _ids(CLOUD) + _ids(LOCAL)
-    assert [c.title for c in choices] == [s.label for s in CLOUD + LOCAL]
-    assert all(c.detail.startswith(s.help) for c, s in zip(choices, CLOUD + LOCAL, strict=True))
+# Setup's "both" tests one cloud and one local provider, each a trigger's (#390).
+def test_setup_tests_a_cloud_and_a_local_provider() -> None:
+    runs = setup_guide.smoke_runs(setup_guide.BOTH, assets.triggers(), Settings())
+    assert [run.provider and PROVIDERS[run.provider].cloud for run in runs] == [True, False]
+    assert all(run.trigger for run in runs)
+
+
+# A stub run checks what improve prints: it never copies the stub's reply to the clipboard.
+def test_stub_env_forces_paste_output() -> None:
+    for output in ("clipboard", "paste"):
+        assert smoke.stub_env(4242, {"PROMPT_OUTPUT": output})["PROMPT_OUTPUT"] == "paste"
+    assert smoke.stub_env(4242, {})["PROMPT_OUTPUT"] == "paste"
 
 
 # The stub runs point every provider at 127.0.0.1 with the placeholder key, never the real one.

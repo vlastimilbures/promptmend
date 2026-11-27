@@ -1,14 +1,19 @@
 """`setup`: the first-run flow. On a terminal it opens the wizard (tui/setup_wizard.py), its
 options prefilling the steps. With --non-interactive (or --plain) it asks nothing:
-settings and the default profile from the options, the API key from --api-key-stdin, a deploy
-preview (applied with --deploy), and a smoke test against a stub on 127.0.0.1, never a paid
-call."""
+cloud or local, the profile and the output from the options, the API key from
+--api-key-stdin, a deploy preview (applied with --deploy), and a smoke test on the path of
+the answer's triggers against a stub on 127.0.0.1, never a paid call. --provider is
+deprecated (#390): it saves PROMPT_PROVIDER, which no trigger reads, and says so."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import replace
+
 import typer
 
-from .. import config, deploy, settings_service, setup_flow, setup_guide, smoke
+from .. import assets, config, deploy, settings_service, setup_flow, setup_guide, smoke
+from ..config import OUTPUTS
 from ..factory import PROVIDER_NAMES
 from ..redaction import safe_repr
 from . import common
@@ -54,8 +59,8 @@ def _settings_writable(steps: _Steps) -> bool:
     return True
 
 
-def _save_choices(steps: _Steps, provider: str, profile: str) -> None:
-    saved = setup_flow.save_choices(provider, profile, lambda line: typer.echo(f"  {line}"))
+def _save_choices(steps: _Steps, choices: Sequence[tuple[str, str]]) -> None:
+    saved = setup_flow.save_choices(choices, lambda line: typer.echo(f"  {line}"))
     if saved.error is not None:
         steps.fail("settings", saved.error)
     elif saved.created is not None:
@@ -64,19 +69,27 @@ def _save_choices(steps: _Steps, provider: str, profile: str) -> None:
         typer.echo("  Unchanged.")
 
 
-def _key_step(steps: _Steps, provider: str, *, writable: bool, from_stdin: bool) -> None:
-    """With --api-key-stdin, the provider's key; else every key the triggers or the provider
-    need (an Ollama default still leaves -i- on OpenRouter)."""
+def _key_step(
+    steps: _Steps, use: str, provider: str | None, *, writable: bool, from_stdin: bool
+) -> None:
+    """With --api-key-stdin, the cloud key the answer ``use`` needs (the deprecated
+    --provider's, when given); else every key the triggers or the provider need, unless
+    PROMPT_LOCAL_ONLY refuses them."""
+    layers, settings = settings_service.load_layers()
     if from_stdin:
-        name = setup_flow.stdin_key(provider)
+        source = provider if provider is not None else setup_flow.key_provider(use, settings)
+        name = setup_flow.stdin_key(source) if source is not None else None
         if name is None:
-            steps.fail("key", f"--api-key-stdin was given, but {provider} takes no key")
+            steps.fail("key", f"--api-key-stdin was given, but {provider or use} takes no key")
             return
         _one_key(steps, name, writable=writable, from_stdin=True)
         return
-    rows = setup_flow.needed_keys(*settings_service.load_layers())
+    rows = setup_flow.needed_keys(layers, settings, use)
     if not rows:
-        typer.echo("  No key needed: every active trigger and your provider run locally.")
+        # Local where it cannot be saved (legacy mode) and is not set yet: not needed once it is.
+        pending = use == setup_guide.LOCAL and not writable and not settings.local_only
+        answered = setup_guide.as_answered(settings, use)
+        typer.echo(f"  {setup_guide.no_key_line(answered, pending=pending)}")
         return
     for row in rows:
         typer.echo(f"  {setup_guide.key_line(row)}")
@@ -159,6 +172,28 @@ def _check_profile(name: str, overrides: tuple[str, ...]) -> None:
         raise typer.BadParameter(str(exc)) from None
 
 
+def _one_of(value: str | None, option: str, allowed: Sequence[str]) -> None:
+    if value is not None and value not in allowed:
+        raise typer.BadParameter(
+            f"{option} must be one of {', '.join(allowed)}, got {safe_repr(value)}"
+        )
+
+
+def _smoke_step(steps: _Steps, use: str) -> None:
+    """One run per path of the answer's triggers (setup_guide.smoke_runs())."""
+    settings = settings_service.load_layers()[1]
+    for run in setup_guide.smoke_runs(use, assets.triggers(), settings):
+        if run.provider is None:  # local, but no trigger stays on this computer
+            steps.later(setup_guide.smoke_result(run, False, ""))
+            continue
+        result = smoke.run(run.provider)
+        line = setup_guide.smoke_result(run, result.ok, result.message)
+        if result.ok:
+            typer.echo(f"  ok: {line}")
+        else:
+            steps.fail("smoke test", line)
+
+
 @app.command(
     "setup", short_help="First run: settings, key, match files, and a smoke test on a local stub."
 )
@@ -167,12 +202,28 @@ def setup(
     non_interactive: bool = typer.Option(
         False, "--non-interactive", help="Ask nothing; use the options and current settings"
     ),
-    provider: str | None = typer.Option(
-        None, "--provider", help=f"PROMPT_PROVIDER: {', '.join(PROVIDER_NAMES)}"
+    use: str | None = typer.Option(
+        None,
+        "--use",
+        help=f"Which triggers you use: {', '.join(setup_guide.USES)} (local saves "
+        "PROMPT_LOCAL_ONLY=true; cloud and both remove it)",
     ),
     profile: str | None = typer.Option(None, "--profile", help="PROMPT_PROFILE"),
+    output: str | None = typer.Option(
+        None, "--output", help=f"PROMPT_OUTPUT: {', '.join(OUTPUTS)}"
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Deprecated, will be removed in a later release (use --use): saves "
+        f"PROMPT_PROVIDER ({', '.join(PROVIDER_NAMES)}), which no trigger reads; on a terminal "
+        "it is not saved",
+    ),
     api_key_stdin: bool = typer.Option(
-        False, "--api-key-stdin", help="Read the provider's API key from the first line of stdin"
+        False,
+        "--api-key-stdin",
+        help="Read the OpenRouter key (cloud or both; the --provider's key with --provider) "
+        "from the first line of stdin",
     ),
     deploy_files: bool | None = typer.Option(
         None,
@@ -197,11 +248,11 @@ def setup(
         help="The same as --non-interactive: print each step, ask nothing",
     ),
 ) -> None:
-    """First run: settings, the API keys, the Espanso match files and a smoke test against a
-    stub on 127.0.0.1 (never a paid call). On a terminal it opens full screen, one step at a
-    time: --provider and --profile preselect a choice, and --no-deploy or --no-smoke-test skip a
-    step. With --non-interactive (or --plain) it asks nothing. Re-run it any time; it changes
-    only what you choose."""
+    """First run: cloud or local, the API keys, the profile, paste or clipboard, the Espanso
+    match files and a smoke test against a stub on 127.0.0.1 (never a paid call). On a
+    terminal it opens full screen, one step at a time: --use, --profile and --output preselect
+    a choice, and --no-deploy or --no-smoke-test skip a step. With --non-interactive (or
+    --plain) it asks nothing. Re-run it any time; it changes only what you choose."""
     interactive = not (non_interactive or plain)
     if interactive and not ui_cmd.on_a_terminal():
         common.fail(
@@ -211,10 +262,9 @@ def setup(
         )
     if api_key_stdin and interactive:
         raise typer.BadParameter("--api-key-stdin needs --non-interactive (stdin holds the key)")
-    if provider is not None and provider not in PROVIDER_NAMES:
-        raise typer.BadParameter(
-            f"--provider must be one of {', '.join(PROVIDER_NAMES)}, got {safe_repr(provider)}"
-        )
+    _one_of(use, "--use", setup_guide.USES)
+    _one_of(output, "--output", OUTPUTS)
+    _one_of(provider, "--provider", PROVIDER_NAMES)
     for value, option in (
         (espanso_dir, "--espanso-dir"),
         (launcher, "--launcher"),
@@ -232,10 +282,15 @@ def setup(
                 launcher,
                 no_restart,
                 standalone=True,
-                provider=provider,
+                # The deprecated --provider is not saved here; it only preselects an answer.
+                use=use
+                if use is not None or provider is None
+                else (setup_flow.use_for_provider(provider)),
                 profile=profile,
+                output=output,
                 deploy=deploy_files,
                 smoke_test=smoke_test,
+                provider=provider,
             )
         )
         return
@@ -243,9 +298,9 @@ def setup(
     layers, settings = settings_service.load_layers()
     common.show_findings(layers)
     typer.echo(
-        "PromptMend setup: settings, API keys, Espanso's match files and a test on a local "
-        "stub. Asks nothing: it uses the options and the current settings, and lists what "
-        "is left with its command; re-run it any time."
+        "PromptMend setup: cloud or local, API keys, the profile and the output, Espanso's "
+        "match files and a test on a local stub. Asks nothing: it uses the options and the "
+        "current settings, and lists what is left with its command; re-run it any time."
     )
 
     steps.heading("Usage history")
@@ -256,20 +311,54 @@ def setup(
     writable = _settings_writable(steps)
     if writable:
         layers, settings = settings_service.load_layers()
-    try:
-        chosen = setup_flow.chosen_provider(provider, settings)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from None
-    picked = profile if profile is not None else settings.profile
+    # An option not given keeps what config.toml holds (saved_settings()): a value only the
+    # shell gives is never written, nor a saved one removed, without being chosen.
+    saved = setup_flow.saved_settings(settings)
+    picked = profile if profile is not None else saved.profile
     _check_profile(picked, settings.profile_overrides)
-    typer.echo(f"  Provider: {chosen}; profile: {picked}")
+    # Without --use nothing about PROMPT_LOCAL_ONLY changes: the answer is the saved one.
+    answer = use if use is not None else setup_flow.current_use(saved)
+    out = output if output is not None else saved.output
+    over = setup_flow.env_overrides(layers, replace(saved, profile=picked, output=out))
+    typer.echo(
+        f"  Triggers: {answer}; "
+        f"profile: {setup_guide.shown_choice('PROMPT_PROFILE', picked, over)}; "
+        f"output: {setup_guide.shown_choice('PROMPT_OUTPUT', out, over)}"
+    )
+    legacy = setup_flow.storage().legacy
+    if answer == setup_guide.LOCAL:
+        # What is true here: saved now (--use local), set already (config.toml, or in legacy
+        # mode the .env, holds it), or for the person to add (legacy mode).
+        note = setup_guide.local_note(
+            assets.triggers(), settings, legacy=legacy, already=saved.local_only, headless=True
+        )
+        typer.echo(f"  {note}")
+    if provider is not None:
+        typer.echo(f"  {setup_guide.PROVIDER_DEPRECATED}")
+    choices = [("PROMPT_PROFILE", picked), ("PROMPT_OUTPUT", out)]
+    if use is not None:
+        choices.insert(0, (setup_flow.LOCAL_ONLY, setup_flow.local_only_value(use)))
+    if provider is not None:
+        choices.append(("PROMPT_PROVIDER", provider))
     if writable:
-        _save_choices(steps, chosen, picked)
-    elif (chosen, picked) != (settings.provider, settings.profile):
-        steps.later(f"set PROMPT_PROVIDER={chosen} and PROMPT_PROFILE={picked} yourself")
+        _save_choices(steps, choices)
+    else:
+        fixes = [
+            f"remove {name} from {legacy}"
+            if value == setup_flow.DEFAULTS[name]
+            else f"add {name}={value} to {legacy}"
+            for name, value in choices
+            if value != setup_flow.choice_value(name, settings)
+        ]
+        if fixes:
+            steps.later("; ".join(fixes))
+    if writable:
+        problem = setup_flow.use_problem(answer, *settings_service.load_layers())
+        if problem:
+            steps.later(problem)
 
     steps.heading("API keys")
-    _key_step(steps, chosen, writable=writable, from_stdin=api_key_stdin)
+    _key_step(steps, answer, provider, writable=writable, from_stdin=api_key_stdin)
 
     steps.heading("Espanso match files")
     if deploy_files is False:
@@ -285,11 +374,7 @@ def setup(
 
     steps.heading("Smoke test (a stub on 127.0.0.1; no provider is called)")
     if smoke_test:
-        result = smoke.run(chosen)
-        if result.ok:
-            typer.echo(f"  ok: {result.message}")
-        else:
-            steps.fail("smoke test", f"improve --provider {chosen}: {result.message}")
+        _smoke_step(steps, answer)
     else:
         typer.echo("  Skipped (--no-smoke-test).")
 
@@ -301,5 +386,8 @@ def setup(
     if steps.todo:
         typer.echo(f"  Setup finished with {len(steps.todo)} thing(s) still to do (above).")
     else:
-        typer.echo(f"  Setup finished. {setup_guide.NEXT_STEP}")
+        settings = setup_flow.saved_settings(settings_service.load_layers()[1])
+        typer.echo(
+            f"  Setup finished. {setup_guide.next_step(answer, assets.triggers(), settings)}"
+        )
     typer.echo("  `promptmend doctor` checks everything again.")
