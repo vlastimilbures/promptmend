@@ -125,8 +125,8 @@ The text after each hint is the provider's own reason.
 
 | Symptom | Fix |
 |---------|-----|
-| `[promptmend: Blocked cloud call. Sensitive content detected: an email address. …]` | The [gate](privacy.md#the-data-protection-gate) matched; the message names what it found in plain words (see [What the gate finds](#what-the-gate-finds)). Remove the content or use a local trigger (with `PROMPT_GATE_LOCAL=true` the message offers none, since those are gated too). If the message offers `-iok-` and the content may leave your machine, use `-iok-` for this draft. `-iok-` runs the standard-tier OpenRouter model, so a blocked `-ip-` or `-if-` says so. Anthropic, OpenAI and a remote Ollama or LM Studio have no one-off trigger, so their message offers none |
-| `[promptmend: Blocked cloud call. Sensitive content detected: a payment card number. …]` on a draft with no card number in it | Something in the draft looks like a card to the [gate](privacy.md#what-it-blocks): 13 to 19 digits in groups (split by spaces, dots, dashes or one line break) that pass the card checksum, as one in ten does (a Unix time with a fraction such as `1732700000.123456` is such a group), or a long number without separators that has a card brand's prefix and length and passes the checksum. `-iok-` does not send it: a card number is a hard finding. Replace the number with a placeholder or shorten it, or use a local trigger |
+| `[promptmend: Blocked cloud call. Sensitive content detected: an email address. …]` | The [gate](privacy.md#the-data-protection-gate) matched; the message names what it found in plain words (see [What the gate finds](#what-the-gate-finds)). Remove the content or use a local trigger (with `PROMPT_GATE_LOCAL=true` the message offers none, since those are gated too). If the message offers `-iok-` and the content may leave your machine, use `-iok-` for this draft. `-iok-` runs the standard-tier OpenRouter model, so a blocked `-ip-` or `-if-` through OpenRouter says so. Anthropic, OpenAI and a remote Ollama or LM Studio have no one-off trigger, so their message offers none |
+| `[promptmend: Blocked cloud call. Sensitive content detected: a payment card number. …]` on a draft with no card number in it | Something in the draft looks like a card to the [gate](privacy.md#what-it-blocks): 13 to 19 digits in groups (split by spaces, dots, dashes or one line break) that pass the card checksum, as at least one in ten does (a Unix time with a fraction such as `1732700000.123456` is such a group), or a long number without separators that has a card brand's prefix and length and passes the checksum. `-iok-` does not send it: a card number is a hard finding. Replace the number with a placeholder or shorten it, or use a local trigger |
 | `[promptmend: Blocked call to the local server …]` | `PROMPT_GATE_LOCAL=true` and the gate matched a `-il-`/`-ilm-` draft. Remove the content, or set `PROMPT_GATE_LOCAL=false` if your `localhost` server runs the model itself (not a relay to a cloud API) |
 | `-il-` or `-ilm-` says `Blocked cloud call` | `OLLAMA_BASE_URL` / `LMSTUDIO_BASE_URL` points at another machine, or the Ollama model is a cloud model, so the gate applies. Use a model on `localhost` for sensitive drafts |
 | `[promptmend: sent despite: an email address, a confidentiality label]` at the top of a rewrite | You used `-iok-`; the draft was sent despite those findings. The line names only what kind of thing was found, never the text. Delete the line |
@@ -134,8 +134,8 @@ The text after each hint is the provider's own reason.
 
 ### What the gate finds
 
-A marker names each finding in plain words; `doctor`, `config validate`, the usage history
-and `PROMPT_PERSONA` checks use the stable name. The gate is a heuristic: it misses some
+A marker names each finding in plain words; `doctor`, `config validate` and the
+`PROMPT_PERSONA` checks use the stable name (the usage history records no finding). The gate is a heuristic: it misses some
 secrets and flags some harmless text. "Soft" findings can be sent once with `-iok-`; the
 others never leave this way (see [Overriding a block](privacy.md#overriding-a-block)).
 
@@ -146,7 +146,7 @@ others never leave this way (see [Overriding a block](privacy.md#overriding-a-bl
 | `vietnam_id_9` | a Vietnamese ID or passport number | A 9-digit number next to *passport*, *ID card* or *national ID* | Soft: `-iok-`, or turn the `vn` pack off |
 | `email` | an email address | Any address, including your own or a public one | Soft: `-iok-` |
 | `iban` | a bank account number (IBAN) | Rare (the checksum must pass) | Soft: `-iok-` |
-| `payment_card` | a payment card number | A number of 13 to 19 digits written in groups that passes the card checksum, as one in ten does (an order number, a Unix time with a fraction); a long number without separators only when it also has a card brand's prefix and length | Replace the number with a placeholder or shorten it, or use a local trigger. `-iok-` does not send it |
+| `payment_card` | a payment card number | A number of 13 to 19 digits written in groups that passes the card checksum, as at least one in ten does (an order number, a Unix time with a fraction); a long number without separators only when it also has a card brand's prefix and length | Replace the number with a placeholder or shorten it, or use a local trigger. `-iok-` does not send it |
 | `openrouter_key`, `anthropic_key`, `openai_key`, `stripe_key`, `google_api_key`, `xai_key` | an API key (OpenRouter), (Anthropic), (OpenAI), (Stripe), (Google), (xAI) | Example keys in documentation | Remove it, or use a local trigger |
 | `github_token`, `gitlab_token`, `huggingface_token`, `slack_token`, `npm_token` | an access token (GitHub), (GitLab), (Hugging Face), (Slack), (npm) | Example tokens in documentation | Remove it, or use a local trigger |
 | `aws_access_key`, `azure_key` | an access key (AWS), (Azure) | Example keys in documentation | Remove it, or use a local trigger |

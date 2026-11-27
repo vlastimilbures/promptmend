@@ -674,7 +674,7 @@ _CUSTOM = re.compile(r"custom_(\d{1,9})")
 def describe(name: str) -> str:
     """The plain words a marker uses for a finding name from scan_draft(): "an email
     address", "your pattern 2" for custom_2. The names themselves stay the stable form
-    (SOFT_FINDINGS, the usage history, doctor); an unknown name is returned as it is."""
+    (SOFT_FINDINGS, doctor, config validate); an unknown name is returned as it is."""
     custom = _CUSTOM.fullmatch(name)
     if custom:
         return f"your pattern {custom.group(1)}"

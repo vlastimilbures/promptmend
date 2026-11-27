@@ -202,10 +202,11 @@ promptmend config set PROMPT_EXTRA_PATTERNS "project[- ]falcon;CUST-\d{6}"
 ```
 
 A match is reported by its position, so the pattern itself never appears in the message: a
-marker says `your pattern 1`, `your pattern 2`, …, while `doctor`, `config validate` and the
-usage history use the names `custom_1`, `custom_2`, …. An entry that is not a valid regex is rejected when settings load: `config validate`,
-`config set` and `doctor` report it by position (`entry 2 (custom_2)`), and every rewrite
-trigger prints a marker until it is fixed (`-p-` still pastes the persona).
+marker says `your pattern 1`, `your pattern 2` and so on, while `doctor` and
+`config validate` use the names `custom_1`, `custom_2`. An entry that is not a valid regex
+is rejected when settings load: `config validate`, `config set` and `doctor` report it by
+position (`entry 2 (custom_2)`), and every rewrite trigger prints a marker until it is fixed
+(`-p-` still pastes the persona).
 
 Keep each pattern simple. It runs on every draft and on each value written to the usage
 history, and Python's regex engine can take exponential time on a pattern with nested
@@ -224,9 +225,9 @@ trigger can do.
   that one draft with `-iok-` (`--allow-flagged`). The paste then starts with
   `[promptmend: sent despite: an email address, a confidentiality label]` (the kinds found),
   and the next draft is checked as usual.
-- `-iok-` runs the standard-tier OpenRouter model, so a blocked `-ip-` or `-if-` says `-iok-
-  sends it once on the standard model`. Anthropic, OpenAI and a remote Ollama or LM Studio
-  have no such trigger, so their message offers none.
+- `-iok-` runs the standard-tier OpenRouter model, so a blocked `-ip-` or `-if-` through
+  OpenRouter says `-iok- sends it once on the standard model`. Anthropic, OpenAI and a
+  remote Ollama or LM Studio have no such trigger, so their message offers none.
 - Keys, tokens, passwords, cards, private keys, a bare token and your own
   `PROMPT_EXTRA_PATTERNS` are never sent this way.
 - `ALLOW_CLOUD_OVERRIDE=true` turns the gate off for every finding and every later call; prefer
