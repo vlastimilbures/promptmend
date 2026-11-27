@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 STUB = "stub"
 REAL = "real"
-TARGETS = ((f"{try_run.DRY_RUN} (no rewrite)", STUB), ("Real provider", REAL))
+TARGETS = ((try_run.DRY_RUN, STUB), ("Real provider", REAL))
 # The profile picker's first choice: no --profile, so the call uses PROMPT_PROFILE (or, on the
 # pro tier, PROMPT_PRO_PROFILE when set), exactly as a trigger that names none.
 CONFIGURED = "(configured)"
@@ -66,6 +66,8 @@ def _profiles(names: Sequence[str]) -> list[tuple[str, str]]:
 class TryPane(Pane):
     # A run is under way (one at a time; Run is disabled meanwhile).
     running = False
+    # The confirm dialog of a real run is open: one at a time, so one Send is one call.
+    confirming = False
     # The provider picker starts at the configured one, once: a reload after a change
     # elsewhere keeps what was picked here.
     defaulted = False
@@ -95,7 +97,7 @@ class TryPane(Pane):
                 ("try-profile", "Profile", _profiles(list(PROFILES)), CONFIGURED),
                 ("try-tier", "Tier", [(t, t) for t in TIERS], TIERS[0]),
             ):
-                with Vertical(classes="try-option", id=f"{id_}-option"):
+                with Vertical(classes="try-option"):
                     yield Label(label)
                     yield Select(options, value=value, allow_blank=False, id=id_)
         yield button_row(("try-run", "Run"))
@@ -127,7 +129,7 @@ class TryPane(Pane):
         if self.target_picked or state is None:
             return
         provider = self._value("#try-provider")
-        real = try_run.usable(provider, state.settings, state.layers.entries)
+        real = try_run.usable(provider, state.settings)
         self.target_default = REAL if real else STUB
         self.query_one("#try-target", Select).value = self.target_default
 
@@ -139,7 +141,11 @@ class TryPane(Pane):
     def _target_changed(self, event: Select.Changed) -> None:
         """A pick by hand: a value that is not the default set last and still the picker's.
         The events of the defaults set here (and the picker's first value, posted on mount)
-        are either the default or already overtaken by a later one, so they never count."""
+        are either the default or already overtaken by a later one, so they never count.
+
+        The limit: a reload whose show() runs between a pick and its event reaching this pane
+        (a few message hops) puts the default back, and the pick is lost; picking again
+        keeps it."""
         if event.value != self.target_default and event.value == event.select.value:
             self.target_picked = True
 
@@ -148,7 +154,7 @@ class TryPane(Pane):
 
     @on(Button.Pressed, "#try-run")
     def _run(self) -> None:
-        if self.running:
+        if self.running or self.confirming:
             return
         draft = self.query_one("#try-draft", TextArea).text
         target = self._value("#try-target")
@@ -183,9 +189,11 @@ class TryPane(Pane):
         )
 
         def done(yes: bool | None) -> None:
+            self.confirming = False
             if yes:
                 self._start(draft, provider, profile, cfg, command)
 
+        self.confirming = True
         self.app.push_screen(
             ConfirmModal(
                 f"Send this draft to {provider}?",
@@ -221,6 +229,8 @@ class TryPane(Pane):
     def _start(
         self, draft: str, provider: str, profile: str | None, cfg: Settings, command: str | None
     ) -> None:
+        if self.running:  # one run at a time, however it was asked for
+            return
         self.running = True
         self.query_one("#try-run", Button).disabled = True
         doing = (

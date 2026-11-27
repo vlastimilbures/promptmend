@@ -205,7 +205,7 @@ result before a trigger pastes one.
   [usage history](privacy.md#usage-history) as a direct call with the trigger `-try-`, so
   `stats` tells it from `promptmend improve` typed in a terminal. Home's session log shows it
   with the draft withheld.
-- **Dry run (no rewrite)** only checks the wiring: a stub on `127.0.0.1` answers with a fixed
+- **Dry run** only checks the wiring: a stub on `127.0.0.1` answers with a fixed
   reply (`promptmend setup check: ok`) to a placeholder key, so no provider is called, nothing
   is rewritten and nothing is recorded. The line above the result starts with
   `Dry run (checks the wiring, no rewrite)`, and the report says so too.
@@ -220,7 +220,7 @@ settings are read as a trigger reads them, so an invalid one stops the run with 
 
 Every run goes through the [data-protection gate](privacy.md#the-data-protection-gate): a
 draft the gate blocks shows the same `[promptmend: …]` marker a trigger would paste, and
-nothing is sent. A stub run is gated (and refused under `PROMPT_LOCAL_ONLY`) exactly as the
+nothing is sent. A dry run is gated (and refused under `PROMPT_LOCAL_ONLY`) exactly as the
 real call would be.
 
 Under the result, a line gives the time, the requests, the tokens in and out and the cost: as

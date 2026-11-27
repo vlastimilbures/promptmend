@@ -30,12 +30,12 @@ All notable changes to this project are documented here. The format follows
 - Interface: the Try tab starts at the real provider when it can be used (#391), so Run
   (after the confirm, which stays) shows a rewrite of the typed draft. "Run against" starts at
   Real provider when the picked provider's key is set, or it needs none (Ollama, LM Studio),
-  and `PROMPT_LOCAL_ONLY` does not refuse it; otherwise at the stub run, now called `Dry run
-  (no rewrite)` instead of `Local stub`. It follows the provider picker until you pick a
-  target yourself, and keeps that pick through a reload. A dry run's usage line starts with
-  `Dry run (checks the wiring, no rewrite)`, its report says `Done: dry run, the stub answered
-  (no rewrite).` and its cost `not applicable (dry run)`, so the stub's fixed reply is not
-  taken for a rewrite.
+  and `PROMPT_LOCAL_ONLY` does not refuse it; otherwise at the stub run, now called `Dry run`
+  instead of `Local stub`. It follows the provider picker until you pick a target yourself,
+  and keeps that pick through a reload. A dry run's usage line starts with `Dry run (checks
+  the wiring, no rewrite)`, its report says `Done: dry run, the stub answered (no rewrite).`
+  and its cost `not applicable (dry run)`, so the stub's fixed reply is not taken for a
+  rewrite. Pressing Run twice opens one confirm dialog, so one Send is one call.
 - The five failure markers a new user meets most often name the next step (#398), and none
   names a flag the call did not pass. A missing key says `is not set` and to run
   `promptmend secrets set OPENROUTER_API_KEY` in a terminal (with `PROMPTMEND_ENV` set: to add

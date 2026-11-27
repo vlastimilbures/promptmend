@@ -230,8 +230,7 @@ def test_usage_line() -> None:
 
 
 def usable(provider: str, environ: dict[str, str]) -> bool:
-    layers = ConfigLayers.resolve(environ, strict=False)
-    return try_run.usable(provider, layers.settings(), layers.entries)
+    return try_run.usable(provider, ConfigLayers.resolve(environ, strict=False).settings())
 
 
 @pytest.mark.parametrize(
@@ -240,6 +239,8 @@ def usable(provider: str, environ: dict[str, str]) -> bool:
         ("openrouter", {"OPENROUTER_API_KEY": REAL_KEY}, True),
         ("openrouter", {}, False),
         ("openrouter", {"OPENROUTER_API_KEY": ""}, False),
+        # Judged as the call reads it: a blank key is parsed to "", so not set.
+        ("openrouter", {"OPENROUTER_API_KEY": "   "}, False),
         # Another provider's key does not make this one usable.
         ("anthropic", {"OPENROUTER_API_KEY": REAL_KEY}, False),
         ("anthropic", {"ANTHROPIC_API_KEY": REAL_KEY}, True),
@@ -255,8 +256,17 @@ def usable(provider: str, environ: dict[str, str]) -> bool:
             {"OLLAMA_BASE_URL": "https://ollama.example", "PROMPT_LOCAL_ONLY": "true"},
             False,
         ),
+        # ...and an Ollama cloud model, on a loopback URL.
+        ("ollama", {"OLLAMA_MODEL": "gpt-oss:120b-cloud", "PROMPT_LOCAL_ONLY": "true"}, False),
         ("no-such-provider", {}, False),
     ],
 )
 def test_usable(provider: str, environ: dict[str, str], expected: bool) -> None:
     assert usable(provider, environ) is expected
+
+
+def test_an_empty_key_in_the_environment_beats_a_saved_one(tmp_path: Any) -> None:
+    saved = tmp_path / "saved.env"
+    saved.write_text(f"OPENROUTER_API_KEY={REAL_KEY}\n", encoding="utf-8")
+    assert usable("openrouter", {"PROMPTMEND_ENV": str(saved)})
+    assert not usable("openrouter", {"PROMPTMEND_ENV": str(saved), "OPENROUTER_API_KEY": ""})

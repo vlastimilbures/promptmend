@@ -19,6 +19,7 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Select, Static, TabbedContent, TextArea
 
 from promptmend import clipboard_guard, pipeline, prompt_builder, smoke, try_run
+from promptmend.config import ConfigLayers
 from promptmend.pipeline import MAX_DRAFT_CHARS
 from promptmend.tui import teach
 from promptmend.tui.app import ManageApp
@@ -783,7 +784,7 @@ def test_the_dry_run_is_named_for_what_it_is() -> None:
         seen.append([str(prompt) for prompt, _ in options._options])
 
     drive(scenario)
-    assert seen == [["Dry run (no rewrite)", "Real provider"]]
+    assert seen == [["Dry run", "Real provider"]]
 
 
 @pytest.mark.parametrize(
@@ -852,16 +853,70 @@ def test_a_real_target_picked_by_hand_stays_for_a_provider_without_a_key(
 
 
 def test_a_reload_follows_a_key_set_elsewhere_until_a_pick() -> None:
-    """A key saved on the Settings tab: the reload moves the default to the real provider."""
+    """A key saved on the Settings tab: the reload moves the default to the real provider.
+    Once the dry run is picked by hand, a key changed again and a reload keep the pick."""
     extra = dict(NO_KEY)
     seen: list[str] = []
 
-    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        seen.append(target(app))
-        extra["OPENROUTER_API_KEY"] = "-".join(("test", "key"))
+    async def reload_with(app: ManageApp, pilot: Pilot[int], key: str) -> None:
+        extra["OPENROUTER_API_KEY"] = key
         app.reload()
         await settle(pilot)
         seen.append(target(app))
 
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        seen.append(target(app))
+        await reload_with(app, pilot, "-".join(("test", "key")))
+        await pick(app, pilot, "target", STUB)
+        await reload_with(app, pilot, "")
+        await reload_with(app, pilot, "-".join(("other", "key")))
+
     drive(scenario, extra)
-    assert seen == [STUB, REAL]
+    assert seen == [STUB, REAL, STUB, STUB]
+
+
+def test_two_presses_open_one_dialog_and_one_send_is_one_call(
+    cloud: None, fake_http: FakeHttp, history_rows: HistoryRows, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run pressed twice before the dialog is up: one dialog, so one Send, one request; and
+    no second start while that run is under way, whoever asks."""
+    fake_http.reply(REPLY)
+    release = threading.Event()
+    real_run = try_run.run
+
+    def held(*args: Any, **kwargs: Any) -> try_run.Outcome:
+        release.wait(10)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(try_run, "run", held)
+    dialogs: list[int] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        pane = tab(app)
+        pane.query_one("#try-draft", TextArea).load_text(DRAFT)
+        assert target(app) == REAL
+        button = pane.query_one("#try-run", Button)
+        button.press()
+        button.press()
+        await pilot.pause()
+        pane._run()  # a third ask while the dialog is open
+        await pilot.pause()
+        dialogs.append(sum(isinstance(s, ConfirmModal) for s in app.screen_stack))
+        await pilot.press("y")
+        await pilot.pause()
+        assert pane.running
+        # The run is held: another y, Run or a direct start sends nothing more.
+        await pilot.press("y")
+        pane._run()
+        cfg = ConfigLayers.resolve().settings()
+        pane._start(DRAFT, "openrouter", None, cfg, COMMAND)
+        await pilot.pause()
+        dialogs.append(sum(isinstance(s, ConfirmModal) for s in app.screen_stack))
+        release.set()
+        await settle(pilot)
+
+    seen = drive(scenario)
+    assert dialogs == [1, 0]
+    assert len(fake_http.requests) == 1
+    assert seen.result == "A better prompt."
+    assert len(history_rows("operations")) == 1

@@ -18,16 +18,17 @@ http.server), so it is tested without an app."""
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from . import pipeline, recorder, sanitize, smoke
-from .factory import check_base_url, leaves_machine, routes
+from .factory import check_base_url, leaves_machine
+from .providers.registry import PROVIDERS
 
 if TYPE_CHECKING:
-    from .config import Entry, Settings
+    from .config import Settings
     from .providers.usage import AttemptUsage
 
 
@@ -94,18 +95,16 @@ def usage_line(attempts: Sequence[AttemptUsage], latency_ms: float, *, stub: boo
     )
 
 
-def usable(provider: str, cfg: Settings, entries: Mapping[str, Entry]) -> bool:
-    """Whether ``provider`` could rewrite a draft as ``cfg`` and the layers' ``entries`` say:
-    its key is set (only whether it is, never its value), or it takes none (Ollama, LM Studio),
-    and PROMPT_LOCAL_ONLY does not refuse it. An unknown name is not usable. Builds no
-    provider and makes no call."""
-    route = next((r for r in routes(cfg) if r.name == provider), None)
-    if route is None or route.refused:
+def usable(provider: str, cfg: Settings) -> bool:
+    """Whether ``provider`` could rewrite a draft on ``cfg``: PROMPT_LOCAL_ONLY does not refuse
+    it (leaves_machine(), as make_provider() decides), and its key is set as the call reads it
+    (parsed, so a blank one is not; only whether it is, never its value), or it takes none
+    (Ollama, LM Studio). An unknown name is not usable. Builds no provider, makes no call."""
+    spec = PROVIDERS.get(provider)
+    if spec is None or (cfg.local_only and leaves_machine(provider, cfg)):
         return False
-    if route.key is None:
-        return True
-    entry = entries.get(route.key)
-    return entry is not None and bool(entry.value)
+    key = spec.api_key(cfg)
+    return key is None or bool(key)
 
 
 def run(
