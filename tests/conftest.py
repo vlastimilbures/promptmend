@@ -368,3 +368,30 @@ def read_env_file(path: Path) -> dict[str, str] | None:
     except (OSError, UnicodeDecodeError):
         return None
     return config._parse_env_text(raw_text)[0]
+
+
+@pytest.fixture
+def smoke_in_process(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """smoke.run()'s CLI run in this process (Typer's CliRunner) with the environment
+    smoke.run() gives it, against the real stub on 127.0.0.1, so the smoke test checks what
+    improve really prints. The clipboard is replaced, never reached: returns each clipboard
+    operation improve asked for."""
+    from typer.testing import CliRunner
+
+    from promptmend import pipeline, smoke
+    from promptmend.cli import app
+
+    calls: list[str] = []
+
+    def clipboard(op: str, *args: str) -> object:
+        calls.append(op)
+        return None
+
+    def run_cli(argv: Sequence[str], env: Mapping[str, str]) -> tuple[int, bytes]:
+        args = list(argv)
+        result = CliRunner().invoke(app, args[args.index("improve") :], env=dict(env))
+        return result.exit_code, result.stdout_bytes
+
+    monkeypatch.setattr(pipeline, "_clipboard", clipboard)
+    monkeypatch.setattr(smoke, "run_cli", run_cli)
+    return calls

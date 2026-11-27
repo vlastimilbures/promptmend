@@ -65,7 +65,7 @@ def test_save_choice_saves_and_unsets_a_default(saved: Path) -> None:
     assert config_store.read_settings().values == {"PROMPT_PROVIDER": "ollama"}
     message, argv = setup_flow.save_choice("PROMPT_PROVIDER", "openrouter")
     assert message is not None
-    assert "its default, openrouter, applies" in message
+    assert "back to the built-in PROMPT_PROVIDER=openrouter" in message
     assert argv == ["unset", "PROMPT_PROVIDER"]
     assert config_store.read_settings().values == {}
     assert setup_flow.choice_command("PROMPT_PROFILE", "default") == ["unset", "PROMPT_PROFILE"]
@@ -97,7 +97,7 @@ def test_local_only_follows_the_answer(saved: Path) -> None:
     assert setup_flow.save_choice("PROMPT_LOCAL_ONLY", "true") == (None, [])
     message, argv = setup_flow.save_choice("PROMPT_LOCAL_ONLY", "false")
     assert message is not None
-    assert "its default, false, applies" in message
+    assert "back to the built-in PROMPT_LOCAL_ONLY=false" in message
     assert argv == ["unset", "PROMPT_LOCAL_ONLY"]
     assert "PROMPT_LOCAL_ONLY" not in config_store.read_settings().table
 

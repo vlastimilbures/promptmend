@@ -9,7 +9,7 @@ match files (assets.triggers()), never a list kept here."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -237,7 +237,7 @@ def _why_not_local(settings: Settings) -> str:
         if is_loopback(spec.url(settings)):
             reasons.append(f"{spec.model_setting} is a cloud model")
         else:
-            reasons.append(f"{spec.url_setting} points elsewhere")
+            reasons.append(f"{spec.url_setting} points to another computer")
     return "; ".join(reasons)
 
 
@@ -252,8 +252,9 @@ def local_note(
     """What "local" does: the triggers PROMPT_LOCAL_ONLY=true refuses (each whose provider
     can send the draft off this machine, factory.leaves_machine()) and the ones left to use.
     Worded by what is true: what the step will save (the default), what is set (``already``:
-    a re-run that asks nothing), or what the person must add to the .env ``legacy`` names,
-    which setup cannot write. ``headless`` names the options instead of the wizard's answers.
+    config.toml, or in legacy mode the .env, holds it), or what the person must add to the
+    .env ``legacy`` names, which setup cannot write (nor remove from: turning it off there is
+    the person's edit too). ``headless`` names the options instead of the wizard's answers.
     Which providers it refuses, and a local relay, are docs/privacy.md's."""
     away, kept = _split(triggers, settings)
     refused = ""
@@ -262,7 +263,7 @@ def local_note(
         refused = (
             f"{names} {{}}paste a refusal instead of sending your draft to {_and(_labels(away))}."
         )
-    if legacy:
+    if legacy and not already:
         text = (
             f"Local needs PROMPT_LOCAL_ONLY=true, which this setup cannot save: add it to {legacy}."
         )
@@ -285,8 +286,10 @@ def local_note(
     else:
         why = _why_not_local(settings)
         use = f"No trigger stays on this computer{f' ({why})' if why else ''}."
-    if legacy:
+    if legacy and not already:
         return f"{text} {use}"
+    if legacy:
+        return f"{text} {use} Remove it from {legacy} to turn it off."
     off = "`--use cloud` or `--use both`" if headless else "Cloud or Both"
     return f"{text} {use} {off} turns it off again."
 
@@ -296,21 +299,19 @@ def use_choices(triggers: Sequence[assets.Trigger], settings: Settings) -> list[
     (as local_note() splits them) and listing those triggers. Only local is stored
     (PROMPT_LOCAL_ONLY=true), so it alone can be marked current."""
     away, kept = _split(triggers, settings)
-    cloud = " ".join(t for t, _ in away)
-    local = " ".join(t for t, _ in kept)
+    cloud = (
+        f"{' '.join(t for t, _ in away)} · the draft leaves; needs a key"
+        if away
+        else "no trigger leaves this computer"
+    )
+    local = (
+        f"{' '.join(t for t, _ in kept)} · PROMPT_LOCAL_ONLY=true: the rest refuse"
+        if kept
+        else "no trigger stays on this computer; every one would refuse"
+    )
     return [
-        Choice(
-            CLOUD,
-            f"Cloud ({', '.join(_labels(away)) or 'none'})",
-            f"{cloud} · the draft leaves; needs a key",
-            False,
-        ),
-        Choice(
-            LOCAL,
-            f"Local ({', '.join(_labels(kept)) or 'none stays on this computer'})",
-            f"{local} · PROMPT_LOCAL_ONLY=true: the rest refuse",
-            settings.local_only,
-        ),
+        Choice(CLOUD, f"Cloud ({', '.join(_labels(away)) or 'none'})", cloud, False),
+        Choice(LOCAL, f"Local ({', '.join(_labels(kept)) or 'none'})", local, settings.local_only),
         Choice(BOTH, "Both", "every trigger above; needs the cloud key", False),
     ]
 
@@ -335,25 +336,39 @@ def smoke_runs(use: str, triggers: Sequence[assets.Trigger], settings: Settings)
 
 
 def _path(run: SmokeRun) -> str:
-    if run.provider is None:
-        return f"nothing on the local path ({NO_LOCAL_TRIGGER})"
     taken = f"the path {run.trigger} takes" if run.trigger else "no active trigger takes it"
     return f"`promptmend improve --provider {run.provider}` ({taken})"
 
 
+NOTHING_LOCAL = f"Nothing runs on the local path: {NO_LOCAL_TRIGGER}."
+
+
 def smoke_intro(runs: Sequence[SmokeRun]) -> str:
-    """The test step's intro: which trigger's path each run takes."""
+    """The test step's intro: which trigger's path each run takes, and that nothing runs on
+    the local path when no trigger stays on this computer."""
+    real = [run for run in runs if run.provider is not None]
+    none = " " + NOTHING_LOCAL if len(real) < len(runs) else ""
+    if not real:
+        return NOTHING_LOCAL
     return (
-        f"Runs {' and '.join(map(_path, runs))} against a stub server on 127.0.0.1 that "
+        f"Runs {' and '.join(map(_path, real))} against a stub server on 127.0.0.1 that "
         "answers like the provider. No provider is called and your real key is never sent; "
-        "it checks that the CLI starts and reads its settings."
+        f"it checks that the CLI starts and reads its settings.{none}"
     )
+
+
+def _local_urls() -> str:
+    return ", ".join(spec.url_setting for spec in PROVIDERS.values() if not spec.cloud)
 
 
 def smoke_result(run: SmokeRun, ok: bool, message: str) -> str:
     """One run's result line, naming the trigger whose path it took."""
     if run.provider is None:
-        return f"local: not run: {NO_LOCAL_TRIGGER}"
+        return (
+            f"local: not run: {NO_LOCAL_TRIGGER}: point a local server's base URL "
+            f"({_local_urls()}) back to this computer, with a local model, or answer cloud "
+            "(`--use cloud`)"
+        )
     who = f"{run.trigger} ({run.provider})" if run.trigger else run.provider
     return f"{who}: {'passed' if ok else 'failed'}: {message}"
 
@@ -454,8 +469,10 @@ def use_problem(
     """What is wrong when the effective PROMPT_LOCAL_ONLY disagrees with the answer ``use``
     (both setup flows: headless as a to-do line, the wizard on Done), or None. ``from_env``:
     the value comes from an environment variable, which outranks config.toml wherever it is
-    set (Espanso does not start from your shell, so the deployed triggers read config.toml);
-    ``legacy`` is the .env PROMPTMEND_ENV names, which setup cannot write."""
+    set. "Wherever", not "in any shell": Espanso started by launchd on macOS reads
+    config.toml, but a Windows user variable (setx) or a Linux session variable reaches
+    Espanso and the triggers too. ``legacy`` is the .env PROMPTMEND_ENV names, which setup
+    cannot write."""
     local = use == LOCAL
     if local == settings.local_only:
         return None
@@ -487,8 +504,14 @@ def use_problem(
     return f"{use}, but PROMPT_LOCAL_ONLY=true makes the cloud triggers refuse: {fix}"
 
 
-def no_key_line(settings: Settings) -> str:
-    """`setup --non-interactive`'s line when no key is needed."""
+def no_key_line(settings: Settings, *, pending: bool = False) -> str:
+    """`setup --non-interactive`'s line when no key is needed; ``pending``: the answer is
+    local but PROMPT_LOCAL_ONLY=true is not set yet (legacy mode: the person adds it)."""
+    if settings.local_only and pending:
+        return (
+            "No key needed once PROMPT_LOCAL_ONLY=true is set: it refuses every trigger that "
+            "would need one."
+        )
     if settings.local_only:
         return "No key needed: PROMPT_LOCAL_ONLY=true refuses every trigger that would need one."
     return "No key needed: every active trigger and your provider run locally."
@@ -517,6 +540,17 @@ def deploy_summary(plan: deploy.Plan) -> str:
     return f"Install writes {len(writes)} file(s) and then restarts Espanso."
 
 
+def shown_choice(name: str, value: str, overrides: Mapping[str, str]) -> str:
+    """A choice as setup shows it (saved_settings()), and the effective value an environment
+    variable gives instead (setup_flow.env_overrides()), said once where the value is shown."""
+    if name not in overrides:
+        return value
+    return (
+        f"{value} (the environment variable {name} overrides it wherever it is set: "
+        f"{overrides[name]})"
+    )
+
+
 def _use_row(settings: Settings, use: str, legacy: str | None, from_env: bool) -> DoneRow:
     """The answer, checked against PROMPT_LOCAL_ONLY (use_problem(): it may not have been
     saved, in legacy mode, or an environment variable may outrank config.toml)."""
@@ -540,16 +574,22 @@ def done_rows(
     skipped: Sequence[str] = (),
     *,
     from_env: bool = False,
+    saved: Settings | None = None,
+    overrides: Mapping[str, str] | None = None,
 ) -> list[DoneRow]:
     """What is set and what is left; ``use`` is the Cloud or local step's answer and
     ``legacy`` the .env PROMPTMEND_ENV names, where a missing setting or key then goes. A step
     in ``skipped`` ("espanso", "test": left out by `setup --no-deploy`/`--no-smoke-test`) says
     so and is not a problem. ``from_env``: PROMPT_LOCAL_ONLY comes from an environment
-    variable (use_problem())."""
+    variable (use_problem()). The answer is checked against the effective ``settings``; the
+    profile and output shown are ``saved`` (setup_flow.saved_settings()), with ``overrides``
+    naming an environment variable that changes them."""
+    shown = saved or settings
+    over = overrides or {}
     rows = [
         _use_row(settings, use, legacy, from_env),
-        DoneRow(True, "Profile", settings.profile),
-        DoneRow(True, "Output", settings.output),
+        DoneRow(True, "Profile", shown_choice("PROMPT_PROFILE", shown.profile, over)),
+        DoneRow(True, "Output", shown_choice("PROMPT_OUTPUT", shown.output, over)),
     ]
     for key in keys:
         if not key.needed:

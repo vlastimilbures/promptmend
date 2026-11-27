@@ -17,6 +17,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.geometry import Region
 from textual.screen import Screen
 from textual.widgets import (
     Button,
@@ -179,9 +180,9 @@ class SetupScreen(Screen[None]):
         return cast("ManageApp", self.app)
 
     def answer(self, settings: config.Settings) -> str:
-        """The Cloud or local answer: the one Next was pressed on, else what the settings
-        give (local while PROMPT_LOCAL_ONLY is true, else cloud)."""
-        return self.use or setup_flow.current_use(settings)
+        """The Cloud or local answer: the one Next was pressed on, else the saved one (local
+        while config.toml holds PROMPT_LOCAL_ONLY=true, else cloud; setup_flow.saved_settings())."""
+        return self.use or setup_flow.current_use(setup_flow.saved_settings(settings))
 
     def on_mount(self) -> None:
         if not self.options.standalone:
@@ -205,32 +206,25 @@ class SetupScreen(Screen[None]):
             notes.append(setup_guide.provider_not_saved(self.options.provider))
         notes.append(setup_guide.history_line(state.settings.history))
         self.query_one("#setup-welcome-notes", Static).update("\n".join(notes))
-        # In legacy mode Next saves nothing: the note says what to add, or that it is set.
-        legacy = where.legacy if where.legacy and not state.settings.local_only else None
+        # What setup shows as current is what config.toml holds (saved_settings()), so a plain
+        # Next on every step writes nothing, whatever the shell says. In legacy mode Next saves
+        # nothing: the note says what to add, or that it is set.
+        saved = setup_flow.saved_settings(state.settings)
         self.query_one("#setup-use-note", Static).update(
             setup_guide.local_note(
-                state.triggers,
-                state.settings,
-                legacy=legacy,
-                already=bool(where.legacy and state.settings.local_only),
+                state.triggers, state.settings, legacy=where.legacy, already=saved.local_only
             )
         )
-        self._fill(
-            "#setup-uses",
-            setup_guide.use_choices(state.triggers, state.settings),
-            self.options.use,
-        )
+        self._fill("#setup-uses", setup_guide.use_choices(state.triggers, saved), self.options.use)
         self._fill(
             "#setup-profiles",
-            setup_guide.profile_choices(state.settings, state.profiles),
+            setup_guide.profile_choices(saved, state.profiles),
             self.options.profile,
         )
         self.query_one("#setup-output-intro", Static).update(
             setup_guide.output_intro(state.settings)
         )
-        self._fill(
-            "#setup-outputs", setup_guide.output_choices(state.settings), self.options.output
-        )
+        self._fill("#setup-outputs", setup_guide.output_choices(saved), self.options.output)
         self._show_test_intro(state)
         self._show_keys(state)
         legacy = where.legacy
@@ -335,18 +329,45 @@ class SetupScreen(Screen[None]):
             focus = "#setup-deploy"
         if not refocus:
             return
-        if focus and focus.startswith("#setup-") and step in ("use", "profile", "output"):
+        if focus and step in ("use", "profile", "output"):
             # The list sits under its question: focused without scrolling, so a step taller
-            # than the screen (a narrow terminal) still opens on its question.
-            target = self.query_one(focus)
+            # than the screen (a narrow terminal) still opens on its question; then scrolled
+            # just enough that the highlighted choice shows (a carried warning can take the
+            # rows), so Enter never picks a choice nobody saw.
+            target = self.query_one(focus, OptionList)
             self.call_after_refresh(lambda: target.focus(scroll_visible=False))
+            # Twice deferred: the first refresh lays the list out at its width, which can
+            # wrap a choice onto another line.
+            self.call_after_refresh(self.call_after_refresh, self._reveal_highlight, step, target)
         elif focus:
             self.call_after_refresh(self.query_one(focus).focus)
         else:
             self.call_after_refresh(self.query_one("#setup-next-step").focus)
 
-    def report(self, message: str, *, error: bool = False, command: str | None = None) -> None:
-        self.query_one(".result", Static).update(result_text(message, command))
+    def _reveal_highlight(self, step: str, options: OptionList) -> None:
+        """Scroll the step, no further than needed, so the list's highlighted choice shows."""
+        index = options.highlighted
+        lines = options._index_to_line  # Textual's own map (what scroll_to_highlight uses)
+        if index is None or index not in lines:
+            return
+        top = options.virtual_region.y + lines[index]
+        height = options._heights[index]
+        self.query_one(f"#setup-{step}", VerticalScroll).scroll_to_region(
+            Region(0, top, 1, height), animate=False, immediate=True
+        )
+
+    def report(
+        self,
+        message: str,
+        *,
+        error: bool = False,
+        command: str | None = None,
+        shown: str | None = None,
+    ) -> None:
+        """Show ``message`` under its command and log it; ``shown`` replaces what the screen
+        shows (the log keeps the whole message), shown without the command."""
+        text = Text(shown) if shown is not None else result_text(message, command)
+        self.query_one(".result", Static).update(text)
         if error:
             self.app.notify(message, severity="error", markup=False)
         if command is not None:
@@ -440,7 +461,10 @@ class SetupScreen(Screen[None]):
             self.report(error_message(exc), error=True, command=command)
             return False
         if message:
-            self.report(message, command=teach.equivalent("config", *argv))
+            # Only the warning (an environment variable that overrides it) is carried onto
+            # the next step's screen; what was saved and where is in the log.
+            warning = "; ".join(setup_flow.save_warnings(name))
+            self.report(message, command=teach.equivalent("config", *argv), shown=warning)
             self.manage.reload()
         return True
 
@@ -588,6 +612,7 @@ class SetupScreen(Screen[None]):
             return
         summary = Text()
         use = self.answer(state.settings)
+        saved = setup_flow.saved_settings(state.settings)
         for row in setup_guide.done_rows(
             state.settings,
             use,
@@ -597,16 +622,24 @@ class SetupScreen(Screen[None]):
             setup_flow.storage().legacy,
             self.skipped,
             from_env=setup_flow.local_only_from_env(state.layers),
+            saved=saved,
+            overrides=setup_flow.env_overrides(state.layers, saved),
         ):
             summary.append("✓ " if row.ok else "✗ ", style="green" if row.ok else "yellow")
             summary.append(f"{row.label}: ", style="bold")
             summary.append(f"{row.text}\n")
         self.query_one("#setup-summary", Static).update(summary)
         self.query_one("#setup-next", Static).update(
-            setup_guide.next_step(use, state.triggers, state.settings)
+            setup_guide.next_step(use, state.triggers, saved)
         )
         if focus:
-            self.call_after_refresh(self.query_one("#setup-quit").focus)
+            # Opened at the top: its first row (Triggers) carries a mismatch, and focusing Quit
+            # at the bottom would scroll it away.
+            quit_button = self.query_one("#setup-quit")
+            self.call_after_refresh(lambda: quit_button.focus(scroll_visible=False))
+            self.call_after_refresh(
+                self.query_one("#setup-done", VerticalScroll).scroll_home, animate=False
+            )
 
     @on(Button.Pressed, "#setup-open")
     def _open(self) -> None:

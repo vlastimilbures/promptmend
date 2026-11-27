@@ -103,12 +103,15 @@ def test_local_note_follows_where_a_local_server_is() -> None:
     )
     note = setup_guide.local_note(assets.triggers(), every_one)
     assert (
-        " No trigger stays on this computer (OLLAMA_BASE_URL points elsewhere; "
-        "LMSTUDIO_BASE_URL points elsewhere). " in note
+        " No trigger stays on this computer (OLLAMA_BASE_URL points to another computer; "
+        "LMSTUDIO_BASE_URL points to another computer). " in note
     )
     assert "Use " not in note
     by = {c.value: c for c in setup_guide.use_choices(assets.triggers(), every_one)}
-    assert by["local"].title == "Local (none stays on this computer)"
+    assert (by["local"].title, by["local"].detail) == (
+        "Local (none)",
+        "no trigger stays on this computer; every one would refuse",
+    )
     cloud_model = setup_guide.local_note(
         [_trigger("-l-", "ollama")], _settings(ollama_model="gpt-oss:120b-cloud")
     )
@@ -147,9 +150,18 @@ def test_the_local_run_is_one_that_local_leaves_usable() -> None:
     )
     runs = setup_guide.smoke_runs("local", triggers, nothing)
     assert runs == [setup_guide.SmokeRun(None, None)]
-    assert setup_guide.smoke_intro(runs).startswith("Runs nothing on the local path (no trigger")
+    assert setup_guide.smoke_intro(runs) == (
+        "Nothing runs on the local path: no trigger stays on this computer with your settings."
+    )
+    both = setup_guide.smoke_runs("both", triggers, nothing)
+    assert setup_guide.smoke_intro(both).endswith(
+        "reads its settings. Nothing runs on the local path: no trigger stays on this "
+        "computer with your settings."
+    )
     assert setup_guide.smoke_result(runs[0], True, "") == (
-        f"local: not run: {setup_guide.NO_LOCAL_TRIGGER}"
+        f"local: not run: {setup_guide.NO_LOCAL_TRIGGER}: point a local server's base URL "
+        "(OLLAMA_BASE_URL, LMSTUDIO_BASE_URL) back to this computer, with a local model, or "
+        "answer cloud (`--use cloud`)"
     )
 
 

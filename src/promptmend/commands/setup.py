@@ -8,6 +8,7 @@ deprecated (#390): it saves PROMPT_PROVIDER, which no trigger reads, and says so
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 
 import typer
 
@@ -85,7 +86,10 @@ def _key_step(
         return
     rows = setup_flow.needed_keys(layers, settings, use)
     if not rows:
-        typer.echo(f"  {setup_guide.no_key_line(setup_guide.as_answered(settings, use))}")
+        # Local where it cannot be saved (legacy mode) and is not set yet: not needed once it is.
+        pending = use == setup_guide.LOCAL and not writable and not settings.local_only
+        answered = setup_guide.as_answered(settings, use)
+        typer.echo(f"  {setup_guide.no_key_line(answered, pending=pending)}")
         return
     for row in rows:
         typer.echo(f"  {setup_guide.key_line(row)}")
@@ -307,20 +311,26 @@ def setup(
     writable = _settings_writable(steps)
     if writable:
         layers, settings = settings_service.load_layers()
-    picked = profile if profile is not None else settings.profile
+    # An option not given keeps what config.toml holds (saved_settings()): a value only the
+    # shell gives is never written, nor a saved one removed, without being chosen.
+    saved = setup_flow.saved_settings(settings)
+    picked = profile if profile is not None else saved.profile
     _check_profile(picked, settings.profile_overrides)
-    # Without --use nothing about PROMPT_LOCAL_ONLY changes: the answer is the settings'.
-    answer = use if use is not None else setup_flow.current_use(settings)
-    out = output if output is not None else settings.output
-    typer.echo(f"  Triggers: {answer}; profile: {picked}; output: {out}")
+    # Without --use nothing about PROMPT_LOCAL_ONLY changes: the answer is the saved one.
+    answer = use if use is not None else setup_flow.current_use(saved)
+    out = output if output is not None else saved.output
+    over = setup_flow.env_overrides(layers, replace(saved, profile=picked, output=out))
+    typer.echo(
+        f"  Triggers: {answer}; "
+        f"profile: {setup_guide.shown_choice('PROMPT_PROFILE', picked, over)}; "
+        f"output: {setup_guide.shown_choice('PROMPT_OUTPUT', out, over)}"
+    )
+    legacy = setup_flow.storage().legacy
     if answer == setup_guide.LOCAL:
-        # What is true here: saved now (--use local), set already (a re-run), or for the
-        # person to add (legacy mode, unless that .env already has it).
-        legacy = setup_flow.storage().legacy
-        already = use is None or bool(legacy and settings.local_only)
-        legacy = None if already else legacy
+        # What is true here: saved now (--use local), set already (config.toml, or in legacy
+        # mode the .env, holds it), or for the person to add (legacy mode).
         note = setup_guide.local_note(
-            assets.triggers(), settings, legacy=legacy, already=already, headless=True
+            assets.triggers(), settings, legacy=legacy, already=saved.local_only, headless=True
         )
         typer.echo(f"  {note}")
     if provider is not None:
@@ -333,13 +343,15 @@ def setup(
     if writable:
         _save_choices(steps, choices)
     else:
-        unsaved = [
-            f"{name}={value}"
+        fixes = [
+            f"remove {name} from {legacy}"
+            if value == setup_flow.DEFAULTS[name]
+            else f"add {name}={value} to {legacy}"
             for name, value in choices
             if value != setup_flow.choice_value(name, settings)
         ]
-        if unsaved:
-            steps.later(f"set {', '.join(unsaved)} yourself")
+        if fixes:
+            steps.later("; ".join(fixes))
     if writable:
         problem = setup_flow.use_problem(answer, *settings_service.load_layers())
         if problem:
@@ -374,7 +386,7 @@ def setup(
     if steps.todo:
         typer.echo(f"  Setup finished with {len(steps.todo)} thing(s) still to do (above).")
     else:
-        settings = settings_service.load_layers()[1]
+        settings = setup_flow.saved_settings(settings_service.load_layers()[1])
         typer.echo(
             f"  Setup finished. {setup_guide.next_step(answer, assets.triggers(), settings)}"
         )

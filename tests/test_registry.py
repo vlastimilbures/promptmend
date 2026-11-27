@@ -170,6 +170,13 @@ def test_setup_tests_a_cloud_and_a_local_provider() -> None:
     assert all(run.trigger for run in runs)
 
 
+# A stub run checks what improve prints: it never copies the stub's reply to the clipboard.
+def test_stub_env_forces_paste_output() -> None:
+    for output in ("clipboard", "paste"):
+        assert smoke.stub_env(4242, {"PROMPT_OUTPUT": output})["PROMPT_OUTPUT"] == "paste"
+    assert smoke.stub_env(4242, {})["PROMPT_OUTPUT"] == "paste"
+
+
 # The stub runs point every provider at 127.0.0.1 with the placeholder key, never the real one.
 def test_stub_points_every_provider_at_the_stub() -> None:
     env = smoke.stub_env(4242, {"OPENROUTER_API_KEY": "real"})

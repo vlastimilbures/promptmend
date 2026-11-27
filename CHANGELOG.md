@@ -94,10 +94,16 @@ All notable changes to this project are documented here. The format follows
 - `setup --non-interactive --api-key-stdin` without `--provider` reads the cloud triggers' key
   (OpenRouter's) instead of `PROMPT_PROVIDER`'s (#390). With local (`--use local`, or
   `PROMPT_LOCAL_ONLY=true` already set and no `--use`) it fails with `takes no key`.
-- Setup writes each choice to `config.toml` whatever the environment says (#390). Espanso
-  does not start from your shell, so a shell variable that already gave the same value no
-  longer made setup skip the save; a choice at its built-in default removes the entry instead
-  of pinning it. When an environment variable overrides the saved value, setup says so.
+- Setup reads and writes its choices in `config.toml`, whatever the environment says (#390).
+  Espanso does not start from your shell, so the current value of the cloud or local answer,
+  the profile and the output is what `config.toml` holds (or the default when it holds
+  none): it is what each step marks current and starts on, what an option not given keeps,
+  and what Done and the next step show. A shell variable is never written into the file, nor
+  a saved value removed, unless you choose it, and a re-run with no options (or a plain Next
+  on every step) writes nothing. A chosen value is written even when a shell variable
+  already gives it; a choice at its built-in default removes the entry instead of pinning
+  it. Where an environment variable makes a choice differ, setup says so next to the value,
+  and a `PROMPT_LOCAL_ONLY` set only in the shell is reported as a mismatch, not as local.
 
 ### Deprecated
 - `setup --provider` (#390): with `--non-interactive` it still saves `PROMPT_PROVIDER` and
@@ -109,6 +115,10 @@ All notable changes to this project are documented here. The format follows
   in a later release.
 
 ### Fixed
+- `doctor`'s timing runs and setup's test no longer copy the stub's reply to the clipboard
+  when `PROMPT_OUTPUT=clipboard` (#390). The stub run used your output setting, so with
+  clipboard output it overwrote the clipboard, printed nothing and failed (`exit code 0, no
+  output`); it now always prints the reply.
 - The gate no longer blocks millisecond timestamps and long numeric IDs as card numbers
   (#397). Any run of 13 to 19 digits that passed the Luhn checksum counted as
   `payment_card`, which one random number in ten does, so about 10% of drafts with a

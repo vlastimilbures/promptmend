@@ -59,9 +59,11 @@ change is made through the same code as its command and shows that command. With
 `PROMPTMEND_ENV` set, settings and keys stay in that file: Next moves on without saving a
 choice and says so, the API keys step only says to add each key to that file, and Done names
 that file for a missing key or a `PROMPT_LOCAL_ONLY` that does not match your answer.
-Otherwise each choice is written to `config.toml` even when an environment variable already
-gives that value (Espanso does not start from your shell), and a choice at its default
-removes the entry; Done names an environment variable that overrides your answer.
+Otherwise what each step marks current and starts on is what `config.toml` holds (or the
+default), not a shell variable (Espanso does not start from your shell), so a plain Next on
+every step writes nothing. A choice is written to `config.toml` even when an environment
+variable already gives that value, and a choice at its default removes the entry; Done names
+an environment variable that overrides your answer, the profile or the output.
 
 Options given to `setup` prefill the wizard: `--use`, `--profile` and `--output` preselect
 that choice (Next still saves it), `--deploy` puts the focus on the install button

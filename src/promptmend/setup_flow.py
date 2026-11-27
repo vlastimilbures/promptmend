@@ -16,7 +16,7 @@ docstrings say which flow uses what."""
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import assets, config, config_files, config_store, deploy, settings_service, setup_guide
@@ -77,6 +77,60 @@ def current_choice(name: str) -> str:
     return choice_value(name, settings_service.load_layers()[1])
 
 
+def _held() -> dict[str, str] | None:
+    """config.toml's settings as text; None in legacy mode (no config.toml is read) or when
+    the file cannot be read (then the effective settings are all there is to show)."""
+    if settings_service.legacy_env():
+        return None
+    try:
+        return config_store.read_settings().values
+    except (ValueError, config_store.ConfigStoreError):
+        return None
+
+
+def saved_choice(name: str) -> str:
+    """The current value of one of setup's choices, the one rule both flows show and keep: in
+    saved mode what config.toml holds, or the default when it holds none (the deployed
+    triggers read config.toml, and an environment variable is never taken for an answer); in
+    legacy mode the effective value (current_choice())."""
+    held = _held()
+    if held is None:
+        return current_choice(name)
+    return str(held.get(name, DEFAULTS[name]))
+
+
+def saved_settings(settings: config.Settings) -> config.Settings:
+    """``settings`` with PROMPT_LOCAL_ONLY, PROMPT_PROFILE and PROMPT_OUTPUT as saved_choice()
+    gives them: what setup shows as current (the "(current)" mark, the starting highlight, the
+    answer read back, the Done rows and the next step) and keeps when nothing is given. Every
+    other field stays effective; in legacy mode it is ``settings``."""
+    held = _held()
+    if held is None:
+        return settings
+
+    def text(name: str) -> str:
+        return str(held.get(name, DEFAULTS[name]))
+
+    return replace(
+        settings,
+        local_only=text(LOCAL_ONLY).lower() == "true",
+        profile=text("PROMPT_PROFILE"),
+        output=text("PROMPT_OUTPUT"),
+    )
+
+
+def env_overrides(layers: config.ConfigLayers, saved: config.Settings) -> dict[str, str]:
+    """The profile and output an environment variable makes differ from what setup shows
+    (saved_settings()): {name: effective value}, for the line or row showing that choice.
+    PROMPT_LOCAL_ONLY has its own line (use_problem())."""
+    found = {}
+    for name in ("PROMPT_PROFILE", "PROMPT_OUTPUT"):
+        entry = layers.entries[name]
+        if entry.source == config.ENV_SOURCE and entry.value != choice_value(name, saved):
+            found[name] = entry.value
+    return found
+
+
 def local_only_value(use: str) -> str:
     """PROMPT_LOCAL_ONLY for the answer ``use`` (setup_guide.USES): true for local, else its
     default, false, which save_choice() unsets rather than pins."""
@@ -86,7 +140,8 @@ def local_only_value(use: str) -> str:
 def current_use(settings: config.Settings) -> str:
     """The answer the settings give when none was picked (`setup --non-interactive` without
     --use, or the wizard before its step): local while PROMPT_LOCAL_ONLY is true, else cloud
-    (cloud and both are not stored)."""
+    (cloud and both are not stored). Callers pass saved_settings(), so a variable set only in
+    the shell is not read back as the answer."""
     return setup_guide.LOCAL if settings.local_only else setup_guide.CLOUD
 
 
@@ -116,12 +171,18 @@ def save_choice(name: str, value: str) -> tuple[str | None, list[str]]:
         _, path = settings_service.unset_setting(name)
         done = f"{name} removed from {path}"
         if current_choice(name) == value:
-            done += f"; its default, {value}, applies"
+            done += f"; back to the built-in {name}={value}"
     else:
         saved = settings_service.save_setting(name, value)
         done = f"{name}={value} saved in {saved.path}"
     notes = settings_service.after_save(name)
     return "; ".join([done, *notes]), choice_command(name, value)
+
+
+def save_warnings(name: str) -> list[str]:
+    """After save_choice() changed ``name``: only its warnings (settings_service.after_save()),
+    which the wizard carries onto the next step; the whole message goes to its log."""
+    return settings_service.after_save(name)
 
 
 def use_for_provider(provider: str) -> str:
