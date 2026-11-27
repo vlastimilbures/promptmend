@@ -9,7 +9,6 @@ import asyncio
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -19,13 +18,12 @@ from test_tui_snapshots import fixed_state, quick_fixed_state
 from textual.pilot import Pilot
 from textual.widgets import Button, Select, Static, TabbedContent, TextArea
 
-from promptmend import clipboard_guard, pipeline, prompt_builder, smoke
+from promptmend import clipboard_guard, pipeline, prompt_builder, smoke, try_run
 from promptmend.pipeline import MAX_DRAFT_CHARS
-from promptmend.providers.usage import AttemptUsage
-from promptmend.tui import teach, try_pane
+from promptmend.tui import teach
 from promptmend.tui.app import ManageApp
 from promptmend.tui.modals import ConfirmModal
-from promptmend.tui.try_pane import CONFIGURED, REAL, TryPane, usage_line
+from promptmend.tui.try_pane import CONFIGURED, REAL, TryPane
 
 if TYPE_CHECKING:
     from conftest import FakeHttp, HistoryRows
@@ -191,7 +189,7 @@ def test_gate_blocks_a_key_before_the_stub_is_called() -> None:
         ("  \n ", "[promptmend: Input is empty]"),
         (
             "x" * (MAX_DRAFT_CHARS + 1),
-            f"[promptmend: Input is too long ({MAX_DRAFT_CHARS + 1} chars, max {MAX_DRAFT_CHARS})]",
+            f"[promptmend: Input is too long (over {MAX_DRAFT_CHARS} chars)]",
         ),
     ],
     # Short ids: pytest puts the test id in PYTEST_CURRENT_TEST, and Windows caps an
@@ -357,7 +355,7 @@ def test_a_crashed_worker_frees_the_run_button(monkeypatch: pytest.MonkeyPatch) 
     def broken(*_: Any, **__: Any) -> Any:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(try_pane, "usage_line", broken)
+    monkeypatch.setattr(try_run, "usage_line", broken)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await run(app, pilot, DRAFT)
@@ -384,35 +382,6 @@ def test_pickers_start_at_the_settings_and_keep_a_pick() -> None:
 
     drive(scenario)
     assert seen == [("openrouter", CONFIGURED), ("ollama", "mine")]
-
-
-def test_usage_line() -> None:
-    def attempt(**fields: Any) -> AttemptUsage:
-        return AttemptUsage("openrouter", "m", "remote", 1, 200, None, 10.0, **fields)
-
-    assert usage_line([], 3.2, stub=False) == "3 ms · no request was sent"
-    reported = attempt(
-        cost_state="reported",
-        charged_amount=Decimal("0.5"),
-        charged_unit="credits",
-        input_uncached=10,
-        cache_read=5,
-        output=3,
-    )
-    assert usage_line([reported], 12.4, stub=False) == (
-        "12 ms · 1 request · tokens in 15, out 3 · cost 0.5 credits reported"
-    )
-    unknown = attempt()
-    assert usage_line([unknown], 1.0, stub=False).endswith(
-        "tokens in unknown, out unknown · cost unknown"
-    )
-    assert usage_line([unknown, reported], 1.0, stub=False).endswith(
-        "2 requests · tokens in 15, out 3 · cost 0.5 credits reported (some unknown)"
-    )
-    local = attempt(cost_state="not_applicable")
-    assert usage_line([local], 1.0, stub=False).endswith(
-        "cost not applicable (runs on this machine)"
-    )
 
 
 def test_pro_tier_preview_names_the_pro_model(cloud: None, fake_http: FakeHttp) -> None:

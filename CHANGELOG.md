@@ -53,6 +53,9 @@ All notable changes to this project are documented here. The format follows
   now says that upper-case label words and phrases such as *internal only* are flagged
   anywhere, and docs/troubleshooting.md lists every finding with its known false positives,
   such as 12-digit AWS account IDs.
+- A draft over the 50,000-character limit gets one marker wording from every source (#408):
+  `--text`, the clipboard and the interface's Try tab now say `Input is too long (over 50000
+  chars)`, as stdin already did, instead of `Input is too long (N chars, max 50000)`.
 
 ### Fixed
 - The gate no longer blocks millisecond timestamps and long numeric IDs as card numbers
