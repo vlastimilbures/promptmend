@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import typer
 
-from .. import config, deploy, setup_flow, setup_guide, smoke
+from .. import config, deploy, settings_service, setup_flow, setup_guide, smoke
 from ..factory import PROVIDER_NAMES
 from ..redaction import safe_repr
 from . import common
@@ -74,7 +74,7 @@ def _key_step(steps: _Steps, provider: str, *, writable: bool, from_stdin: bool)
             return
         _one_key(steps, name, writable=writable, from_stdin=True)
         return
-    rows = setup_flow.needed_keys(*common.load_layers())
+    rows = setup_flow.needed_keys(*settings_service.load_layers())
     if not rows:
         typer.echo("  No key needed: every active trigger and your provider run locally.")
         return
@@ -85,7 +85,7 @@ def _key_step(steps: _Steps, provider: str, *, writable: bool, from_stdin: bool)
 
 
 def _one_key(steps: _Steps, name: str, *, writable: bool, from_stdin: bool) -> None:
-    layers, _ = common.load_layers()
+    layers, _ = settings_service.load_layers()
     entry = layers.entries[name]
     if not writable:
         if from_stdin:
@@ -225,7 +225,7 @@ def setup(
         from ..tui.setup_wizard import SetupOptions
 
         if profile is not None:
-            _check_profile(profile, common.load_layers()[1].profile_overrides)
+            _check_profile(profile, settings_service.load_layers()[1].profile_overrides)
         ui_cmd.open_setup(
             SetupOptions(
                 espanso_dir,
@@ -240,7 +240,7 @@ def setup(
         )
         return
     steps = _Steps()
-    layers, settings = common.load_layers()
+    layers, settings = settings_service.load_layers()
     common.show_findings(layers)
     typer.echo(
         "PromptMend setup: settings, API keys, Espanso's match files and a test on a local "
@@ -255,7 +255,7 @@ def setup(
     steps.heading("Settings")
     writable = _settings_writable(steps)
     if writable:
-        layers, settings = common.load_layers()
+        layers, settings = settings_service.load_layers()
     try:
         chosen = setup_flow.chosen_provider(provider, settings)
     except ValueError as exc:

@@ -11,7 +11,7 @@ from test_tui import KEY, FakeRunner, drive, press, settle
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Static
 
-from promptmend import config, config_store, deploy, smoke
+from promptmend import config, config_store, deploy, settings_service, smoke
 from promptmend.commands import common
 from promptmend.commands import setup as setup_cmd
 from promptmend.commands import ui as ui_cmd
@@ -120,7 +120,7 @@ def test_wizard_walks_every_step_and_saves(
 
     app = drive(scenario, setup=_options(espanso))
     assert app.return_code == 0
-    layers, settings = common.load_layers()
+    layers, settings = settings_service.load_layers()
     assert (settings.provider, settings.profile) == ("ollama", "general")
     assert layers.entries["OPENROUTER_API_KEY"].value == KEY
     commands = [entry.command for entry in app.session]
@@ -149,7 +149,7 @@ def test_wizard_default_choice_is_removed_not_pinned(saved: Path, espanso: FakeR
 
     app = drive(scenario, setup=_options(espanso))
     assert "PROMPT_PROVIDER" not in config_store.read_settings().table
-    assert common.load_layers()[1].provider == "openrouter"
+    assert settings_service.load_layers()[1].provider == "openrouter"
     # The log names the command that ran, not a `config set` (#237).
     assert [entry.command for entry in app.session] == ["promptmend config unset PROMPT_PROVIDER"]
 
@@ -179,10 +179,10 @@ def test_wizard_moves_on_in_legacy_env_mode(espanso: FakeRunner) -> None:
     app = drive(scenario, setup=_options(espanso))
     assert notes == [
         f"PROMPT_PROVIDER not saved: PROMPTMEND_ENV is set, so settings stay in "
-        f"{common.legacy_env()}; edit that file instead."
+        f"{settings_service.legacy_env()}; edit that file instead."
     ]
     assert app.session == []
-    layers, settings = common.load_layers()
+    layers, settings = settings_service.load_layers()
     assert settings.provider == "openrouter"
     assert layers.entries["OPENROUTER_API_KEY"].value != KEY
 
@@ -228,7 +228,7 @@ def test_wizard_names_an_unread_dotenv(saved: Path, espanso: FakeRunner) -> None
 
     drive(scenario, setup=_options(espanso))
     assert env.read_text("utf-8") == "PROMPT_PROVIDER=ollama\n"
-    assert common.load_layers()[1].provider == "openrouter"
+    assert settings_service.load_layers()[1].provider == "openrouter"
 
 
 def test_wizard_deploy_refused_when_the_plan_changed(saved: Path, espanso: FakeRunner) -> None:

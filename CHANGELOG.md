@@ -53,6 +53,10 @@ All notable changes to this project are documented here. The format follows
   now says that upper-case label words and phrases such as *internal only* are flagged
   anywhere, and docs/troubleshooting.md lists every finding with its known false positives,
   such as 12-digit AWS account IDs.
+- The Settings tab's edit dialog refuses a value that looks like a key with `config set`'s
+  own words, which name `promptmend secrets set NAME` for an API key (#408): the dialog and
+  `config set` now make one check. With `PROMPTMEND_ENV` set, `config set` with a value the
+  setting cannot read names that value before the legacy-mode refusal (exit 1 either way).
 
 ### Fixed
 - The gate no longer blocks millisecond timestamps and long numeric IDs as card numbers

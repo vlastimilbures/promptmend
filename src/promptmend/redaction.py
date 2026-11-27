@@ -535,6 +535,21 @@ def set_user_patterns(patterns: tuple[re.Pattern[str], ...]) -> None:
     _user_patterns = patterns
 
 
+def user_patterns() -> tuple[re.Pattern[str], ...]:
+    """The user's PROMPT_EXTRA_PATTERNS, compiled, as set_user_patterns() set them last."""
+    return _user_patterns
+
+
+def looks_like_a_key(value: str, *, user_patterns: bool = True) -> bool:
+    """A value the gate would block as a credential (an API key, a token, a password), or
+    one the user's PROMPT_EXTRA_PATTERNS match (from the settings loaded last, see
+    set_user_patterns; ``user_patterns`` false skips them, for the value of
+    PROMPT_EXTRA_PATTERNS itself, which may match its own text): it belongs in the secrets
+    file, so it is never saved in config.toml or printed."""
+    extra = _user_patterns if user_patterns else ()
+    return bool(set(scan(value, extra)) - SOFT_FINDINGS)
+
+
 def safe_repr(raw: str, *, user_patterns: bool = True) -> str:
     """How an error message quotes a value it rejects. Errors are pasted into whatever app
     has focus, so a value that may hold a secret is described instead of repeated: a long

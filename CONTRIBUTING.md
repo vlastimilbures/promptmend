@@ -425,6 +425,9 @@ promptmend/
 │   ├── config.py                 Settings from the environment, config.toml or a named .env
 │   ├── config_files.py           reads config.toml/secrets.toml; atomic, private writes
 │   ├── config_store.py           saves settings and secrets
+│   ├── settings_service.py       config set/unset and secrets set's checks and saves, Typer-free,
+│   │                             shared by the commands, setup and the interface
+│   ├── settings_checks.py        the persona and gate-pack checks, the triggers' providers
 │   ├── factory.py                make_provider(): builds providers, decides which are gated
 │   ├── gate.py                   GatedProvider: scans every draft that can leave the machine
 │   ├── clipboard_guard.py        refuses password-manager (concealed) clipboard items

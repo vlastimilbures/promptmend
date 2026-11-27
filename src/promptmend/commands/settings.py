@@ -1,17 +1,14 @@
-"""`config` and `secrets`: the settings and API keys, over config.py (repair mode) and
-config_store.py. A key is read only from stdin or a hidden prompt, never from an
-argument, and no command prints one."""
+"""`config` and `secrets`: the settings and API keys, printed over settings_service.py (the
+checks and saves setup and the interface share) and config_store.py. A key is read only from
+stdin or a hidden prompt, never from an argument, and no command prints one."""
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import typer
 
-from .. import config, config_files, config_store
+from .. import config, config_store, settings_service
 from ..config import ConfigLayers, env_names, secret_names
-from ..redaction import safe_repr
+from ..redaction import looks_like_a_key, safe_repr
 from . import common
 from .common import guard
 
@@ -40,88 +37,15 @@ def _setting(name: str) -> str:
 
 
 def _secret(name: str) -> str:
-    if name not in secret_names():
-        raise typer.BadParameter(
-            f"{safe_repr(name)} is not a secret; choose from {', '.join(secret_names())}"
-        )
-    return name
-
-
-def _not_a_secret(name: str, verb: str) -> None:
-    if name in secret_names():
-        raise common.CommandError(
-            f"{name} is a secret: {verb} it with `promptmend secrets {verb} {name}` (a hidden "
-            "prompt or --stdin), never as an argument",
-            common.USAGE,
-        )
-
-
-def env_override(name: str) -> str | None:
-    """The warning to show after saving ``name`` while a real environment variable outranks
-    it, or None."""
-    if name in os.environ:
-        return f"the environment variable {name} is set and overrides the saved value"
-    return None
-
-
-# The settings doctor.persona_problem() reads: saving one can make the persona go out.
-_PERSONA_INPUTS = frozenset(
-    {
-        "PROMPT_PERSONA",
-        "PROMPT_PROFILE",
-        "PROMPT_PRO_PROFILE",
-        "PROMPT_PROFILE_OVERRIDES",
-        "PROMPT_EXTRA_PATTERNS",
-        "PROMPT_GATE_PACKS",
-        "PROMPT_LOCAL_ONLY",
-        "PROMPT_GATE_LOCAL",
-    }
-)
-
-
-def persona_warning(name: str) -> str | None:
-    """The warning to show after saving ``name`` when the effective persona now matches the
-    data-protection patterns and is sent (`config validate`'s problem: finding names only,
-    never the text), or None. The value stays saved: a persona never blocks a call."""
-    if name not in _PERSONA_INPUTS:
-        return None
-    from ..doctor import persona_problem
-
-    return persona_problem(common.load_layers()[1])
-
-
-def after_save(name: str) -> list[str]:
-    """The warnings to show after saving or removing ``name``; the interface shows them too."""
-    return [note for note in (env_override(name), persona_warning(name)) if note]
+    try:
+        return config_store.secret_name(name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
 
 
 def _warn_after_save(name: str) -> None:
-    for note in after_save(name):
+    for note in settings_service.after_save(name):
         common.warn(note)
-
-
-def save_setting(name: str, value: str) -> config_store.SavedSettings:
-    """`config set` without the printing, shared with the interface: refuse a secret, a
-    value that looks like a key and legacy mode (CommandError), then save
-    ``value`` in config.toml after checking it as the CLI would read it."""
-    _not_a_secret(name, "set")
-    if common.looks_like_a_key(value, user_patterns=name != common.EXTRA_PATTERNS):
-        raise common.CommandError(
-            "that value looks like a key or password, which never goes in config.toml; use "
-            "`promptmend secrets set NAME` for an API key",
-            common.USAGE,
-        )
-    common.refuse_in_legacy_mode(config_files.SETTINGS_FILE)
-    return config_store.save_settings(config_store.read_settings(), {name: value})
-
-
-def store_key(name: str, value: str) -> str:
-    """`secrets set` without the printing, shared with setup and the interface: refuse legacy
-    mode (CommandError), save ``value`` in the secrets file and say so. after_save() gives the
-    warnings to show with it."""
-    common.refuse_in_legacy_mode("the secrets file")
-    config_store.save_secret(name, value)
-    return f"{name} saved in the secrets file ({config_store.config_dir()})"
 
 
 # --- config -------------------------------------------------------------------------------
@@ -140,7 +64,7 @@ def layers_lines(layers: ConfigLayers, raw: bool) -> list[str]:
                 if name in layer.values:
                     entry = config.Entry(layer.values[name], layer.source)
                     lines.append(f"      {name} = {common.shown_value(name, entry)}")
-    if common.legacy_env():
+    if settings_service.legacy_env():
         lines.append(
             f"  ({config.ENV_FILE_VAR} is set: config.toml and the secrets file are not read)"
         )
@@ -154,7 +78,7 @@ def config_show(
 ) -> None:
     """Each setting's effective value and where it comes from. Keys and the persona are shown
     only as set or not set; `overrides` names the files whose value lost to it."""
-    layers, _ = common.load_layers()
+    layers, _ = settings_service.load_layers()
     for line in layers_lines(layers, raw):
         typer.echo(line)
     typer.echo("")
@@ -178,10 +102,10 @@ def config_get(name: str = _NAME) -> None:
     _setting(name)
     if name in secret_names():
         common.fail(f"{name} is a secret and is never printed; `secrets status` says if it is set")
-    layers, _ = common.load_layers()
+    layers, _ = settings_service.load_layers()
     common.show_findings(layers)
     value = layers.entries[name].value
-    if common.looks_like_a_key(value, user_patterns=name != common.EXTRA_PATTERNS):
+    if looks_like_a_key(value, user_patterns=name != settings_service.EXTRA_PATTERNS):
         common.fail(
             f"{name} holds what looks like a key ({len(value)} chars), so it is not printed; "
             "move the key to `promptmend secrets set`"
@@ -197,7 +121,7 @@ def config_set(
 ) -> None:
     """Save a setting in config.toml, after checking it as the CLI would read it."""
     _setting(name)
-    saved = save_setting(name, value)
+    saved = settings_service.save_setting(name, value)
     typer.echo(f"{name} saved in {saved.path}")
     _warn_after_save(name)
 
@@ -207,7 +131,7 @@ def config_set(
 def config_unset(name: str = _NAME) -> None:
     """Remove a setting from config.toml, so its default applies again."""
     _setting(name)
-    removed, path = unset_setting(name)
+    removed, path = settings_service.unset_setting(name)
     if not removed:
         typer.echo(f"{name} is not saved in {path}; nothing to do.")
         return
@@ -215,32 +139,19 @@ def config_unset(name: str = _NAME) -> None:
     _warn_after_save(name)
 
 
-def unset_setting(name: str) -> tuple[bool, Path]:
-    """`config unset` without the printing, shared with the interface's reset: refuse
-    a secret and legacy mode, then remove ``name`` from config.toml. Whether it was saved
-    there, and the file's path."""
-    _not_a_secret(name, "remove")
-    common.refuse_in_legacy_mode(config_files.SETTINGS_FILE)
-    snapshot = config_store.read_settings()
-    if name not in snapshot.table:
-        return False, snapshot.path
-    config_store.save_settings(snapshot, {name: None})
-    return True, snapshot.path
-
-
 @config_app.command("validate")
 @guard
 def config_validate() -> None:
     """Check the settings as improve reads them. Exit 4 when there is anything to fix."""
-    from ..doctor import gate_packs_note, persona_problem
     from ..prompt_builder import system_prompt
+    from ..settings_checks import gate_packs_note, persona_problem
 
     problems = []
     try:
         ConfigLayers.resolve().settings()
     except ValueError as exc:
         problems.append(f"improve would stop with: {exc}")
-    layers, settings = common.load_layers()
+    layers, settings = settings_service.load_layers()
     problems += [f"{common.source_label(f.source)}: {f.message}" for f in layers.findings]
     for profile in dict.fromkeys(filter(None, (settings.profile, settings.pro_profile))):
         try:
@@ -271,9 +182,10 @@ def secrets_set(
 ) -> None:
     """Save an API key in the secrets file (asks with hidden input, or reads --stdin)."""
     _secret(name)
-    common.refuse_in_legacy_mode("the secrets file")  # before asking for a key it cannot save
+    # Before asking for a key it cannot save.
+    settings_service.refuse_in_legacy_mode("the secrets file")
     value = common.read_secret(name, from_stdin=stdin)
-    typer.echo(store_key(name, value))
+    typer.echo(settings_service.store_key(name, value))
     _warn_after_save(name)
 
 
@@ -281,7 +193,7 @@ def secrets_set(
 @guard
 def secrets_status() -> None:
     """Whether each key is set and where it comes from; never the value."""
-    layers, _ = common.load_layers()
+    layers, _ = settings_service.load_layers()
     width = max(len(n) for n in secret_names())
     for name in secret_names():
         entry = layers.entries[name]
@@ -299,14 +211,14 @@ def secrets_status() -> None:
 def secrets_remove(name: str = _SECRET, yes: bool = _YES) -> None:
     """Delete an API key from the secrets file."""
     _secret(name)
-    common.refuse_in_legacy_mode("the secrets file")
+    settings_service.refuse_in_legacy_mode("the secrets file")
     if name not in config_store.saved_secret_names():
         typer.echo(f"{name} is not in the secrets file; nothing to do.")
         return
     common.confirm(f"Delete {name} from the secrets file?", yes=yes)
     config_store.delete_secret(name)
     typer.echo(f"{name} removed from the secrets file.")
-    layers, _ = common.load_layers()
+    layers, _ = settings_service.load_layers()
     entry = layers.entries[name]
     if entry.value:
         typer.echo(f"{name} is still set, from {common.source_label(entry.source)}.")

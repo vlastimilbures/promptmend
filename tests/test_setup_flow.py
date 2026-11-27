@@ -11,10 +11,16 @@ import sys
 from pathlib import Path
 
 import pytest
-import typer
 
-from promptmend import config, config_files, config_store, deploy, setup_flow, setup_guide
-from promptmend.commands import common
+from promptmend import (
+    config,
+    config_files,
+    config_store,
+    deploy,
+    settings_service,
+    setup_flow,
+    setup_guide,
+)
 
 KEY = "sk-or-v1-" + "ab12" * 16
 
@@ -30,22 +36,59 @@ def _settings_file() -> Path:
     return config_store.read_settings().path
 
 
-def test_imports_neither_typer_nor_textual() -> None:
-    tree = ast.parse(Path(setup_flow.__file__).read_text(encoding="utf-8"))
-    names = {
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    }
-    names |= {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+PACKAGE = Path(setup_flow.__file__).parent
+# The Typer-free modules (#408): setup's core, the settings services and checks, and doctor.
+TYPER_FREE = ("setup_flow", "settings_service", "settings_checks", "doctor")
+
+
+def _imports(path: Path) -> set[str]:
+    """Every module ``path`` (under src/promptmend) imports, at module level or inside a
+    function, as an absolute name; ``from . import x`` counts as ``promptmend.x`` too."""
+    package = ["promptmend", *path.relative_to(PACKAGE).parts[:-1]]
+    names = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            names |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            base = package[: len(package) - node.level + 1] if node.level else []
+            module = ".".join([*base, *(node.module or "").split(".")]).strip(".")
+            names.add(module)
+            names |= {f"{module}.{alias.name}" for alias in node.names}
+    return names
+
+
+@pytest.mark.parametrize("module", TYPER_FREE)
+def test_imports_neither_typer_nor_textual(module: str) -> None:
+    names = _imports(PACKAGE / f"{module}.py")
     assert not {n for n in names if n.split(".")[0] in ("typer", "textual", "click")}
 
 
-def test_import_loads_no_textual() -> None:
+def test_only_commands_tui_and_cli_import_the_commands() -> None:
+    """No module outside commands/ and tui/ imports from promptmend.commands, not even inside
+    a function: the commands print over the services, never the other way round. cli.py is
+    the one exception: it wires the commands into the Typer app (each loaded when it runs)."""
+    offenders = []
+    for path in sorted(PACKAGE.rglob("*.py")):
+        relative = path.relative_to(PACKAGE)
+        if relative.parts[0] in ("commands", "tui") or relative == Path("cli.py"):
+            continue
+        commands = "promptmend.commands"
+        if any(n == commands or n.startswith(f"{commands}.") for n in _imports(path)):
+            offenders.append(relative.as_posix())
+    assert offenders == []
+
+
+def test_the_import_walk_sees_imports_inside_functions() -> None:
+    # The walk above would pass on an empty set: show it finds cli.py's lazy import.
+    assert "promptmend.commands.ui.on_a_terminal" in _imports(PACKAGE / "cli.py")
+
+
+@pytest.mark.parametrize("module", TYPER_FREE)
+def test_import_loads_no_typer_click_textual_or_commands(module: str) -> None:
     code = (
-        "import sys, promptmend.setup_flow; "
-        "print(sorted(m for m in sys.modules if m.split('.')[0] == 'textual'))"
+        f"import sys, promptmend.{module}; "
+        "print(sorted(m for m in sys.modules if m.split('.')[0] in ('typer', 'click', "
+        "'textual') or m.startswith('promptmend.commands')))"
     )
     out = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60
@@ -127,7 +170,7 @@ def test_save_choices_reports_a_failed_settings_file(
 
 
 def test_chosen_provider_and_profile() -> None:
-    settings = common.load_layers()[1]
+    settings = settings_service.load_layers()[1]
     assert setup_flow.chosen_provider(None, settings) == settings.provider
     assert setup_flow.chosen_provider("ollama", settings) == "ollama"
     with pytest.raises(ValueError, match="is not a provider; pass --provider"):
@@ -140,13 +183,13 @@ def test_chosen_provider_and_profile() -> None:
 def test_keys(saved: Path) -> None:
     assert setup_flow.stdin_key("openrouter") == "OPENROUTER_API_KEY"
     assert setup_flow.stdin_key("ollama") is None
-    rows = setup_flow.needed_keys(*common.load_layers())
+    rows = setup_flow.needed_keys(*settings_service.load_layers())
     assert [row.name for row in rows] == ["OPENROUTER_API_KEY"]
     assert all(row.needed for row in rows)
     message = setup_flow.save_keys([("OPENROUTER_API_KEY", KEY)])
     assert message.startswith("OPENROUTER_API_KEY saved")
     assert KEY not in message
-    assert common.load_layers()[0].entries["OPENROUTER_API_KEY"].value == KEY
+    assert settings_service.load_layers()[0].entries["OPENROUTER_API_KEY"].value == KEY
     assert not _settings_file().exists()  # a key never goes in config.toml
 
 
@@ -178,10 +221,12 @@ def test_read_plan_install_and_in_sync(tmp_path: Path) -> None:
 
 
 def test_read_plan_refuses_a_key_in_an_option(tmp_path: Path) -> None:
-    # common.no_key()'s usage error, as `setup --espanso-dir`/`--launcher` give it.
-    with pytest.raises(typer.BadParameter, match="--espanso-dir looks like a key"):
+    # settings_service.refuse_key()'s usage error; `setup --espanso-dir`/`--launcher` give its
+    # text as Click's (commands.common.no_key()).
+    with pytest.raises(settings_service.ServiceError, match="--espanso-dir looks like a key") as e:
         setup_flow.read_plan(KEY, "/bin/pm")
-    with pytest.raises(typer.BadParameter, match="--launcher looks like a key"):
+    assert e.value.usage
+    with pytest.raises(settings_service.ServiceError, match="--launcher looks like a key"):
         setup_flow.read_plan(str(tmp_path), KEY)
 
 

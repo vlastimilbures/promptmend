@@ -12,9 +12,10 @@ from textual import work
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, DataTable, Static
 
-from .. import config_store, deploy, history
+from .. import config_store, deploy, history, settings_service
 from ..commands import common
 from ..config_files import SecretStoreError
+from ..redaction import looks_like_a_key
 from . import teach
 from .state import State
 
@@ -30,7 +31,7 @@ else:
 # What a save, a deletion or a deploy may raise for the person to read: the same errors the
 # headless commands turn into `error: …` (commands/common.guard).
 EXPECTED = (
-    common.CommandError,
+    settings_service.ServiceError,
     ValueError,
     OSError,
     config_store.ConfigStoreError,
@@ -94,6 +95,22 @@ class Reports(_Mixin):
         self.report(message, command=command)
         if reload:
             self.manage.reload()
+
+    def save_setting(self, name: str, value: str, saved: Callable[[], None] = lambda: None) -> None:
+        """Save ``value`` for ``name`` through `config set`'s service, the one save path of the
+        Settings and Profiles tabs: what was saved and after_save()'s warnings, under the
+        command (a private or key-like value withheld). ``saved`` runs once the value is
+        saved, before the warnings are read."""
+        private = name in common.PRIVATE or looks_like_a_key(value)
+        shown = teach.WITHHELD if private else value
+
+        def save() -> str:
+            path = settings_service.save_setting(name, value).path
+            saved()
+            notes = settings_service.after_save(name)
+            return "; ".join([f"{name} saved in {path}", *notes])
+
+        self.attempt(save, command=teach.for_setting("set", name, shown))
 
 
 # What a button that waits for the full State says when it is pressed anyway.
@@ -179,8 +196,8 @@ class Pane(Reports, VerticalScroll):
 
 def error_message(exc: Exception) -> str:
     """As commands/common.guard: a service error's own message; a bug named as unexpected;
-    both redacted the same way (a CommandError's own text is not)."""
-    if isinstance(exc, common.CommandError):
+    both redacted the same way (a ServiceError's own text is not)."""
+    if isinstance(exc, settings_service.ServiceError):
         return f"error: {exc}"
     if isinstance(exc, EXPECTED):
         return f"error: {common.redacted(str(exc) or type(exc).__name__)}"

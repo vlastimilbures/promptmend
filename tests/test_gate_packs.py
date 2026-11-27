@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from test_redaction import MUST_DETECT, MUST_PASS
 
-from promptmend import doctor, redaction
+from promptmend import doctor, redaction, settings_checks
 from promptmend.config import Settings
 from promptmend.factory import make_provider
 from promptmend.gate import GateBlocked, GatedProvider
@@ -257,8 +257,8 @@ def test_make_provider_passes_packs(monkeypatch: pytest.MonkeyPatch, packs: str)
 # doctor, `config validate` and the interface scan the persona with the same packs.
 def test_persona_findings_use_packs() -> None:
     persona = "HR lead, CCCD 001099012345"
-    assert doctor.persona_findings(Settings(persona=persona)) == ["vietnam_id_12"]
-    assert doctor.persona_findings(Settings(persona=persona, gate_packs=())) == []
+    assert settings_checks.persona_findings(Settings(persona=persona)) == ["vietnam_id_12"]
+    assert settings_checks.persona_findings(Settings(persona=persona, gate_packs=())) == []
 
 
 # doctor's gate_packs check and `config validate` note a pack that is off (an empty value,
@@ -272,7 +272,7 @@ def test_doctor_notes_a_pack_that_is_off() -> None:
         "gate pack vn is off (PROMPT_GATE_PACKS): the gate does not flag Vietnamese national "
         "ID numbers and confidentiality labels"
     )
-    assert doctor.gate_packs_note(Settings()) is None
+    assert settings_checks.gate_packs_note(Settings()) is None
 
 
 @pytest.mark.parametrize("packs", ["", "vn"])

@@ -2,12 +2,12 @@
 wizard (tui/setup_wizard.py) and `setup --non-interactive`/`--plain` (commands/setup.py). Both
 are presentation over this module: they print or show the outcomes, in their own words, and
 neither decides what to save, where, or when. setup_guide.py holds what they say; this module
-imports neither Typer nor Textual itself and never loads Textual (tests/test_setup_flow.py
-checks both); Typer still arrives through commands.common and commands.settings, where the
-setting services and no_key() live. It writes only
-through the services the headless commands use (`config set`/`unset`, `secrets set`,
-`espanso deploy`), so each write goes through config_files.write_atomic() and a key only ever
-reaches the secrets file.
+neither imports nor loads Typer, Click or Textual, and nothing from commands/
+(tests/test_setup_flow.py checks it): a refusal is a settings_service.ServiceError, which the
+command turns into its exit code and the wizard shows as a message. It writes only
+through the services the headless commands use (settings_service.py for `config set`/`unset`
+and `secrets set`; deploy.py for `espanso deploy`), so each write goes through
+config_files.write_atomic() and a key only ever reaches the secrets file.
 
 The two flows still differ where they always have (an interactive step-by-step wizard against a
 one-shot printout); this module keeps each one's behaviour rather than unify it, and its
@@ -19,9 +19,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import assets, config, config_files, config_store, deploy, setup_guide
-from .commands import common
-from .commands import settings as settings_cmd
+from . import assets, config, config_files, config_store, deploy, settings_service, setup_guide
 from .config import setting_fields
 from .factory import PROVIDER_KEYS, PROVIDER_NAMES
 from .prompt_builder import system_prompt
@@ -49,7 +47,7 @@ class Storage:
 
 
 def storage() -> Storage:
-    legacy = common.legacy_env()
+    legacy = settings_service.legacy_env()
     if legacy:
         return Storage(legacy, None)
     return Storage(None, setup_guide.unread_env_note(config.unread_env_files()))
@@ -66,7 +64,7 @@ _CHOICES: dict[str, Callable[[config.Settings], str]] = {
 
 def current_choice(name: str) -> str:
     """The effective value of PROMPT_PROVIDER or PROMPT_PROFILE."""
-    return _CHOICES[name](common.load_layers()[1])
+    return _CHOICES[name](settings_service.load_layers()[1])
 
 
 def choice_command(name: str, value: str) -> list[str]:
@@ -83,11 +81,11 @@ def save_choice(name: str, value: str) -> tuple[str | None, list[str]]:
     if current_choice(name) == value:
         return None, []
     if value == DEFAULTS[name]:
-        removed, path = settings_cmd.unset_setting(name)
+        removed, path = settings_service.unset_setting(name)
         if removed and current_choice(name) == value:
             return f"{name} removed from {path}; its default, {value}, applies", ["unset", name]
-    saved = settings_cmd.save_setting(name, value)
-    notes = settings_cmd.after_save(name)
+    saved = settings_service.save_setting(name, value)
+    notes = settings_service.after_save(name)
     return "; ".join([f"{name}={value} saved in {saved.path}", *notes]), ["set", name, value]
 
 
@@ -127,7 +125,7 @@ def save_choices(
     for name, value in (("PROMPT_PROVIDER", provider), ("PROMPT_PROFILE", profile)):
         try:
             message, _ = save_choice(name, value)
-        except (ValueError, common.CommandError, config_store.ConfigStoreError) as exc:
+        except (ValueError, settings_service.ServiceError, config_store.ConfigStoreError) as exc:
             return ChoicesSaved(tuple(messages), error=str(exc))
         if message:
             said(message)
@@ -147,7 +145,7 @@ def save_choices(
 # --- API keys ------------------------------------------------------------------------------
 
 # What saving a key can raise; the step reports it and setup goes on.
-KEY_ERRORS = (common.CommandError, ValueError, config_files.SecretStoreError)
+KEY_ERRORS = (settings_service.ServiceError, ValueError, config_files.SecretStoreError)
 
 
 def stdin_key(provider: str) -> str | None:
@@ -165,7 +163,7 @@ def needed_keys(layers: config.ConfigLayers, settings: config.Settings) -> list[
 def save_key(name: str, value: str) -> None:
     """Save one key in the secrets file (`secrets set`'s service; never config.toml), raising
     one of KEY_ERRORS. ``value`` comes from stdin, getpass or the wizard's masked field."""
-    settings_cmd.store_key(name, value)
+    settings_service.store_key(name, value)
 
 
 def save_keys(typed: Sequence[tuple[str, str]]) -> str:
@@ -174,7 +172,7 @@ def save_keys(typed: Sequence[tuple[str, str]]) -> str:
     saved = []
     for name, value in typed:
         save_key(name, value)
-        saved.append("; ".join([f"{name} saved", *settings_cmd.after_save(name)]))
+        saved.append("; ".join([f"{name} saved", *settings_service.after_save(name)]))
     return "; ".join(saved)
 
 
@@ -188,13 +186,13 @@ def read_plan(espanso_dir: str | None, launcher: str | None) -> tuple[deploy.Pla
     prints the folder and the launcher."""
     fallback = None
     if espanso_dir is not None:
-        common.no_key(espanso_dir, "--espanso-dir")
+        settings_service.refuse_key(espanso_dir, "--espanso-dir")
         target = Path(espanso_dir).expanduser().resolve()
     else:
         found = deploy.locate_espanso_dir()
         target, fallback = found.path.resolve(), found.fallback
     if launcher is not None:
-        common.no_key(launcher, "--launcher")
+        settings_service.refuse_key(launcher, "--launcher")
         path = launcher
     else:
         path = str(deploy.resolve_launcher().path)

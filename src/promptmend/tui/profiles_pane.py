@@ -14,9 +14,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Static
 
-from ..commands import settings as settings_cmd
 from ..prompt_builder import ADDED, ALIASES, PROFILES, user_profiles_dir
-from . import teach
 from .base import Pane, add_row, button_row
 from .modals import Field, FormModal
 from .state import State
@@ -99,14 +97,7 @@ class ProfilesPane(Pane):
 
     def _save_profile(self, values: dict[str, str] | None) -> None:
         if values is not None:
-            name = values["profile"]
-
-            def save() -> str:
-                saved = settings_cmd.save_setting("PROMPT_PROFILE", name)
-                notes = settings_cmd.after_save("PROMPT_PROFILE")
-                return "; ".join([f"PROMPT_PROFILE saved in {saved.path}", *notes])
-
-            self.attempt(save, command=teach.equivalent("config", "set", "PROMPT_PROFILE", name))
+            self.save_setting("PROMPT_PROFILE", values["profile"])
 
     def selected(self) -> Path | None:
         table = self.query_one("#profiles", DataTable)

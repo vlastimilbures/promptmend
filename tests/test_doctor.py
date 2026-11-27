@@ -745,9 +745,9 @@ def test_localhost_note_quotes_the_default_shape(monkeypatch: pytest.MonkeyPatch
         "config set LMSTUDIO_BASE_URL http://127.0.0.1:4321/v1/`)"
     )
     # A URL the gate would call a key (a user pattern, say) is never quoted, whatever its shape.
-    from promptmend.commands import common
+    from promptmend import redaction
 
-    monkeypatch.setattr(common, "looks_like_a_key", lambda value: True)
+    monkeypatch.setattr(redaction, "looks_like_a_key", lambda value: True)
     keyish = doctor._localhost_note(
         "LMSTUDIO_BASE_URL", "http://localhost:1234/v1", ["-ilm-"], toml
     )

@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import assets, deploy, doctor, factory
+from . import assets, deploy, factory, settings_checks
 from .config import ConfigLayers, Settings, secret_names
 from .prompt_builder import ADDED, PROFILES, UserProfile
 from .providers.registry import PROVIDERS
@@ -151,8 +151,8 @@ class DoneRow:
 
 
 def rewrites(triggers: Sequence[assets.Trigger], settings: Settings) -> dict[str, list[str]]:
-    """Each provider the active rewrite triggers run on, with those triggers (doctor's)."""
-    return doctor._rewrites(list(triggers), settings)
+    """Each provider the active rewrite triggers run on, with those triggers (as doctor)."""
+    return settings_checks.rewrites(list(triggers), settings)
 
 
 def provider_choices(settings: Settings, triggers: Sequence[assets.Trigger]) -> list[Choice]:
