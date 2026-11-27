@@ -124,9 +124,13 @@ proxy discovery that never returns, a clipboard that does not answer, a server t
 reply a byte at a time), it ends no later than the limit plus 2 seconds, counted from the
 moment the `promptmend` command starts its own code; Python's start-up before that is not
 counted. The result is then the
-`[promptmend: … timed out after …s]` marker, exit code 0, and nothing else. The provider's
-own timeout counts from its request, so it prints that marker first only when the run reached
-its request within 1.5 seconds; otherwise, or when something that timeout cannot see blocks,
+`[promptmend: … timed out after …s: try again, …]` marker, exit code 0, and nothing else. It
+ends with the next step: try again, or raise the setting that set the limit
+(`PROMPT_TIMEOUT_SECONDS`, or `PROMPT_PRO_TIMEOUT_SECONDS` on the pro tier), or, when the
+limit came from `--timeout` (a timeout picked in the [-if- form](#the--if--form)), try again
+with a longer one. The provider's own timeout counts from its request, so it prints that
+marker first only when the run reached its request within 1.5 seconds; otherwise, or when
+something that timeout cannot see blocks,
 the watchdog prints it. If the rewrite came back but copying it to the clipboard
 ([clipboard output](#output-paste-or-clipboard) or `--copy`) stalls, the marker says the
 clipboard did not answer and the rewrite is pasted instead.
@@ -140,7 +144,7 @@ exit code 0, and no usage-history row (whether to keep one is itself a setting).
 have loaded, the configured limit takes over, still counted from the same start, so a longer
 `PROMPT_TIMEOUT_SECONDS` or `PROMPT_PRO_TIMEOUT_SECONDS` is unaffected. If the load itself
 took a second or more (start-up before it not counted), the timed-out marker says how much of
-the limit it used (`… timed out after 30.0s, 12.3s of it loading the settings`). If start-up
+the limit it used (`… timed out after 30.0s, 12.3s of it loading the settings: try again, …`). If start-up
 and the load used up the whole limit, the run ends right there, before it reads the draft,
 and sends nothing: the marker says which took the time
 (`[promptmend: starting up took 31.0s, past the 30.0s time limit; nothing was sent]`, or

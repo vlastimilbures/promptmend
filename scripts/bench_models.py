@@ -1249,6 +1249,9 @@ def _call(
         openrouter_reasoning_effort=effort,
         openrouter_max_tokens=max_tokens,
         timeout=120,
+        # Both are this run's own, so a failure names the option, not a setting (#398).
+        call_max_tokens=max_tokens,
+        call_timeout=120,
     )
     provider = make_provider(
         "openrouter",

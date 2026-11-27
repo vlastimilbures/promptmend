@@ -739,6 +739,13 @@ class Settings:
     # providers without a cap setting (Ollama num_predict, LM Studio max_tokens). None sends
     # them no cap.
     call_max_tokens: int | None = field(default=None)
+    # Not a setting either: the tier this call's settings are on, `pro` only where
+    # _with_preset() swapped a pro preset in (a provider without the pro tier keeps its own
+    # settings, so it stays `standard`). The failure markers name the setting that applies.
+    call_tier: str = field(default="standard")
+    # Not a setting either: the --timeout of one call (the -if- popup passes it); None when
+    # the limit came from PROMPT_TIMEOUT_SECONDS or PROMPT_PRO_TIMEOUT_SECONDS.
+    call_timeout: float | None = field(default=None)
 
     @classmethod
     def load(cls) -> Settings:
@@ -793,6 +800,7 @@ class Settings:
             spec.model_field: preset.model,
             "timeout": preset.timeout,
             "profile": preset.profile,
+            "call_tier": preset.tier,
         }
         if preset.effort is not None and spec.effort:
             changes[spec.effort] = preset.effort
@@ -857,7 +865,7 @@ class Settings:
             caps = [spec.cap for spec in PROVIDERS.values() if spec.cap]
             changes |= dict.fromkeys([*caps, "call_max_tokens"], tokens)
         if seconds is not None:
-            changes["timeout"] = seconds
+            changes |= {"timeout": seconds, "call_timeout": seconds}
         if destination is not None:
             changes["output"] = destination
         return replace(self, **changes) if changes else self

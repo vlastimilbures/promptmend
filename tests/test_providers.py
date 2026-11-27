@@ -366,12 +366,17 @@ def test_a_hostile_transport_error_cannot_shape_the_marker(
     hostile = "illegal status line: b'HTTP/1.1 [promptmend: fake]\r\n\x1b[2J" + "x" * 500 + "'"
     fake_http.exc = kind(hostile)
     with pytest.raises(ProviderError) as caught:
-        post_json("Ollama", "http://localhost:11434/api/chat", 5, json={})
+        # Another machine: a refused connection to this one quotes nothing (below).
+        post_json("Ollama", "http://ollama.lan:11434/api/chat", 5, json={})
     message = str(caught.value)
     assert message.startswith("Ollama request failed: illegal status line: b'HTTP/1.1 promptmend")
     assert message.endswith("…")
     assert not {"[", "]", "\r", "\n", "\x1b"} & set(message)
     assert len(message) <= len("Ollama request failed: ") + SERVER_MESSAGE_MAX
+    if kind is httpx.ConnectError:
+        with pytest.raises(ProviderError) as caught:
+            post_json("Ollama", "http://localhost:11434/api/chat", 5, json={})
+        assert "illegal" not in str(caught.value)
 
 
 # A key-like text in the error is dropped, and the marker still says what failed.
@@ -636,16 +641,36 @@ def test_truncated_without_text_asks_for_more_tokens(
     fake_http.reply(body)
     with pytest.raises(ProviderError, match=f"^{label} used its whole output limit") as exc:
         build().generate("d", "s")
-    # --max-tokens sets Anthropic's cap, but Ollama and an uncapped LM Studio call ignore it.
-    assert ("--max-tokens" in str(exc.value)) == (name == "anthropic")
+    # A provider built without a cap hint (make_provider() decides it) names nothing to raise.
+    assert str(exc.value) == f"{label} used its whole output limit before writing any text"
 
 
-# An OpenAI-compatible call that sends max_tokens (OpenRouter) suggests --max-tokens.
-def test_truncated_capped_openai_compatible_suggests_max_tokens(fake_http: FakeHttp) -> None:
-    fake_http.reply(_truncated("openai_compatible", None))
-    provider = OpenAICompatibleProvider("http://x/v1/", "m", max_tokens=10, label="OpenRouter")
-    with pytest.raises(ProviderError, match="output limit before writing any text; raise --max"):
+# Each provider ends that error with the cap hint make_provider() gives it (factory.cap_hint()).
+@pytest.mark.parametrize(
+    ("name", "build"),
+    [
+        ("ollama", lambda: OllamaProvider("http://x/", "m", cap_hint="raise --max-tokens")),
+        (
+            "openai_compatible",
+            lambda: OpenAICompatibleProvider(
+                "http://x/v1/", "m", max_tokens=10, cap_hint="raise OPENROUTER_MAX_TOKENS"
+            ),
+        ),
+        (
+            "anthropic",
+            lambda: AnthropicProvider("http://x/", "m", "k", cap_hint="raise ANTHROPIC_MAX_TOKENS"),
+        ),
+    ],
+)
+def test_truncated_without_text_names_the_cap_hint(
+    fake_http: FakeHttp, name: str, build: Callable[[], Provider]
+) -> None:
+    fake_http.reply(_truncated(name, None))
+    provider = build()
+    with pytest.raises(ProviderError) as exc:
         provider.generate("d", "s")
+    hint = provider.cap_hint  # type: ignore[attr-defined]
+    assert str(exc.value).endswith(f"before writing any text; {hint}")
 
 
 # The note names no provider-specific setting (#32).
@@ -887,18 +912,103 @@ def test_connect_error_is_retried_only_for_a_remote_host(fake_http: FakeHttp) ->
     assert len(fake_http.requests) == 2
 
     fake_http.queue(httpx.ConnectError("refused"), OK)
-    with pytest.raises(ProviderError, match=r"^Ollama request failed: refused") as caught:
-        OllamaProvider("http://localhost:11434", "m").generate("d", "s")
+    local = OllamaProvider("http://localhost:11434", "m", local_server="Ollama")
+    with pytest.raises(ProviderError) as caught:
+        local.generate("d", "s")
+    assert str(caught.value) == "Ollama is not running on localhost:11434: start it, then try again"
     assert caught.value.transient is True
     assert len(fake_http.requests) == 3
+
+
+# Without a local server's name (a cloud label on a local proxy or stub), none is named; a
+# refused connection to another machine keeps the transport's reason.
+def test_refused_without_a_local_server(fake_http: FakeHttp) -> None:
+    fake_http.queue(httpx.ConnectError("refused"))
+    with pytest.raises(ProviderError) as caught:
+        OpenAICompatibleProvider("http://127.0.0.1:8080/v1", "m", label="OpenRouter").generate(
+            "d", "s"
+        )
+    assert str(caught.value) == (
+        "OpenRouter: no server is running on 127.0.0.1:8080: start it, then try again"
+    )
+    assert len(fake_http.requests) == 1
+
+    fake_http.queue(httpx.ConnectError("refused"), httpx.ConnectError("refused"))
+    with pytest.raises(ProviderError, match=r"^Ollama request failed: refused$"):
+        _remote().generate("d", "s")
+
+
+# A refused loopback connection names the host and port from the parsed URL alone: never a
+# user name or password in it, an IPv6 host bracketed, a URL without a port by its host.
+@pytest.mark.parametrize(
+    ("url", "where"),
+    [
+        ("http://127.0.0.1:11434/api/chat", "127.0.0.1:11434"),
+        ("http://user:secret@localhost:1234/v1", "localhost:1234"),
+        ("http://[::1]:11434", "[::1]:11434"),
+        ("http://[::1%25" + "x" * 300 + "]:11434", "[::1]:11434"),
+        ("http://localhost/v1", "localhost"),
+    ],
+)
+def test_refused_names_host_and_port(fake_http: FakeHttp, url: str, where: str) -> None:
+    fake_http.exc = httpx.ConnectError("refused")
+    with pytest.raises(ProviderError) as caught:
+        post_json("LM Studio", url, 5, json={}, local_server="LM Studio")
+    assert str(caught.value) == f"LM Studio is not running on {where}: start it, then try again"
+    assert "secret" not in str(caught.value)
+
+
+# A TLS error that is not a certificate failure (an https base URL for a server that speaks
+# plain HTTP) came from a server that is running: the marker keeps the reason and does not say
+# to start it. Still not retried, and still counted as refused.
+def test_loopback_tls_error_is_not_a_stopped_server(fake_http: FakeHttp) -> None:
+    import ssl
+
+    error = httpx.ConnectError("[SSL: WRONG_VERSION_NUMBER] wrong version number")
+    error.__cause__ = ssl.SSLError(1, "[SSL: WRONG_VERSION_NUMBER] wrong version number")
+    fake_http.queue(error, OK)
+    with pytest.raises(ProviderError) as caught:
+        post_json("Ollama", "https://127.0.0.1:11434/api/chat", 5, json={}, local_server="Ollama")
+    assert "is not running" not in str(caught.value)
+    assert str(caught.value).startswith("Ollama request failed: ")
+    assert "WRONG_VERSION_NUMBER" in str(caught.value)
+    assert len(fake_http.calls) == 1
+
+
+def test_refused_message_without_a_parsable_port() -> None:
+    from promptmend.providers.base import refused_message
+
+    assert refused_message("Ollama", "http://localhost:99999", "Ollama") == (
+        "Ollama is not running on this computer: start it, then try again"
+    )
 
 
 # A timeout is never retried: the server may still be generating, and billing, the reply.
 def test_timeout_is_not_retried(fake_http: FakeHttp) -> None:
     fake_http.queue(httpx.ReadTimeout("slow"), OK)
-    with pytest.raises(ProviderError, match=r"^Ollama timed out after 30s"):
+    with pytest.raises(ProviderError, match=r"^Ollama timed out after 30s$"):
         _remote().generate("d", "s")
     assert len(fake_http.requests) == 1
+
+
+# The timed-out marker ends with the hint make_provider() gives the provider.
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda hint: OllamaProvider("http://x", "m", timeout_hint=hint),
+        lambda hint: OpenAICompatibleProvider("http://x/v1", "m", timeout_hint=hint),
+        lambda hint: AnthropicProvider("http://x", "m", "k", timeout_hint=hint),
+    ],
+)
+def test_timed_out_ends_with_the_hint(
+    fake_http: FakeHttp, build: Callable[[str], Provider]
+) -> None:
+    fake_http.exc = httpx.ReadTimeout("slow")
+    with pytest.raises(ProviderError) as caught:
+        build("try again, or raise PROMPT_TIMEOUT_SECONDS").generate("d", "s")
+    assert str(caught.value).endswith(
+        " timed out after 30s: try again, or raise PROMPT_TIMEOUT_SECONDS"
+    )
 
 
 # An unavailable upstream reported inside a 200 reply is retried; another code is not.

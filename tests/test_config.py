@@ -117,7 +117,7 @@ def test_pro_tier_on_a_direct_provider(monkeypatch: pytest.MonkeyPatch, provider
         "pro", provider, spec.model(settings), None, None, None, 50.0, "general"
     )
     call = settings.for_call("pro", provider=provider)
-    assert call == replace(settings, timeout=50.0, profile="general")
+    assert call == replace(settings, timeout=50.0, profile="general", call_tier="pro")
     assert (spec.max_tokens(call), spec.reasoning_effort(call)) == (
         spec.max_tokens(settings),
         spec.reasoning_effort(settings),
@@ -208,6 +208,7 @@ def test_openrouter_pro_tier_parity(monkeypatch: pytest.MonkeyPatch, env: dict[s
         openrouter_max_tokens=s.openrouter_pro_max_tokens or s.openrouter_max_tokens,
         timeout=s.pro_timeout,
         profile=s.pro_profile or s.profile,
+        call_tier="pro",
     )
     assert s.for_tier("pro") == before
     assert s.for_call("pro") == before
@@ -266,6 +267,23 @@ def test_with_overrides_call_max_tokens() -> None:
     assert settings.call_max_tokens is None
     assert settings.with_overrides(max_tokens="300").call_max_tokens == 300
     assert "call_max_tokens" not in [f.metadata.get("env") for f in config.setting_fields()]
+
+
+# The tier and the --timeout of one call are kept for the failure markers (#398), and neither
+# is a setting.
+def test_call_tier_and_call_timeout() -> None:
+    settings = Settings()
+    assert (settings.call_tier, settings.call_timeout) == ("standard", None)
+    assert settings.for_call("pro").call_tier == "pro"
+    assert settings.for_call("pro", provider="anthropic").call_tier == "pro"
+    # A provider without the pro tier keeps its own settings, so it stays standard.
+    assert settings.for_call("pro", provider="ollama").call_tier == "standard"
+    assert settings.for_call("standard").call_tier == "standard"
+    assert settings.for_call("pro", timeout="default").call_timeout is None
+    call = settings.for_call("pro", timeout="7")
+    assert (call.timeout, call.call_timeout) == (7.0, 7.0)
+    names = {f.name for f in config.setting_fields()}
+    assert not {"call_tier", "call_timeout"} & names
 
 
 # OPENROUTER_PRO_MAX_TOKENS: empty (the default) inherits OPENROUTER_MAX_TOKENS for the pro

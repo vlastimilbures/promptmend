@@ -88,8 +88,18 @@ def test_cloud_spec_needs_a_key_and_https(spec: ProviderSpec) -> None:
     assert spec.key_field in SETTINGS_FIELDS
     assert spec.cap
     assert spec.probe_path is None
-    with pytest.raises(ProviderError, match=f"^{spec.key} is not configured$"):
+    # The conftest default is legacy mode (PROMPTMEND_ENV set), where `secrets set` refuses.
+    legacy = f"{spec.key} is not set: add it to the .env that PROMPTMEND_ENV names"
+    with pytest.raises(ProviderError) as caught:
         make_provider(spec.name, Settings())
+    assert str(caught.value) == legacy
+    with pytest.MonkeyPatch.context() as patch:
+        patch.delenv("PROMPTMEND_ENV")
+        with pytest.raises(ProviderError) as caught:
+            make_provider(spec.name, Settings())
+    assert str(caught.value) == (
+        f"{spec.key} is not set: run `promptmend secrets set {spec.key}` in a terminal"
+    )
     plain = _url(_keyed(Settings()), spec, "http://relay.example")
     with pytest.raises(GateBlocked, match=f"{spec.url_setting} must be an https:// URL"):
         check_base_url(spec.name, plain)

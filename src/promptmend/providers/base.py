@@ -6,6 +6,7 @@ import math
 import re
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlsplit
 
@@ -189,6 +190,8 @@ def post_json(
     json: object = None,
     headers: Mapping[str, str] | None = None,
     meter: Meter | None = None,
+    timeout_hint: str = "",
+    local_server: str = "",
 ) -> dict[str, object]:
     """POST and return the parsed JSON body; every failure is a ProviderError.
 
@@ -215,21 +218,34 @@ def post_json(
     name resolution, system proxy discovery or a server that trickles its headers a byte at a
     time are not bounded here. The hard deadline is improve's watchdog (trigger.Watchdog),
     which ends the process with this module's timed-out marker shortly after the limit.
+
+    ``timeout_hint`` is the next step the timed-out marker ends with, and ``local_server``
+    the local server a refused loopback connection names (timed_out_message(),
+    refused_message()); make_provider() decides both.
     """
+    wording = _Wording(timeout_hint, local_server)
     encoded = _encode_headers(label, headers)
     deadline = time.monotonic() + timeout
     first = _Outcome()
     try:
-        return _attempt(label, url, timeout, timeout, json, encoded, meter, first)
+        return _attempt(label, url, timeout, timeout, json, encoded, meter, first, wording)
     except _Retry as retry:
         budget = deadline + first.observer_seconds - time.monotonic() - retry.delay
         if budget < MIN_RETRY_BUDGET:
             raise retry.error from retry.error.__cause__
         _sleep(retry.delay)
     try:
-        return _attempt(label, url, timeout, budget, json, encoded, meter, _Outcome(2))
+        return _attempt(label, url, timeout, budget, json, encoded, meter, _Outcome(2), wording)
     except _Retry as retry:
         raise retry.error from retry.error.__cause__
+
+
+@dataclass(frozen=True)
+class _Wording:
+    """post_json()'s ``timeout_hint`` and ``local_server``, for the markers _exchange() words."""
+
+    timeout_hint: str = ""
+    local_server: str = ""
 
 
 class _Outcome:
@@ -253,6 +269,7 @@ def _attempt(
     headers: httpx.Headers,
     meter: Meter | None = None,
     outcome: _Outcome | None = None,
+    wording: _Wording | None = None,
 ) -> dict[str, object]:
     """One request, reported to ``meter`` (if any) however it ends."""
     outcome = outcome or _Outcome()
@@ -260,7 +277,7 @@ def _attempt(
         meter.begin(loopback=is_loopback(url), attempt=outcome.number)
     started = time.monotonic()
     try:
-        return _exchange(label, url, timeout, budget, json, headers, outcome)
+        return _exchange(label, url, timeout, budget, json, headers, outcome, wording or _Wording())
     except BaseException:
         outcome.error_kind = outcome.error_kind or "unexpected"
         raise
@@ -278,9 +295,35 @@ def _attempt(
             outcome.observer_seconds = time.monotonic() - ended
 
 
-def timed_out_message(label: str, timeout: float) -> str:
-    """How a call that ran out of time is worded, by _exchange() and by improve's watchdog."""
-    return f"{label} timed out after {timeout}s"
+def timed_out_message(label: str, timeout: float, hint: str = "", detail: str = "") -> str:
+    """How a call that ran out of time is worded, by _exchange() and by improve's watchdog:
+    ``detail`` (the watchdog's time spent loading the settings) follows the limit, and the
+    next step ``hint`` (factory.timeout_hint()) comes last."""
+    return f"{label} timed out after {timeout}s{detail}" + (f": {hint}" if hint else "")
+
+
+def _host_port(url: str) -> str:
+    """``host:port`` of ``url`` for a marker, from the parsed host and port alone (the netloc
+    may hold a user name and password); an IPv6 host is bracketed, without its zone id, and a
+    URL without a port shows its host alone."""
+    try:
+        parts = urlsplit(url)
+        host, port = (parts.hostname or "").partition("%")[0], parts.port
+    except ValueError:
+        return ""
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{host}:{port}" if port is not None else host
+
+
+def refused_message(label: str, url: str, local_server: str = "") -> str:
+    """A loopback server that refused the connection: nothing runs there. ``local_server``
+    names the local server the URL is for (Ollama, LM Studio); empty, as for a cloud API's
+    label on a local proxy or stub, it names no server it cannot know."""
+    where = _host_port(url) or "this computer"
+    if local_server:
+        return f"{local_server} is not running on {where}: start it, then try again"
+    return f"{label}: no server is running on {where}: start it, then try again"
 
 
 def _reason(text: str, limit: int) -> str:
@@ -307,10 +350,23 @@ def _tls_failure(exc: BaseException) -> ssl.SSLCertVerificationError | None:
     try."""
     import ssl  # httpx has loaded it already
 
+    return _cause(exc, ssl.SSLCertVerificationError)
+
+
+def _tls_error(exc: BaseException) -> bool:
+    """Whether a TLS error of any kind caused ``exc``: the server answered, so it is running
+    (an https base URL for a server that speaks plain HTTP ends this way)."""
+    import ssl  # httpx has loaded it already
+
+    return _cause(exc, ssl.SSLError) is not None
+
+
+def _cause[E: BaseException](exc: BaseException, kind: type[E]) -> E | None:
+    """The first ``kind`` in ``exc``'s chain of causes, ``exc`` itself included."""
     seen: set[int] = set()
     cause: BaseException | None = exc
     while cause is not None and id(cause) not in seen:
-        if isinstance(cause, ssl.SSLCertVerificationError):
+        if isinstance(cause, kind):
             return cause
         seen.add(id(cause))
         cause = cause.__cause__ or cause.__context__
@@ -339,6 +395,7 @@ def _exchange(
     json: object,
     headers: httpx.Headers,
     outcome: _Outcome,
+    wording: _Wording,
 ) -> dict[str, object]:
     """One request, given ``budget`` seconds in total. httpx's own timeouts apply to each
     network operation, and its read timer restarts with every chunk, so a server that
@@ -351,7 +408,9 @@ def _exchange(
     transport = httpx.HTTPTransport(verify=trust) if is_loopback(url) else None
     limits = httpx.Timeout(budget, connect=min(budget, CONNECT_TIMEOUT_MAX))
     stop_at = time.monotonic() + budget
-    timed_out = ProviderError(timed_out_message(label, timeout), transient=True)
+    timed_out = ProviderError(
+        timed_out_message(label, timeout, wording.timeout_hint), transient=True
+    )
     content = bytearray()
     try:
         with (
@@ -380,12 +439,18 @@ def _exchange(
     except httpx.ConnectError as exc:
         outcome.error_kind = "refused"
         tls = _tls_failure(exc)
-        message = _failed(label, exc) if tls is None else tls_message(label, tls)
+        loopback = is_loopback(url)
+        if tls is not None:
+            message = tls_message(label, tls)
+        elif loopback and not _tls_error(exc):
+            message = refused_message(label, url, wording.local_server)
+        else:
+            message = _failed(label, exc)
         refused = ProviderError(message, transient=tls is None)
         refused.__cause__ = exc  # kept when post_json re-raises it after the retry
         # A local server that refuses the connection is not running, and a certificate
         # failure fails the same way again: a second try a second later only delays the marker.
-        if is_loopback(url) or tls is not None:
+        if loopback or tls is not None:
             raise refused from exc
         raise _Retry(refused) from exc
     except httpx.HTTPError as exc:
@@ -466,7 +531,7 @@ _FILTERED = frozenset({"content_filter", "refusal"})
 
 
 def finalize_content(
-    content: object, label: str, *, stop_reason: object = None, capped: bool = False
+    content: object, label: str, *, stop_reason: object = None, cap_hint: str = ""
 ) -> str:
     """Validate a provider's raw response content, strip <think> blocks, require non-empty text.
 
@@ -474,7 +539,8 @@ def finalize_content(
     - "error": generation failed part way, so no partial text is pasted.
     - "length"/"max_tokens": the token cap. With no text, a reasoning model spent the whole
       budget thinking, which only a bigger cap fixes; otherwise TRUNCATED_NOTE is appended.
-      ``capped``: the request sent the cap that --max-tokens sets, so the error suggests it.
+      ``cap_hint`` (factory.cap_hint()) names what to raise: the cap setting this call
+      used, or --max-tokens when this call passed it; empty when nothing capped it.
     - "content_filter"/"refusal": with no text the request was declined; otherwise
       FILTERED_NOTE is appended.
     """
@@ -483,7 +549,7 @@ def finalize_content(
         raise ProviderError(f"{label} stopped with an error before finishing", transient=True)
     result = strip_thinking(content) if isinstance(content, str) else ""
     if reason in _TRUNCATING and not result:
-        hint = "; raise --max-tokens" if capped else ""
+        hint = f"; {cap_hint}" if cap_hint else ""
         raise ProviderError(f"{label} used its whole output limit before writing any text{hint}")
     if reason in _FILTERED and not result:
         raise ProviderError(f"{label} declined the request ({reason})")

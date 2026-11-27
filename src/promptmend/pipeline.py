@@ -162,17 +162,23 @@ def rewrite(
     allow_flagged: bool = False,
     observer: UsageObserver | None = None,
     force_remote: bool = False,
+    source: str | None = None,
 ) -> str:
     """Rewrite the draft ``raw`` with ``provider`` on ``cfg`` (the call's settings), as improve
     does once it has read its input; the interface's Try tab calls it too. Raises on any
     failure (marker() words it), with what was known by then kept in ``ran``.
     ``force_remote`` is make_provider()'s, for the Try tab's stub runs only; improve never
-    passes it."""
+    passes it. ``source`` is where improve read the draft (read_input()'s); an empty draft
+    from the clipboard says to copy one, any other (the Try tab passes none) is empty input."""
     # Checked before cleaning, which would otherwise run over a pasted multi-megabyte log.
     if len(raw) > MAX_DRAFT_CHARS:
         raise ProviderError(f"Input is too long ({len(raw)} chars, max {MAX_DRAFT_CHARS})")
     draft = clean(raw)
     if not draft.strip():
+        if source == "clipboard":
+            raise ProviderError(
+                "The clipboard has no text: copy your draft, then type the trigger again"
+            )
         raise ProviderError("Input is empty")
 
     # Data-protection gate: make_provider wraps anything that can send the draft off this

@@ -86,7 +86,24 @@ def test_anthropic_cloud_override_allows_sensitive_content(
 # Blank input surfaces as an inline message instead of a blank expansion.
 def test_empty_input_reports_inline() -> None:
     result = improve("--provider", "ollama", "--source", "argument", "--text", "   ")
-    assert "Input is empty" in result.stdout
+    assert result.stdout == "[promptmend: Input is empty]"
+    assert improve("--provider", "ollama", "--source", "stdin", input=" \n").stdout == (
+        "[promptmend: Input is empty]"
+    )
+
+
+# An empty clipboard (the triggers' source) says what to do: copy the draft first (#398).
+@pytest.mark.parametrize("held", ["", " \n\t", "​"])
+def test_empty_clipboard_says_to_copy_the_draft(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, held: str
+) -> None:
+    monkeypatch.setattr(pyperclip, "paste", lambda: held)
+    result = improve("--provider", "ollama", "--source", "clipboard")
+    assert result.stdout == (
+        "[promptmend: The clipboard has no text: copy your draft, then type the trigger again]"
+    )
+    assert result.exit_code == 0
+    assert stub_provider.calls == []
 
 
 # An oversized draft (an accidental copy of a log or document) is refused inline.
@@ -843,6 +860,47 @@ def test_ollama_capped_hint(fake_http: FakeHttp) -> None:
     fake_http.reply({"message": {"content": ""}, "done_reason": "length"})
     args = ["--provider", "ollama", "--max-tokens", "5", "--source", "argument", "--text", "d"]
     assert improve(*args).stdout.endswith("before writing any text; raise --max-tokens]")
+    # Without --max-tokens nothing capped the call, so there is nothing to raise.
+    args = ["--provider", "ollama", "--source", "argument", "--text", "d"]
+    assert improve(*args).stdout.endswith("before writing any text]")
+
+
+# The cap hint names the setting that capped this call, and --max-tokens only when this call
+# passed it (#398): a trigger user cannot pass a flag.
+@pytest.mark.parametrize(
+    ("provider", "extra", "hint"),
+    [
+        ("openrouter", [], "raise OPENROUTER_MAX_TOKENS"),
+        ("openrouter", ["--tier", "pro"], "raise OPENROUTER_PRO_MAX_TOKENS"),
+        (
+            "openrouter",
+            ["--tier", "pro", "--max-tokens", "default"],
+            "raise OPENROUTER_PRO_MAX_TOKENS",
+        ),
+        ("openrouter", ["--max-tokens", "50"], "raise --max-tokens"),
+        ("openrouter", ["--tier", "pro", "--max-tokens", "50"], "raise --max-tokens"),
+        ("anthropic", [], "raise ANTHROPIC_MAX_TOKENS"),
+        ("anthropic", ["--tier", "pro"], "raise ANTHROPIC_MAX_TOKENS"),
+        ("openai", ["--tier", "pro"], "raise OPENAI_MAX_TOKENS"),
+        ("lmstudio", ["--max-tokens", "50"], "raise --max-tokens"),
+    ],
+)
+def test_cap_hint_names_what_capped_the_call(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_http: FakeHttp,
+    provider: str,
+    extra: list[str],
+    hint: str,
+) -> None:
+    for key in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.setenv(key, "test-key")
+    if provider == "anthropic":
+        fake_http.reply({"content": [], "stop_reason": "max_tokens"})
+    else:
+        fake_http.reply({"choices": [{"message": {"content": ""}, "finish_reason": "length"}]})
+    args = ["--provider", provider, *extra, "--source", "argument", "--text", "d"]
+    out = improve(*args).stdout
+    assert out.endswith(f"used its whole output limit before writing any text; {hint}]"), out
 
 
 # --tier pro applies only to OpenRouter, Anthropic and OpenAI and --effort only to OpenRouter

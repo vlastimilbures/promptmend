@@ -143,6 +143,67 @@ def test_make_provider_anthropic_missing_key(monkeypatch: pytest.MonkeyPatch) ->
         make_provider("anthropic", Settings())
 
 
+# A missing key names where it goes: `secrets set`, or in legacy mode (PROMPTMEND_ENV, the
+# conftest default), the .env it names, never its path (#398).
+def test_key_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert factory.key_hint("OPENAI_API_KEY") == "add it to the .env that PROMPTMEND_ENV names"
+    monkeypatch.setenv("PROMPTMEND_ENV", "")  # empty counts as unset
+    assert factory.key_hint("OPENAI_API_KEY") == (
+        "run `promptmend secrets set OPENAI_API_KEY` in a terminal"
+    )
+
+
+# The timeout and cap hints come from the call's settings alone (#398).
+def test_timeout_hint() -> None:
+    cfg = Settings()
+    assert factory.timeout_hint(cfg) == "try again, or raise PROMPT_TIMEOUT_SECONDS"
+    assert factory.timeout_hint(cfg.for_call("pro")) == (
+        "try again, or raise PROMPT_PRO_TIMEOUT_SECONDS"
+    )
+    assert factory.timeout_hint(cfg.for_call("pro", timeout="9")) == (
+        "try again with a longer --timeout"
+    )
+    assert factory.timeout_hint(cfg.for_call("standard", timeout="9")) == (
+        "try again with a longer --timeout"
+    )
+
+
+def test_cap_hint() -> None:
+    cfg = Settings()
+    hint = factory.cap_hint
+    assert hint(PROVIDERS["openrouter"], cfg) == "raise OPENROUTER_MAX_TOKENS"
+    assert hint(PROVIDERS["openrouter"], cfg.for_call("pro")) == "raise OPENROUTER_PRO_MAX_TOKENS"
+    assert hint(PROVIDERS["anthropic"], cfg.for_call("pro", provider="anthropic")) == (
+        "raise ANTHROPIC_MAX_TOKENS"
+    )
+    assert hint(PROVIDERS["openai"], cfg) == "raise OPENAI_MAX_TOKENS"
+    for name in ("ollama", "lmstudio"):
+        assert hint(PROVIDERS[name], cfg) == ""
+        assert hint(PROVIDERS[name], cfg.for_call("standard", max_tokens="9")) == (
+            "raise --max-tokens"
+        )
+    assert hint(PROVIDERS["openrouter"], cfg.for_call("pro", max_tokens="9")) == (
+        "raise --max-tokens"
+    )
+
+
+# make_provider() hands each provider its hints, and names the server of a refused loopback
+# connection only for a local one.
+def test_make_provider_passes_the_hints(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.setenv(key, "test-key")
+    cfg = Settings().for_call("pro", provider="openrouter", timeout="9")
+    for name in PROVIDER_NAMES:
+        built = make_provider(name, cfg)
+        inner = built._inner if isinstance(built, GatedProvider) else built
+        assert inner.timeout_hint == "try again with a longer --timeout"  # type: ignore[attr-defined]
+        assert inner.cap_hint == factory.cap_hint(PROVIDERS[name], cfg)  # type: ignore[attr-defined]
+        if not PROVIDERS[name].cloud:
+            assert inner.local_server == PROVIDERS[name].label  # type: ignore[attr-defined]
+        elif name != "anthropic":
+            assert inner.local_server == ""  # type: ignore[attr-defined]
+
+
 # make_provider() errors on an unknown provider name.
 def test_make_provider_unknown() -> None:
     with pytest.raises(ProviderError, match="Unknown provider"):

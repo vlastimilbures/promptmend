@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from .config import Settings
+from .config import Settings, env_file_override
 from .gate import GateBlocked, GatedProvider
 from .providers.anthropic import AnthropicProvider
 from .providers.base import Provider, ProviderError, is_loopback
@@ -54,7 +54,7 @@ def openrouter_body(cfg: Settings) -> dict[str, object]:
 
 def _require(value: str | None, env_name: str) -> str:
     if not value:
-        raise ProviderError(f"{env_name} is not configured")
+        raise ProviderError(f"{env_name} is not set: {key_hint(env_name)}")
     # A key is printable ASCII; anything else came from a rich-text paste and cannot be sent
     # in a header. The key itself is never shown.
     if not (value.isascii() and value.isprintable()):
@@ -63,6 +63,39 @@ def _require(value: str | None, env_name: str) -> str:
             "paste the key again"
         )
     return value
+
+
+def key_hint(env_name: str) -> str:
+    """Where a missing key goes, as a trigger's marker says it: `secrets set`, or in legacy
+    mode (PROMPTMEND_ENV set), where `secrets set` refuses, the .env it names. The path is
+    never shown: the marker is pasted into the focused app."""
+    if env_file_override() is not None:
+        return "add it to the .env that PROMPTMEND_ENV names"
+    return f"run `promptmend secrets set {env_name}` in a terminal"
+
+
+def timeout_hint(cfg: Settings) -> str:
+    """The next step of a call that ran out of time on ``cfg`` (the call's settings), the
+    same for the provider's own marker and improve's watchdog: try again, or raise the limit
+    this call used (--timeout when this call passed it, since a setting would not change it)."""
+    if cfg.call_timeout is not None:
+        return "try again with a longer --timeout"
+    setting = "PROMPT_PRO_TIMEOUT_SECONDS" if cfg.call_tier == "pro" else "PROMPT_TIMEOUT_SECONDS"
+    return f"try again, or raise {setting}"
+
+
+def cap_hint(spec: ProviderSpec, cfg: Settings) -> str:
+    """What to raise when a reply used its whole output cap before writing any text: the
+    --max-tokens this call passed, else the provider's cap setting (on OpenRouter's pro tier
+    OPENROUTER_PRO_MAX_TOKENS, which alone changes that tier); empty when nothing capped the
+    request (Ollama and LM Studio without --max-tokens)."""
+    if cfg.call_max_tokens is not None:
+        return "raise --max-tokens"
+    if spec.cap is None:
+        return ""
+    if spec.router and cfg.call_tier == "pro":
+        return "raise OPENROUTER_PRO_MAX_TOKENS"
+    return f"raise {spec.cap.upper()}"
 
 
 def check_base_url(name: str, cfg: Settings) -> None:
@@ -241,6 +274,10 @@ def _build(
     api_key = _require(spec.api_key(cfg), spec.key) if spec.key else None
     max_tokens = spec.max_tokens(cfg)
     temperature = spec.request_temperature(cfg)
+    waited, capped = timeout_hint(cfg), cap_hint(spec, cfg)
+    # A refused loopback connection names the server only for a local one: a cloud label on a
+    # loopback URL is a proxy or a stub, not the cloud service itself.
+    local_server = "" if spec.cloud else spec.label
     if spec.protocol == "ollama":
         return OllamaProvider(
             base_url=base_url,
@@ -254,6 +291,9 @@ def _build(
             local=not remote,
             name=spec.name,
             label=spec.label,
+            local_server=local_server,
+            timeout_hint=waited,
+            cap_hint=capped,
         )
     if spec.protocol == "anthropic":
         # The Messages API requires max_tokens; an anthropic spec sets cap
@@ -273,6 +313,8 @@ def _build(
             observer=observer,
             name=spec.name,
             label=spec.label,
+            timeout_hint=waited,
+            cap_hint=capped,
         )
     # OpenRouter alone takes the app title, routing and nested reasoning fields, the bench
     # hooks and reports a cost; another spec's effort is a top-level field.
@@ -294,4 +336,7 @@ def _build(
         name=spec.name,
         usage=openrouter_usage if router else openai_usage,
         local=not remote,
+        local_server=local_server,
+        timeout_hint=waited,
+        cap_hint=capped,
     )
