@@ -17,7 +17,6 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.geometry import Region
 from textual.screen import Screen
 from textual.widgets import (
     Button,
@@ -335,6 +334,7 @@ class SetupScreen(Screen[None]):
             # just enough that the highlighted choice shows (a carried warning can take the
             # rows), so Enter never picks a choice nobody saw.
             target = self.query_one(focus, OptionList)
+            target.styles.max_height = None  # the stylesheet's again (_reveal_highlight())
             self.call_after_refresh(lambda: target.focus(scroll_visible=False))
             # Twice deferred: the first refresh lays the list out at its width, which can
             # wrap a choice onto another line.
@@ -344,17 +344,25 @@ class SetupScreen(Screen[None]):
         else:
             self.call_after_refresh(self.query_one("#setup-next-step").focus)
 
-    def _reveal_highlight(self, step: str, options: OptionList) -> None:
-        """Scroll the step, no further than needed, so the list's highlighted choice shows."""
-        index = options.highlighted
-        lines = options._index_to_line  # Textual's own map (what scroll_to_highlight uses)
-        if index is None or index not in lines:
+    def _reveal_highlight(self, step: str, options: OptionList, *, fitted: bool = False) -> None:
+        """Bring the focused list, with its highlighted choice, into view, scrolling the step
+        only when the list is not wholly visible, and then no further than needed. Public
+        Textual API only (the dependency is a range). Two things scroll here: the step (a
+        VerticalScroll) and the list itself, an OptionList (a scroll view) capped by the
+        stylesheet's max-height. A list taller than the step's visible height is first
+        capped to that height, so it scrolls inside itself, where scroll_to_highlight()
+        guarantees the highlighted choice shows; then the step scrolls the whole list in."""
+        step_view = self.query_one(f"#setup-{step}", VerticalScroll)
+        visible = step_view.scrollable_content_region.height
+        box = options.virtual_region  # the list's place in the step's scrolled content
+        if box.height > visible and not fitted and visible > 0:
+            options.styles.max_height = visible
+            self.call_after_refresh(self._reveal_highlight, step, options, fitted=True)
             return
-        top = options.virtual_region.y + lines[index]
-        height = options._heights[index]
-        self.query_one(f"#setup-{step}", VerticalScroll).scroll_to_region(
-            Region(0, top, 1, height), animate=False, immediate=True
-        )
+        options.scroll_to_highlight()
+        top = step_view.scroll_y
+        if box.y < top or box.bottom > top + visible:
+            step_view.scroll_to_region(box, animate=False, immediate=True)
 
     def report(
         self,

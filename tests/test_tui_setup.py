@@ -13,7 +13,7 @@ from textual.containers import VerticalScroll
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Static
 
-from promptmend import config, config_store, deploy, settings_service, smoke
+from promptmend import config, config_store, deploy, prompt_builder, settings_service, smoke
 from promptmend.commands import common
 from promptmend.commands import setup as setup_cmd
 from promptmend.commands import ui as ui_cmd
@@ -363,14 +363,18 @@ def test_wizard_names_the_deprecated_provider_and_saves_it_not(
 
 
 def _row_visible(app: ManageApp, step: str, selector: str) -> bool:
-    """Whether the list's highlighted choice shows in its step's scroll view."""
+    """Whether the list's highlighted choice shows: inside the list's own scroll view and the
+    step's. (Textual's line map is private; a test may read it, the wizard does not.)"""
     options = app.screen.query_one(selector, OptionList)
     scroller = app.screen.query_one(f"#setup-{step}", VerticalScroll)
     index = options.highlighted
     assert index is not None
-    top = options.virtual_region.y + options._index_to_line[index]
-    bottom = top + options._heights[index]
-    return scroller.scroll_y <= top and bottom <= scroller.scroll_y + scroller.size.height
+    in_list = options._index_to_line[index] - options.scroll_y
+    height = options._heights[index]
+    if in_list < 0 or in_list + height > options.scrollable_content_region.height:
+        return False
+    top = options.virtual_region.y + in_list
+    return scroller.scroll_y <= top and top + height <= scroller.scroll_y + scroller.size.height
 
 
 def test_wizard_shows_what_config_toml_holds_and_a_plain_next_writes_nothing(
@@ -513,6 +517,50 @@ def test_wizard_a_tall_message_still_shows_the_highlighted_choice(
         assert _row_visible(app, step, lists[step])
 
     drive(scenario, setup=_options(espanso), size=(80, 24))
+
+
+@pytest.mark.parametrize("pick", ["first", "last"])
+def test_wizard_a_profile_list_taller_than_the_screen_shows_the_highlighted_choice(
+    saved: Path, espanso: FakeRunner, pick: str
+) -> None:
+    """Many added profiles: the list is capped to the step's visible height and scrolls
+    inside itself to the highlighted choice."""
+    folder = prompt_builder.user_profiles_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    for n in range(20):
+        (folder / f"mine{n:02}.md").write_text("Rewrite the draft.", encoding="utf-8")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        options = wizard.query_one("#setup-profiles", OptionList)
+        assert options.option_count == 22
+        options.highlighted = 0 if pick == "first" else options.option_count - 1
+        wizard.go("profile")
+        await settle(pilot)
+        assert app.screen.focused is options
+        step = wizard.query_one("#setup-profile", VerticalScroll)
+        assert options.virtual_size.height > step.scrollable_content_region.height
+        assert _row_visible(app, "profile", "#setup-profiles")
+
+    drive(scenario, setup=_options(espanso), size=(80, 24))
+
+
+@pytest.mark.parametrize("size", [(80, 24), (70, 24)])
+@pytest.mark.parametrize("step", ["use", "profile", "output"])
+def test_wizard_a_list_step_that_fits_opens_on_its_question(
+    saved: Path, espanso: FakeRunner, size: tuple[int, int], step: str
+) -> None:
+    lists = {"use": "#setup-uses", "profile": "#setup-profiles", "output": "#setup-outputs"}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        wizard.go(step)
+        await settle(pilot)
+        assert app.screen.focused is wizard.query_one(lists[step], OptionList)
+        assert wizard.query_one(f"#setup-{step}", VerticalScroll).scroll_y == 0
+        assert _row_visible(app, step, lists[step])
+
+    drive(scenario, setup=_options(espanso), size=size)
 
 
 @pytest.mark.parametrize("size", [(80, 24), (70, 24)])
