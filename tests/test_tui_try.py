@@ -321,6 +321,59 @@ def test_real_run_with_history_off_records_nothing(
     assert "tokens in 120, out 30" in seen.usage
 
 
+def counting_reloads(app: ManageApp) -> list[int]:
+    """Counts the app's reloads from here on (the History tab reloads with it)."""
+    reloads: list[int] = []
+    real_reload = app.reload
+
+    def reload() -> None:
+        reloads.append(1)
+        real_reload()
+
+    app.reload = reload  # type: ignore[method-assign]
+    return reloads
+
+
+@pytest.mark.parametrize(("history", "expected"), [("true", 1), ("false", 0)], ids=["on", "off"])
+def test_a_real_run_reloads_history_only_when_recorded(
+    history: str,
+    expected: int,
+    cloud: None,
+    fake_http: FakeHttp,
+    history_rows: HistoryRows,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROMPT_HISTORY", history)
+    fake_http.reply(REPLY)
+    counts: list[int] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        reloads = counting_reloads(app)
+        await run(app, pilot, DRAFT, target=REAL)
+        await pilot.press("y")
+        await settle(pilot)
+        counts.append(len(reloads))
+
+    seen = drive(scenario)
+    assert seen.result == "A better prompt."
+    assert counts == [expected]
+    assert len(history_rows("operations")) == expected
+
+
+@pytest.mark.usefixtures("loopback_only")
+def test_a_stub_run_does_not_reload_history() -> None:
+    counts: list[int] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        reloads = counting_reloads(app)
+        await run(app, pilot, DRAFT)
+        counts.append(len(reloads))
+
+    seen = drive(scenario)
+    assert seen.result == smoke.REPLY
+    assert counts == [0]
+
+
 def test_one_run_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
     release = threading.Event()
     calls: list[str] = []

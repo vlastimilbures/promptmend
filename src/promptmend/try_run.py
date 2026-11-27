@@ -30,8 +30,9 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class Outcome:
     """A finished run: what to show, whether it failed, the usage line, the requests sent
-    (the stub's count on a stub run, 0 when the gate stopped it first), and whether the run
-    was recorded in the usage history (a real run with PROMPT_HISTORY on)."""
+    (the stub's count on a stub run, 0 when the gate stopped it first), and ``recorded``: true
+    whenever a real run was meant to be recorded in the usage history (PROMPT_HISTORY on),
+    also when the history write itself was lost (Recorder.finish() never raises)."""
 
     text: str
     error: bool
