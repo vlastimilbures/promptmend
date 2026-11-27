@@ -23,10 +23,10 @@ import yaml
 from typer.testing import CliRunner
 
 from promptmend import smoke
-from promptmend.cli import PERSONA_PLACEHOLDER, app
+from promptmend.cli import app
 from promptmend.config import Settings
 from promptmend.deploy import launcher_text
-from promptmend.prompt_builder import PROFILES, system_prompt
+from promptmend.prompt_builder import PERSONA_PLACEHOLDER, PROFILES, system_prompt
 from promptmend.providers.base import timed_out_message
 from promptmend.providers.registry import PROVIDERS
 from promptmend.trigger import WATCHDOG_MARGIN, _past

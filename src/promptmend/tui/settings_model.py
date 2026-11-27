@@ -11,9 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
 
-from .. import config
 from ..commands import common
 from ..config import (
     ANTHROPIC_EFFORTS,
@@ -259,12 +257,6 @@ ADVANCED_COUNT = sum(meta.advanced for meta in SETTINGS)
 def default(name: str) -> str:
     """A setting's built-in default, as text."""
     return next(str(f.metadata["default"]) for f in setting_fields() if f.metadata["env"] == name)
-
-
-def parse(name: str, raw: str) -> Any:
-    """``raw`` read as the CLI reads ``name``; ValueError naming the setting otherwise."""
-    field = next(f for f in setting_fields() if f.metadata["env"] == name)
-    return config.parse_setting(name, field.metadata["parse"], raw)
 
 
 def choices(meta: Meta, state: State | None) -> tuple[str, ...]:

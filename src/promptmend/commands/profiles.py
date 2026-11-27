@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from .. import settings_service
 from ..prompt_builder import ALIASES, PROFILES, user_profiles, user_profiles_dir
 from . import common
 from .common import guard
@@ -25,7 +26,7 @@ def _group() -> None:
 @guard
 def profiles_list() -> None:
     """The built-in profiles and the ones in your profile folder, and which the triggers use."""
-    layers, settings = common.load_layers()
+    layers, settings = settings_service.load_layers()
     common.show_findings(layers)
     typer.echo(f"PROMPT_PROFILE: {settings.profile}")
     typer.echo(f"PROMPT_PRO_PROFILE: {settings.pro_profile or '(empty: PROMPT_PROFILE)'}")

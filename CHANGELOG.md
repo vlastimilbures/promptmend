@@ -53,6 +53,11 @@ All notable changes to this project are documented here. The format follows
   now says that upper-case label words and phrases such as *internal only* are flagged
   anywhere, and docs/troubleshooting.md lists every finding with its known false positives,
   such as 12-digit AWS account IDs.
+- The Settings tab's edit dialog refuses a value that looks like a key with `config set`'s
+  own words, which name `promptmend secrets set NAME` for an API key (#408): the dialog and
+  `config set` now make one check. `config set` with a value the setting cannot read now
+  says so first: before the legacy-mode refusal when `PROMPTMEND_ENV` is set, and before the
+  error for a `config.toml` that cannot be read (exit 1 in every case).
 - A draft over the 50,000-character limit gets one marker wording from every source (#408):
   `--text`, the clipboard and the interface's Try tab now say `Input is too long (over 50000
   chars)`, as stdin already did, instead of `Input is too long (N chars, max 50000)`.

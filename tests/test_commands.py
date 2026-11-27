@@ -21,7 +21,7 @@ import typer
 from typer._click.core import Command, Context, Parameter
 from typer.testing import CliRunner, Result
 
-from promptmend import __version__, assets, config, deploy, doctor, history, smoke
+from promptmend import __version__, assets, config, deploy, doctor, history, settings_service, smoke
 from promptmend.cli import app
 from promptmend.commands import common
 from promptmend.config import secret_names
@@ -1090,19 +1090,22 @@ def test_interface_error_message_matches_the_guard() -> None:
     unexpected = error_message(RuntimeError(f"bad {KEY}"))
     assert unexpected.startswith("error: unexpected RuntimeError: bad <redacted")
     assert KEY not in unexpected
-    assert error_message(common.CommandError("PROMPTMEND_ENV is set")) == (
+    assert error_message(settings_service.ServiceError("PROMPTMEND_ENV is set")) == (
         "error: PROMPTMEND_ENV is set"
     )
 
 
-def test_guard_keeps_a_command_error_as_written(capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(("usage", "code"), [(True, common.USAGE), (False, common.FAILED)])
+def test_guard_keeps_a_service_error_as_written(
+    capsys: pytest.CaptureFixture[str], usage: bool, code: int
+) -> None:
     @common.guard
     def command() -> None:
-        raise common.CommandError(f"PROMPTMEND_ENV is set ({LAUNCHER})", common.USAGE)
+        raise settings_service.ServiceError(f"PROMPTMEND_ENV is set ({LAUNCHER})", usage=usage)
 
     with pytest.raises(typer.Exit) as raised:
         command()
-    assert raised.value.exit_code == common.USAGE
+    assert raised.value.exit_code == code
     assert capsys.readouterr().err == f"error: PROMPTMEND_ENV is set ({LAUNCHER})\n"
 
 
@@ -1640,14 +1643,3 @@ def test_config_show_marks_an_empty_value(saved: Path, monkeypatch: pytest.Monke
     line = next(x for x in lines if x.startswith("OPENROUTER_PROVIDER "))
     assert "(empty)" not in line
     assert _run("config", "get", "PROMPT_TEMPERATURE").stdout == "\n"
-
-
-def test_looks_like_a_key_uses_the_users_patterns(monkeypatch: pytest.MonkeyPatch) -> None:
-    from promptmend import redaction
-
-    custom = "zz-falcon-1234"
-    assert not common.looks_like_a_key(custom)
-    monkeypatch.setattr(redaction, "_user_patterns", (re.compile("zz-falcon"),))
-    assert common.looks_like_a_key(custom)
-    # Showing PROMPT_EXTRA_PATTERNS itself never hides it behind its own pattern.
-    assert not common.looks_like_a_key("zz-falcon", user_patterns=False)

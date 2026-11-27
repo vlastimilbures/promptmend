@@ -248,7 +248,7 @@ Path(sys.argv[1]).write_text(json.dumps(result), encoding="utf-8")
 """
 
 # Never on the trigger path: the Textual interface (#93), config writers (#84), the keyring
-# and the Espanso deploy service (#86), the management commands and their services (#92).
+# and the Espanso deploy service (#86), the management commands and their services (#92, #408).
 # rich is installed with Typer but not loaded today: Typer imports it only for help and usage
 # errors.
 FORBIDDEN = (
@@ -264,6 +264,8 @@ FORBIDDEN = (
     "promptmend.smoke",
     "promptmend.try_run",
     "promptmend.config_store",
+    "promptmend.settings_service",
+    "promptmend.settings_checks",
     "promptmend.update_check",
     "promptmend.local_probe",
     "promptmend.wordings",

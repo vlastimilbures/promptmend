@@ -22,10 +22,9 @@ from textual.geometry import Region
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from .. import config_store, smoke
+from .. import config_store, settings_service, smoke
 from ..commands import common
 from ..commands import doctor as doctor_cmd
-from ..commands import settings as settings_cmd
 from ..config import secret_names
 from ..factory import PROVIDER_NAMES
 from . import home, settings_model, teach
@@ -443,18 +442,16 @@ class SettingsPane(Pane):
 
     def _type(self, meta: settings_model.Meta, current: str) -> None:
         name = meta.name
-        own = name != common.EXTRA_PATTERNS
         # A value that looks like a key is never shown, not even here: the field opens empty,
         # the dialog says why, and an empty submit then keeps the value (it is a cancel).
-        withheld = bool(current) and common.looks_like_a_key(current, user_patterns=own)
+        withheld = bool(current) and settings_service.key_like(name, current)
         value = "" if withheld else current
 
         def check(typed: str) -> str | None:
-            if common.looks_like_a_key(typed, user_patterns=own):
-                return "That looks like a key or password, which never goes in config.toml."
+            """`config set`'s own checks (settings_service.check_setting()), as typed."""
             try:
-                settings_model.parse(name, typed)
-            except ValueError as exc:
+                settings_service.check_setting(name, typed)
+            except (settings_service.ServiceError, ValueError) as exc:
                 return str(exc)
             return None
 
@@ -472,18 +469,13 @@ class SettingsPane(Pane):
         self.app.push_screen(EditModal(name, value, check, preview, use_default=True), typed)
 
     def save(self, name: str, value: str) -> None:
-        """Save through `config set`'s service; the command is logged (a private or key-like
-        value withheld)."""
-        private = name in common.PRIVATE or common.looks_like_a_key(value)
-        shown_value = teach.WITHHELD if private else value
+        """Save through `config set`'s service (Pane.save_setting()); the command is logged (a
+        private or key-like value withheld)."""
 
-        def save() -> str:
-            saved = settings_cmd.save_setting(name, value)
+        def saved() -> None:
             self.pending = True  # until show() reads it back
-            notes = settings_cmd.after_save(name)
-            return "; ".join([f"{name} saved in {saved.path}", *notes])
 
-        self.attempt(save, command=teach.for_setting("set", name, shown_value))
+        self.save_setting(name, value, saved)
 
     def reset(self) -> None:
         """u (or Use default in a setting's dialog): a key's Remove key dialog, or a setting
@@ -497,12 +489,12 @@ class SettingsPane(Pane):
             return
 
         def unset() -> str:
-            removed, path = settings_cmd.unset_setting(name)
+            removed, path = settings_service.unset_setting(name)
             self.pending = removed  # until show() reads it back
             if not removed:
                 elsewhere = f" It comes from {row.where}." if row.custom else ""
                 return f"{name} is not saved in {path}; nothing to do.{elsewhere}"
-            notes = settings_cmd.after_save(name)
+            notes = settings_service.after_save(name)
             return "; ".join([f"{name} removed from {path}; its default applies", *notes])
 
         self.attempt(unset, command=teach.for_setting("reset", name))
@@ -526,14 +518,15 @@ class SettingsPane(Pane):
             return
 
         def save() -> str:
-            return "; ".join([settings_cmd.store_key(name, value), *settings_cmd.after_save(name)])
+            saved = settings_service.store_key(name, value)
+            return "; ".join([saved, *settings_service.after_save(name)])
 
         self.attempt(save, command=teach.for_setting("set-key", name))
 
     def remove_key(self, name: str | None = None) -> None:
         """Pick a saved key (``name`` first, when saved), then confirm (`secrets remove`)."""
         try:
-            common.refuse_in_legacy_mode("the secrets file")
+            settings_service.refuse_in_legacy_mode("the secrets file")
             saved = config_store.saved_secret_names()
         except EXPECTED as exc:
             self.report(error_message(exc), error=True)
@@ -568,7 +561,7 @@ class SettingsPane(Pane):
 
     def _delete(self, name: str) -> str:
         config_store.delete_secret(name)
-        layers, _ = common.load_layers()
+        layers, _ = settings_service.load_layers()
         entry = layers.entries[name]
         if entry.value:
             still = common.source_label(entry.source)

@@ -11,8 +11,9 @@ from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Select, Static
 
-from .. import history
-from ..commands import common, usage
+from .. import history, settings_service
+from ..commands import usage
+from ..redaction import looks_like_a_key
 from . import teach
 from .base import Pane, add_row, button_row
 from .modals import ConfirmModal, Field, FormModal
@@ -106,7 +107,7 @@ class HistoryPane(Pane):
             self.manage.reload()
 
     def _store(self) -> history.HistoryStore:
-        _, settings = common.load_layers()
+        _, settings = settings_service.load_layers()
         return usage.store(settings)
 
     @on(Button.Pressed, "#export")
@@ -128,8 +129,8 @@ class HistoryPane(Pane):
         def export() -> str:
             raw = values["path"].strip()
             if not raw:
-                raise common.CommandError("enter the file to write")
-            common.no_key(raw, "the file")
+                raise settings_service.ServiceError("enter the file to write")
+            settings_service.refuse_key(raw, "the file")
             path = Path(raw).expanduser()
             fmt: Any = values["format"]
             with path.open("x", encoding="utf-8", newline="") as out:
@@ -138,7 +139,7 @@ class HistoryPane(Pane):
 
         fmt, raw = values["format"], values["path"].strip()
         # A path that looks like a key is never shown.
-        shown = teach.WITHHELD if common.looks_like_a_key(raw) else raw
+        shown = teach.WITHHELD if looks_like_a_key(raw) else raw
         argv = ("history", "export", "--format", fmt, "-o", shown if raw else "<FILE>")
         self.attempt(export, reload=False, command=teach.equivalent(*argv))
 

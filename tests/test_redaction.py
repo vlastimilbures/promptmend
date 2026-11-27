@@ -964,6 +964,17 @@ def test_safe_repr_honours_user_patterns(monkeypatch: pytest.MonkeyPatch) -> Non
     assert safe_repr("PRJ-12345") == "'PRJ-12345'"
 
 
+def test_looks_like_a_key_uses_the_users_patterns(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend import redaction
+
+    custom = "zz-falcon-1234"
+    assert not redaction.looks_like_a_key(custom)
+    monkeypatch.setattr(redaction, "_user_patterns", (re.compile("zz-falcon"),))
+    assert redaction.looks_like_a_key(custom)
+    # Showing PROMPT_EXTRA_PATTERNS itself never hides it behind its own pattern.
+    assert not redaction.looks_like_a_key("zz-falcon", user_patterns=False)
+
+
 # _normalize() returns ASCII text as is, without unicodedata (#312): exactly what the full
 # fold gives, for every ASCII code point and for random ASCII strings (controls, tabs and
 # newlines included), so the gate's findings cannot change.

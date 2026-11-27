@@ -143,6 +143,14 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   and reports a `.env` earlier releases read (`config.unread_env_files()`, #275).
 - Legacy mode: with `PROMPTMEND_ENV` set (the conftest default) there is no `config.toml` and
   no secrets file, and `config set`/`secrets set` refuse.
+- What may be saved is decided once, in `settings_service.py` (`check_setting()`,
+  `save_setting()`, `unset_setting()`, `store_key()`, `key_like()`, the legacy-mode refusal,
+  repair-mode `load_layers()`), Typer-free and shared by the commands, `setup_flow.py` and
+  `tui/`; it raises `ServiceError` (`usage` for exit 2). `settings_checks.py` holds the
+  persona and gate-pack checks and `rewrites()`. No module outside `commands/`, `tui/` and
+  `cli.py`'s lazy imports imports `promptmend.commands`, and `setup_flow`, `settings_service`,
+  `settings_checks`, `doctor` and `try_run` reach neither Typer nor `cli`/`trigger`
+  (`tests/test_layering.py`).
 - Adding a setting: a field and parser in `config.py`, a row in docs/configuration.md, a line
   in `.env.example` and an entry in `tui/settings_model.SETTINGS`; `tests/test_docs.py` and
   `tests/test_tui_settings_model.py` fail without the last three.
@@ -174,9 +182,10 @@ the CLI again.
 
 - Exit codes 0 ok, 1 failed, 2 usage, 3 needs a terminal, 4 doctor/validate found problems
   (`commands/common.py`; docs/commands.md "Exit codes" is their only doc home).
-- Errors go to stderr via `@guard` (never a traceback); never prompt without a TTY
-  (`stdin_is_tty()`); a key comes only from stdin or `getpass` (`read_secret()`), never from
-  an option or argument; `config set` refuses secret names and key-like values.
+- Errors go to stderr via `@guard` (never a traceback; a `ServiceError` keeps its text); never
+  prompt without a TTY (`stdin_is_tty()`); a key comes only from stdin or `getpass`
+  (`read_secret()`), never from an option or argument; `config set` refuses secret names and
+  key-like values.
 - `setup` on a terminal opens the wizard (its flags only prefill or skip steps; nothing is
   written without a press); `--non-interactive`/`--plain` asks nothing, deploys only with
   `--deploy`, and always discloses the usage history (D-HIST-0).
@@ -198,7 +207,7 @@ the CLI again.
   never touches the clipboard.
 - Every button names its headless command: `tui/teach.BUTTONS` (or `NO_COMMAND`);
   `tests/test_tui_teach.py` parses each against the Click tree. New code that shows a
-  user-typed value in a command passes it through `common.looks_like_a_key()` and shows
+  user-typed value in a command passes it through `redaction.looks_like_a_key()` and shows
   `teach.WITHHELD` instead of a match.
 
 ## Releases

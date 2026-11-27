@@ -91,14 +91,34 @@ def _snapshot(path: Path) -> SavedSettings:
     return SavedSettings(path, loaded[0], loaded[1])
 
 
-def _toml_value(name: str, raw: str) -> Any:
+def _known(name: str) -> str:
+    if name not in _FIELDS:
+        raise ValueError(f"{safe_repr(name)} is not a setting")
+    return name
+
+
+def secret_refusal(name: str, verb: str) -> str | None:
+    """Why ``name`` cannot be given a value (``verb`` "set") or removed ("remove") in
+    config.toml, or None: a secret goes only in the secrets file, through `secrets` (a hidden
+    prompt or --stdin), never as an argument. The one wording of that rule, for `config
+    set|unset` (settings_service) and save_settings()."""
+    if name not in secret_names():
+        return None
+    return (
+        f"{name} is a secret: {verb} it with `promptmend secrets {verb} {name}` (a hidden "
+        "prompt or --stdin), never as an argument"
+    )
+
+
+def toml_value(name: str, raw: str) -> Any:
     """``raw`` validated by the setting's own parser, as the TOML value to save: true/false,
-    a number or text. Raises the same ValueError a bad value in a .env does. A value that
+    a number or text. Raises the same ValueError a bad value in a .env does, and one naming
+    an unknown setting. A value that
     parses to None (an empty PROMPT_TEMPERATURE) is saved as the empty text, since None
     means "remove the setting" to save_settings(). A list (PROMPT_PROFILE_OVERRIDES,
     PROMPT_GATE_PACKS) is saved as its canonical comma-separated text: config.toml holds
     only scalars (config_files.scalar_text), and the setting's parser reads the text back."""
-    value = config.parse_setting(name, _FIELDS[name].metadata["parse"], raw)
+    value = config.parse_setting(name, _FIELDS[_known(name)].metadata["parse"], raw)
     if value is None:
         return raw
     return ",".join(value) if isinstance(value, tuple) else value
@@ -125,15 +145,13 @@ def save_settings(snapshot: SavedSettings, changes: Mapping[str, str | None]) ->
             f"{snapshot.path.name} has an unknown {VERSION_KEY}; this version "
             f"({CONFIG_VERSION}) only reads it"
         )
-    known, secrets = env_names(), secret_names()
     updates: dict[str, Any] = {}
     for name, raw in changes.items():
-        if name not in known:
-            raise ValueError(f"{safe_repr(name)} is not a setting")
-        if name in secrets:
-            raise ValueError(f"{name} is a secret; save it in the secrets file, not config.toml")
-        updates[name] = None if raw is None else _toml_value(name, raw)
-    held = [k for k in snapshot.table if k in secrets]
+        refused = secret_refusal(_known(name), "set" if raw is not None else "remove")
+        if refused:
+            raise ValueError(refused)
+        updates[name] = None if raw is None else toml_value(name, raw)
+    held = [k for k in snapshot.table if k in secret_names()]
     if held:
         raise ConfigStoreError(
             f"{', '.join(held)} in {snapshot.path.name} is a secret; move it to the secret "
@@ -157,9 +175,13 @@ def save_settings(snapshot: SavedSettings, changes: Mapping[str, str | None]) ->
 # --- secrets ------------------------------------------------------------------------------
 
 
-def _secret_name(name: str) -> str:
+def secret_name(name: str) -> str:
+    """``name`` when it is a secret, else a ValueError naming the secrets (`secrets
+    set|remove` give it as their usage error)."""
     if name not in secret_names():
-        raise ValueError(f"{safe_repr(name)} is not a secret setting")
+        raise ValueError(
+            f"{safe_repr(name)} is not a secret; choose from {', '.join(secret_names())}"
+        )
     return name
 
 
@@ -168,12 +190,12 @@ def save_secret(name: str, value: str, environ: Mapping[str, str] | None = None)
     the store fails; nothing is then written anywhere else."""
     cleaned = value.strip()
     if not cleaned or any(c.isspace() or not c.isprintable() for c in cleaned):
-        raise ValueError(f"{_secret_name(name)} must be one line of visible characters")
-    config_files.secret_store(config_dir(environ)).set(_secret_name(name), cleaned)
+        raise ValueError(f"{secret_name(name)} must be one line of visible characters")
+    config_files.secret_store(config_dir(environ)).set(secret_name(name), cleaned)
 
 
 def delete_secret(name: str, environ: Mapping[str, str] | None = None) -> None:
-    config_files.secret_store(config_dir(environ)).delete(_secret_name(name))
+    config_files.secret_store(config_dir(environ)).delete(secret_name(name))
 
 
 def saved_secret_names(environ: Mapping[str, str] | None = None) -> tuple[str, ...]:

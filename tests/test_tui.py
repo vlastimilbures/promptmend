@@ -22,7 +22,7 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
-from promptmend import config, config_store, deploy, history, smoke, update_check
+from promptmend import config, config_store, deploy, history, settings_service, smoke, update_check
 from promptmend.history import HistoryStore
 from promptmend.tui import (
     base,
@@ -2062,7 +2062,8 @@ def test_settings_edit_checks_the_value_in_the_dialog(
         await pilot.press("enter")  # Enter in the field submits too
         await settle(pilot)
         assert app.screen is screen
-        assert "looks like a key" in str(screen.query_one("#edit-error", Static).render())
+        refused = str(screen.query_one("#edit-error", Static).render())
+        assert refused == settings_service.KEY_LIKE  # `config set`'s own words (#408)
         assert KEY not in str(screen.query_one("#edit-error", Static).render())
         await pilot.press("escape")
         await settle(pilot)

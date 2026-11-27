@@ -22,8 +22,17 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from .. import assets, config, config_files, deploy, doctor, espanso_windows, history, update_check
-from ..commands import common
+from .. import (
+    assets,
+    config,
+    config_files,
+    deploy,
+    doctor,
+    espanso_windows,
+    history,
+    settings_service,
+    update_check,
+)
 from ..commands.usage import store
 from ..config import ConfigLayers, Settings, secret_names
 from ..prompt_builder import UserProfile, user_profiles
@@ -175,7 +184,7 @@ def quick(group_by: str = "trigger") -> State:
     (no command, no doctor, no history, no network), so Home paints at once. Everything else
     is a placeholder and the State is not full. The update check says off at once when the
     settings turn it off, else checking (see known_update())."""
-    layers, settings = common.load_layers()
+    layers, settings = settings_service.load_layers()
     return State(
         layers=layers,
         settings=settings,
@@ -254,7 +263,7 @@ def needs_setup(state: State) -> bool:
     """Nothing is set up yet: no config.toml, no key, and no match file installed. A bare
     `promptmend` then opens the wizard by itself, once; never of a quick State, which has no
     plan. Here, not in setup_wizard.py, so the app asks without importing the wizard."""
-    if common.legacy_env() or not state.full or state.plan is None:
+    if settings_service.legacy_env() or not state.full or state.plan is None:
         return False
     if config_files.is_file(config.settings_file()):
         return False

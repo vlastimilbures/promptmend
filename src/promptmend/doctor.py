@@ -37,6 +37,14 @@ from . import (
 )
 from .config import ConfigLayers, secret_names
 from .providers.registry import PROVIDERS
+from .settings_checks import (
+    gate_packs_note,
+    packs_off,
+    persona_findings,
+    persona_problem,
+    persona_used,
+    rewrites,
+)
 
 if TYPE_CHECKING:
     from .history import Health
@@ -302,17 +310,6 @@ def deployed_triggers(espanso_dir: Path) -> tuple[list[assets.Trigger], bool]:
     return (found, True) if deployed else (assets.triggers(), False)
 
 
-def _rewrites(triggers: list[assets.Trigger], settings: config.Settings) -> dict[str, list[str]]:
-    """Each provider the active rewrite triggers run on, with those triggers, in file order;
-    a trigger naming no provider runs on PROMPT_PROVIDER (PROMPT_PRO_PROVIDER on the pro tier)."""
-    found: dict[str, list[str]] = {}
-    for t in triggers:
-        if t.active and t.command == "improve":
-            provider = t.provider or settings.provider_for(t.tier or "standard")
-            found.setdefault(provider, []).append(t.trigger)
-    return found
-
-
 def stale_pro_pins(deployed: list[assets.Trigger], settings: config.Settings) -> dict[str, str]:
     """Each active deployed pro trigger that still names a provider the shipped one leaves to
     PROMPT_PRO_PROVIDER (-ip-'s `--provider openrouter` before #278), with that provider, when
@@ -380,7 +377,7 @@ def _keys_check(
     routes = {r.name: r for r in factory.routes(settings)}
     missing: dict[str, list[str]] = {}
     problems = []
-    for provider, names in _rewrites(triggers, settings).items():
+    for provider, names in rewrites(triggers, settings).items():
         route = routes.get(provider)
         # A refused provider (PROMPT_LOCAL_ONLY) never needs its key.
         if route is None or route.refused or not route.key or keys[route.key]["set"]:
@@ -422,7 +419,7 @@ def _local_servers_check(
     a ``localhost`` URL on Windows still works, so its note (#365) is only advice. A base
     URL Settings refused (#368) is named, never quoted, and not asked: repair mode has
     already put the default in its place, which the triggers would not use (they stop)."""
-    used = _rewrites(triggers, settings)
+    used = rewrites(triggers, settings)
     servers: dict[str, dict[str, Any]] = {}
     notes = []
     slow: list[str] = []
@@ -491,7 +488,7 @@ def _localhost_note(setting: str, url: str, names: list[str], source: str) -> st
     the `config set` command, which legacy mode refuses and the environment overrides."""
     from urllib.parse import urlsplit
 
-    from .commands.common import looks_like_a_key
+    from .redaction import looks_like_a_key
 
     where = _set_where(source)
     why = f"on Windows each {', '.join(names)} call may wait about 2 s for ::1 at localhost"
@@ -549,58 +546,6 @@ def _probe_all(urls: Mapping[str, str]) -> dict[str, bool | None]:
     return {key: future.result() for key, future in futures.items()}
 
 
-def persona_findings(settings: config.Settings) -> list[str]:
-    """What the gate's scan finds in PROMPT_PERSONA: finding names only, never the text. The
-    gate scans the draft, but every call also sends the persona in the system prompt, so
-    `config validate`, this check and the interface scan it once instead: a match warns and
-    never blocks a trigger, which never runs this. No ``bare_token``: that rule is for a
-    whole draft that is one secret-like word (a password left on the clipboard); a persona is
-    a typed setting, a one-word one (DataOps2Lead) is a role, and a pasted key still matches
-    the key patterns, as `config set` checks every value with the same scan()."""
-    from .redaction import compile_extra, scan
-
-    return scan(settings.persona, compile_extra(settings.extra_patterns), settings.gate_packs)
-
-
-def _persona_stays_local(settings: config.Settings) -> bool:
-    """PROMPT_LOCAL_ONLY makes make_provider() refuse every provider that leaves the machine,
-    unless PROMPT_GATE_LOCAL says a loopback server may relay to a cloud API."""
-    return settings.local_only and not settings.gate_local
-
-
-def _persona_used(settings: config.Settings) -> bool:
-    """Whether PROMPT_PROFILE or PROMPT_PRO_PROFILE sends the persona: its template (built-in
-    or opted-in user file) holds {{PERSONA_RULE}}. A profile that cannot load sends nothing
-    (improve stops; the profiles check reports it). The triggers' only explicit --profile is
-    `general`, which has no persona."""
-    from .prompt_builder import PERSONA_TOKEN, template
-
-    for name in dict.fromkeys(filter(None, (settings.profile, settings.pro_profile))):
-        try:
-            if PERSONA_TOKEN in template(name, settings.profile_overrides):
-                return True
-        except ValueError:
-            continue
-    return False
-
-
-def persona_problem(settings: config.Settings) -> str | None:
-    """`config validate`'s problem for a persona the gate's patterns match, labels only."""
-    findings = persona_findings(settings)
-    if not findings or _persona_stays_local(settings) or not _persona_used(settings):
-        return None
-    # With PROMPT_LOCAL_ONLY no cloud call is made: only a relaying loopback server sends it on.
-    sent = (
-        "with every call through a local relay (PROMPT_GATE_LOCAL=true)"
-        if settings.local_only
-        else "with every cloud call"
-    )
-    return (
-        f"PROMPT_PERSONA matches the data-protection patterns: {', '.join(findings)}; "
-        f"it is sent unscanned {sent}"
-    )
-
-
 def _persona_readable() -> bool:
     """False when a problem can change PROMPT_PERSONA (its own rejected value, a merged line,
     an unreadable settings file): then the persona subcommand prints its placeholder, and
@@ -624,36 +569,14 @@ def _persona_check(settings: config.Settings, readable: bool = True) -> Check:
         return Check("persona", WARN, problem, data)
     if findings:
         why = "not sent (PROMPT_LOCAL_ONLY=true)"
-        if not _persona_used(settings):
+        if not persona_used(settings):
             why = "not used by the configured profiles"
         return Check("persona", INFO, f"matches {', '.join(findings)}; {why}", data)
     return Check("persona", OK, "PROMPT_PERSONA matches no data-protection pattern", data)
 
 
-def _packs_off(settings: config.Settings) -> list[str]:
-    from .redaction import GATE_PACKS
-
-    return [pack for pack in GATE_PACKS if pack not in settings.gate_packs]
-
-
-def gate_packs_note(settings: config.Settings) -> str | None:
-    """The note for gate packs PROMPT_GATE_PACKS leaves off (an empty value, or an empty
-    ${VAR} it expanded from), or None when every pack is on. Information, not a problem: a
-    pack may be off on purpose, but the gate then flags less."""
-    from .redaction import GATE_PACK_COVERS
-
-    off = _packs_off(settings)
-    if not off:
-        return None
-    return "; ".join(
-        f"gate pack {pack} is off (PROMPT_GATE_PACKS): the gate does not flag "
-        f"{GATE_PACK_COVERS[pack]}"
-        for pack in off
-    )
-
-
 def _gate_packs_check(settings: config.Settings) -> Check:
-    data = {"packs": list(settings.gate_packs), "off": _packs_off(settings)}
+    data = {"packs": list(settings.gate_packs), "off": packs_off(settings)}
     note = gate_packs_note(settings)
     if note:
         return Check("gate_packs", INFO, note, data)
@@ -1278,8 +1201,8 @@ def timing(
     fails is reported, never raised. When the launcher's --version fails or prints another
     version, it is another CLI (or none), so its persona and improve are not run."""
     from . import smoke
-    from .cli import PERSONA_PLACEHOLDER
     from .entry import self_command
+    from .prompt_builder import PERSONA_PLACEHOLDER
 
     time_runs = timer or smoke.time_runs
     interpreter = self_command()

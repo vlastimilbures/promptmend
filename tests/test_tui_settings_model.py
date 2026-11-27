@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from promptmend import config
+from promptmend import config, config_store
 from promptmend.config import ConfigLayers, env_names, secret_names
 from promptmend.prompt_builder import PROFILES, UserProfile
 from promptmend.tui import settings_model as model
@@ -127,12 +127,12 @@ def test_the_basic_and_advanced_settings_are_pinned() -> None:
 def test_every_choice_and_default_parses(meta: model.Meta) -> None:
     profiles = [UserProfile("mine", Path("mine.md"), "added")]
     for choice in model.choices(meta, _state({}, profiles)):
-        model.parse(meta.name, choice)
+        config_store.toml_value(meta.name, choice)
     if meta.kind == model.BOOL:
         assert model.default(meta.name) in ("true", "false")
     if meta.kind == model.CHOICE:
         assert model.choices(meta, None)
-    model.parse(meta.name, model.default(meta.name))
+    config_store.toml_value(meta.name, model.default(meta.name))
 
 
 def test_profile_choices_are_the_builtins_and_your_added_ones() -> None:
@@ -149,7 +149,7 @@ def test_profile_choices_are_the_builtins_and_your_added_ones() -> None:
 
 def test_a_bad_value_is_refused_naming_the_setting() -> None:
     with pytest.raises(ValueError, match="PROMPT_HISTORY_RETENTION_DAYS must be"):
-        model.parse("PROMPT_HISTORY_RETENTION_DAYS", "0")
+        config_store.toml_value("PROMPT_HISTORY_RETENTION_DAYS", "0")
 
 
 def test_dot_rules() -> None:
@@ -231,7 +231,7 @@ def test_an_empty_value_shows_its_empty_word(meta: model.Meta) -> None:
     assert meta.empty
     assert meta.empty != "(empty)"
     try:
-        model.parse(meta.name, "")
+        config_store.toml_value(meta.name, "")
     except ValueError:
         return  # an empty value is refused (a switch, a number)
     row = next(r for r in model.rows(_state({meta.name: ""})) if r.name == meta.name)

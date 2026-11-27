@@ -6,14 +6,13 @@ import dataclasses
 from pathlib import Path
 from typing import Any
 
-from promptmend import assets, deploy, setup_guide
-from promptmend.commands import common
+from promptmend import assets, deploy, settings_service, setup_guide
 from promptmend.config import Settings
 from promptmend.factory import PROVIDER_NAMES
 
 
 def _settings(**kw: Any) -> Settings:
-    return dataclasses.replace(common.load_layers()[1], **kw)
+    return dataclasses.replace(settings_service.load_layers()[1], **kw)
 
 
 def test_unread_env_note(tmp_path: Path) -> None:
@@ -46,7 +45,7 @@ def test_profile_choices_mark_current() -> None:
 
 
 def test_key_rows_follow_the_triggers_not_only_the_provider() -> None:
-    layers, _ = common.load_layers()
+    layers, _ = settings_service.load_layers()
     rows = {
         r.name: r
         for r in setup_guide.key_rows(layers, _settings(provider="ollama"), assets.triggers())
@@ -66,7 +65,7 @@ def test_key_rows_follow_the_triggers_not_only_the_provider() -> None:
 
 
 def test_key_rows_local_only_needs_none() -> None:
-    layers, _ = common.load_layers()
+    layers, _ = settings_service.load_layers()
     rows = setup_guide.key_rows(layers, _settings(local_only=True), assets.triggers())
     assert not any(r.needed for r in rows)
 

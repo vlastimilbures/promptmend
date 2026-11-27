@@ -19,7 +19,7 @@ import pytest
 from typer.testing import CliRunner
 
 from promptmend import config, config_files, config_store
-from promptmend.cli import PERSONA_PLACEHOLDER, app
+from promptmend.cli import app
 from promptmend.config import ConfigLayers, Settings, env_names, secret_names
 from promptmend.config_files import FileSecretStore, SecretStoreError
 from promptmend.config_store import (
@@ -27,6 +27,7 @@ from promptmend.config_store import (
     ReadOnlyConfigError,
     StaleEditError,
 )
+from promptmend.prompt_builder import PERSONA_PLACEHOLDER
 
 if TYPE_CHECKING:
     from conftest import StubProvider
@@ -421,7 +422,7 @@ def test_round_trip_covers_every_setting() -> None:
     ],
 )
 def test_saved_setting_round_trips(saved_mode: Path, name: str, raw: str) -> None:
-    from promptmend.commands.settings import save_setting
+    from promptmend.settings_service import save_setting
 
     field_ = _ATTRS[name]
     expected = config.parse_setting(name, field_.metadata["parse"], raw)
@@ -495,6 +496,41 @@ def test_save_settings_validates_first(
     assert not (saved_mode / "config.toml").exists()
 
 
+# One wording for "a secret never goes in config.toml" (#408): save_settings() and `config
+# set|unset` (settings_service) give the same text.
+def test_a_secret_is_refused_in_one_wording(saved_mode: Path) -> None:
+    from promptmend import settings_service
+
+    assert config_store.secret_refusal("OLLAMA_MODEL", "set") is None
+    removal = config_store.secret_refusal("OPENROUTER_API_KEY", "remove")
+    assert removal is not None
+    assert "`promptmend secrets remove OPENROUTER_API_KEY`" in removal
+    with pytest.raises(ValueError, match="is a secret: remove it") as raised:
+        config_store.save_settings(config_store.read_settings(), {"OPENROUTER_API_KEY": None})
+    assert str(raised.value) == removal
+    with pytest.raises(settings_service.ServiceError) as refused:
+        settings_service.unset_setting("OPENROUTER_API_KEY")
+    assert (str(refused.value), refused.value.usage) == (removal, True)
+
+
+# settings_service.check_setting(): `config set`'s checks, which the Settings dialog shows.
+def test_check_setting(saved_mode: Path) -> None:
+    from promptmend import settings_service
+
+    settings_service.check_setting("OLLAMA_THINK", "true")
+    with pytest.raises(settings_service.ServiceError, match="is a secret") as secret:
+        settings_service.check_setting("OPENROUTER_API_KEY", "x")
+    assert secret.value.usage
+    with pytest.raises(settings_service.ServiceError) as keyish:
+        settings_service.check_setting("OLLAMA_MODEL", OPENROUTER_VALUE)
+    assert (str(keyish.value), keyish.value.usage) == (settings_service.KEY_LIKE, True)
+    with pytest.raises(ValueError, match="OLLAMA_THINK must be true or false"):
+        settings_service.check_setting("OLLAMA_THINK", "1")
+    with pytest.raises(ValueError, match="'NOT_A_SETTING' is not a setting"):
+        settings_service.check_setting("NOT_A_SETTING", "x")
+    assert not (saved_mode / "config.toml").exists()
+
+
 # A concurrent edit is refused and reported by setting name, never by value.
 def test_concurrent_edit_is_refused_with_diff(saved_mode: Path) -> None:
     path = _write(saved_mode / "config.toml", 'OLLAMA_MODEL = "a"\nLMSTUDIO_MODEL = "b"\n')
@@ -539,7 +575,7 @@ def test_save_and_delete_secret(saved_mode: Path) -> None:
     config_store.delete_secret("ANTHROPIC_API_KEY")
     config_store.delete_secret("ANTHROPIC_API_KEY")  # already gone: no error
     assert config_store.saved_secret_names() == ("OPENROUTER_API_KEY",)
-    with pytest.raises(ValueError, match="'OLLAMA_MODEL' is not a secret setting"):
+    with pytest.raises(ValueError, match="'OLLAMA_MODEL' is not a secret; choose from"):
         config_store.save_secret("OLLAMA_MODEL", "x")
     with pytest.raises(ValueError, match="one line of visible characters") as exc:
         config_store.save_secret("OPENROUTER_API_KEY", f"{OPENROUTER_VALUE}\nOLLAMA_MODEL=x")

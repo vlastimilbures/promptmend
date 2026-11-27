@@ -13,7 +13,7 @@ from typing import Any
 
 import typer
 
-from .. import history
+from .. import history, settings_service
 from ..config import Settings
 from ..redaction import safe_repr
 from . import common
@@ -134,7 +134,7 @@ def stats(
         raise typer.BadParameter(
             f"--by must be one of {', '.join(history.GROUP_BY)}, got {safe_repr(by)}"
         )
-    layers, settings = common.load_layers()
+    layers, settings = settings_service.load_layers()
     common.show_findings(layers)
     rows = store(settings).stats(by)
     if as_json:
@@ -182,7 +182,7 @@ def history_export(
     if fmt not in ("json", "csv"):
         raise typer.BadParameter(f"--format must be json or csv, got {safe_repr(fmt)}")
     common.no_key(output, "--output")
-    _, settings = common.load_layers()
+    _, settings = settings_service.load_layers()
     if output is None:
         store(settings).export(sys.stdout, fmt)  # type: ignore[arg-type]
         return
@@ -217,7 +217,7 @@ def history_prune(
                 f"--older-than must be a number of days, got {safe_repr(older_than)}"
             )
         age = timedelta(days=int(found.group(1)))
-    _, settings = common.load_layers()
+    _, settings = settings_service.load_layers()
     if age is not None and age.days < settings.history_retention_days:
         common.confirm(
             f"Delete every record older than {age.days} day(s), sooner than the "
@@ -235,7 +235,7 @@ def history_reset(
     yes: bool = typer.Option(False, "--yes", "-y", help="Do it without asking"),
 ) -> None:
     """Delete every record and the lost-write counter."""
-    _, settings = common.load_layers()
+    _, settings = settings_service.load_layers()
     target = store(settings)
     common.confirm(f"Delete every usage record in {target.path}?", yes=yes)
     target.reset()

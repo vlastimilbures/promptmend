@@ -1,5 +1,7 @@
-"""What every management command shares: exit codes, the repair-mode settings, prompts that
-never run without a terminal, secret input, and output that respects NO_COLOR.
+"""What every management command shares: exit codes, the error guard, prompts that never run
+without a terminal, secret input, and output that respects NO_COLOR. The settings services
+they print over (saving, the repair-mode settings, the legacy-mode refusal) are
+settings_service.py, Typer-free and shared with setup and the interface.
 
 Unlike improve and persona, these commands use ordinary exit codes (documented in
 docs/commands.md, "Exit codes") and print errors to stderr.
@@ -16,8 +18,8 @@ from typing import Any, NoReturn
 
 import typer
 
-from .. import config
-from ..config import DEFAULT_SOURCE, ENV_SOURCE, ConfigLayers, Entry, Settings, secret_names
+from .. import settings_service
+from ..config import DEFAULT_SOURCE, ENV_SOURCE, ConfigLayers, Entry, secret_names
 from ..redaction import redact_message, safe_repr
 
 # Exit codes (docs/commands.md). 2 is Click's own usage error (an unknown option, a bad value).
@@ -29,17 +31,6 @@ PROBLEMS = 4  # doctor or config validate ran and found problems
 
 # Settings shown only as set or not set: personal text that has no place in a pasted report.
 PRIVATE = frozenset({"PROMPT_PERSONA"})
-# The user's own credential patterns: its value may match itself, so it is never hidden or
-# refused by them.
-EXTRA_PATTERNS = "PROMPT_EXTRA_PATTERNS"
-
-
-class CommandError(Exception):
-    """A management command that failed; the message is shown as `error: <message>`."""
-
-    def __init__(self, message: str, code: int = FAILED) -> None:
-        super().__init__(message)
-        self.code = code
 
 
 def guard[**P, R](func: Callable[P, R]) -> Callable[P, R]:
@@ -47,7 +38,8 @@ def guard[**P, R](func: Callable[P, R]) -> Callable[P, R]:
     broken config, a full disk or a bug all end the same readable way. Service errors carry a
     message meant for the user (never a secret value); anything else is named as unexpected.
     Both pass through redacted(), since people paste this text into bug reports; a
-    CommandError's text is this project's own and is shown as it is."""
+    ServiceError's text is this project's own and is shown as it is, exiting USAGE when it
+    refuses what was given (``usage``), else FAILED."""
 
     @functools.wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -68,8 +60,8 @@ def guard[**P, R](func: Callable[P, R]) -> Callable[P, R]:
             return func(*args, **kwargs)
         except (typer.Exit, typer.Abort, typer.BadParameter, KeyboardInterrupt):
             raise
-        except CommandError as exc:
-            fail(str(exc), exc.code)
+        except settings_service.ServiceError as exc:
+            fail(str(exc), USAGE if exc.usage else FAILED)
         except expected as exc:
             fail(redacted(str(exc) or type(exc).__name__))
         except Exception as exc:
@@ -168,34 +160,9 @@ def read_secret(name: str, *, from_stdin: bool) -> str:
 # --- settings -----------------------------------------------------------------------------
 
 
-def load_layers() -> tuple[ConfigLayers, Settings]:
-    """The settings in repair mode: a broken .env or TOML is reported, not raised, and a
-    rejected value falls back to the next lower layer, so every command still runs."""
-    layers = ConfigLayers.resolve(strict=False)
-    # Cannot raise: a rejected value fell back to a lower layer, at worst the default.
-    return layers, layers.settings()
-
-
 def show_findings(layers: ConfigLayers) -> None:
     for finding in layers.findings:
         warn(f"{source_label(finding.source)}: {finding.message}")
-
-
-def legacy_env() -> str | None:
-    """The .env PROMPTMEND_ENV names: then it alone is read, never config.toml
-    or the secrets file, so a command that would write them refuses."""
-    return config.env_file_override()
-
-
-def refuse_in_legacy_mode(what: str) -> None:
-    """Raise CommandError when PROMPTMEND_ENV means ``what`` would not be read."""
-    path = legacy_env()
-    if path:
-        name = config.ENV_FILE_VAR
-        raise CommandError(
-            f"{name} is set ({path}), so {what} would not be read; edit that file, "
-            f"or unset {name} and save the settings with `promptmend setup`"
-        )
 
 
 def source_label(source: str) -> str:
@@ -224,12 +191,8 @@ def shown_value(name: str, entry: Entry) -> str:
     """A setting's value as a command may print it: never a secret, never the persona. An
     empty value set on purpose (PROMPT_TEMPERATURE= sends no temperature) reads "(empty)"
     rather than a blank; one left at an empty default stays blank."""
-    own = name != EXTRA_PATTERNS
-    if (
-        name in secret_names()
-        or name in PRIVATE
-        or looks_like_a_key(entry.value, user_patterns=own)
-    ):
+    own = name != settings_service.EXTRA_PATTERNS
+    if name in secret_names() or name in PRIVATE or settings_service.key_like(name, entry.value):
         return "<set>" if entry.value else "<not set>"
     if not entry.value and entry.source != DEFAULT_SOURCE:
         return "(empty)"
@@ -239,23 +202,13 @@ def shown_value(name: str, entry: Entry) -> str:
     return safe_repr(entry.value, user_patterns=own)
 
 
-def looks_like_a_key(value: str, *, user_patterns: bool = True) -> bool:
-    """A value the gate would block as a credential (an API key, a token, a password), or
-    one the user's PROMPT_EXTRA_PATTERNS match (from the settings loaded last, see
-    redaction.set_user_patterns; ``user_patterns`` false skips them, for the value of
-    PROMPT_EXTRA_PATTERNS itself, which may match its own text): it belongs in the secrets
-    file, so it is never saved in config.toml or printed."""
-    from .. import redaction
-
-    extra = redaction._user_patterns if user_patterns else ()
-    return bool(set(redaction.scan(value, extra)) - redaction.SOFT_FINDINGS)
-
-
 def no_key(value: str | None, option: str) -> None:
-    """Refuse a key given to an option that takes a path or a name, before it is used or
-    echoed back (a command prints the paths it works on)."""
-    if value and looks_like_a_key(value):
-        raise typer.BadParameter(f"{option} looks like a key; a key is never an argument")
+    """settings_service.refuse_key() as Click's usage error (exit 2): refuse a key given to an
+    option that takes a path or a name, before it is used or echoed back."""
+    try:
+        settings_service.refuse_key(value, option)
+    except settings_service.ServiceError as exc:
+        raise typer.BadParameter(str(exc)) from None
 
 
 def json_dump(data: Any) -> None:
