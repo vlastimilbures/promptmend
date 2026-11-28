@@ -30,7 +30,7 @@ from textual.binding import Binding, BindingType
 from textual.message import Message
 from textual.screen import Screen
 from textual.theme import Theme
-from textual.widgets import Footer, Header, TabbedContent, TabPane
+from textual.widgets import Footer, Header, TabbedContent, TabPane, Tabs
 
 from .. import installed_version
 from ..update_check import UpdateStatus
@@ -233,6 +233,29 @@ class MainScreen(Screen[None]):
                         yield HomePane(id="home-pane")
         yield Footer()
 
+    def on_mount(self) -> None:
+        self.watch(self.query_one(TabbedContent), "active", self._tab_changed, init=False)
+
+    def _tab_changed(self, tab: str) -> None:
+        """Called synchronously as the active tab changes, before the old pane hides or any
+        handler runs, whichever way the tab changed (a digit, a click, the arrows, a pane's
+        own call). A focus left in another tab's pane moves to the tab bar now, not after a
+        refresh: the widget that kept it would be blurred as its pane hides, and Textual
+        hands the focus to a visible sibling, still in that hidden pane; focus inside a tab
+        pane makes its tab active again, so the tab bounced back (#428). The tab shown then
+        focuses what it focuses on arrival (Home's list, the Settings list).
+
+        This moves only the focus the screen has now. A focus already posted and not yet
+        delivered can still re-open the old tab: Tab and a digit read together (type-ahead,
+        a slow SSH link) move the focus into the old pane after this has run, and the tab
+        bounces back once."""
+        focused = self.focused
+        if focused is None:
+            return
+        outgoing = next((n for n in focused.ancestors if isinstance(n, TabPane)), None)
+        if outgoing is not None and outgoing.id != tab:
+            self.set_focus(self.query_one(TabbedContent).query_one(Tabs))
+
     def built(self, tab: str) -> Pane | None:
         """``tab``'s pane, or None while that tab has not been opened."""
         found = self.query(f"#{tab}-pane").results(Pane)
@@ -255,18 +278,13 @@ class MainScreen(Screen[None]):
     @on(TabbedContent.TabActivated)
     async def _tab_shown(self, event: TabbedContent.TabActivated) -> None:
         """A tab opened by a click or the arrows is built here. The Settings list takes the
-        focus as its tab opens, so the arrows move in it at once; leaving the tab drops
-        it, so its keys (`u`, Space) never act unseen."""
+        focus as its tab opens, so the arrows move in it at once; leaving the tab gives it to
+        the tab bar (_tab_changed), so its keys (`u`, Space) never act unseen."""
         tab = event.pane.id
         if tab in TABS:
             await self.build(tab)
-        settings = self.built("settings")
-        if settings is None:
-            return
-        if tab == "settings":
+        if tab == "settings" and self.built("settings") is not None:
             self.call_after_refresh(self._focus_settings_list)
-        elif self.focused is not None and settings in self.focused.ancestors_with_self:
-            self.set_focus(None)
 
     def on_screen_resume(self) -> None:
         """Back on the tabs (a dialog or About closed): a first-run offer held back while it
