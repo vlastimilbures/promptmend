@@ -90,6 +90,10 @@ promptmend secrets status                            # set or not set, and where
 promptmend secrets remove OPENROUTER_API_KEY
 ```
 
+A save or removal refuses to write when the secrets file changed between its read and its
+write, as when the interface and `secrets set` save two keys at the same moment: it says that
+nothing was written, and the key the other save wrote stays. Run it again.
+
 `secrets.toml`, the secrets file, is a private plaintext file: the keys in it are not
 encrypted. What keeps other accounts out is its file permissions: mode 600 on macOS and Linux,
 and on Windows an access list that grants your account alone (no SYSTEM, no Administrators,

@@ -582,6 +582,72 @@ def test_save_and_delete_secret(saved_mode: Path) -> None:
     assert OPENROUTER_VALUE not in str(exc.value)
 
 
+def _save_lands_after_the_read(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
+    """Make another process's save of ``name`` land right after the next save or removal has
+    read the secrets file, before it writes (#413)."""
+    real_load = FileSecretStore._load
+    landed: list[bool] = []
+
+    def load(self: FileSecretStore) -> tuple[dict[str, str], str | None]:
+        read = real_load(self)
+        if not landed:
+            landed.append(True)
+            FileSecretStore(self.path).set(name, value)
+        return read
+
+    monkeypatch.setattr(FileSecretStore, "_load", load)
+
+
+# Two key saves at the same moment (the interface and `secrets set`): the later write no
+# longer replaces the file the other one just wrote, losing its key without a word (#413).
+def test_a_secret_save_over_a_concurrent_one_is_refused(
+    saved_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _save_lands_after_the_read(monkeypatch, "ANTHROPIC_API_KEY", ANTHROPIC_VALUE)
+    with pytest.raises(config_files.StaleSecretsError) as refused:
+        config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
+    message = str(refused.value)
+    assert message == (
+        "secrets.toml changed while OPENROUTER_API_KEY was being saved (another save at the "
+        "same moment?); nothing was written: run it again"
+    )
+    assert OPENROUTER_VALUE not in message
+    assert ANTHROPIC_VALUE not in message
+    assert isinstance(refused.value, SecretStoreError)
+    assert FileSecretStore(saved_mode / "secrets.toml").read() == {
+        "ANTHROPIC_API_KEY": ANTHROPIC_VALUE
+    }
+    assert sorted(p.name for p in saved_mode.iterdir()) == ["secrets.toml"]  # no temp file
+    config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)  # run again: both kept
+    assert config_store.saved_secret_names() == ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY")
+
+
+def test_a_secret_removal_over_a_concurrent_save_is_refused(
+    saved_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
+    _save_lands_after_the_read(monkeypatch, "ANTHROPIC_API_KEY", ANTHROPIC_VALUE)
+    with pytest.raises(config_files.StaleSecretsError, match="was being removed") as refused:
+        config_store.delete_secret("OPENROUTER_API_KEY")
+    assert "nothing was written: run it again" in str(refused.value)
+    assert config_store.saved_secret_names() == ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY")
+
+
+def test_secrets_set_shows_a_stale_save_without_a_traceback(
+    saved_mode: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _save_lands_after_the_read(monkeypatch, "ANTHROPIC_API_KEY", ANTHROPIC_VALUE)
+    result = runner.invoke(
+        app, ["secrets", "set", "OPENROUTER_API_KEY", "--stdin"], input=f"{OPENROUTER_VALUE}\n"
+    )
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.startswith("error: secrets.toml changed while OPENROUTER_API_KEY")
+    assert "Traceback" not in result.output
+    assert OPENROUTER_VALUE not in result.output
+    assert config_store.saved_secret_names() == ("ANTHROPIC_API_KEY",)
+
+
 def _link(link: Path, target: Path | str) -> None:
     try:
         link.symlink_to(target)

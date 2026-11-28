@@ -197,7 +197,8 @@ the CLI again.
   triggers, whose names come from the match files.
 - `tests/test_commands.py` walks the whole command tree (no secret-named option, no key saved
   from a value, no traceback on broken config): add a new command to its `_commands()`.
-- `doctor` changes nothing except replaying the history spool and refreshing the
+- `doctor` changes nothing except replaying the history spool (which also removes history
+  temp files a killed write left, once a minute old) and refreshing the
   update-check cache; `doctor --json` keeps
   `schema_version` 1 (only add check ids/keys; `previous_install` was removed in #246 by owner
   decision, its PATH warning kept as `path_shadow`; since #275 `folders` keeps its `legacy`

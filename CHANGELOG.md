@@ -248,6 +248,22 @@ All notable changes to this project are documented here. The format follows
   different files is a usage error (exit 2). The History tab's Export shows `--file`.
 
 ### Fixed
+- A key save can now be refused as stale (#413). When the interface and `secrets set` (or
+  setup) saved two keys at the same moment, the later write replaced the file the other had
+  just written and that key was lost without a message. A save or removal whose secrets file
+  changed since it read it now writes nothing and says so: `secrets.toml changed while NAME
+  was being saved (another save at the same moment?); nothing was written: run it again`.
+- The usage history no longer leaves `history.lost.<pid>.tmp` or `history.spool.<pid>.tmp`
+  behind for good (#413): `history reset` deletes them, and `stats`, `history last`,
+  `history export` and `doctor` delete those older than a minute (a write killed between
+  writing the file and putting it in place left one). The trigger path does not look for
+  them.
+- History: two processes can no longer both hold the sidecar lock after one breaks a lock a
+  killed process left (#413). A process that found the lock stale could move aside the fresh
+  lock another one had just taken, and a third process could take the lock in that moment:
+  both went on writing the spool or the lost-write count at once, and a record or a count
+  could be lost. Breaking a stale lock now takes a short `history.lost.lock.break` claim
+  first and deletes the lock only after checking its age again under it.
 - Interface: a digit pressed for another tab no longer bounces back to the tab you were on
   (#428). It did with the focus on one of Profiles' two buttons, Triggers' three buttons,
   History's picker, table or buttons, or the Try tab's result box: the digit of any tab but
