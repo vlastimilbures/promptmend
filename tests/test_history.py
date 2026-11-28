@@ -1537,13 +1537,28 @@ def test_creating_write_gets_extra_time(
     ]
 
 
+def _leftover_temp_files(store: HistoryStore, age: float) -> list[Path]:
+    """The temp files a write killed between its write and its os.replace leaves (#413)."""
+    temps = [
+        store.lost_path.with_name(f"{history.LOST_NAME}.4242.tmp"),
+        store.spool_path.with_name(f"{history.SPOOL_NAME}.4243.tmp"),
+    ]
+    when = time.time() - age
+    for temp in temps:
+        temp.write_text("{}", "utf-8")
+        os.utime(temp, (when, when))
+    return temps
+
+
 def test_reset_deletes_every_record_and_the_marker(store: HistoryStore) -> None:
     _seed(store)
     store._mark_lost()
+    _leftover_temp_files(store, 0)  # even fresh ones: reset holds the sidecar lock
     store.reset()
     health = store.health()
     assert (health.operations, health.attempts, health.lost_writes) == (0, 0, 0)
     store.reset()  # nothing left to reset
+    assert list(store.path.parent.glob("history.*.tmp")) == []
     # Every connection is closed: the files can be deleted (Windows refuses an open one).
     for path in store.path.parent.iterdir():
         path.unlink()
@@ -1764,6 +1779,113 @@ def test_a_fresh_lock_is_never_broken_and_only_the_holder_removes_it(store: Hist
         lock.write_text("someone else", "ascii")
     assert lock.read_text("ascii") == "someone else"
     lock.unlink()
+
+
+def test_breaking_a_stale_lock_never_leaves_two_holders(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#413: B finds the lock a killed process left; before B acts on it, A breaks it too and
+    takes a fresh lock; then C tries to take the lock while B is at work. B must not move A's
+    fresh lock aside, or A and C would both hold the lock."""
+    store.path.parent.mkdir(parents=True)
+    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock.write_text("dead", "ascii")
+    old = time.time() - 60
+    os.utime(lock, (old, old))
+    holders: dict[str, Any] = {}
+    tried: set[str] = set()
+
+    def take(name: str) -> None:
+        tried.add(name)
+        held = store._sidecar_lock(time.monotonic() + 0.05)
+        with contextlib.suppress(TimeoutError):
+            held.__enter__()
+            holders[name] = held
+
+    real_stat, real_replace = Path.stat, os.replace
+
+    def stat_then_a(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        result = real_stat(self, follow_symlinks=follow_symlinks)
+        if self == lock and not tried:
+            take("A")  # right after B's first look, which saw the dead lock
+        return result
+
+    def replace_then_c(src: Any, dst: Any) -> None:
+        real_replace(src, dst)
+        if Path(src) == lock and "A" in holders and "C" not in tried:
+            take("C")  # while the lock is out of its place
+
+    monkeypatch.setattr(Path, "stat", stat_then_a)
+    monkeypatch.setattr(os, "replace", replace_then_c)
+    assert history._break_stale(lock) is False  # B
+    monkeypatch.setattr(Path, "stat", real_stat)
+    monkeypatch.setattr(os, "replace", real_replace)
+    if "C" not in tried:
+        take("C")
+    try:
+        assert "A" in holders
+        assert "C" not in holders
+    finally:
+        for held in holders.values():
+            held.__exit__(None, None, None)
+    assert not lock.exists()  # A released its own lock
+
+
+def test_a_claim_left_by_a_killed_breaker_is_cleared(store: HistoryStore) -> None:
+    store.path.parent.mkdir(parents=True)
+    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    claim = lock.with_name(f"{lock.name}.break")
+    lock.write_text("dead", "ascii")
+    claim.touch()
+    old = time.time() - 60
+    os.utime(lock, (old, old))
+    assert history._break_stale(lock) is False  # another process is breaking it
+    assert lock.exists()
+    assert claim.exists()
+    os.utime(claim, (old, old))
+    assert history._break_stale(lock) is False  # the breaker was killed: its claim goes
+    assert not claim.exists()
+    real_unlink = Path.unlink
+
+    def held_open(self: Path, missing_ok: bool = False) -> None:
+        if self == lock:
+            raise PermissionError(errno.EACCES, "open elsewhere (Windows)")
+        real_unlink(self, missing_ok=missing_ok)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "unlink", held_open)
+        assert history._break_stale(lock) is False  # tried again later
+    assert not claim.exists()
+    assert history._break_stale(lock) is True
+    assert not lock.exists()
+    assert not claim.exists()
+
+
+def test_replay_removes_only_old_temp_files(store: HistoryStore) -> None:
+    store.path.parent.mkdir(parents=True)
+    old = _leftover_temp_files(store, history._STALE_TEMP + 5)
+    fresh = store.lost_path.with_name(f"{history.LOST_NAME}.4244.tmp")
+    fresh.write_text("{}", "utf-8")  # a live write's, about to be replaced
+    other = store.path.with_name("notes.tmp")
+    other.write_text("", "utf-8")  # not ours
+    assert store.replay() == 0
+    assert [path.exists() for path in old] == [False, False]
+    assert fresh.exists()
+    assert other.exists()
+
+
+def test_record_never_sweeps_temp_files(
+    store: HistoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Counted, not raised: record()'s helpers swallow every Exception, an AssertionError too.
+    swept: list[float | None] = []
+
+    def sweep(self: HistoryStore, older_than: float | None = None) -> None:
+        swept.append(older_than)
+
+    monkeypatch.setattr(HistoryStore, "_sweep_temp", sweep)
+    assert store.record(_op())
+    assert swept == []
 
 
 def test_a_write_blocked_everywhere_gives_up(

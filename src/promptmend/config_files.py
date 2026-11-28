@@ -14,7 +14,7 @@ import contextlib
 import errno
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,12 @@ class ConfigFileError(ValueError):
 
 class SecretStoreError(Exception):
     """The secret store failed. Never answered by falling back to a plaintext file."""
+
+
+class StaleSecretsError(SecretStoreError):
+    """The secrets file changed between a save's read and its write (another save at the same
+    moment), so nothing was written: the other save's key would have been lost. The message
+    names the file, never a key or its value."""
 
 
 def _position(exc: Exception) -> str:
@@ -445,7 +451,13 @@ def make_private_dir(directory: Path) -> None:
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
 
 
-def write_atomic(path: Path, data: bytes, *, private: bool) -> None:
+def write_atomic(
+    path: Path,
+    data: bytes,
+    *,
+    private: bool,
+    before_replace: Callable[[], None] | None = None,
+) -> None:
     """Replace ``path`` with ``data`` all at once: a reader sees the old file or the new one,
     never a torn write. The temporary file is created in the same directory (os.replace is
     atomic only within one file system; on Windows it is MoveFileEx with
@@ -458,6 +470,9 @@ def write_atomic(path: Path, data: bytes, *, private: bool) -> None:
 
     A symlinked ``path`` (a config.toml kept in a dotfiles repo) is written through to the
     file it points to, so the link stays a link.
+
+    ``before_replace`` runs last before the os.replace; what it raises removes the temporary
+    file and leaves ``path`` as it was (the secrets file's check for a concurrent save).
     """
     make_private_dir(path.parent)
     # Only the folder the caller named is created: a dangling link to a missing folder fails.
@@ -476,6 +491,8 @@ def write_atomic(path: Path, data: bytes, *, private: bool) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
+        if before_replace is not None:
+            before_replace()
         os.replace(temp, path)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -505,13 +522,17 @@ class FileSecretStore:
         return f"file:{self.path}"
 
     def read(self) -> dict[str, str]:
+        return self._load()[0]
+
+    def _load(self) -> tuple[dict[str, str], str | None]:
+        """The keys and the sha256 of the file's bytes (None with no file)."""
         try:
             loaded = load_toml(self.path)
         except ConfigFileError as exc:
             raise SecretStoreError(str(exc)) from None
         if loaded is None:
-            return {}
-        return {k: v for k, v in loaded[0].items() if isinstance(v, str)}
+            return {}, None
+        return {k: v for k, v in loaded[0].items() if isinstance(v, str)}, loaded[1]
 
     def _open(self) -> bool | None:
         """The file is open to other accounts: on POSIX readable or writable by the group or
@@ -549,20 +570,38 @@ class FileSecretStore:
             return f"could not check the secrets file's access list; {fix}"
         return f"the secrets file's access list or owner is not private to your account; {fix}"
 
-    def _write(self, values: Mapping[str, str]) -> None:
+    def _write(self, values: Mapping[str, str], read: str | None, what: str) -> None:
+        """Replace the file with ``values``, unless it changed since the read whose digest is
+        ``read`` (StaleSecretsError): two saves at the same moment would otherwise each write
+        the file they read, and the first one's key would be lost without a word. Checked
+        again right before the os.replace, which is the only window left."""
+
+        def unchanged() -> None:
+            if self._load()[1] != read:
+                raise StaleSecretsError(
+                    f"{self.path.name} changed while {what} (another save at the same "
+                    "moment?); nothing was written: run it again"
+                )
+
         try:
-            write_atomic(self.path, dump_toml(dict(sorted(values.items()))), private=True)
+            write_atomic(
+                self.path,
+                dump_toml(dict(sorted(values.items()))),
+                private=True,
+                before_replace=unchanged,
+            )
         except OSError as exc:
             raise SecretStoreError(f"could not write {self.path.name}: {exc.strerror}") from None
 
     def set(self, name: str, value: str) -> None:
-        self._write({**self.read(), name: value})
+        values, read = self._load()
+        self._write({**values, name: value}, read, f"{name} was being saved")
 
     def delete(self, name: str) -> None:
-        values = self.read()
+        values, read = self._load()
         if name in values:
             del values[name]
-            self._write(values)
+            self._write(values, read, f"{name} was being removed")
 
 
 def secret_store(directory: Path) -> FileSecretStore:

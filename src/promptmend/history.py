@@ -95,6 +95,12 @@ _PRUNE_BATCH = 100
 _PROGRESS_STEPS = 1000
 # A sidecar lock older than this was left by a killed process (it is held for a few ms).
 _STALE_LOCK = 10.0
+# The temp file of a marker or spool write (`history.lost.<pid>.tmp`,
+# `history.spool.<pid>.tmp`) lives for milliseconds, between its write and its os.replace,
+# always under the sidecar lock, which is broken as stale after _STALE_LOCK. One older than
+# this was left by a crash or the watchdog's hard exit between the two steps; replay() removes
+# it. Six times _STALE_LOCK, so even a writer whose lock was broken under it is long done.
+_STALE_TEMP = 6 * _STALE_LOCK
 # Busy timeout for management commands (stats, export, last, prune, reset), which nobody
 # pastes.
 _SERVICE_TIMEOUT = 5.0
@@ -673,7 +679,9 @@ class HistoryStore:
     def replay(self) -> int:
         """Store the records waiting in the spool now, with a management command's time
         (stats, export, last and doctor call it first). Each is validated again; one that is not
-        valid is dropped and counted as lost. Returns how many were stored; never raises."""
+        valid is dropped and counted as lost. Returns how many were stored; never raises.
+        Also removes the temp files older than _STALE_TEMP that a killed write left."""
+        self._sweep_temp(_STALE_TEMP)
         try:
             extra = compile_extra(self.extra_patterns)
             spooled, pending = self._replayable(extra, time.monotonic() + _SERVICE_TIMEOUT)
@@ -828,6 +836,22 @@ class HistoryStore:
             return []
         prefix = f"{LOST_NAME}."
         return [folder / n for n in names if n.startswith(prefix) and n.endswith(_DROP_SUFFIX)]
+
+    def _sweep_temp(self, older_than: float | None = None) -> None:
+        """Remove the temp files a marker or spool write left (see _STALE_TEMP), every one or
+        only those older than ``older_than`` seconds. A management command's step, never
+        record()'s: one listing of the data folder and a stat per temp file. Never raises:
+        a temp file holds nothing that counts, and one still open on Windows stays."""
+        folder = self.lost_path.parent
+        prefixes = (f"{LOST_NAME}.", f"{SPOOL_NAME}.")
+        with contextlib.suppress(OSError):
+            for name in os.listdir(folder):
+                if not (name.startswith(prefixes) and name.endswith(".tmp")):
+                    continue
+                temp = folder / name
+                with contextlib.suppress(OSError):
+                    if older_than is None or time.time() - temp.stat().st_mtime > older_than:
+                        temp.unlink()
 
     def _count_lost(self, dropped: int) -> None:
         """Add ``dropped`` to the marker; the caller holds the sidecar lock."""
@@ -1295,8 +1319,9 @@ class HistoryStore:
 
     def reset(self) -> None:
         """Delete every record (spooled ones too), compact the file and clear the lost-write
-        marker and the drop files. Rows are deleted rather than the file, so a writer holding
-        it open (or Windows, which cannot delete an open file) does not stop it."""
+        marker, the drop files and the temp files a killed write left. Rows are deleted
+        rather than the file, so a writer holding it open (or Windows, which cannot delete an
+        open file) does not stop it."""
         if self.path.is_file():
             try:
                 with self._service() as conn:
@@ -1320,6 +1345,8 @@ class HistoryStore:
                 self.lost_path.unlink(missing_ok=True)
                 for drop in self._drop_files():
                     drop.unlink(missing_ok=True)
+                # Under the lock, where every write makes its temp file: any one is left over.
+                self._sweep_temp()
         except (OSError, TimeoutError) as exc:
             raise HistoryError(f"cannot clear {self.spool_path} or {self.lost_path}") from exc
 
@@ -1372,24 +1399,42 @@ def _drop_count(name: str) -> int | None:
 
 
 def _break_stale(lock: Path) -> bool:
-    """Remove ``lock`` if a killed process left it (older than _STALE_LOCK). It is first
-    renamed to a unique name, which only one process can do, and checked again there: a
-    fresh lock another process took in between is put back instead."""
+    """Remove ``lock`` if a killed process left it (older than _STALE_LOCK). Only the process
+    that creates the ``<lock>.break`` claim (O_EXCL) may break it, and it checks the age again
+    under the claim before it deletes the lock: with no other breaker, the lock it checked is
+    the one it deletes. (Renaming the lock aside and putting back a fresh one found there
+    could not work: while it was away a third process could take the lock, and the holder of
+    the fresh one went on believing it held it too, #413.) A claim left by a process killed
+    while breaking is removed once it is older than _STALE_LOCK. True when the lock was
+    removed; the caller then tries to take it again.
+
+    What remains: a holder paused for longer than _STALE_LOCK counts as dead, as with any
+    timeout lock; and removing an abandoned claim is a stat and then an unlink, so two
+    processes paused at exactly those two points, with a claim a killed breaker left, could
+    still let two breakers run."""
+    claim = lock.with_name(f"{lock.name}.break")
     try:
         if time.time() - lock.stat().st_mtime <= _STALE_LOCK:
             return False
-        grave = lock.with_name(f"{lock.name}.{uuid.uuid4().hex}.stale")
-        os.replace(lock, grave)
+        try:
+            os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        except FileExistsError:
+            # Another process is breaking it (for microseconds), or was killed doing so.
+            if time.time() - claim.stat().st_mtime > _STALE_LOCK:
+                claim.unlink()
+            return False
     except OSError:
+        # Windows: PermissionError for a claim whose deletion is pending (busy).
         return False
     try:
-        if time.time() - grave.stat().st_mtime <= _STALE_LOCK:
-            with contextlib.suppress(OSError):
-                os.link(grave, lock)
-            return False
+        if time.time() - lock.stat().st_mtime <= _STALE_LOCK:
+            return False  # another breaker removed it first and a fresh lock was taken
+        lock.unlink()
+    except OSError:
+        return False
     finally:
         with contextlib.suppress(OSError):
-            grave.unlink()
+            claim.unlink()
     return True
 
 
