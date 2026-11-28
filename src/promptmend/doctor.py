@@ -183,7 +183,9 @@ class Verdict:
 
 # The checks whose fail or warning `promptmend setup` deals with on a machine with no match
 # files deployed: it saves the key and deploys the match files (which the launcher check
-# reads). pro_provider is not one: it warns only about a deployed file.
+# reads). pro_provider is not one: it warns only about a deployed file. match_files counts
+# only when it failed (files missing in a folder that exists): its warnings (no Espanso
+# folder, cannot compare, files that are not ours) are ones a setup cannot change.
 SETUP_CHECKS = ("keys", "match_files", "launcher")
 
 
@@ -199,15 +201,22 @@ def _one_line(text: str) -> str:
 def _not_set_up(report: Report) -> str | None:
     """What is not set up yet, or None. It hinges on the match files: none managed in
     Espanso's folder (deployed_triggers(), as pro_provider reports it). A setup with the
-    default answers writes no config.toml, so a missing one alone means nothing; with the
-    match files missing too (config mode ``defaults``) nothing is set up. A check that could
-    not run says neither."""
+    default answers writes no config.toml, so a missing one alone means nothing; only with no
+    config.toml, no PROMPTMEND_ENV (config mode ``defaults``) and no key set either is nothing
+    set up. A check that could not run says neither."""
     data = {c.id: c.data for c in report.checks}
     if data.get("pro_provider", {}).get("deployed") is not False:
         return None
-    if data.get("config", {}).get("mode") == "defaults":
+    keys = data.get("keys", {}).get("keys") or {}
+    any_key = any(isinstance(k, Mapping) and k.get("set") for k in keys.values())
+    if data.get("config", {}).get("mode") == "defaults" and not any_key:
         return "nothing is set up yet"
     return "no match files are deployed yet"
+
+
+def _points_at_setup(check: Check) -> bool:
+    """Whether setup fixes this wrong check (SETUP_CHECKS; match_files only when it failed)."""
+    return check.id in SETUP_CHECKS and (check.id != "match_files" or check.status == FAIL)
 
 
 def verdict(report: Report) -> Verdict:
@@ -217,7 +226,7 @@ def verdict(report: Report) -> Verdict:
     beside them and point the line only when nothing failed. "First" is the first such check
     in report order (CHECK_IDS), which already runs install, settings, keys, Espanso, match
     files, launcher. On a machine with no match files deployed (_not_set_up()) where a check
-    setup deals with (SETUP_CHECKS) is wrong, the line names `promptmend setup` instead;
+    setup deals with is wrong (_points_at_setup()), the line names `promptmend setup` instead;
     unless a check outside setup's reach failed (the settings, the profiles, the history):
     then the first of those comes first, and setup on the next run. Warnings outside its
     reach never hold setup back."""
@@ -237,7 +246,7 @@ def verdict(report: Report) -> Verdict:
         beyond = [c for c in fails if c.id not in SETUP_CHECKS]
         if beyond:
             candidates = beyond
-        elif {c.id for c in fails + warns} & set(SETUP_CHECKS):
+        elif any(_points_at_setup(c) for c in fails + warns):
             line = f"{counts}: {missing}. Next: `{SETUP_COMMAND}`"
             return Verdict(len(fails), len(warns), None, True, line)
     if candidates:

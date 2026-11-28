@@ -11,13 +11,15 @@ All notable changes to this project are documented here. The format follows
   checks, which make it exit 4) and warnings and names the first to fix, as
   `N problems, M warnings. Fix first: <check>: <its message>` (with warnings only,
   `No problems, M warnings. Check first: …`; with nothing wrong, `No problems found.`). On a
-  machine with no match files deployed, where a key, the match files or the launcher is
-  still wrong, it names the next step instead: `…: nothing is set up yet. Next:` (or
-  `no match files are deployed yet` when a `config.toml` exists) and `promptmend setup`;
-  a failed check setup does not fix (the settings, the profiles, the history) still comes
-  first. The message it quotes is always on one line. `doctor --json` carries it as the new key `verdict`
-  (`problems`, `warnings`, `first`, `setup`, `line`); `schema_version` stays 1 and the exit
-  codes are unchanged.
+  machine with no match files deployed, where a key or the launcher is still wrong or the
+  match files are missing from an Espanso folder that exists, it names the next step
+  instead: `…: nothing is set up yet. Next:` and `promptmend setup` (`no match files are
+  deployed yet` instead when a key is saved, a `config.toml` exists or `PROMPTMEND_ENV` names
+  a settings file). A failed check setup does not fix (the settings, the profiles, the
+  history) still comes first, and a match folder setup cannot write to (no Espanso folder,
+  files that are not ours) gets `Check first`. The message it quotes is always on one
+  line. `doctor --json` carries it as the new key `verdict` (`problems`, `warnings`,
+  `first`, `setup`, `line`); `schema_version` stays 1 and the exit codes are unchanged.
 - Homebrew: `brew install` ends with the formula's caveats (#402): start Espanso, then run
   `promptmend setup`.
 

@@ -1106,6 +1106,64 @@ def test_no_match_files_with_a_config_toml_says_so(
     assert found.line.endswith(": no match files are deployed yet. Next: `promptmend setup`")
 
 
+def test_no_espanso_folder_after_setup_is_not_sent_to_setup(
+    tmp_path: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wizard ran with the default answers (the key in the secrets file, no config.toml),
+    but Espanso is not there: setup cannot deploy, so the line points at the first warning
+    (espanso on a real install, where the install check is fine; install here)."""
+    from promptmend import settings_service
+
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    settings_service.store_key("OPENROUTER_API_KEY", KEY)
+    report = doctor.run(espanso_dir=tmp_path / "none", launcher=LAUNCHER, runner=_runner())
+    assert _status("keys", report).status == doctor.OK
+    assert _status("match_files", report).status == doctor.WARN
+    found = doctor.verdict(report)
+    warns = [c for c in report.checks if c.status == doctor.WARN]
+    assert "espanso" in [c.id for c in warns]
+    assert (found.setup, found.first) == (False, warns[0].id)
+    assert found.line.startswith(f"No problems, {len(warns)} warnings. Check first: ")
+    assert "promptmend setup" not in found.line
+
+
+def test_a_detached_machine_with_a_key_has_no_match_files(
+    espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wizard defaults, then `espanso detach`: the key is still saved, so something is set up."""
+    from promptmend import settings_service
+
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    settings_service.store_key("OPENROUTER_API_KEY", KEY)
+    report = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner())
+    assert _status("config", report).data["mode"] == "defaults"
+    found = doctor.verdict(report)
+    assert found.setup
+    assert found.line.endswith(": no match files are deployed yet. Next: `promptmend setup`")
+
+
+def test_without_pro_provider_data_setup_is_never_named(
+    espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whether match files are deployed comes from pro_provider: crashed or absent, it is
+    unknown, so the line names the first failure, never setup."""
+
+    def broken(*args: object) -> doctor.Check:
+        raise RuntimeError("broke")
+
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    fresh = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner())
+    absent = doctor.Report(tuple(c for c in fresh.checks if c.id != "pro_provider"))
+    found = doctor.verdict(absent)
+    assert (found.setup, found.first) == (False, "match_files")
+    assert ". Fix first: match_files: " in found.line
+    monkeypatch.setattr(doctor, "_pro_provider_check", broken)
+    crashed = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner())
+    found = doctor.verdict(crashed)
+    assert (found.setup, found.first) == (False, "pro_provider")
+    assert found.line.endswith("Fix first: pro_provider: check failed: RuntimeError: broke")
+
+
 def test_the_verdict_is_one_line(
     espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
