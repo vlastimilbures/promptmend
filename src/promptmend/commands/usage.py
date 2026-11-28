@@ -1,12 +1,14 @@
-"""`stats` and `history export / prune / reset`, over the usage history store (history.py).
-Everything shown is metadata; the store never holds a draft, rewrite, persona or key."""
+"""`stats` and `history last / export / prune / reset`, over the usage history store
+(history.py). Everything shown is metadata; the store never holds a draft, rewrite, persona or
+key. The row helpers (ms(), tokens(), money(), last_cells()) are plain functions the History
+tab uses too, so both show the same text."""
 
 from __future__ import annotations
 
 import dataclasses
 import re
 import sys
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -15,7 +17,7 @@ import typer
 
 from .. import history, settings_service
 from ..config import Settings
-from ..redaction import safe_repr
+from ..redaction import looks_like_a_key, safe_repr
 from . import common
 from .common import guard
 
@@ -33,7 +35,7 @@ history_app = typer.Typer(
     name="history",
     no_args_is_help=True,
     add_completion=False,
-    help="Export, prune or reset the local usage history (metadata only, this device only).",
+    help="List, export, prune or reset the local usage history (metadata only, this device only).",
 )
 
 
@@ -84,6 +86,108 @@ def tokens(row: history.StatsRow) -> tuple[int | None, int | None]:
 
 def ms(value: float | None) -> str:
     return "-" if value is None else f"{value:.0f}"
+
+
+# `history last`: the most runs one call lists, and the default.
+LAST_MAX = 1000
+LAST_DEFAULT = 10
+# The columns of `history last` and of the History tab's "Last runs" table.
+LAST_COLUMNS = ("Local time", "Trigger", "Outcome", "Error", "ms", "Provider", "Model")
+LAST_LATENCY = LAST_COLUMNS.index("ms")
+_STORED_TIME = "%Y-%m-%dT%H:%M:%S.%fZ"
+_COUNT = re.compile(r"[0-9]{1,6}")
+
+
+def local_zone() -> tzinfo | None:
+    """The zone `history last` and the History tab show times in: None, this machine's own.
+    Tests pin it."""
+    return None
+
+
+def _stand_in(value: object) -> str:
+    """A stored value that is not what history.py writes (a database edited by hand or by
+    another tool), shown quoted through safe_repr() from its printable characters; `?` when
+    it has none."""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", "replace")
+    text = "".join(c for c in str(value) if c.isprintable() and c != "�")
+    return safe_repr(text) if text.strip() else "?"
+
+
+def local_time(utc: object, *, short: bool = False) -> str:
+    """A stored UTC time (``occurred_at_utc``) in local time, to the second (``short``:
+    month-day only). Never raises: a value of another shape is its _stand_in()."""
+    try:
+        if not isinstance(utc, str):
+            raise TypeError("not a time")
+        when = datetime.strptime(utc, _STORED_TIME).replace(tzinfo=UTC)
+        shape = "%m-%d %H:%M:%S" if short else "%Y-%m-%d %H:%M:%S"
+        return when.astimezone(local_zone()).strftime(shape)
+    except (ValueError, TypeError, OverflowError, OSError):
+        return _stand_in(utc)
+
+
+# The longest latency (ms, about 11.5 days) and identifier shown as they are; history.py
+# keeps a model id to 200 characters and the other identifiers shorter.
+_LATENCY_MAX = 1e9
+_WORD_MAX = 200
+
+
+def _latency(value: object) -> str:
+    if (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and 0 <= value <= _LATENCY_MAX
+    ):
+        return ms(value)
+    return "-" if value is None else _stand_in(value)
+
+
+def _word(value: object, missing: str = "-") -> str:
+    """A stored identifier as it is, `missing` for none; its _stand_in() when it is not a
+    short printable string or looks like a key (a row another tool edited)."""
+    if value is None or value == "":
+        return missing
+    if (
+        isinstance(value, str)
+        and len(value) <= _WORD_MAX
+        and value.isprintable()
+        and not looks_like_a_key(value)
+    ):
+        return value
+    return _stand_in(value)
+
+
+def last_cells(run: history.LastRun, *, compact: bool = False) -> tuple[str, ...]:
+    """One run's cells, in LAST_COLUMNS' order; a missing value is `-`. Never raises:
+    history.py validates what it writes, but a row edited by another tool shows as a
+    stand-in instead of hiding the other runs. ``compact`` (the History tab): the time
+    without the year, and `(none)` for a direct call, as the tab's stats table says."""
+    return (
+        local_time(run.occurred_at_utc, short=compact),
+        _word(run.trigger_id, "(none)" if compact else NO_TRIGGER),
+        _word(run.outcome),
+        _word(run.error_kind),
+        _latency(run.latency_ms),
+        _word(run.provider),
+        _word(run.requested_model),
+    )
+
+
+def last_lines(runs: list[history.LastRun]) -> list[str]:
+    """`history last`'s table: a header and a line per run, in columns as wide as the
+    widest value shown (the latency right-aligned), the model last and never padded."""
+    rows = [LAST_COLUMNS, *(last_cells(run) for run in runs)]
+    latency = LAST_LATENCY
+    widths = [max(len(row[i]) for row in rows) for i in range(len(LAST_COLUMNS) - 1)]
+    lines = []
+    for row in rows:
+        cells = [
+            cell.rjust(width) if i == latency else cell.ljust(width)
+            for i, (cell, width) in enumerate(zip(row, widths, strict=False))
+        ]
+        lines.append("  ".join([*cells, row[-1]]).rstrip())
+    return lines
 
 
 def _row_text(row: history.StatsRow) -> list[str]:
@@ -168,6 +272,51 @@ def stats(
     for row in rows:
         for line in _row_text(row):
             typer.echo(line)
+
+
+@history_app.command("last", short_help="The newest runs, one line each.")
+@guard
+def history_last(
+    count: str = typer.Option(
+        str(LAST_DEFAULT), "-n", "--count", help=f"How many runs, 1 to {LAST_MAX}"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text"),
+) -> None:
+    """The newest runs first, one line each: when (local time), trigger, outcome, error kind,
+    latency, provider and model. After a retry, the provider, model and error kind are the
+    last request's. --json gives the times in UTC, as stored."""
+    found = _COUNT.fullmatch(count.strip())
+    n = int(found.group(0)) if found else 0
+    if not 1 <= n <= LAST_MAX:
+        raise typer.BadParameter(
+            f"-n must be a whole number from 1 to {LAST_MAX}, got {safe_repr(count)}"
+        )
+    layers, settings = settings_service.load_layers()
+    common.show_findings(layers)
+    runs = store(settings).last(n)
+    if as_json:
+        common.json_dump(
+            {
+                "schema_version": 1,
+                "time_zone": "UTC",
+                "history": {
+                    "enabled": settings.history,
+                    "path": str(history.history_path()),
+                    "retention_days": settings.history_retention_days,
+                },
+                "runs": [dataclasses.asdict(run) for run in runs],
+            }
+        )
+        return
+    if not settings.history:
+        typer.echo(summary(settings))
+        if runs:
+            typer.echo("Recorded while it was on:")
+    if not runs:
+        typer.echo("No usage recorded yet.")
+        return
+    for line in last_lines(runs):
+        typer.echo(line)
 
 
 @history_app.command("export")

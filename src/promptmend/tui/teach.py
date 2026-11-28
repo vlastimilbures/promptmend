@@ -49,6 +49,10 @@ BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
         ),
     ),
 }
+# What a part of a tab that is no button shows the way to (its title names the command).
+HINTS: dict[str, tuple[str, ...]] = {
+    "last-runs": ("history", "last", "-n", "<N>"),  # the History tab's Last runs table
+}
 # The Settings tab's list: each action of its keys -> the command it is in a terminal.
 SETTING_ACTIONS: dict[str, tuple[str, ...]] = {
     "set": ("config", "set", "<NAME>", "<VALUE>"),  # Space toggles, Enter picks or edits

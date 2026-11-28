@@ -8,8 +8,8 @@ be a known enum or a short identifier with no spaces, so prose cannot get in.
 Writes (HistoryStore.record) are fail-open: a locked, read-only, full or corrupt database
 never raises to the caller, and a write gives up within a fixed time budget (a little more for
 the one write that creates the database). A write that misses its budget is kept in a small
-spool file of the same allowlisted columns, which the next record(), stats(), export() or
-replay() stores. A record that is truly dropped (the spool is full or cannot be written,
+spool file of the same allowlisted columns, which the next record(), stats(), export(),
+last() or replay() stores. A record that is truly dropped (the spool is full or cannot be written,
 or its lock is not free in time) is counted: in a small sidecar marker or, when the marker's
 lock is not free in time or the marker cannot be written, in a new empty drop file of its own,
 which needs no lock. health() reports both, so lost tracking stays visible. A data folder that
@@ -95,7 +95,8 @@ _PRUNE_BATCH = 100
 _PROGRESS_STEPS = 1000
 # A sidecar lock older than this was left by a killed process (it is held for a few ms).
 _STALE_LOCK = 10.0
-# Busy timeout for management commands (stats, export, prune, reset), which nobody pastes.
+# Busy timeout for management commands (stats, export, last, prune, reset), which nobody
+# pastes.
 _SERVICE_TIMEOUT = 5.0
 # WAL could rarely reset a database before SQLite 3.51.3, so older libraries keep the
 # rollback journal (journal_mode DELETE), and a database left in WAL is switched back.
@@ -242,7 +243,8 @@ ERROR_KINDS = (
 
 
 class HistoryError(Exception):
-    """A history service (stats, export, prune, reset) could not read or change the store."""
+    """A history service (stats, export, last, prune, reset) could not read or change the
+    store."""
 
 
 class UnusableHistory(HistoryError):
@@ -554,9 +556,31 @@ class StatsRow:
     not_applicable_attempts: int = 0
 
 
+@dataclass(frozen=True)
+class LastRun:
+    """One operation as `history last` lists it, from the stored columns only. The
+    operation's own columns are as stored (``latency_ms`` is the whole run's). ``provider``,
+    ``requested_model`` and ``error_kind`` come from its last attempt (the highest ``seq``,
+    the request whose answer decided the outcome after any retries), and ``attempts`` counts
+    them all; an operation with no attempt (persona, a static snippet, a run refused or
+    blocked before any request) has 0 and None in the three."""
+
+    occurred_at_utc: str
+    origin: str
+    trigger_id: str | None
+    kind: str
+    profile_id: str | None
+    outcome: str
+    latency_ms: float | None
+    attempts: int
+    provider: str | None
+    requested_model: str | None
+    error_kind: str | None
+
+
 class HistoryStore:
     """The usage history at ``path``. ``record()`` never raises; the services (stats, export,
-    prune, reset) raise HistoryError. Every connection is closed before a method returns, so
+    last, prune, reset) raise HistoryError. Every connection is closed before a method returns, so
     the files can be deleted (Windows cannot delete an open file)."""
 
     def __init__(
@@ -648,7 +672,7 @@ class HistoryStore:
 
     def replay(self) -> int:
         """Store the records waiting in the spool now, with a management command's time
-        (stats, export and doctor call it first). Each is validated again; one that is not
+        (stats, export, last and doctor call it first). Each is validated again; one that is not
         valid is dropped and counted as lost. Returns how many were stored; never raises."""
         try:
             extra = compile_extra(self.extra_patterns)
@@ -1226,6 +1250,31 @@ class HistoryStore:
         else:
             raise ValueError("fmt must be csv or json")
         return len(ops)
+
+    def last(self, n: int = 10, *, replay: bool = True) -> list[LastRun]:
+        """The ``n`` newest operations, newest first (by occurred_at_utc, then id), each
+        with its last attempt (see LastRun). Replays the spool first, as stats() and export()
+        do, unless ``replay`` is false (a caller that just ran stats()); [] with no database;
+        HistoryError when it cannot be read. One statement, so a run written meanwhile is
+        either whole or absent. The values are returned as stored, not validated again."""
+        if n < 1:
+            raise ValueError("n must be at least 1")
+        if replay:
+            self.replay()
+        if not self.path.is_file():
+            return []
+        sql = (
+            "SELECT o.occurred_at_utc, o.origin, o.trigger_id, o.kind, o.profile_id, o.outcome,"
+            " o.latency_ms,"
+            " (SELECT COUNT(*) FROM attempts c WHERE c.operation_id = o.id),"
+            " a.provider, a.requested_model, a.error_kind"
+            " FROM (SELECT * FROM operations ORDER BY occurred_at_utc DESC, id DESC LIMIT ?) o"
+            " LEFT JOIN attempts a ON a.operation_id = o.id AND a.seq ="
+            " (SELECT MAX(m.seq) FROM attempts m WHERE m.operation_id = o.id)"
+            " ORDER BY o.occurred_at_utc DESC, o.id DESC"
+        )
+        with self._service() as conn:
+            return [LastRun(*row) for row in conn.execute(sql, (n,))]
 
     def prune(self, older_than: timedelta | None = None) -> int:
         """Delete operations (and their attempts) older than ``older_than``, by default the

@@ -3488,6 +3488,286 @@ def test_history_stats_export_prune_reset(
     assert len(json.loads(out.read_text("utf-8"))["operations"]) == 2
 
 
+PLUS_TWO = "UTC+2"
+
+
+def _plus_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta, timezone
+
+    from promptmend.commands import usage
+
+    monkeypatch.setattr(usage, "local_zone", lambda: timezone(timedelta(hours=2)))
+
+
+def _seed_runs(seed_history: SeedHistory, count: int) -> None:
+    """``count`` -i- runs to OpenRouter's default model a second apart; the newest failed."""
+    from datetime import UTC, datetime, timedelta
+
+    start = datetime(2026, 11, 28, 9, 0, tzinfo=UTC)
+    for second in range(count):
+        failed = second == count - 1
+        op = {
+            "id": history.new_operation_id(),
+            "occurred_at_utc": start + timedelta(seconds=second),
+            "origin": "espanso_managed",
+            "trigger_id": "-i-",
+            "kind": "improve",
+            "outcome": "error_marker" if failed else "ok",
+            "latency_ms": 1000.0 + second,
+        }
+        attempt = {
+            "provider": "openrouter",
+            "requested_model": "google/gemini-3.5-flash-lite",
+            "endpoint": "remote",
+            "status": 401 if failed else 200,
+            "error_kind": "non_2xx" if failed else None,
+            "latency_ms": 900.0,
+        }
+        seed_history(op, [attempt])
+
+
+def _runs(app: ManageApp) -> list[tuple[str, ...]]:
+    from textual.widgets import DataTable
+
+    table = pane(app, "history").query_one("#runs", DataTable)
+    return [tuple(c.plain for c in table.get_row_at(i)) for i in range(table.row_count)]
+
+
+async def _tab_to(app: ManageApp, pilot: Pilot[int], button_id: str) -> Button:
+    """Press Tab until ``button_id`` has the focus; it is then on screen."""
+    for _ in range(40):
+        if app.focused is not None and app.focused.id == button_id:
+            break
+        await pilot.press("tab")
+        await pilot.pause()
+    button = app.screen.query_one(f"#{button_id}", Button)
+    assert app.focused is button
+    assert button.region.height > 0
+    assert app.screen.region.contains_region(button.region)
+    return button
+
+
+@pytest.mark.parametrize("size", [(80, 24), (70, 24)])
+def test_history_last_runs_table(
+    espanso: FakeRunner,
+    seed_history: SeedHistory,
+    monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
+) -> None:
+    """#400: under the stats, the newest LAST_RUNS runs as `history last` lists them (local
+    time, here without the year); the buttons below stay reachable by Tab at 80x24 and
+    70x24, the pane scrolling to the focused one; Reset empties the table."""
+    from textual.widgets import DataTable
+
+    from promptmend.commands import usage
+    from promptmend.tui.state import LAST_RUNS
+
+    _plus_two(monkeypatch)
+    _seed_runs(seed_history, LAST_RUNS + 2)
+    stored = history.HistoryStore(history.history_path()).last(LAST_RUNS)
+    expected = [usage.last_cells(run, compact=True) for run in stored]
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("5")
+        await settle(pilot)
+        history_tab = pane(app, "history")
+        table = history_tab.query_one("#runs", DataTable)
+        rows = _runs(app)
+        assert rows == expected
+        assert len(rows) == LAST_RUNS
+        assert rows[0] == (
+            "11-28 11:00:06",
+            "-i-",
+            "error_marker",
+            "non_2xx",
+            "1006",
+            "openrouter",
+            "google/gemini-3.5-flash-lite",
+        )
+        assert [str(c.label) for c in table.columns.values()] == list(usage.LAST_COLUMNS)
+        # Every column but the model is whole at 80 and at 70 columns; only the model is cut
+        # (docs/interface.md says so: this notices when it fits and the sentence is stale).
+        widths = [column.get_render_width(table) for column in table.columns.values()]
+        assert table.virtual_size.width == sum(widths)
+        assert widths[0] == len("11-28 11:00:06") + 2  # the short time, with its padding
+        assert sum(widths[:-1]) <= table.size.width
+        assert sum(widths) > table.size.width
+        # Tab to the last button and press it: the pane scrolls it on screen.
+        await _tab_to(app, pilot, "reset")
+        await pilot.press("enter")
+        await settle(pilot)
+        await pilot.click("#confirm")
+        await settle(pilot)
+        assert history_tab.last_message == "The usage history is empty."
+        assert _runs(app) == []
+
+    drive(scenario, size=size)
+
+
+def test_history_last_runs_wait_for_the_full_state(
+    espanso: FakeRunner, seed_history: SeedHistory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A quick State has no runs: the table is empty while the stats note says it reads."""
+    _plus_two(monkeypatch)
+    _seed_runs(seed_history, 2)
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        await app.main.build("history")
+        await pilot.pause()
+        assert _runs(app) == []
+        assert "Reading the usage history" in _rendered(pane(app, "history"), "#stats-note")
+        blocked.release.set()
+        await settle(pilot)
+        assert [row[0] for row in _runs(app)] == ["11-28 11:00:01", "11-28 11:00:00"]
+
+    drive(scenario, settled=False, loader=blocked)
+
+
+def test_history_last_runs_on_a_read_error(
+    espanso: FakeRunner, seed_history: SeedHistory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_runs(seed_history, 2)
+
+    def locked(self: history.HistoryStore, n: int = 10, *, replay: bool = True) -> None:
+        raise history.HistoryError("history database is locked")
+
+    monkeypatch.setattr(history.HistoryStore, "last", locked)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("5")
+        await settle(pilot)
+        assert _runs(app) == []
+        note = _rendered(pane(app, "history"), "#stats-note")
+        assert "error: last runs: history database is locked" in note
+
+    drive(scenario)
+
+
+def _odd_rows() -> None:
+    """Rows no record() writes (another tool edited the database), newer than the rest."""
+    import sqlite3
+
+    rows = [
+        (b"\x00\xff", 1.0),
+        ("9999-12-31T23:59:59.999999Z", 1.0),
+        ("2027-01-01 00:00:00", 1.0),
+        ("2026-12-01T00:00:00.000000Z", "soon"),
+    ]
+    with sqlite3.connect(history.history_path()) as conn:
+        for when, latency in rows:
+            conn.execute(
+                "INSERT INTO operations VALUES (?, ?, 'direct', NULL, 'improve', NULL, 'ok', ?,"
+                " '1.0')",
+                (history.new_operation_id(), when, latency),
+            )
+    conn.close()
+
+
+def test_odd_stored_rows_never_break_the_history_tab(
+    espanso: FakeRunner, seed_history: SeedHistory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of #400: a row edited by another tool shows as a stand-in; the other runs, the
+    gated buttons and the tabs painted after History are all there."""
+    _plus_two(monkeypatch)
+    _seed_runs(seed_history, 1)
+    _odd_rows()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("5")
+        await settle(pilot)
+        rows = _runs(app)
+        assert [row[0] for row in rows] == [
+            "?",
+            "'9999-12-31T23:59:59.999999Z'",
+            "'2027-01-01 00:00:00'",
+            "12-01 02:00:00",
+            "11-28 11:00:00",
+        ]
+        assert rows[3][1] == "(none)"
+        assert rows[3][4] == "'soon'"
+        assert rows[4][-1] == "google/gemini-3.5-flash-lite"
+        reset = await _tab_to(app, pilot, "reset")
+        assert not reset.disabled
+        await pilot.press("6")
+        await settle(pilot)
+        assert "Checking every part" not in _rendered(pane(app, "diagnostics"), "#all-checks")
+
+    drive(scenario)
+
+
+@pytest.mark.parametrize(
+    ("when", "trigger"),
+    [(b"2026-11-28T09:00:00.000000Z", "-i-"), ("2026-11-28T09:00:00.000000Z", b"-i-")],
+    ids=["blob-time", "blob-trigger"],
+)
+def test_a_single_blob_row_never_breaks_the_stats_table(
+    espanso: FakeRunner, when: object, trigger: object
+) -> None:
+    """Review of #400: on a history of one hand-edited row, stats() returns a key or a last
+    use that is not text; the stats table says it cannot be shown, in one line, and the tab
+    is still painted, gated and reachable."""
+    import sqlite3
+
+    store = history.HistoryStore(history.history_path())
+    assert store.record(
+        {"id": history.new_operation_id(), "origin": "direct", "kind": "improve", "outcome": "ok"}
+    )
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("DELETE FROM operations")
+        conn.execute(
+            "INSERT INTO operations VALUES (?, ?, 'direct', ?, 'improve', NULL, 'ok', 1.0, '1.0')",
+            (history.new_operation_id(), when, trigger),
+        )
+    conn.close()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        from textual.widgets import DataTable
+
+        await pilot.press("5")
+        await settle(pilot)
+        history_tab = pane(app, "history")
+        assert history_tab.query_one("#stats", DataTable).row_count == 0
+        note = _rendered(history_tab, "#stats-note")
+        assert "error: the stats cannot be shown (TypeError)" in note
+        assert len(_runs(app)) == 1
+        reset = await _tab_to(app, pilot, "reset")
+        assert not reset.disabled
+
+    drive(scenario)
+
+
+def test_a_failure_drawing_the_runs_is_one_line(
+    espanso: FakeRunner, seed_history: SeedHistory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whatever goes wrong filling the runs table, the tab is still painted and gated and
+    says so in one line; the Checks tab, painted after it, is too."""
+    from promptmend.commands import usage
+
+    _seed_runs(seed_history, 1)
+
+    def broken(run: history.LastRun, *, compact: bool = False) -> tuple[str, ...]:
+        raise RuntimeError("kaput")
+
+    monkeypatch.setattr(usage, "last_cells", broken)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("5")
+        await settle(pilot)
+        history_tab = pane(app, "history")
+        assert _runs(app) == []
+        note = _rendered(history_tab, "#stats-note")
+        assert "error: the last runs cannot be shown (RuntimeError)" in note
+        assert "kaput" not in note
+        assert not history_tab.query_one("#reset", Button).disabled
+        await pilot.press("6")
+        await settle(pilot)
+        assert "Checking every part" not in _rendered(pane(app, "diagnostics"), "#all-checks")
+
+    drive(scenario)
+
+
 def test_cost_badges() -> None:
     row = history.StatsRow(
         "m",

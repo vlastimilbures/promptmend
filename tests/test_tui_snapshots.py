@@ -17,6 +17,7 @@ import dataclasses
 import os
 import sys
 from collections.abc import Callable
+from datetime import timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -24,8 +25,9 @@ from typing import Any
 import pytest
 
 from promptmend import assets, deploy, doctor, update_check
+from promptmend.commands import usage
 from promptmend.config import ConfigLayers
-from promptmend.history import StatsRow
+from promptmend.history import LastRun, StatsRow
 from promptmend.prompt_builder import UserProfile
 from promptmend.tui import app as app_module
 from promptmend.tui import brand, home
@@ -136,6 +138,51 @@ def _stats() -> list[StatsRow]:
     ]
 
 
+def _runs() -> list[LastRun]:
+    """The History tab's last runs: a timeout, a retry that passed, a persona run."""
+    return [
+        LastRun(
+            "2026-10-04T09:12:31.000000Z",
+            "espanso_managed",
+            "-i-",
+            "improve",
+            "default",
+            "error_marker",
+            30012.0,
+            1,
+            "openrouter",
+            "google/gemini-3.5-flash-lite",
+            "timeout",
+        ),
+        LastRun(
+            "2026-10-04T09:10:02.000000Z",
+            "espanso_managed",
+            "-il-",
+            "improve",
+            "default",
+            "ok",
+            4105.0,
+            2,
+            "ollama",
+            "qwen3:8b",
+            None,
+        ),
+        LastRun(
+            "2026-10-03T16:40:02.000000Z",
+            "espanso_managed",
+            "-p-",
+            "persona",
+            None,
+            "ok",
+            3.0,
+            0,
+            None,
+            None,
+            None,
+        ),
+    ]
+
+
 def fixed_state(
     group_by: str = "trigger",
     extra: dict[str, str] | None = None,
@@ -176,6 +223,7 @@ def fixed_state(
         profiles=profiles,
         group_by=group_by,
         stats=_stats(),
+        runs=_runs(),
         stats_error=None,
         update=UPDATE,
     )
@@ -190,6 +238,7 @@ def quick_of(state: State) -> State:
         plan=None,
         plan_error=None,
         stats=[],
+        runs=[],
         stats_error=None,
         update=CHECKING,
         pending=None,
@@ -212,6 +261,8 @@ def fixed_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PROMPTMEND_ENV")
     monkeypatch.setenv("XDG_CONFIG_HOME", f"{HOME}/.config")
     monkeypatch.setenv("XDG_DATA_HOME", f"{HOME}/.local/share")
+    # The last runs' local time, whatever the runner's zone.
+    monkeypatch.setattr(usage, "local_zone", lambda: timezone(timedelta(hours=2)))
 
 
 def _normalize(svg: str) -> str:

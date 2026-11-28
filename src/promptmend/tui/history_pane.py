@@ -1,5 +1,5 @@
-"""The History tab: the usage history's stats, export, prune and reset (`stats`, `history
-export|prune|reset`). Metadata only."""
+"""The History tab: the usage history's stats, its last runs, export, prune and reset (`stats`,
+`history last|export|prune|reset`). Metadata only."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Select, Static
@@ -17,7 +18,7 @@ from ..redaction import looks_like_a_key
 from . import teach
 from .base import Pane, add_row, button_row
 from .modals import ConfirmModal, Field, FormModal
-from .state import State
+from .state import LAST_RUNS, State
 
 
 def _cost(row: history.StatsRow) -> str:
@@ -55,6 +56,13 @@ class HistoryPane(Pane):
         )
         yield DataTable(id="stats", cursor_type="none", zebra_stripes=True)
         yield Static("", markup=False, id="stats-note")
+        command = (str(LAST_RUNS) if w == "<N>" else w for w in teach.HINTS["last-runs"])
+        yield Static(
+            f"Last runs, newest first (`{teach.equivalent(*command)}`)",
+            id="runs-title",
+            markup=False,
+        )
+        yield DataTable(id="runs", cursor_type="none", zebra_stripes=True)
         yield button_row(
             ("export", "Export"),
             ("prune", "Prune"),
@@ -74,31 +82,66 @@ class HistoryPane(Pane):
             "Tok out",
             "Cost",
         )
+        self.query_one("#runs", DataTable).add_columns(*usage.LAST_COLUMNS)
 
     def show(self, state: State) -> None:
         self.query_one("#disclosure", Static).update("\n".join(usage.disclosure(state.settings)))
-        table = self.query_one("#stats", DataTable)
-        table.clear()
-        for row in state.stats:
-            tokens_in, tokens_out = usage.tokens(row)
-            add_row(
-                table,
-                row.key or "(none)",
-                str(row.operations),
-                str(row.attempts),
-                row.last_used_utc[:16].replace("T", " "),
-                usage.ms(row.latency_p50_ms),
-                usage.ms(row.latency_p95_ms),
-                "-" if tokens_in is None else str(tokens_in),
-                "-" if tokens_out is None else str(tokens_out),
-                _cost(row),
-            )
+        stats_failed = self._show_stats(state.stats)
+        runs_error = self._show_runs(state.runs)
+        if state.runs_error and state.runs_error != state.stats_error:
+            runs_error = f"error: last runs: {state.runs_error}"
         note = state.stats_error and f"error: {state.stats_error}"
         if not state.full:  # a quick State: the stats are not read yet
             note = "Reading the usage history…" if state.failed is None else "Not read."
         elif not note and not state.stats:
             note = "No usage recorded yet."
-        self.query_one("#stats-note", Static).update(note or "")
+        note = "\n".join(filter(None, (note, stats_failed, runs_error)))
+        self.query_one("#stats-note", Static).update(note)
+
+    def _show_stats(self, stats: list[history.StatsRow]) -> str | None:
+        """Fill the stats table; the error line to show when that fails (a value another
+        tool stored that is not text, say), as _show_runs() does."""
+        table = self.query_one("#stats", DataTable)
+        table.clear()
+        try:
+            for row in stats:
+                tokens_in, tokens_out = usage.tokens(row)
+                add_row(
+                    table,
+                    row.key or "(none)",
+                    str(row.operations),
+                    str(row.attempts),
+                    row.last_used_utc[:16].replace("T", " "),
+                    usage.ms(row.latency_p50_ms),
+                    usage.ms(row.latency_p95_ms),
+                    "-" if tokens_in is None else str(tokens_in),
+                    "-" if tokens_out is None else str(tokens_out),
+                    _cost(row),
+                )
+        except Exception as exc:
+            table.clear()
+            return f"error: the stats cannot be shown ({type(exc).__name__})"
+        return None
+
+    def _show_runs(self, runs: list[history.LastRun]) -> str | None:
+        """Fill the Last runs table (`history last`'s cells, the time without the year);
+        the error line to show when that fails, so a failure here never stops the tab from
+        being painted and its buttons gated, nor the tabs painted after it."""
+        table = self.query_one("#runs", DataTable)
+        table.clear()
+        try:
+            for run in runs:
+                cells = usage.last_cells(run, compact=True)
+                table.add_row(
+                    *(
+                        Text(cell, justify="right" if i == usage.LAST_LATENCY else "left")
+                        for i, cell in enumerate(cells)
+                    )
+                )
+        except Exception as exc:
+            table.clear()
+            return f"error: the last runs cannot be shown ({type(exc).__name__})"
+        return None
 
     @on(Select.Changed, "#group-by")
     def _group(self, event: Select.Changed) -> None:

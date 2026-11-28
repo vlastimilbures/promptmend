@@ -21,6 +21,7 @@ EXAMPLES = {
     "<PROVIDER>": "openrouter",
     "<TIER>": "standard",
     "<DRAFT>": "a rough draft",
+    "<N>": "5",
 }
 
 
@@ -45,6 +46,7 @@ def parse(argv: tuple[str, ...]) -> None:
 ALL = sorted(
     {argv for commands in teach.BUTTONS.values() for argv in commands}
     | set(teach.SETTING_ACTIONS.values())
+    | set(teach.HINTS.values())
 )
 
 

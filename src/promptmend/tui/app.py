@@ -132,6 +132,7 @@ DataTable { height: auto; max-height: 14; margin-bottom: 1; }
     margin-bottom: 1;
 }
 #group-by { width: 30; margin-bottom: 1; }
+#runs-title { text-style: bold; }
 .buttons { height: auto; margin-top: 1; }
 .buttons Button { margin-right: 1; }
 /* Home's buttons (its fix button and three more) as wide as their labels, so the row fits

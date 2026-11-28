@@ -1,5 +1,6 @@
 import contextlib
 import csv
+import dataclasses
 import errno
 import io
 import json
@@ -1094,6 +1095,101 @@ def test_export_replays_the_spool(store: HistoryStore, monkeypatch: pytest.Monke
     out = io.StringIO()
     assert store.export(out) == 2
     assert spooled in out.getvalue()
+
+
+# -- last (#400) ----------------------------------------------------------------------------
+
+
+def test_last_lists_the_newest_first_with_the_last_attempt(store: HistoryStore) -> None:
+    start = datetime(2026, 11, 28, 9, 0, tzinfo=UTC)
+    persona = _op(
+        occurred_at_utc=start, kind="persona", trigger_id="-p-", profile_id=None, latency_ms=None
+    )
+    retried = _op(occurred_at_utc=start + timedelta(seconds=2), outcome="error_marker")
+    single = _op(occurred_at_utc=start + timedelta(seconds=1))
+    assert store.record(persona)
+    assert store.record(
+        retried,
+        [
+            _attempt(status=503, error_kind="non_2xx"),
+            _attempt(
+                attempt=2,
+                provider="ollama",
+                requested_model="qwen3:8b",
+                endpoint="loopback",
+                status=None,
+                error_kind="timeout",
+            ),
+        ],
+    )
+    assert store.record(single, [_attempt()])
+    runs = store.last(10)
+    assert [run.occurred_at_utc for run in runs] == [
+        "2026-11-28T09:00:02.000000Z",
+        "2026-11-28T09:00:01.000000Z",
+        "2026-11-28T09:00:00.000000Z",
+    ]
+    assert runs[0] == history.LastRun(
+        occurred_at_utc="2026-11-28T09:00:02.000000Z",
+        origin="espanso_managed",
+        trigger_id="-i-",
+        kind="improve",
+        profile_id="default",
+        outcome="error_marker",
+        latency_ms=1234.5,
+        attempts=2,
+        provider="ollama",
+        requested_model="qwen3:8b",
+        error_kind="timeout",
+    )
+    assert (runs[1].attempts, runs[1].provider, runs[1].error_kind) == (1, "openrouter", None)
+    # An operation with no attempt is listed too.
+    assert (runs[2].kind, runs[2].attempts, runs[2].provider, runs[2].latency_ms) == (
+        "persona",
+        0,
+        None,
+        None,
+    )
+    assert store.last(1) == runs[:1]
+    # Only the operation's own and the attempts' allowlisted columns reach a run.
+    names = {f.name for f in dataclasses.fields(history.LastRun)} - {"attempts"}
+    assert names <= set(history.OPERATION_COLUMNS) | set(history.ATTEMPT_COLUMNS)
+
+
+def test_last_replays_the_spool(store: HistoryStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    _spool_one(store, monkeypatch, outcome="gate_blocked")
+    assert store.spool_path.exists()
+    runs = store.last(5)
+    assert not store.spool_path.exists()
+    assert sorted(run.outcome for run in runs) == ["gate_blocked", "ok"]
+
+
+def test_last_of_no_history_is_empty_and_creates_nothing(store: HistoryStore) -> None:
+    assert store.last() == []
+    assert not store.path.exists()
+    with pytest.raises(ValueError, match="at least 1"):
+        store.last(0)
+
+
+def test_last_of_an_unusable_database_raises_a_history_error(store: HistoryStore) -> None:
+    store.path.parent.mkdir(parents=True)
+    store.path.write_bytes(b"garbage" * 2000)
+    with pytest.raises(history.UnusableHistory, match="corrupt"):
+        store.last()
+    store.path.unlink()
+    assert store.record(_op())
+    with contextlib.closing(sqlite3.connect(store.path)) as conn:
+        conn.execute("PRAGMA user_version = 99")
+        conn.commit()
+    with pytest.raises(HistoryError, match="newer"):
+        store.last()
+
+
+def test_last_of_a_file_without_a_schema_is_empty(store: HistoryStore) -> None:
+    # A first write that ran out of time can leave an empty file; stats and export read it.
+    store.path.parent.mkdir(parents=True)
+    store.path.write_bytes(b"")
+    assert store.last() == []
 
 
 def test_a_database_from_a_newer_version_is_never_written(store: HistoryStore) -> None:

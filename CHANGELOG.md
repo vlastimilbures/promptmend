@@ -29,6 +29,13 @@ All notable changes to this project are documented here. The format follows
   same as without it, and a rewrite with only a `sent despite` note or the output-limit note
   still exits 0. Without the flag, `improve` exits 0 as before; no Espanso match passes it,
   since Espanso fails the expansion on a nonzero exit.
+- `promptmend history last [-n N] [--json]` (#400): the newest runs first, one line each,
+  with the time in local time, the trigger, the outcome, the error kind, the latency, and
+  the provider and model of the run's last request, so a lost paste no longer means
+  exporting the whole history and searching it by a UTC time. `--json` keeps the stored
+  names and UTC times. The History tab shows the last 5 runs under its stats table (the time
+  without the year, `(none)` for a direct call), and docs/troubleshooting.md ("The trigger
+  stays and nothing happens") points there.
 
 ### Changed
 - Windows one-command install: the closing check prints only `doctor`'s verdict line, read

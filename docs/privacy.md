@@ -359,6 +359,8 @@ which is why only your settings and the provider's reply fill those columns, nev
   recorded run also deletes up to 100 of the oldest records past that age, so the history
   stays within it without a separate clean-up (after lowering the setting, a large backlog goes
   over the next few runs).
+- **Last runs:** `promptmend history last [-n N]` lists the newest runs, one line each, from
+  the same metadata (the History tab shows the last 5).
 - **Export, prune, reset:** `promptmend history export [--format json|csv] [-o FILE]` writes
   every record (the same metadata, nothing more), `promptmend history prune [--older-than DAYS]`
   deletes older records now, and `promptmend history reset` deletes them all. Uninstalling does
@@ -380,8 +382,8 @@ A write that cannot finish in that time (a slow disk, antivirus or endpoint scan
 locked, read-only or corrupt file) is kept in a small `history.spool` file next to the
 database, in the same [data folder](configuration.md#files-and-folders). It holds exactly the
 columns above, nothing else, and each record is checked again before it is stored. The next
-recorded run, `promptmend stats`, `promptmend history export` and `promptmend doctor` move its
-records into the database. It holds at most 100 records; a record that does not fit (or a
+recorded run, `promptmend stats`, `promptmend history last`, `promptmend history export` and
+`promptmend doctor` move its records into the database. It holds at most 100 records; a record that does not fit (or a
 spool that cannot be written, or one still busy with another write when the time is up) is
 dropped, and a small `history.lost` file counts the dropped writes. A write dropped while that
 file is busy or cannot be written is counted in an empty `history.lost.<random>.<n>.drop`

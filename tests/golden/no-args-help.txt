@@ -12,5 +12,5 @@ config Show, check and change the settings (config.toml).
 secrets Save, check or remove API keys in the secrets file. Keys are never arguments.
 profiles List the rewrite profiles: the built-in ones and yours.
 stats Calls, latency, tokens and costs from the local usage history.
-history Export, prune or reset the local usage history (metadata only, this device only).
+history List, export, prune or reset the local usage history (metadata only, this device only).
 doctor Check the install, settings, keys, Espanso, matches and history.
