@@ -215,7 +215,7 @@ def setup(
     provider: str | None = typer.Option(
         None,
         "--provider",
-        help="Deprecated, will be removed in a later release (use --use): saves "
+        help="Deprecated, removed in 0.30.0 (use --use): saves "
         f"PROMPT_PROVIDER ({', '.join(PROVIDER_NAMES)}), which no trigger reads; on a terminal "
         "it is not saved",
     ),
@@ -242,7 +242,8 @@ def setup(
     smoke_test: bool = typer.Option(
         True, "--smoke-test/--no-smoke-test", help="Run improve against a local stub at the end"
     ),
-    # An old alias of --non-interactive, hidden since #405 and still accepted (no removal date).
+    # An old alias of --non-interactive, hidden since #405 and still accepted; 0.30.0 removes
+    # it (CONTRIBUTING.md, "Compatibility paths").
     plain: bool = typer.Option(False, "--plain", hidden=True),
 ) -> None:
     """First run: cloud or local, the API keys, the profile, paste or clipboard, the Espanso

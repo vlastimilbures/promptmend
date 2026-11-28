@@ -207,6 +207,8 @@ The interface works around it, but the fix is a newer Python:
 | `[promptmend: OLLAMA_THINK must be true or false, got …]` (or `must be a number above 0`) | Fix that value. A long value, or one that looks like a key, is shown as `<redacted, N chars>` |
 | `[promptmend: … in .env runs into the next line; add the missing newline]` | Two lines of the `.env` were saved as one. Split them |
 | `[promptmend: … must be an https:// URL]` | A cloud `*_BASE_URL` uses `http`. Switch it to `https` |
+| `[promptmend: Unknown profile: 'default-pro'. Choose from: default, general]` (or another name) | `PROMPT_PROFILE` or `PROMPT_PRO_PROFILE` names a profile that is neither built in nor one of [your own](profiles.md#your-own-profiles). `default-pro`, an alias of `default` until 0.28.0, is gone: remove the setting with `promptmend config unset PROMPT_PRO_PROFILE` (or `PROMPT_PROFILE`), or set it to a name the marker lists. `promptmend config validate` names it too |
+| `config validate` reports `'PROMPT_UI_INTRO' in config.toml is not a setting; it was ignored` (doctor's `config` check warns of a finding) | The switch for the intro screen, which 0.25.0 removed; until 0.28.0 it was skipped without a word. The triggers ignore it. Remove it with `promptmend config unset PROMPT_UI_INTRO` |
 
 ## Provider errors
 

@@ -138,7 +138,8 @@ def save_settings(snapshot: SavedSettings, changes: Mapping[str, str | None]) ->
     no secret is ever written to config.toml. Refused too: a file with a newer
     config_version (ReadOnlyConfigError), and a file that changed since ``snapshot`` was
     read (StaleEditError, naming the settings that differ). Settings this version does not
-    know are kept; comments are not (tomli-w writes plain TOML).
+    know are kept unless a change removes one (None); comments are not (tomli-w writes
+    plain TOML).
     """
     if snapshot.read_only:
         raise ReadOnlyConfigError(
@@ -147,6 +148,9 @@ def save_settings(snapshot: SavedSettings, changes: Mapping[str, str | None]) ->
         )
     updates: dict[str, Any] = {}
     for name, raw in changes.items():
+        if raw is None and name in snapshot.table and name not in _FIELDS and name != VERSION_KEY:
+            updates[name] = None  # a key that is no setting here (one a release removed)
+            continue
         refused = secret_refusal(_known(name), "set" if raw is not None else "remove")
         if refused:
             raise ValueError(refused)

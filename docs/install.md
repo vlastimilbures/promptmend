@@ -316,8 +316,8 @@ promptmend setup --non-interactive --use local --output clipboard --deploy   # n
 `--use cloud|local|both` and `--output paste|clipboard` answer those steps; without them what
 `config.toml` holds stays (a value set only in your shell is not written, and setup says
 when one overrides it). The smoke test prints the stub's reply whatever the output, so it
-never touches your clipboard. `--provider` is deprecated: it still saves `PROMPT_PROVIDER`, which no
-trigger reads, and says so; use `--use` instead.
+never touches your clipboard. `--provider` is deprecated (0.30.0 removes it): it still saves
+`PROMPT_PROVIDER`, which no trigger reads, and says so; use `--use` instead.
 
 Without `--deploy`, the deploy stays a preview. Then copy a rough draft, type the trigger
 setup names last (`-i-` for cloud or both, `-il-` for local) in any text field and wait

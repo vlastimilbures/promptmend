@@ -185,19 +185,27 @@ def test_pro_row_follows_an_older_deployed_ip() -> None:
     assert _rows(state)["Pro (-ip-)"].text == "openai · gpt-6-luna"
 
 
-# A file deployed by v0.20.0 or earlier (the shell `cmd:` form) is read: its -i- names
-# OpenRouter, so PROMPT_PROVIDER=ollama does not make Home say it stays local (#278).
-def test_rows_read_a_shell_form_deployed_file() -> None:
+# A file deployed by v0.20.0 or earlier (the shell `cmd:` form) is no longer read (#414): its
+# triggers have no command line, so the rows are the shipped triggers'. The shipped -i- names
+# OpenRouter too, so PROMPT_PROVIDER=ollama still does not make Home say it stays local
+# (#278); the shipped -ip- shows PROMPT_PRO_PROVIDER, not the old file's OpenRouter pin.
+def test_rows_of_a_shell_form_deployed_file_are_the_shipped_ones() -> None:
     from test_doctor import V0_20_0_BLOCKS
 
     from promptmend import assets
 
     deployed = assets.triggers_in(V0_20_0_BLOCKS, "prompts-llm.yml")
     base = dataclasses.replace(ready(), deployed=deployed)
-    state = _with_env(base, PROMPT_PROVIDER="ollama", OPENROUTER_API_KEY="-".join(("a", "b")))
+    state = _with_env(
+        base,
+        PROMPT_PROVIDER="ollama",
+        PROMPT_PRO_PROVIDER="openai",
+        OPENROUTER_API_KEY="-".join(("a", "b")),
+        OPENAI_API_KEY="k",
+    )
     found = _rows(state)
     assert found["Rewrites"].text == "openrouter · google/gemini-3.5-flash-lite"
-    assert found["Pro (-ip-)"].text == "openrouter · openai/gpt-6-luna"
+    assert found["Pro (-ip-)"].text == "openai · gpt-6-luna"
 
 
 # A commented-out copy, or one whose command line was not read, never stands in for the

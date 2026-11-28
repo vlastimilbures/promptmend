@@ -1587,18 +1587,24 @@ def test_a_file_0_18_deployed_is_stale(
         deploy.PLACEHOLDER, old_launcher
     )
     target = espanso / "match" / name
-    target.write_text(rendered, encoding="utf-8")
+    # Bytes, as deploy writes them: write_text() would save CRLF on Windows, and the
+    # record below holds the digest of the LF text.
+    target.write_bytes(rendered.encode("utf-8"))
     if manifest:
         entry = deploy.Entry(
             target=str(target),
             asset_version="0.18.0",
-            digest=hashlib.sha256(rendered.encode()).hexdigest(),
+            digest=deploy._digest(rendered),  # as a real deploy record holds it
             launcher=old_launcher,
             calls_cli=True,
         )
         manifest_file = deploy.Manifest.load()
         manifest_file.entries[str(target)] = entry
         manifest_file.save()
+        # The record alone makes it stale, with no released source to match.
+        with monkeypatch.context() as patched:
+            patched.setitem(KNOWN_SOURCES, name, frozenset())
+            assert _states(espanso)[name] == deploy.STALE
     assert _states(espanso)[name] == deploy.STALE
     outcome = deploy.apply(_plan(espanso))
     assert not outcome.kept
@@ -1616,7 +1622,7 @@ def test_a_file_0_18_deployed_is_stale(
 @pytest.mark.parametrize("manifest", [True, False], ids=["manifest", "bare"])
 @pytest.mark.parametrize("windows", [False, True], ids=["posix", "win"])
 def test_a_file_0_20_deployed_is_replaced_by_script_vars(
-    espanso: Path, name: str, manifest: bool, windows: bool
+    monkeypatch: pytest.MonkeyPatch, espanso: Path, name: str, manifest: bool, windows: bool
 ) -> None:
     source = (SHELL_0_20 / name).read_text("utf-8")
     assert hashlib.sha256(source.encode()).hexdigest() in KNOWN_SOURCES[name]
@@ -1627,18 +1633,24 @@ def test_a_file_0_20_deployed_is_replaced_by_script_vars(
         deploy.PLACEHOLDER, launcher
     )
     target = espanso / "match" / name
-    target.write_text(rendered, encoding="utf-8")
+    # Bytes, as deploy writes them: write_text() would save CRLF on Windows, and the
+    # record below holds the digest of the LF text.
+    target.write_bytes(rendered.encode("utf-8"))
     assert deploy.launchers_in(rendered) == {launcher}
     if manifest:
         manifest_file = deploy.Manifest.load()
         manifest_file.entries[str(target)] = deploy.Entry(
             target=str(target),
             asset_version="0.20.0",
-            digest=hashlib.sha256(rendered.encode()).hexdigest(),
+            digest=deploy._digest(rendered),  # as a real deploy record holds it
             launcher=launcher,
             calls_cli=True,
         )
         manifest_file.save()
+        # The record alone makes it stale, from a launcher nothing could read or match.
+        with monkeypatch.context() as patched:
+            patched.setitem(KNOWN_SOURCES, name, frozenset())
+            assert _states(espanso, "/elsewhere/promptmend")[name] == deploy.STALE
     assert _states(espanso, launcher)[name] == deploy.STALE
     outcome = deploy.apply(_plan(espanso, launcher))
     assert not outcome.kept

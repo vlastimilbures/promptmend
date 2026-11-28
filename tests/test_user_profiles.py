@@ -77,10 +77,9 @@ def test_user_default_needs_explicit_opt_in(
     monkeypatch.setenv("PROMPT_PROFILE_OVERRIDES", "default")
     assert _improve().exit_code == 0
     assert stub_provider.calls[-1]["system_prompt"] == prompt_builder.render(MINE)
-    # The pro tier keeps the opt-in, and the alias resolves to the overridden profile.
+    # The pro tier keeps the opt-in.
     assert _improve("--tier", "pro").exit_code == 0
     assert stub_provider.calls[-1]["system_prompt"] == prompt_builder.render(MINE)
-    assert system_prompt("default-pro", "", ("default",)) == prompt_builder.render(MINE)
     # Only the listed built-in is replaced.
     _write("general")
     assert _improve("--profile", "general").exit_code == 0
@@ -191,7 +190,7 @@ def test_user_profiles_report() -> None:
         "regulation": "added",
         "default": "overrides",
         "general": "overrides",
-        "default-pro": "shadowed",
+        "default-pro": "added",  # no longer a retired built-in name (#414): yours
         "bad name": "invalid name",
     }
     assert {p.name: p.status for p in user_profiles()}["default"] == "shadowed"

@@ -256,6 +256,39 @@ python3 scripts/release_notes.py notes --release 0.10.0 > notes-0.10.0.md
 gh release create v0.10.0 --verify-tag --latest=false --title v0.10.0 --notes-file notes-0.10.0.md
 ```
 
+## Compatibility paths
+
+Code that keeps an old release's files, settings or flags working is removed in the second
+minor release after the one that made it unnecessary, and no sooner than 30 days after that
+release. Its removal gets a CHANGELOG line under *Removed* that says what a user who still has
+the old value sees. When you cut a release, remove what the table below says is due, and add a
+row when a change leaves something old working.
+
+| Path | Code | Unnecessary since | Earliest removal |
+|------|------|-------------------|------------------|
+| The note about a `.env` that earlier releases read (#275) | `paths.unread_env_files()`, read by `ConfigLayers.resolve()` (repair mode) and setup | 0.26.0 (2026-11-16) | The first release from 0.28.0 on that is out on or after 2026-12-16 |
+| A list setting saved in `config.toml` as an array (#231) | `config.saved_text()` | 0.27.0 (2026-11-17) | 0.29.0, not before 2026-12-17 |
+| doctor's "from an older release" wording for a deployed `-ip-` that still names `--provider openrouter` (#278) | The `openrouter` branch of `doctor.stale_pro_message()` only; `stale_pro_pins()` is a live check (any deployed `-ip-` pin that differs from `PROMPT_PRO_PROVIDER`, an edit of yours included) and stays | 0.27.0 (2026-11-17) | 0.29.0, not before 2026-12-17 |
+| `setup --plain`, the old name of `--non-interactive` (#405) | `commands/setup.py` | 0.28.0 | 0.30.0, not before 30 days after 0.28.0 |
+| `setup --provider` (#390) | `commands/setup.py`, `setup_guide.PROVIDER_DEPRECATED` and `provider_not_saved()`, `settings_service.use_for_provider()`, the setup wizard | 0.28.0 | 0.30.0, not before 30 days after 0.28.0 |
+| `history export --output`, the old name of `--file` (#405) | `commands/usage.py` | 0.28.0 | 0.30.0, not before 30 days after 0.28.0 |
+| `doctor --json` keys that are always empty: `folders.legacy`, `folders.conflicts` (#275) and `match_files.legacy` (#246) | `doctor._folders_check()`, `doctor._match_check()` | 0.26.0 and 0.25.0 | `schema_version` 2 |
+
+Some old-release code has no horizon. `match_history.KNOWN_SOURCES` holds the hash of every
+match file a release shipped; before it compares, deploy strips the `# prompt-workflow` stamp
+of 0.18.0 and earlier and the CRLF line ends of Windows checkouts before 0.11.
+`deploy._QUOTED_LAUNCHER` reads the launcher of the `type: shell` files that releases up to
+0.20.0 deployed. Together they let deploy recognise any pristine file an earlier release wrote
+as its own and stale, even from another launcher and with no deploy record, and replace it
+without asking. The 0.26.0 notes and docs/install.md promise that for files from 0.18.0 and
+earlier, so they stay for as long as such a file can still be deployed. The owner's list of
+2026-11-28 named `_QUOTED_LAUNCHER` for removal along with the shell-form trigger readers. It
+stayed: without it, every such file from 0.18.0 or earlier (they called `prompt-workflow`)
+would be `foreign` and kept (#414).
+
+`history._MIGRATIONS` is not a compatibility path either: its steps upgrade an old usage
+database in place, forward only, and nothing reads the old shape afterwards.
+
 ## Trigger start-up budget
 
 Espanso starts a fresh `promptmend` process for every trigger, so everything `cli.py` (and
@@ -728,7 +761,7 @@ local 7-8B model; nothing has measured `general` on Ollama or LM Studio yet. Kee
 ### Known gaps in the default prompt
 
 Both tiers send the `default` profile (flash-lite on the standard tier, gpt-6-luna on the pro
-tier); `default-pro` is an alias of it. The 2026-10-02 rework (its decision record is in git:
+tier); `default-pro` was an alias of it from 0.14.0 to 0.27.0. The 2026-10-02 rework (its decision record is in git:
 `git show v0.25.0:docs/prompt-candidates/PLAN.md`; the candidate files, I2 among them, at
 `v0.17.0`) closed the old gaps 1–4 and 7: fixed wordings are copied word for word, document
 steps name their sections, method choices are stated as assumptions, a message to a named

@@ -218,7 +218,7 @@ All notable changes to this project are documented here. The format follows
   it. Where an environment variable makes a choice differ, setup says so next to the value,
   and a `PROMPT_LOCAL_ONLY` set only in the shell is reported as a mismatch, not as local.
 - `setup --plain` is hidden from the help and the docs (#405); it still works, as
-  `--non-interactive`.
+  `--non-interactive`, and 0.30.0 removes it.
 - Help wording (#405): `espanso status --launcher` now says it is the CLI path the matches
   are compared against (it said "to write into the matches"; `status` writes nothing), and
   `improve --output` and `--copy` say which one a script uses: `--output clipboard` to get
@@ -239,6 +239,12 @@ All notable changes to this project are documented here. The format follows
   start-up steps of a trigger and the fast `--version`, so the difference from the launcher
   rows is the launcher alone, and the `interpreter:` line (and `doctor --json --timing`'s
   `interpreter`) names the new module. `python -m promptmend.cli` no longer runs anything.
+- `promptmend config unset NAME` also removes a name that is no setting when `config.toml`
+  holds it (#414), such as `PROMPT_UI_INTRO`, which a release removed, and prints
+  `'NAME' removed from <path> (not a setting).` (a key-like name is not repeated). A name
+  that is no setting and not in the file is still a usage error (exit 2), and so is any such
+  name with `PROMPTMEND_ENV` set; a `config.toml` that cannot be read is reported first
+  (exit 1).
 
 ### Deprecated
 - `setup --provider` (#390): with `--non-interactive` it still saves `PROMPT_PROVIDER` and
@@ -246,12 +252,44 @@ All notable changes to this project are documented here. The format follows
   `--use cloud|local|both` chooses your triggers. On a terminal it opens the wizard, which has
   no step for it: Welcome says it was not saved and that `promptmend config set
   PROMPT_PROVIDER <name>` saves it, and without `--use` the Cloud or local step starts on
-  local for Ollama or LM Studio and on cloud otherwise (a highlight; Next saves it). It goes
-  in a later release.
+  local for Ollama or LM Studio and on cloud otherwise (a highlight; Next saves it). 0.30.0
+  removes it, as its note and its help now say.
 - `history export --output FILE` is now `history export --file FILE` (#405), since
   `--output` elsewhere (`improve`, `setup`) says where the rewrite goes; `-o` stays. `--output`
-  is still accepted, hidden from the help, and 0.29.0 removes it. Passing both with
+  is still accepted, hidden from the help, and 0.30.0 removes it. Passing both with
   different files is a usage error (exit 2). The History tab's Export shows `--file`.
+- Every compatibility path now has a removal date (#414): it goes in the second minor release
+  after the one that made it unnecessary, and no sooner than 30 days after that release.
+  CONTRIBUTING.md, "Compatibility paths", lists each one that is left with its release. For
+  users: a `config.toml` list setting saved as an array (before 0.27.0) stops loading in
+  0.29.0 at the earliest and not before 2026-12-17, and the note about a `.env` that is no
+  longer read goes with the first release on or after 2026-12-16.
+
+### Removed
+- The `default-pro` profile name (#414), an alias of `default` since 0.14.0. A
+  `PROMPT_PROFILE` or `PROMPT_PRO_PROFILE` that still names it, or `--profile default-pro`,
+  now fails as any unknown profile does: a trigger pastes `[promptmend: Unknown profile:
+  'default-pro'. Choose from: default, general]` (your own profiles are listed too) and sends
+  nothing, and `config validate` and doctor's `profiles` check report it. Remove the setting
+  with `promptmend config unset PROMPT_PRO_PROFILE` (or `PROMPT_PROFILE`), or set it to
+  `default`. `profiles list` and the Profiles tab no longer list the name. A profile of your
+  own named `default-pro.md`, ignored until now, is an ordinary profile of yours, so a
+  setting or `--profile` that names `default-pro` now sends that file (before, the name meant
+  the built-in `default` and the file was ignored).
+- `ui --no-intro` (#414), hidden and ignored since 0.25.0 removed the intro screen: it is now a
+  usage error (`No such option: --no-intro`, exit 2). Run `promptmend ui` without it.
+- The silent skip of `PROMPT_UI_INTRO` (#414), the setting 0.25.0 removed. The triggers still
+  ignore it wherever it is set, but in `config.toml` it is now reported as any unknown name
+  is: `config validate` prints `problem: <path>: 'PROMPT_UI_INTRO' in config.toml is not a
+  setting; it was ignored` and exits 4, and doctor's `config` check warns. Remove it with
+  `promptmend config unset PROMPT_UI_INTRO`. In a `.env` or the environment it is ignored
+  without a word, as before.
+- Reading the triggers of a match file deployed by 0.20.0 or earlier (#414), whose triggers
+  call the CLI through a `type: shell` var. doctor still reports such a file as `stale` and
+  says to run `promptmend espanso deploy`, which replaces it without asking, as before; only
+  the per-trigger details are gone until then. The `keys` check no longer names a key that
+  file's triggers need, the `pro_provider` check no longer warns about its `-ip-`'s OpenRouter
+  pin, and Home and the Triggers tab show the triggers as the current release ships them.
 
 ### Fixed
 - A key save can now be refused as stale (#413). When the interface and `secrets set` (or

@@ -14,7 +14,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Static
 
-from ..prompt_builder import ADDED, ALIASES, OVERRIDES, PROFILES, user_profiles_dir
+from ..prompt_builder import ADDED, OVERRIDES, PROFILES, user_profiles_dir
 from .base import Pane, add_row, button_row
 from .modals import Field, FormModal
 from .state import State
@@ -78,8 +78,6 @@ class ProfilesPane(Pane):
         table.clear()
         for name in PROFILES:
             add_row(table, name, "built in", "default" if name == cfg.profile else "", key=name)
-        for alias, target in ALIASES.items():
-            add_row(table, alias, "built in", f"retired; means {target}", key=alias)
         for profile in state.profiles:
             add_row(table, profile.name, "yours", profile.status, key=f"user:{profile.name}")
         if kept is not None and kept in table.rows:
@@ -97,9 +95,9 @@ class ProfilesPane(Pane):
         )
 
     def highlighted(self, state: State) -> str:
-        """The profile the highlighted row names: a built-in one, a retired name's target, or
-        one of yours that a trigger uses when it is picked (added, or replacing a built-in
-        through PROMPT_PROFILE_OVERRIDES). A file of yours that is not used (shadowed, an
+        """The profile the highlighted row names: a built-in one, or one of yours that a
+        trigger uses when it is picked (added, or replacing a built-in through
+        PROMPT_PROFILE_OVERRIDES). A file of yours that is not used (shadowed, an
         invalid name, an override without its file) names nothing to pick, so it, like an
         empty table, gives the current default."""
         table = self.query_one("#profiles", DataTable)
@@ -110,8 +108,6 @@ class ProfilesPane(Pane):
         )
         if key in PROFILES:
             return key
-        if key in ALIASES:
-            return ALIASES[key]
         used = {p.name for p in state.profiles if p.status in (ADDED, OVERRIDES)}
         name = key.removeprefix("user:")
         return name if key.startswith("user:") and name in used else state.settings.profile

@@ -58,10 +58,6 @@ class _BuiltinProfiles(Mapping[str, str]):
 # user_profiles_dir().
 PROFILES: Mapping[str, str] = _BuiltinProfiles()
 
-# Retired profile names that still resolve, so an existing .env or --profile keeps working.
-# `default-pro` was `default` minus one clause; one prompt serves both tiers.
-ALIASES = {"default-pro": "default"}
-
 # Replaced in a profile by the rule for how CONTEXT opens (see PROMPT_PERSONA).
 PERSONA_TOKEN = "{{PERSONA_RULE}}"  # noqa: S105 - a template placeholder, not a secret
 # What the persona subcommand (the -p- snippet) prints when PROMPT_PERSONA is not set.
@@ -129,11 +125,6 @@ def render(template: str, persona: str = "") -> str:
     return re.sub("|".join(map(re.escape, values)), lambda m: values[m.group()], template)
 
 
-def resolve_profile_name(profile: str) -> str:
-    """The profile name ``profile`` stands for: itself, or the built-in a retired alias names."""
-    return profile if profile in PROFILES else ALIASES.get(profile, profile)
-
-
 def system_prompt(profile: str, persona: str = "", overrides: Collection[str] = ()) -> str:
     """The rendered profile: a built-in, or `<name>.md` in user_profiles_dir() for a name
     that is not built in. A user file named like a built-in replaces it only when the name is
@@ -143,12 +134,11 @@ def system_prompt(profile: str, persona: str = "", overrides: Collection[str] = 
 
 def template(profile: str, overrides: Collection[str] = ()) -> str:
     """system_prompt()'s profile before render(), its tokens unfilled."""
-    name = resolve_profile_name(profile)
     text = None
-    if name not in PROFILES or name in overrides:
-        text = _read_user_profile(name)
+    if profile not in PROFILES or profile in overrides:
+        text = _read_user_profile(profile)
     if text is None:
-        text = PROFILES.get(name)
+        text = PROFILES.get(profile)
     if text is None:
         # Built-ins first, in the order they always had; the user's own after them, sorted.
         own = sorted(p.name for p in user_profiles(overrides) if p.status == ADDED)
@@ -158,7 +148,7 @@ def template(profile: str, overrides: Collection[str] = ()) -> str:
 
 
 # user_profiles() statuses: a new profile, a built-in replaced by explicit opt-in, a file
-# ignored because it is named like a built-in (or an alias) without the opt-in, a file whose
+# ignored because it is named like a built-in without the opt-in, a file whose
 # name no --profile can select, and an opted-in built-in that has no file.
 ADDED = "added"
 OVERRIDES = "overrides"
@@ -191,7 +181,7 @@ def user_profiles(overrides: Collection[str] = ()) -> list[UserProfile]:
         elif name in PROFILES:
             status = OVERRIDES if name in overrides else SHADOWED
         else:
-            status = SHADOWED if name in ALIASES else ADDED
+            status = ADDED
         found.append(UserProfile(name, path, status))
     listed = {p.name for p in found}
     missing = [n for n in overrides if n not in listed]

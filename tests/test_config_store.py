@@ -209,19 +209,30 @@ def test_toml_notes(saved_mode: Path) -> None:
     assert repair.settings().ollama_model == "m"
 
 
-# A removed setting (#245) that the user saved, or still sets, is ignored without a
-# finding in either mode: doctor and `config validate` must not flag it.
-def test_retired_settings_are_ignored(
-    saved_mode: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+# A removed setting (PROMPT_UI_INTRO, #245; skipped without a word until #414) is any
+# unknown name now. The triggers (strict mode) ignore it in every layer; repair mode (doctor,
+# `config validate`) names it, with the file, only in config.toml, where the user can delete
+# the line. A .env and the environment give only env_names() keys, so it is never read there.
+def test_a_removed_setting_is_ignored_by_the_triggers(
+    saved_mode: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
 ) -> None:
-    _write(saved_mode / "config.toml", 'PROMPT_UI_INTRO = false\nOLLAMA_MODEL = "m"\n')
-    monkeypatch.setenv("PROMPT_UI_INTRO", "maybe")
-    assert ConfigLayers.resolve().settings().ollama_model == "m"
-    assert ConfigLayers.resolve(strict=False).findings == ()
+    assert "PROMPT_UI_INTRO" not in env_names()
+    saved = _write(saved_mode / "config.toml", 'PROMPT_UI_INTRO = false\nOLLAMA_MODEL = "m"\n')
+    note = f"file:{saved}", "'PROMPT_UI_INTRO' in config.toml is not a setting; it was ignored"
+    for environ in ({}, {"PROMPT_UI_INTRO": "maybe"}):  # the real environment adds nothing
+        for key, value in environ.items():
+            monkeypatch.setenv(key, value)
+        strict = ConfigLayers.resolve()
+        assert (strict.findings, strict.settings().ollama_model) == ((), "m")
+        repair = ConfigLayers.resolve(strict=False)
+        assert [(f.source, f.message) for f in repair.findings] == [note]
+        result = runner.invoke(app, ["improve", "--source", "argument", "--text", "draft"])
+        assert (result.exit_code, result.stdout, result.stderr) == (0, "improved", "")
     monkeypatch.setenv("PROMPTMEND_ENV", str(_write(tmp_path / ".env", "PROMPT_UI_INTRO=no\n")))
     assert ConfigLayers.resolve().findings == ()
     assert ConfigLayers.resolve(strict=False).findings == ()
-    assert "PROMPT_UI_INTRO" not in env_names()
+    result = runner.invoke(app, ["improve", "--source", "argument", "--text", "draft"])
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "improved", "")
 
 
 # The secrets file only contributes secrets; anything else in it is ignored.
@@ -494,6 +505,26 @@ def test_save_settings_validates_first(
         config_store.save_settings(config_store.read_settings(), changes)
     assert OPENROUTER_VALUE not in str(exc.value)
     assert not (saved_mode / "config.toml").exists()
+
+
+# A name that is no setting can only be removed, and only when the file holds it (a setting a
+# release removed, #414); config_version is never removed.
+def test_save_settings_removes_only_an_unknown_name_the_file_holds(saved_mode: Path) -> None:
+    saved_mode.mkdir(parents=True, exist_ok=True)
+    toml = saved_mode / "config.toml"
+    text = 'config_version = 1\nPROMPT_UI_INTRO = false\nOLLAMA_MODEL = "m"\n'
+    toml.write_text(text, "utf-8")
+    refused: dict[str, str | None] = {
+        "NOT_THERE": None,
+        config_files.VERSION_KEY: None,
+        "PROMPT_UI_INTRO": "true",
+    }
+    for name, raw in refused.items():
+        with pytest.raises(ValueError, match="is not a setting"):
+            config_store.save_settings(config_store.read_settings(), {name: raw})
+        assert toml.read_text("utf-8") == text
+    saved = config_store.save_settings(config_store.read_settings(), {"PROMPT_UI_INTRO": None})
+    assert saved.table == {"config_version": 1, "OLLAMA_MODEL": "m"}
 
 
 # One wording for "a secret never goes in config.toml" (#408): save_settings() and `config

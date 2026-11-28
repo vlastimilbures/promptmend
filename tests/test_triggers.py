@@ -247,7 +247,6 @@ def test_if_model_choices_are_covered() -> None:
             {"model": "google/gemini-3.8-flash@google-ai-studio"},
             "default",
         ),
-        ({"PROMPT_PRO_PROFILE": "default-pro"}, "-ip-", {}, "default"),
         ({"PROMPT_PROFILE": "default-pro"}, "-il-", {}, "general"),
     ],
     ids=[
@@ -258,7 +257,6 @@ def test_if_model_choices_are_covered() -> None:
         "if-pro-profile",
         "if-other-model-profile",
         "if-other-model-loses-pro-profile",
-        "ip-retired-default-pro",
         "il-keeps-general",
     ],
 )
@@ -274,6 +272,29 @@ def test_profile_settings_reach_triggers(
         monkeypatch.setenv(key, value)
     _, _, prompt = _replay(stub_provider, trigger, **picks)
     assert _profile(prompt) == profile
+
+
+# The retired `default-pro` (an alias of default from 0.14.0 until #414) fails as any unknown
+# profile does: a marker naming it and the valid ones, exit 0, nothing on stderr, no call.
+@pytest.mark.parametrize(
+    ("name", "trigger"),
+    [("PROMPT_PRO_PROFILE", "-ip-"), ("PROMPT_PROFILE", "-i-"), ("--profile", "-i-")],
+)
+def test_retired_default_pro_is_an_unknown_profile(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, name: str, trigger: str
+) -> None:
+    argv = _argv(trigger)
+    if name == "--profile":
+        argv += ["--profile", "default-pro"]
+    else:
+        monkeypatch.setenv(name, "default-pro")
+    result = runner.invoke(app, argv)
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "[promptmend: Unknown profile: 'default-pro'. Choose from: default, general]",
+        "",
+    )
+    assert stub_provider.calls == []
 
 
 # An explicit --profile beats the tier's profile, so no pro-tier trigger may pass one.
