@@ -380,6 +380,30 @@ them with the usage history on and off: on, the run is recorded after its output
 dependency belongs behind a lazy import in the command that needs it, never on the trigger
 path. Raise the ceiling only with new measurements here.
 
+## The trigger's time limit
+
+What a user and a script can rely on is in
+[docs/commands.md, "The time limit"](docs/commands.md#the-time-limit); this is how
+`trigger.Watchdog` (its docstring has the full state machine) keeps it.
+
+- The watchdog is a timer thread that steps in at the limit plus 1.5 seconds
+  (`WATCHDOG_MARGIN` minus `_WATCHDOG_HISTORY`). It closes the run's usage observer, so no
+  request starts from then on, not even a retry; it writes the usage history for up to 0.4
+  seconds, then prints its marker straight to file descriptor 1 and ends the process.
+- The provider's own timeout (`providers/base.py`) words the same marker, but counts from its
+  request, so it prints that marker first only when the run reached its request within 1.5
+  seconds; otherwise, or when something that timeout cannot see blocks, the watchdog prints
+  it.
+- A request the run had already begun (one still waiting for its name lookup, connection or
+  TLS handshake) may still go out during the history wait or in the few milliseconds between
+  the marker and the exit.
+- A run whose output is already out but whose usage-history write is still going ends at once
+  at the limit plus 1.5 seconds, or at the limit plus 2 seconds if its output was still being
+  printed then, or as soon as its output is flushed, if that is later; that history row is
+  lost.
+- Being a thread, the watchdog can be delayed by a long step that holds the GIL until that
+  step ends.
+
 ## Interface start-up budget
 
 `promptmend ui` builds only Home before its first paint (#316): `tui/app.py` names the other

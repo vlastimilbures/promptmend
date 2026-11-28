@@ -49,7 +49,8 @@ def emit(text: str, watch: Watchdog | None = None) -> None:
 # marker and records the attempt itself, but counts from its request: it ends a slow call
 # first only when start-up and reading the draft took under WATCHDOG_MARGIN -
 # _WATCHDOG_HISTORY seconds; otherwise the watchdog does. Until the settings have loaded the
-# limit is config.loading_limit() (#331). Documented in docs/usage.md.
+# limit is config.loading_limit() (#331). What users and scripts see: docs/commands.md "The
+# time limit"; how the watchdog keeps it: CONTRIBUTING.md "The trigger's time limit".
 WATCHDOG_MARGIN = 2.0
 # Of WATCHDOG_MARGIN, the most the watchdog waits for the usage history before its marker.
 _WATCHDOG_HISTORY = 0.5
