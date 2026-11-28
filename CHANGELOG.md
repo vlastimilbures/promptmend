@@ -233,6 +233,12 @@ All notable changes to this project are documented here. The format follows
   when coming from an old release moved to docs/install.md, "Upgrading from older
   versions"; the reasoning-text row no longer says to edit the source; and the
   `history last` advice names the columns it prints.
+- `doctor --timing`'s interpreter rows and the smoke test now start the CLI the way the
+  launcher does (#410): `python -P -m promptmend.entry`, through the same entry point, where
+  they ran `python -P -m promptmend.cli`. The interpreter rows therefore include the early
+  start-up steps of a trigger and the fast `--version`, so the difference from the launcher
+  rows is the launcher alone, and the `interpreter:` line (and `doctor --json --timing`'s
+  `interpreter`) names the new module. `python -m promptmend.cli` no longer runs anything.
 
 ### Deprecated
 - `setup --provider` (#390): with `--non-interactive` it still saves `PROMPT_PROVIDER` and

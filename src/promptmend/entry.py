@@ -67,11 +67,12 @@ def discard_stderr() -> None:
 def self_command() -> list[str]:
     """The argv prefix that runs this CLI again in a child process. A frozen build (the
     Windows zip) is its own program: its executable runs the CLI, and it has no
-    interpreter to take ``-m``. Otherwise this interpreter runs the module with ``-P``, so a
-    module planted in the working directory never runs."""
+    interpreter to take ``-m``. Otherwise this interpreter runs this module, so the child
+    starts through main() as the console script does, with ``-P``, so a module planted in the
+    working directory never runs."""
     if getattr(sys, "frozen", False):
         return [sys.executable]
-    return [sys.executable, "-P", "-m", "promptmend.cli"]
+    return [sys.executable, "-P", "-m", "promptmend.entry"]
 
 
 def main() -> None:
@@ -92,4 +93,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # `python -m promptmend.entry` runs this file as __main__, a module apart from
+    # promptmend.entry, which the watchdog imports for take_start(). Run that module's main(),
+    # so the start time (and anything a test patches) lives where it is read.
+    from promptmend.entry import main as _main
+
+    _main()

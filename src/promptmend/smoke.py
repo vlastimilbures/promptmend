@@ -2,7 +2,7 @@
 settings, the provider, the gate, the HTTP call and the output path are all exercised without
 a paid call or a key leaving the machine.
 
-A child process runs `python -m promptmend.cli improve --provider <name> ...` (the same
+A child process runs `python -m promptmend.entry improve --provider <name> ...` (the same
 code a trigger runs) with every provider base URL pointed at the stub and a placeholder key
 in place of the real one, set as environment variables, which outrank every settings file.
 The usage history is switched off the same way: a health check is not usage.

@@ -519,7 +519,7 @@ def test_output_is_utf8_under_legacy_code_page(tmp_path: Path) -> None:
         "PROMPTMEND_ENV": str(tmp_path / ".env"),
     }
     proc = subprocess.run(
-        [sys.executable, "-m", "promptmend.cli", "persona"],
+        [sys.executable, "-m", "promptmend.entry", "persona"],
         capture_output=True,
         env=env,
         timeout=60,
@@ -1384,7 +1384,7 @@ def test_clipboard_output_copy_failure_with_sent_despite(
 # Usage lines name `promptmend` however it was started (here `python -m`).
 def test_usage_names_promptmend() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "promptmend.cli", "--help"],
+        [sys.executable, "-m", "promptmend.entry", "--help"],
         capture_output=True,
         text=True,
         encoding="utf-8",

@@ -4207,7 +4207,7 @@ def test_bare_command_in_a_real_process(tmp_path: Path) -> None:
 
     def run(*args: str) -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(
-            [sys.executable, "-m", "promptmend.cli", *args],
+            [sys.executable, "-m", "promptmend.entry", *args],
             capture_output=True,
             stdin=subprocess.DEVNULL,
             env=env,

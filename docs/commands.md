@@ -191,7 +191,7 @@ runs, as child processes, `promptmend --version`, `promptmend persona` and the `
 `improve` (`--source argument` with the draft as an argument, so the clipboard read a real
 trigger makes is not included), each one first through this install's launcher (the one a
 deploy writes into the match files, or `--launcher`) and then through the interpreter
-directly (`python -P -m promptmend.cli`; a frozen build's exe is both, so it runs once). The difference
+directly (`python -P -m promptmend.entry`; a frozen build's exe is both, so it runs once). The difference
 between the two rows is the cost of the launcher. It also times importing the interface
 (`import promptmend.tui.app` in a child), and reports how long each of `doctor`'s own checks
 took.

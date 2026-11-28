@@ -1516,7 +1516,7 @@ def test_timing_runs_each_command_through_the_launcher_and_the_interpreter(
     assert data["launcher"] == str(launcher)
     assert data["launcher_note"] is None
     assert data["warm_runs"] == 3
-    interpreter = [sys.executable, "-P", "-m", "promptmend.cli"]
+    interpreter = [sys.executable, "-P", "-m", "promptmend.entry"]
     assert data["interpreter"] == interpreter
     assert [(r["command"], r["via"]) for r in data["runs"]] == [
         ("--version", "launcher"),
