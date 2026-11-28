@@ -18,6 +18,7 @@ from .config import ConfigLayers, Settings, secret_names
 from .prompt_builder import ADDED, PROFILES, UserProfile
 from .providers.base import is_loopback
 from .providers.registry import PROVIDERS
+from .settings_service import history_off
 
 # Step id -> the name in the left rail, in order.
 STEPS = {
@@ -101,15 +102,15 @@ LEGACY_NOTE = (
 )
 
 
-def history_line(on: bool) -> str:
+def history_line(on: bool, *, legacy: bool = False) -> str:
     """The Welcome step's word on the usage history (D-HIST-0; `setup --non-interactive`
-    prints usage.disclosure() in full)."""
+    prints usage.disclosure() in full); ``legacy`` when PROMPTMEND_ENV names the settings
+    file, where `config set` refuses."""
     if not on:
         return "Usage history is off; nothing is recorded."
     return (
         "Usage history is on: metadata only (trigger, model, outcome, tokens, cost), never "
-        "your text or keys, kept on this device. Off: `promptmend config set PROMPT_HISTORY "
-        "false`."
+        f"your text or keys, kept on this device. Off: {history_off(legacy=legacy)}."
     )
 
 
@@ -137,7 +138,7 @@ def unread_env_note(env_files: Sequence[Path]) -> str | None:
 
 ESPANSO_INTRO = (
     "Espanso runs PromptMend when you type a trigger. Its match files tell it which trigger "
-    "runs what; installing them writes only PromptMend's own files into Espanso's match "
+    "runs what; deploying them writes only PromptMend's own files into Espanso's match "
     "folder. A file you edited is kept as it is."
 )
 
@@ -146,7 +147,7 @@ NO_LOCAL_TRIGGER = "no trigger stays on this computer with your settings"
 
 # A match file's deploy state in words.
 FILE_STATES = {
-    deploy.MISSING: "not installed yet; will be written",
+    deploy.MISSING: "not deployed yet; will be written",
     deploy.IN_SYNC: "up to date",
     deploy.STALE: "from an older version; will be updated",
     deploy.MODIFIED: "you edited it; kept as it is",
@@ -176,7 +177,7 @@ class KeyRow:
 # and the rail (rail()), so the two never disagree (#393): ok, skipped or not run (a step
 # `setup --no-deploy`/`--no-smoke-test` leaves out, a test not run), or failed (what leaves a
 # trigger not working: an answer PROMPT_LOCAL_ONLY contradicts, a needed key not set, the
-# match files not found or not installed, a test that failed). A fact not known yet (the
+# match files not found or not deployed, a test that failed). A fact not known yet (the
 # match folder still being read, or no State at all) is UNKNOWN: neither ✓ nor ✗.
 OK, SKIPPED, FAILED, UNKNOWN = "ok", "skipped", "failed", "unknown"
 MARKS = {OK: "✓", SKIPPED: "\u2013", FAILED: "✗", UNKNOWN: "\u2026"}
@@ -558,11 +559,11 @@ def _writes(plan: deploy.Plan) -> list[deploy.FileStep]:
 
 def deploy_summary(plan: deploy.Plan) -> str:
     if plan.is_noop or plan.only_forgets:
-        return "Every match file is up to date; nothing to install."
+        return "Every match file is up to date; nothing to deploy."
     writes = _writes(plan)
     if not writes:
         return "Nothing to write: the files that differ are yours and stay as they are."
-    return f"Install writes {len(writes)} file(s) and then restarts Espanso."
+    return f"Deploy writes {len(writes)} file(s) and then restarts Espanso."
 
 
 def shown_choice(name: str, value: str, overrides: Mapping[str, str]) -> str:
@@ -655,8 +656,8 @@ def _match_row(plan: deploy.Plan | None, skipped: Sequence[str], reading: bool) 
     if plan is None:
         return DoneRow(FAILED, label, "Espanso's folder was not found", "espanso")
     if _writes(plan):
-        return DoneRow(FAILED, label, "not installed: `promptmend espanso deploy`", "espanso")
-    text = f"installed in {plan.espanso_dir / 'match'}"
+        return DoneRow(FAILED, label, "not deployed: `promptmend espanso deploy`", "espanso")
+    text = f"deployed to {plan.espanso_dir / 'match'}"
     if plan.conflicts:
         text += f"; {len(plan.conflicts)} file(s) you changed were kept"
     return DoneRow(OK, label, text, "espanso")

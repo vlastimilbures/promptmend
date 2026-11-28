@@ -1381,7 +1381,7 @@ def _quit_shown(app: ManageApp, width: int) -> bool:
 
 # At 70 columns (#394), every tab label lies whole inside the screen and the footer still
 # shows Quit on every tab, each opened from Home's focused rows (#395): Home with its list
-# focused and the Settings list focused (Edit, Toggle, Reset, Filter added) included. About
+# focused and the Settings list focused (Edit, Toggle, Use default, Filter added) included. About
 # and High contrast are off the footer and still work. Pilot, not a snapshot, so Windows
 # checks it too.
 def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
@@ -1410,6 +1410,12 @@ def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
             if tab == "settings":
                 focused = app.focused
                 seen["settings focused"] = focused is not None and focused.id == "settings-list"
+                # `u` is Use default there: "Reset" names only History's delete-all (#396).
+                seen["settings footer"] = {
+                    k.description: k.region.right <= width
+                    for k in app.screen.query(FooterKey)
+                    if k.description in ("Use default", "Reset")
+                }
                 # t works with the list focused too, as docs/interface.md "Keys" says.
                 await pilot.press("t")
                 seen["t on the list"] = app.theme == HIGH_CONTRAST.name
@@ -1441,6 +1447,7 @@ def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
     assert seen == {
         "narrow": True,
         "settings focused": True,
+        "settings footer": {"Use default": True},
         "t on the list": True,
         "t": True,
         "a": True,
@@ -1609,7 +1616,7 @@ def test_a_failing_load_is_shown_not_raised(espanso: FakeRunner) -> None:
 @pytest.mark.parametrize(
     ("tab", "button"),
     [
-        ("2", "#smoke"),
+        ("6", "#smoke"),
         ("3", "#set-profile"),
         ("5", "#export"),
         ("5", "#prune"),
@@ -1640,7 +1647,7 @@ def _focused_id(app: ManageApp) -> str | None:
 @pytest.mark.parametrize(
     ("tab", "button", "field"),
     [
-        ("2", "#smoke", "provider"),
+        ("6", "#smoke", "provider"),
         ("3", "#set-profile", "profile"),
         ("5", "#export", "format"),
         ("5", "#prune", "days"),
@@ -2552,7 +2559,9 @@ def in_view(app: ManageApp, option_id: str) -> bool:
 
 @pytest.mark.parametrize(
     "keys",
-    [("pagedown", "pageup"), ("end", "home"), ("k", "j")],
+    # Page Down skips a heading it lands on, so one Page Up can stop a setting short of the
+    # first: a second one gets there (the list is a line taller since #396 moved Test call).
+    [("pagedown", "pageup", "pageup"), ("end", "home"), ("k", "j")],
     ids=["page", "end-home", "k-j"],
 )
 def test_settings_the_summary_lines_come_back_into_view(
@@ -2947,7 +2956,7 @@ def test_settings_change_warns_about_a_flagged_persona(
     assert 'PROMPT_PROFILE = "default"' in (saved / "config.toml").read_text("utf-8")
 
 
-def test_settings_test_call_uses_the_stub_service(
+def test_checks_test_call_uses_the_stub_service(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     called = []
@@ -2959,20 +2968,20 @@ def test_settings_test_call_uses_the_stub_service(
     monkeypatch.setattr(smoke, "run", fake_run)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("2")
+        await pilot.press("6")
         await press(app, pilot, "#smoke")
         assert "No provider is called" in _dialog(app).preview
         await press(app, pilot, "#cancel")
         assert called == []
         await press(app, pilot, "#smoke")
         await fill(app, pilot, provider="ollama")
-        assert pane(app, "settings").last_message == "ok: improve reached the stub"
+        assert pane(app, "diagnostics").last_message == "ok: improve reached the stub"
 
     drive(scenario)
     assert called == ["ollama"]
 
 
-def test_settings_test_call_adds_no_history_row(
+def test_checks_test_call_adds_no_history_row(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#116: the real Test call (a child improve against the stub) is not usage."""
@@ -2980,18 +2989,60 @@ def test_settings_test_call_adds_no_history_row(
     store = HistoryStore(history.history_path())
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("2")
+        await pilot.press("6")
         await press(app, pilot, "#smoke")
         await fill(app, pilot, provider="ollama")
         for _ in range(100):  # the child process runs in a worker
-            if pane(app, "settings").last_message.startswith("ok: "):
+            if pane(app, "diagnostics").last_message.startswith("ok: "):
                 break
             await asyncio.sleep(0.1)
             await settle(pilot)
-        assert pane(app, "settings").last_message.startswith("ok: improve reached the stub")
+        assert pane(app, "diagnostics").last_message.startswith("ok: improve reached the stub")
 
     drive(scenario)
     assert store.health().operations in (None, 0)
+
+
+# #396: the one Test call is on the Checks tab, and it needs only the settings: on the quick
+# State (the full checks still running) a real click opens its dialog, focused on the
+# provider, and Run reports the stub's answer under the button. The Settings tab has no
+# button row left.
+def test_checks_test_call_works_on_the_quick_state(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: list[str] = []
+
+    def fake_run(provider: str) -> smoke.SmokeResult:
+        called.append(provider)
+        return smoke.SmokeResult(True, smoke.REPLY, 1, "improve reached the stub")
+
+    monkeypatch.setattr(smoke, "run", fake_run)
+    blocked = BlockedLoad()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await until(pilot, lambda: app.state is not None)
+        await pilot.press("2")
+        await until(pilot, lambda: settings_tab(app).ready)
+        assert not settings_tab(app).query("#smoke")
+        assert not settings_tab(app).query(".buttons")
+        await pilot.press("6")
+        checks = app.main.query_one("#diagnostics-pane", base.Pane)
+        await until(pilot, lambda: checks.ready)
+        assert not _state(app).full
+        assert not checks.query_one("#smoke", Button).disabled
+        await pilot.click("#smoke")
+        await until(pilot, lambda: isinstance(app.screen, FormModal))
+        assert _dialog(app).dialog_title == "Test call"
+        assert _focused_id(app) == "provider"
+        await pilot.click("#submit")
+        await until(pilot, lambda: checks.last_message.startswith("ok: "), lambda: called)
+        assert checks.last_message == "ok: improve reached the stub"
+        assert not _state(app).full
+        blocked.release.set()
+        await settle(pilot)
+
+    drive(scenario, settled=False, loader=blocked)
+    assert called == [config.Settings().provider]
 
 
 # --- Profiles -----------------------------------------------------------------------------
@@ -3186,11 +3237,17 @@ def test_triggers_show_fixed_providers_and_deploy(espanso: FakeRunner) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await pilot.press("4")
         rows = table_rows(app, "triggers", "#triggers")
-        assert rows["-i-"][1:5] == ["openrouter", "standard", "PROMPT_PROFILE", "missing"]
-        assert rows["-ip-"][1:3] == ["PROMPT_PRO_PROVIDER", "pro"]
+        # The value a call runs with, the setting that supplied it under it (#396); a value
+        # the command line names stands alone.
+        assert rows["-i-"][1:5] == ["openrouter", "standard", "default\nPROMPT_PROFILE", "missing"]
+        assert rows["-ip-"][1:4] == [
+            "openrouter\nPROMPT_PRO_PROVIDER",
+            "pro",
+            "default\nPROMPT_PROFILE",
+        ]
         assert rows["-il-"][1:4] == ["ollama", "standard", "general"]
         assert rows["-ic-"][4] == "commented out"
-        assert "PROMPT_PROVIDER does not change these" in str(
+        assert "whatever PROMPT_PROVIDER says" in str(
             pane(app, "triggers").query_one(".note").render()
         )
         await press(app, pilot, "#deploy")
@@ -3773,10 +3830,10 @@ def test_a_failing_worker_is_reported_not_raised(
     monkeypatch.setattr(deploy, "apply", bad_apply)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        await pilot.press("2")
+        await pilot.press("6")
         await press(app, pilot, "#smoke")
         await fill(app, pilot)
-        assert pane(app, "settings").last_message == "error: unexpected RuntimeError: kaput"
+        assert pane(app, "diagnostics").last_message == "error: unexpected RuntimeError: kaput"
         await pilot.press("4")
         await press(app, pilot, "#deploy")
         await press(app, pilot, "#submit")
@@ -4083,8 +4140,8 @@ def test_results_show_their_command_and_home_keeps_the_session(
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         home = pane(app, "home")
         before = _rendered(home, "#home-session")
-        assert "In a terminal, try:" in before
-        assert "$ promptmend config show" in before
+        # Before any action, one line (#396): no recipes.
+        assert before.rstrip("\n") == home_pane.SESSION_EMPTY
         await edit_to(app, pilot, "PROMPT_TIMEOUT_SECONDS", "45")
         result = _rendered(pane(app, "settings"), ".result")
         assert result.startswith("$ promptmend config set PROMPT_TIMEOUT_SECONDS 45\n")
@@ -4121,3 +4178,135 @@ def test_session_log_keeps_the_latest(espanso: FakeRunner) -> None:
     assert text.count("$ promptmend doctor") == home_pane.SESSION_LINES
     failed = home_pane.session_text([teach.Entry("c", "boom", error=True)]).plain
     assert "    error: boom" in failed
+
+
+# #396: the empty session log is one muted line, whole at 70 columns (Home's pane has one
+# column of padding each side), instead of a title, six recipes and a note.
+def test_the_empty_session_log_is_one_line() -> None:
+    from promptmend.tui import home_pane
+
+    empty = home_pane.session_text(())
+    assert empty.plain == home_pane.SESSION_EMPTY
+    assert "\n" not in empty.plain
+    assert cell_len(empty.plain) <= 70 - 2
+    assert str(empty.style) == "dim"
+    assert "tooltip" in empty.plain
+
+
+# #396: the Triggers table's Provider and Profile cells show the value a call runs with and,
+# under it, the setting that supplied it; a value the command line names stands alone. The
+# pro tier takes PROMPT_PRO_PROFILE when it is set, on a provider with the pro tier only.
+@pytest.mark.parametrize(
+    ("env", "ip", "if_"),
+    [
+        (
+            {"PROMPT_PRO_PROFILE": "general"},
+            ["openrouter\nPROMPT_PRO_PROVIDER", "pro", "general\nPROMPT_PRO_PROFILE"],
+            ["openrouter", "pro", "general\nPROMPT_PRO_PROFILE"],
+        ),
+        (
+            {"PROMPT_PRO_PROFILE": "general", "PROMPT_PRO_PROVIDER": "anthropic"},
+            ["anthropic\nPROMPT_PRO_PROVIDER", "pro", "general\nPROMPT_PRO_PROFILE"],
+            ["openrouter", "pro", "general\nPROMPT_PRO_PROFILE"],
+        ),
+        (
+            {"PROMPT_PROFILE": "general", "PROMPT_PROVIDER": "ollama"},
+            ["openrouter\nPROMPT_PRO_PROVIDER", "pro", "general\nPROMPT_PROFILE"],
+            ["openrouter", "pro", "general\nPROMPT_PROFILE"],
+        ),
+    ],
+    ids=["pro-profile", "pro-provider", "standard-settings"],
+)
+def test_triggers_cells_name_the_setting_a_value_comes_from(
+    espanso: FakeRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    ip: list[str],
+    if_: list[str],
+) -> None:
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    standard = env.get("PROMPT_PROFILE", "default")
+    seen: dict[str, list[str]] = {}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("4")
+        await settle(pilot)
+        seen.update(table_rows(app, "triggers", "#triggers"))
+
+    drive(scenario)
+    assert seen["-ip-"][1:4] == ip
+    assert seen["-if-"][1:4] == if_
+    # -i- names openrouter: PROMPT_PROVIDER never changes it; its profile is PROMPT_PROFILE's.
+    assert seen["-i-"][1:4] == ["openrouter", "standard", f"{standard}\nPROMPT_PROFILE"]
+    assert seen["-il-"][1:4] == ["ollama", "standard", "general"]
+    assert seen["-p-"][1:4] == ["prints PROMPT_PERSONA", "-", "-"]
+
+
+# Review of #396: the -ip- Provider cell draws the provider a call runs, as Home's Pro row
+# names it, not PROMPT_PRO_PROVIDER's raw text (empty means openrouter; the parser strips
+# and lowercases it).
+@pytest.mark.parametrize(
+    ("raw", "runs"), [("", "openrouter"), ("OpenAI", "openai"), (" anthropic ", "anthropic")]
+)
+def test_triggers_ip_cell_and_home_name_the_same_provider(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, raw: str, runs: str
+) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", raw)
+    seen: dict[str, Any] = {}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        seen["home"] = next(line for line in _home_text(app).splitlines() if "Pro (-ip-)" in line)
+        await pilot.press("4")
+        await settle(pilot)
+        seen["rows"] = table_rows(app, "triggers", "#triggers")
+        seen["runs"] = _state(app).settings.pro_provider
+
+    drive(scenario)
+    assert seen["runs"] == runs
+    assert seen["rows"]["-ip-"][1] == f"{runs}\nPROMPT_PRO_PROVIDER"
+    assert f"{runs} · " in seen["home"]
+
+
+# Review of #396: the Triggers table takes the height the note, the deploy target and the
+# buttons leave and scrolls inside itself, so Show diff, Deploy and Detach (under the table)
+# and the deploy target's first line are on screen without scrolling the pane, and Down on
+# the table reaches the last trigger.
+@pytest.mark.parametrize("size", [(70, 24), (80, 24), (110, 36)])
+def test_triggers_buttons_stay_on_screen_and_the_table_scrolls(
+    espanso: FakeRunner, size: tuple[int, int]
+) -> None:
+    from textual.widgets import DataTable
+
+    width, height = size
+    seen: dict[str, Any] = {}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("4")
+        await settle(pilot)
+        triggers = pane(app, "triggers")
+        seen["pane scroll"] = (triggers.max_scroll_y, triggers.scroll_y)
+        inside = []
+        for id_ in ("show-diff", "deploy", "detach"):
+            region = triggers.query_one(f"#{id_}").region
+            inside.append(region.height > 0 and region.bottom <= height - 1)
+            inside.append(region.x >= 0 and region.right <= width)
+        # The deploy target's first line too (its paths wrap; tests' temp paths are long).
+        target = triggers.query_one("#deploy-target").region
+        inside.append(target.height > 0 and target.y < height - 1)
+        seen["inside"] = inside
+        table = triggers.query_one("#triggers", DataTable)
+        table.focus()
+        await pilot.pause()
+        for _ in range(table.virtual_size.height):
+            await pilot.press("down")
+        await pilot.pause()
+        # Scrolled as far as it goes: the last trigger's row is the table's last line.
+        seen["table"] = (table.scroll_y, table.max_scroll_y, table.size.height > 1)
+
+    drive(scenario, size=size)
+    assert seen["pane scroll"][1] == 0
+    assert seen["inside"] == [True] * 7
+    scroll_y, max_scroll_y, shown = seen["table"]
+    assert shown
+    assert scroll_y == max_scroll_y

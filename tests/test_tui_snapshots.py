@@ -363,6 +363,17 @@ def test_snapshot_try_narrow(name: str, size: tuple[int, int]) -> None:
     _check(name, _shoot("7", size=size))
 
 
+# The Triggers tab at 80 columns (#396): a value a setting supplies has the setting's name on
+# a second line, so the State column stays on screen; every trigger's row is in the table.
+# The Checks tab at 70 columns: the Test call's button row whole under the routes table.
+@pytest.mark.parametrize(
+    ("name", "key", "size"),
+    [("triggers-80", "4", (80, 24)), ("diagnostics-70", "6", (70, 24))],
+)
+def test_snapshot_narrow_tabs(name: str, key: str, size: tuple[int, int]) -> None:
+    _check(name, _shoot(key, size=size))
+
+
 def test_snapshot_about() -> None:
     _check("about", _shoot("a"))
 

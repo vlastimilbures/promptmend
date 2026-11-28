@@ -19,16 +19,15 @@ from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
 from textual.geometry import Region
-from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from .. import config_store, settings_service, smoke
+from .. import config_store, settings_service
 from ..commands import common
 from ..commands import doctor as doctor_cmd
 from ..config import secret_names
-from ..factory import PROVIDER_NAMES
 from . import home, settings_model, teach
-from .base import EXPECTED, Pane, button_row, error_message
+from .base import EXPECTED, Pane, error_message
 from .modals import USE_DEFAULT, ConfirmModal, EditModal, Field, FormModal, PickModal, UseDefault
 from .state import State
 
@@ -113,15 +112,16 @@ def _matching(choices: tuple[str, ...], value: str) -> int | None:
 
 class SettingsList(OptionList):
     """The Settings tab's list. Its keys are bound here, so they act only while it has the
-    focus: never under a dialog, in the filter or on another tab. Reset is `u` (as `config
-    unset`), so `r` reloads here too."""
+    focus: never under a dialog, in the filter or on another tab. Use default is `u` (as
+    `config unset`; "Reset" names only the History tab's delete-everything), so `r` reloads
+    here too."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
         Binding("space", "switch", "Toggle"),
         Binding("enter", "select", "Edit"),
-        Binding("u", "reset", "Reset"),
+        Binding("u", "reset", "Use default"),
         Binding("slash", "filter", "Filter"),
     ]
 
@@ -215,7 +215,6 @@ class SettingsPane(Pane):
             yield Static("", id="settings-count", markup=False)
         yield SettingsList(id="settings-list")
         yield Static("", id="settings-help", markup=False)
-        yield button_row(("smoke", "Test call (local stub)"))
         yield self.result()
 
     def setup(self) -> None:
@@ -571,27 +570,3 @@ class SettingsPane(Pane):
             still = common.source_label(entry.source)
             return f"{name} removed from the secrets file; it is still set, from {still}."
         return f"{name} removed from the secrets file."
-
-    @on(Button.Pressed, "#smoke")
-    def _smoke(self) -> None:
-        current = self.state.settings.provider if self.state else PROVIDER_NAMES[0]
-        preview = (
-            "Runs improve against a stub on 127.0.0.1 with a placeholder key. No provider is "
-            "called, and neither your key nor your clipboard is sent."
-        )
-        fields = [Field("provider", "Provider", PROVIDER_NAMES, value=current)]
-        self.app.push_screen(
-            FormModal("Test call", fields, submit="Run", preview=preview, focus="provider"),
-            self._run_smoke,
-        )
-
-    def _run_smoke(self, values: dict[str, str] | None) -> None:
-        if values is not None:
-            self.report(f"Running improve --provider {values['provider']} against the stub…")
-            provider = values["provider"]
-            self.background(lambda: self._smoke_now(provider))
-
-    def _smoke_now(self, provider: str) -> None:
-        result = smoke.run(provider)
-        message = f"{'ok' if result.ok else 'failed'}: {result.message}"
-        self.app.call_from_thread(self.report, message, error=not result.ok)

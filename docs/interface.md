@@ -32,8 +32,9 @@ asks first, in a dialog whose Cancel has the focus. A dialog whose first Enter c
 opens in its field instead: Set key in the hidden value (Enter on it empty changes nothing; a
 saved key is replaced only by what you type), Test call, Export, the default profile and
 Prune's days (whose Next still asks, on Cancel). No provider
-is called except by the Test call button, which runs `improve` against a stub on `127.0.0.1`
-with a placeholder key, and by a Try tab run you confirm.
+is called except by the Checks tab's Test call button, which runs `improve` against a stub on
+`127.0.0.1` with a placeholder key (no command does only that: setup's Test step runs the same
+test on your triggers' path), and by a Try tab run you confirm.
 
 ## Setup
 
@@ -41,7 +42,7 @@ with a placeholder key, and by a Try tab run you confirm.
 the steps listed on the left: `▶` marks where you are, and each step you have passed is
 marked as Done lists it: `✓` done, `–` skipped or not run (a test you did not run, a step
 `--no-deploy` or `--no-smoke-test` leaves out), `✗` failed or still to do (a key the
-triggers need is not set, the match files are not installed or Espanso's folder was not
+triggers need is not set, the match files are not deployed or Espanso's folder was not
 found, the test failed), `…` not known yet (the first read of the match folder has not landed; a later re-read
 keeps the last result on screen). A step
 not reached yet has no mark. The first time you open `promptmend` with nothing set up yet (no
@@ -55,7 +56,7 @@ time.
 | API keys | Paste each key the triggers need (hidden); the step names the triggers each key is for, and after local says that none is needed |
 | Profile | Pick the default profile; each line says how it rewrites |
 | Output | Paste (the rewrite replaces the trigger) or clipboard (`PROMPT_OUTPUT`: the rewrite waits on the clipboard; see [Output](usage.md#output-paste-or-clipboard)) |
-| Espanso | See the match folder and each file in words (not installed yet, up to date, you edited it), then install them; a file you edited is kept |
+| Espanso | See the match folder and each file in words (not deployed yet, up to date, you edited it), then deploy them; a file you edited is kept |
 | Test | Run `improve` against a stub on `127.0.0.1` on the path your triggers take: `-i-`'s for cloud, the first trigger that stays on this computer for local (`-il-`'s on Ollama), both for both; no provider is called, and with no local trigger nothing runs |
 | Done | A checklist of what is set and what is left (cloud or local, the profile, the output, the keys), with the command for each, and how to try a trigger your answer leaves you (`-il-` after local, `-i-` otherwise), worded by the output |
 
@@ -67,7 +68,7 @@ Next and Back (or Escape) move between the steps; Enter on a list picks and move
 (Quit setup, in the footer on every step) leaves setup, and so does Escape on Welcome:
 opened by `promptmend setup` it exits (code 0, as Done's Quit), opened from Home it goes back
 to Home, where a second `q` quits the interface. While a key field has the focus `q` types
-into it, so the footer leaves it out there. While the match files install or the test runs,
+into it, so the footer leaves it out there. While the match files deploy or the test runs,
 `q` and Escape (Back) are greyed out in the footer and refused, and the Back and Next buttons
 do nothing; nothing is queued: press again once it has finished. Each
 change is made through the same code as its command and shows that command. With
@@ -81,7 +82,7 @@ variable already gives that value, and a choice at its default removes the entry
 an environment variable that overrides your answer, the profile or the output.
 
 Options given to `setup` prefill the wizard: `--use`, `--profile` and `--output` preselect
-that choice (Next still saves it), `--deploy` puts the focus on the install button
+that choice (Next still saves it), `--deploy` puts the focus on the Deploy button
 (nothing is written until you press it), and `--no-deploy` and `--no-smoke-test` leave out
 the Espanso and Test steps. The deprecated `--provider` has no step: Welcome says it was not
 saved, and without `--use` the Cloud or local step starts on local for Ollama or LM Studio
@@ -95,18 +96,21 @@ and on cloud otherwise. `--non-interactive` (or `--plain`) runs without the wiza
 | Key | Tab | What it shows and does |
 |-----|-----|------------------------|
 | `1` | Home | Whether you are ready, the most urgent problem and the session log |
-| `2` | Settings | What the triggers run, then every setting and key in one list, the rarely changed ones behind an Advanced fold: switch, pick, edit or reset a setting, set or remove a key, run the Test call (see [Settings tab](#settings-tab)) |
+| `2` | Settings | What the triggers run, then every setting and key in one list, the rarely changed ones behind an Advanced fold: switch, pick or edit a setting or put it back to its default, set or remove a key (see [Settings tab](#settings-tab)) |
 | `3` | Profiles | Built-in and your own profiles; pick the default profile (Set default starts at the highlighted row: a retired name at its target, one of yours only when a trigger would use it, added or replacing a built-in), edit a profile in `$VISUAL` or `$EDITOR` |
-| `4` | Triggers | The match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
+| `4` | Triggers | Each trigger's provider, tier and profile, as the value a call runs with (a value a setting supplies has that setting's name under it, `openrouter` over `PROMPT_PRO_PROVIDER`; a value the trigger's command line names stands alone; `-if-`'s Profile is what its form's `default` choices run, and a profile picked in the form applies instead), the match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
 | `5` | History | Usage statistics by trigger, provider, model or day; export, prune, reset |
-| `6` | Checks | Each provider's model, base URL, key and whether the draft leaves this machine; the settings layers and any problem in the settings files; the `doctor` checks |
+| `6` | Checks | Each provider's model, base URL, key and whether the draft leaves this machine; the settings layers and any problem in the settings files; the `doctor` checks; the Test call, `improve` on a provider you pick against a stub on `127.0.0.1` with a placeholder key |
 | `7` | Try | Rewrite a typed draft with a confirmed provider, or check the wiring with a dry run |
 
 The Checks tab was called Diagnostics in 0.27.0 and earlier. All seven tabs fit a 70-column
 terminal: below 80 columns the tabs have one space between them instead of two.
 
 Every button's tooltip shows the command that does the same in a terminal, and every result
-starts with that command (`$ promptmend config set …`).
+starts with that command (`$ promptmend config set …`). A button no command does the same as
+says what it does instead, and what comes closest: Check again (`promptmend doctor` prints
+the same checks), Edit in `$EDITOR` (`promptmend profiles list` shows where each profile is)
+and Test call (setup's Test step runs the same test on your triggers' path).
 
 ![The Home tab](interface.svg)
 
@@ -138,10 +142,10 @@ gives it to the list, on the row it was on, which a reload keeps too.
 When the headline names a problem, the first button opens its fix (Tab, then Enter, from
 the list), always on the tab the headline points to:
 
-- `Deploy or repair…` when match files are not deployed, out of date or edited, or an older
+- `Deploy…` when match files are not deployed, out of date or edited, or an older
   deployed `-ip-` needs a redeploy (even when its key is missing: once redeployed it runs on
   `PROMPT_PRO_PROVIDER`, which may need another key): the Triggers tab's deploy preview, as
-  its own Deploy or repair button opens it. Nothing is written until you press Deploy in that
+  its own Deploy button opens it. Nothing is written until you press Deploy in that
   dialog (`promptmend espanso deploy`); it is greyed out until the checks are done, as that
   button is.
 - `Set OPENROUTER_API_KEY…` (or the key that is missing): the Settings tab's Set key dialog
@@ -157,7 +161,7 @@ The row under the highlight is drawn in the highlight's own colours, its status 
 it reads in either theme.
 
 The header shows the same status (`ok`, or `1 problem, 2 warnings`). Home also lists this
-session's commands, or a few useful ones before you have done anything.
+session's commands; before you have done anything, one line says that they will show there.
 
 Home appears at once, in two steps. The rows that need only your settings (what `-i-` and
 `-ip-` run, the output mode) fill in first; the match files and Espanso, the usage history
@@ -179,7 +183,7 @@ lands.
 Buttons that act on what is still being checked wait for it: Show diff, Deploy and Detach on
 the Triggers tab and Prune and Reset on the History tab are greyed out until then (pressed
 anyway, they say they wait; nothing is queued to run later), and a first run offers the
-setup only once it knows nothing is installed. Everything that needs only your settings
+setup only once it knows nothing is set up yet. Everything that needs only your settings
 (the Settings, Profiles and Try tabs, Home's buttons, Export) works at once.
 
 ![Home while the checks still run](../tests/snapshots/home-quick.svg)

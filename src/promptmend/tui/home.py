@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from .. import deploy, doctor, installed_version, update_check
 from ..commands import common
-from ..config import model_setting
+from ..config import Settings, model_setting
 from ..factory import routes
 from .state import State
 
@@ -109,6 +109,37 @@ def _version_row(state: State) -> HomeRow:
     return HomeRow(OK, "Version", f"{installed_version()}{words.get(update.state, '')}")
 
 
+@dataclass(frozen=True)
+class Resolved:
+    """What a trigger call runs with (a provider or a profile) and the setting that supplied
+    it; ``setting`` is None when the trigger's command line names the value itself."""
+
+    value: str
+    setting: str | None = None
+
+
+def trigger_provider(cfg: Settings, tier: str, named: str | None) -> Resolved:
+    """The provider a trigger on ``tier`` runs: the one its command line names, else
+    cfg.provider_for() (PROMPT_PRO_PROVIDER on the pro tier, PROMPT_PROVIDER otherwise)."""
+    if named:
+        return Resolved(named)
+    return Resolved(
+        cfg.provider_for(tier), "PROMPT_PRO_PROVIDER" if tier == "pro" else "PROMPT_PROVIDER"
+    )
+
+
+def trigger_profile(cfg: Settings, tier: str, provider: str, named: str | None) -> Resolved:
+    """The profile a trigger on ``tier`` and ``provider`` runs: the one its command line
+    names, else what Settings.for_call() applies, and the setting it came from:
+    PROMPT_PRO_PROFILE when set, on the pro tier of a provider that has one (tier_preset()),
+    else PROMPT_PROFILE."""
+    if named:
+        return Resolved(named)
+    profile = cfg.for_call(tier, provider=provider).profile
+    pro = cfg.tier_preset(tier, provider) is not None and bool(cfg.pro_profile)
+    return Resolved(profile, "PROMPT_PRO_PROFILE" if pro else "PROMPT_PROFILE")
+
+
 def trigger_row(state: State, label: str, name: str) -> HomeRow:
     """The provider and model a trigger runs (its command line names them; PROMPT_PROVIDER,
     or PROMPT_PRO_PROVIDER on the pro tier, only when it does not), and whether its key is
@@ -121,7 +152,7 @@ def trigger_row(state: State, label: str, name: str) -> HomeRow:
     trigger = next((t for t in [*deployed, *state.triggers] if t.trigger == name), None)
     cfg = state.settings
     tier = (trigger.tier if trigger else None) or "standard"
-    provider = (trigger.provider if trigger else None) or cfg.provider_for(tier)
+    provider = trigger_provider(cfg, tier, trigger.provider if trigger else None).value
     route = next((r for r in routes(cfg) if r.name == provider), None)
     if route is None:  # a provider name no route knows: nothing more to say about it
         return HomeRow(FAIL, label, provider, "", "settings", f"{name} names {provider}")
@@ -285,7 +316,7 @@ def headline(rows: list[HomeRow]) -> tuple[str, str | None]:
 
 
 # What Home's fix button opens (Fix.action).
-DEPLOY = "deploy"  # the Triggers tab's deploy preview, as its Deploy or repair button
+DEPLOY = "deploy"  # the Triggers tab's deploy preview, as its Deploy button
 SET_KEY = "set-key"  # the Settings tab's Set key dialog for Fix.key
 OPEN = "open"  # the tab Fix.tab
 
@@ -303,7 +334,7 @@ class Fix:
     def label(self) -> str:
         """The button's label: an ellipsis when it opens a dialog."""
         if self.action == DEPLOY:
-            return "Deploy or repair…"
+            return "Deploy…"
         if self.action == SET_KEY:
             return f"Set {self.key}…"
         return f"Open {TAB_LABELS[self.tab]}"

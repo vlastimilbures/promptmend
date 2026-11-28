@@ -61,7 +61,7 @@ one: saving writes the file it points to, and so does a symlinked `secrets.toml`
 ## Change a setting
 
 Use the commands, or the [Settings tab](interface.md#settings-tab) of the interface, a list
-to switch, pick, edit and reset each setting:
+to switch, pick and edit each setting, or put it back to its default:
 
 ```bash
 promptmend config show                       # every setting, its value and its source

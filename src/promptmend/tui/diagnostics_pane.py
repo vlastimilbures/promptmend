@@ -1,20 +1,27 @@
 """The Checks tab (id `diagnostics`): the provider routes, the settings layers and every
-doctor check."""
+doctor check, and the Test call under the routes: `improve` on a provider the person picks
+against a stub on 127.0.0.1 with a placeholder key (smoke.run(), as setup's Test step), never
+a real provider or the real key (#396: moved here from the Settings tab). The interface's
+other stub runs are setup's Test step and the Try tab's Dry run; outside it, `doctor
+--timing` runs a stub improve too, to time it. It needs only the settings, so it works on the
+quick State too."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
-from textual.widgets import DataTable, Static
+from textual.widgets import Button, DataTable, Static
 
-from .. import doctor
+from .. import doctor, smoke
 from ..commands import common
 from ..commands import doctor as doctor_cmd
 from ..commands import settings as settings_cmd
-from ..factory import routes
-from .base import Pane, add_row
+from ..factory import PROVIDER_NAMES, routes
+from .base import Pane, add_row, button_row
+from .modals import Field, FormModal
 from .state import State
 
 
@@ -69,6 +76,8 @@ class DiagnosticsPane(Pane):
     def compose(self) -> ComposeResult:
         yield Static("", markup=False, id="policy")
         yield DataTable(id="routes", cursor_type="none", zebra_stripes=True)
+        yield button_row(("smoke", "Test call (local stub)"))
+        yield self.result()
         yield Static("", markup=False, id="layers")
         yield Static("", markup=False, id="findings")
         yield Static("", markup=False, id="all-checks")
@@ -116,3 +125,27 @@ class DiagnosticsPane(Pane):
             f"Lost history writes: {lost}{f' (last {last})' if last else ''}; tracking "
             f"{'incomplete' if stored.get('tracking_incomplete') else 'complete'}"
         )
+
+    @on(Button.Pressed, "#smoke")
+    def _smoke(self) -> None:
+        current = self.state.settings.provider if self.state else PROVIDER_NAMES[0]
+        preview = (
+            "Runs improve against a stub on 127.0.0.1 with a placeholder key. No provider is "
+            "called, and neither your key nor your clipboard is sent."
+        )
+        fields = [Field("provider", "Provider", PROVIDER_NAMES, value=current)]
+        self.app.push_screen(
+            FormModal("Test call", fields, submit="Run", preview=preview, focus="provider"),
+            self._run_smoke,
+        )
+
+    def _run_smoke(self, values: dict[str, str] | None) -> None:
+        if values is not None:
+            self.report(f"Running improve --provider {values['provider']} against the stub…")
+            provider = values["provider"]
+            self.background(lambda: self._smoke_now(provider))
+
+    def _smoke_now(self, provider: str) -> None:
+        result = smoke.run(provider)
+        message = f"{'ok' if result.ok else 'failed'}: {result.message}"
+        self.app.call_from_thread(self.report, message, error=not result.ok)

@@ -63,6 +63,16 @@ def legacy_env() -> str | None:
     return config.env_file_override()
 
 
+def history_off(*, legacy: bool) -> str:
+    """How to switch the usage history off, true in either mode (#396): `config set`, or in
+    legacy mode (``legacy``: PROMPTMEND_ENV set), where `config set` refuses, the line to add
+    to the file it names (never its path, as factory.key_hint()). The one source of the
+    advice for `stats --verbose`, `setup` and the History and setup screens."""
+    if legacy:
+        return f"add PROMPT_HISTORY=false to the .env that {config.ENV_FILE_VAR} names"
+    return "`promptmend config set PROMPT_HISTORY false`"
+
+
 def refuse_in_legacy_mode(what: str) -> None:
     """Raise ServiceError when PROMPTMEND_ENV means ``what`` would not be read."""
     path = legacy_env()

@@ -291,7 +291,7 @@ After any install, run one of these in a terminal:
   key), the local ones (Ollama or LM Studio; this saves `PROMPT_LOCAL_ONLY=true`, so the cloud
   triggers refuse) or both, paste each API key those triggers need (hidden, saved in
   `secrets.toml`), pick the default profile and paste or clipboard output (saved in
-  `config.toml`), install the match files after seeing what changes, and run a smoke test of
+  `config.toml`), deploy the match files after seeing what changes, and run a smoke test of
   `improve` on your triggers' path against a stub on `127.0.0.1` (never a paid call, never
   your real key). It ends with what is left to do and how to try a trigger your answer
   leaves you (`-il-` after local, `-i-` otherwise). `promptmend setup --non-interactive`

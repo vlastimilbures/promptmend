@@ -924,10 +924,12 @@ def test_stats_text_states_the_caveats_and_the_history(
         "not provider billing",
         "rendered does not mean pasted",
         "ignore PROMPT_PROVIDER",
-        "config set PROMPT_HISTORY false",
+        # conftest's PROMPTMEND_ENV (legacy mode), where `config set` refuses (#396).
+        "add PROMPT_HISTORY=false to the .env that PROMPTMEND_ENV names",
         str(history.history_path()),
     ):
         assert caveat in result.stdout
+    assert "config set PROMPT_HISTORY" not in result.stdout
     assert "No usage recorded yet." in result.stdout
     record_ops()
     result = _run("stats", "--by", "provider")

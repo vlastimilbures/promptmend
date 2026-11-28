@@ -15,14 +15,14 @@ All notable changes to this project are documented here. The format follows
   out, are now `–` in the checklist too (they were `✗` and `✓`); a skipped step stays listed
   on the rail. `q` (Quit setup) is in the footer on every step, except while a key field
   has the focus, and Escape on Welcome leaves as well: `promptmend setup` exits 0, as Done's
-  Quit; opened from Home, it goes back to Home. While the match files install or the test
+  Quit; opened from Home, it goes back to Home. While the match files deploy or the test
   runs, `q` and Escape are refused and greyed out in the footer.
 - Interface: Home takes you to the fix of the problem it names (#395). Its rows are a list
   with the focus when the interface opens: Enter (or a click) on a row opens the tab it
   names, checks again on a `not checked` row and shows About on a newer release; the row
   stays highlighted through a reload, and leaving Home gives the focus to the tab bar
   (to Settings' list on the Settings tab, as before). A
-  new first button opens the headline's fix: `Deploy or repair…` opens the Triggers tab's
+  new first button opens the headline's fix: `Deploy…` opens the Triggers tab's
   deploy preview (nothing is written until you press Deploy there), `Set <KEY>…` the
   Settings tab's Set key dialog for the missing key, and `Open` the tab the problem points
   to otherwise, always the tab the headline's pointer names (an older `-ip-` that needs a
@@ -39,6 +39,24 @@ All notable changes to this project are documented here. The format follows
   at 70 columns without wrapping a value such as `Real provider` or `as configured`. A long
   profile name of your own is cut in the closed picker, so the Send dialog now names the
   profile too (for `as configured`, the one it uses).
+- Interface: clearer wording and command hints (#396). Writing the match files into Espanso
+  is called deploy everywhere: setup's button is `Deploy the match files` (it said Install,
+  as its file list, `--deploy`'s help and setup's checklist did: `not deployed`, `deployed
+  to …`), the Triggers tab's button is `Deploy` and Home's fix button `Deploy…` (both were
+  `Deploy or repair`). On the Settings tab the footer calls `u` Use default, as its dialogs
+  do; Reset is only the History tab's delete-everything. The tooltips of Check again, Edit
+  in `$EDITOR` and Test call no longer show a command that does something else (`doctor`,
+  `profiles list`, `setup`): they say what the button does and name the closest command.
+  The advice on switching the usage history off (`stats --verbose`, setup, the History tab)
+  no longer mentions "your .env": it gives `promptmend config set PROMPT_HISTORY false`, or,
+  with `PROMPTMEND_ENV` set, says to add `PROMPT_HISTORY=false` to the file it names. The
+  Triggers table shows the provider and profile each trigger runs with (`openrouter`, with
+  `PROMPT_PRO_PROVIDER` under it when a setting supplies it) instead of the setting's name,
+  and its note is shorter; the table scrolls inside itself, with Show diff, Deploy and Detach
+  right under it and then the deploy target, so the buttons stay on screen down to 70x24.
+  The Test call button moved from the Settings tab to the Checks
+  tab, so Settings' list is a line taller. Before any action, Home's session log is one
+  line instead of eight.
 - Interface: on the Settings tab a row at its built-in default no longer looks disabled
   (#388). Names and values always have the normal text colour; only the word `default` in
   the source column is muted. The dot means only "set by you": a filled `●`, in the theme's
