@@ -90,10 +90,27 @@ class ProfilesPane(Pane):
         if self.state is None:
             return
         own = [p.name for p in self.state.profiles if p.status == ADDED]
-        fields = [
-            Field("profile", "PROMPT_PROFILE", [*PROFILES, *own], value=self.state.settings.profile)
-        ]
-        self.app.push_screen(FormModal("Default profile", fields), self._save_profile)
+        value = self.highlighted(self.state, own)
+        fields = [Field("profile", "PROMPT_PROFILE", [*PROFILES, *own], value=value)]
+        self.app.push_screen(
+            FormModal("Default profile", fields, focus="profile"), self._save_profile
+        )
+
+    def highlighted(self, state: State, own: list[str]) -> str:
+        """The profile the highlighted row names: a built-in one, a retired name's target, or
+        one of ``own`` (yours that are added); on any other row, the current default."""
+        table = self.query_one("#profiles", DataTable)
+        key = (
+            table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value or ""
+            if table.row_count
+            else ""
+        )
+        if key in PROFILES:
+            return key
+        if key in ALIASES:
+            return ALIASES[key]
+        name = key.removeprefix("user:")
+        return name if key.startswith("user:") and name in own else state.settings.profile
 
     def _save_profile(self, values: dict[str, str] | None) -> None:
         if values is not None:

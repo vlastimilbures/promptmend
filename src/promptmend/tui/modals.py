@@ -4,7 +4,11 @@ offer a Use default button, which returns USE_DEFAULT: the caller resets the set
 
 A destructive action always goes through one of them: nothing is deleted, overwritten or
 deployed until its button is pressed, and Cancel (or Escape, or n) is the focused default.
-The pick list, which changes nothing by itself, focuses its list instead.
+The confirmation always opens on Cancel. A form does too, unless its caller names a field to
+focus (``focus=``), which only a form that deletes nothing does: Set key, Test call, Export,
+the default profile, and the days to prune (a confirmation on Cancel follows it). The pick
+list and the edit dialog, which change nothing until a value is picked or saved, focus their
+list or field.
 """
 
 from __future__ import annotations
@@ -233,15 +237,28 @@ class EditModal(_Dialog[str | UseDefault | None]):
 
 class FormModal(_Dialog[dict[str, str] | None]):
     """A few fields and a submit button; returns the values by field id, or None when
-    cancelled. Cancel has the focus when it opens. Its submit button is the confirmation for
-    what the preview describes, except prune, which asks once more."""
+    cancelled. Its submit button is the confirmation for what the preview describes, except
+    prune and remove-key, which ask once more.
+
+    Cancel has the focus when it opens, so Enter right after opening changes nothing. A
+    caller whose submit deletes nothing passes ``focus``, a field id, to open in that field
+    instead: Enter in a text field submits the form, and on a choice opens its list."""
 
     def __init__(
-        self, title: str, fields: Sequence[Field], *, submit: str = "Save", preview: str = ""
+        self,
+        title: str,
+        fields: Sequence[Field],
+        *,
+        submit: str = "Save",
+        preview: str = "",
+        focus: str | None = None,
     ) -> None:
         super().__init__(title, preview, None)
+        if focus is not None and focus not in {item.id for item in fields}:
+            raise ValueError(f"no field {focus!r} to focus")
         self.fields = fields
         self.submit = submit
+        self.focus_field = focus
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
@@ -267,8 +284,9 @@ class FormModal(_Dialog[dict[str, str] | None]):
                 yield Button(self.submit, id="submit", variant="primary")
 
     def on_mount(self) -> None:
-        # Cancel first: Enter right after the dialog opens changes nothing.
-        self.query_one("#cancel", Button).focus()
+        # Cancel unless the caller named a field: Enter right after opening changes nothing.
+        target = f"#{self.focus_field}" if self.focus_field else "#cancel"
+        self.query_one(target).focus()
 
     def values(self) -> dict[str, str]:
         found = {}

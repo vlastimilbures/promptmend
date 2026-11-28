@@ -505,8 +505,10 @@ class SettingsPane(Pane):
             Field("key-name", "Key", secret_names(), value=name or ""),
             Field("key-value", "Value (hidden as you type; never shown again)", secret=True),
         ]
+        # Nothing is deleted: the cursor starts in the value when the key is picked already.
+        focus = "key-value" if name else "key-name"
         self.app.push_screen(
-            FormModal("Save an API key in the secrets file", fields), self._save_key
+            FormModal("Save an API key in the secrets file", fields, focus=focus), self._save_key
         )
 
     def _save_key(self, values: dict[str, str] | None) -> None:
@@ -577,7 +579,8 @@ class SettingsPane(Pane):
         )
         fields = [Field("provider", "Provider", PROVIDER_NAMES, value=current)]
         self.app.push_screen(
-            FormModal("Test call", fields, submit="Run", preview=preview), self._run_smoke
+            FormModal("Test call", fields, submit="Run", preview=preview, focus="provider"),
+            self._run_smoke,
         )
 
     def _run_smoke(self, values: dict[str, str] | None) -> None:

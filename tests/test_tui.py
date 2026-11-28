@@ -36,7 +36,7 @@ from promptmend.tui import (
 )
 from promptmend.tui.app import HIGH_CONTRAST, TABS, ManageApp
 from promptmend.tui.home import pill
-from promptmend.tui.modals import ConfirmModal, EditModal, FormModal, PickModal, TextModal
+from promptmend.tui.modals import ConfirmModal, EditModal, Field, FormModal, PickModal, TextModal
 from promptmend.tui.state import FULL, QUICK, State, gather, quick
 
 if TYPE_CHECKING:
@@ -1486,6 +1486,125 @@ def test_cancelling_a_dialog_changes_nothing(
 
     drive(scenario)
     assert sorted((p, p.read_bytes()) for p in saved.rglob("*") if p.is_file()) == before
+
+
+def _focused_id(app: ManageApp) -> str | None:
+    return app.focused.id if app.focused is not None else None
+
+
+@pytest.mark.parametrize(
+    ("tab", "button", "field"),
+    [
+        ("2", "#smoke", "provider"),
+        ("3", "#set-profile", "profile"),
+        ("5", "#export", "format"),
+        ("5", "#prune", "days"),
+    ],
+)
+def test_a_form_that_deletes_nothing_opens_in_its_field(
+    espanso: FakeRunner, tab: str, button: str, field: str
+) -> None:
+    """#392: only a dialog that destroys something opens on Cancel."""
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press(tab)
+        await press(app, pilot, button)
+        assert isinstance(app.screen, FormModal)
+        assert _focused_id(app) == field
+
+    drive(scenario)
+
+
+def test_a_form_refuses_to_focus_a_field_it_does_not_have() -> None:
+    with pytest.raises(ValueError, match="no field 'nope'"):
+        FormModal("Title", [Field("days", "Days")], focus="nope")
+
+
+def test_set_key_opens_with_the_cursor_in_a_field(saved: Path, espanso: FakeRunner) -> None:
+    """#392: with the key picked, typing goes into the hidden value and Enter saves it;
+    without one, the key picker has the focus."""
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "OPENROUTER_API_KEY", "enter")
+        assert isinstance(app.screen, FormModal)
+        assert _focused_id(app) == "key-value"
+        await pilot.press(*"sk-typed", "enter")
+        await settle(pilot)
+        assert not isinstance(app.screen, FormModal)
+        assert settings_rows(app)["OPENROUTER_API_KEY"].value == "set"
+        settings_tab(app).set_key()
+        await settle(pilot)
+        assert isinstance(app.screen, FormModal)
+        assert _focused_id(app) == "key-name"
+
+    drive(scenario)
+    assert config_store.saved_secret_names() == ("OPENROUTER_API_KEY",)
+
+
+def test_a_destructive_dialog_still_opens_on_cancel(saved: Path, espanso: FakeRunner) -> None:
+    """#392: Deploy, Detach, Remove a key and every confirmation keep Cancel focused, so
+    Enter right after one opens changes nothing."""
+    config_store.save_secret("ANTHROPIC_API_KEY", KEY)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await on_row(app, pilot, "ANTHROPIC_API_KEY", "u")
+        assert isinstance(app.screen, FormModal)
+        assert _focused_id(app) == "cancel"
+        await press(app, pilot, "#submit")
+        assert isinstance(app.screen, ConfirmModal)
+        assert _focused_id(app) == "cancel"
+        await pilot.press("enter")
+        await settle(pilot)
+        assert config_store.saved_secret_names() == ("ANTHROPIC_API_KEY",)
+
+        await pilot.press("4")
+        await press(app, pilot, "#deploy")
+        assert isinstance(app.screen, FormModal)
+        assert _focused_id(app) == "cancel"
+        await pilot.press("enter")
+        await settle(pilot)
+        assert not list((espanso.root / "match").iterdir())
+        await press(app, pilot, "#deploy")
+        await press(app, pilot, "#submit")
+        await press(app, pilot, "#detach")
+        assert isinstance(app.screen, FormModal)
+        assert _focused_id(app) == "cancel"
+        await pilot.press("enter")
+        await settle(pilot)
+        assert (espanso.root / "match" / "prompts-llm.yml").is_file()
+
+    drive(scenario)
+
+
+@pytest.mark.parametrize(
+    ("row", "picked"),
+    [
+        ("default", "default"),  # built in
+        ("user:mine", "mine"),  # one of yours, added
+        ("default-pro", "default"),  # a retired name means its target
+        ("user:default", "general"),  # yours but shadowed: the current default
+    ],
+)
+def test_set_default_opens_on_the_highlighted_profile(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, row: str, picked: str
+) -> None:
+    """#392: Set default starts at the highlighted row, not at the current profile."""
+    monkeypatch.setenv("PROMPT_PROFILE", "general")
+    _user_profile("mine")
+    _user_profile("default")
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        from textual.widgets import DataTable
+
+        await pilot.press("3")
+        await settle(pilot)
+        table = pane(app, "profiles").query_one("#profiles", DataTable)
+        table.move_cursor(row=table.get_row_index(row))
+        await press(app, pilot, "#set-profile")
+        assert isinstance(app.screen, FormModal)
+        assert app.screen.query_one("#profile", Select).value == picked
+
+    drive(scenario)
 
 
 def test_no_color_is_left_to_textual(monkeypatch: pytest.MonkeyPatch, espanso: FakeRunner) -> None:
@@ -3558,10 +3677,16 @@ def test_prune_enter_does_not_prune(espanso: FakeRunner, monkeypatch: pytest.Mon
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await pilot.press("5")
+        # The days field has the focus (#392): Enter there only opens the confirmation,
+        # whose Cancel has the focus, so a second Enter closes it.
         await press(app, pilot, "#prune")
         await pilot.press("enter")
         await settle(pilot)
+        assert isinstance(app.screen, ConfirmModal)
+        await pilot.press("enter")
+        await settle(pilot)
         assert not isinstance(app.screen, FormModal | ConfirmModal)
+        assert pruned == []
         await press(app, pilot, "#prune")
         await fill(app, pilot, days="30")
         assert isinstance(app.screen, ConfirmModal)
