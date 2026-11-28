@@ -52,9 +52,9 @@ All notable changes to this project are documented here. The format follows
   `--source clipboard` and are not affected. A match you wrote yourself, a launcher or a
   script that runs `improve` with no `--source` and no terminal now gets
   `[promptmend: Input is empty]` instead of rewriting the clipboard, and one whose stdin
-  stays open gets, at the time limit, `[promptmend: no draft arrived on stdin within …s (it
-  stayed open), so nothing was sent: close stdin after the draft, or pass --source
-  clipboard]` (the same with `--source stdin`). On Windows a null stdin (`< NUL`, likely
+  stays open gets, at the time limit, `[promptmend: stdin was not closed within …s, so
+  nothing was sent: close stdin after the draft, or pass --source clipboard]` (the same with
+  `--source stdin`). On Windows a null stdin (`< NUL`, likely
   Espanso's) counts as a terminal, so such a call still reads the clipboard there. The safe
   form everywhere is an explicit `--source`: add `--source clipboard`.
 - Setup: the wizard's rail marks each step as the Done checklist does (#393): `✓` done,

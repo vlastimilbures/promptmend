@@ -284,12 +284,11 @@ such as `my-prompts.yml`:
    rendering`. A trigger you copied from a file deployed by 0.20.0 or earlier (#18) has that shell
    shape; rewrite it this way.
 5. Keep `"--source", "clipboard"` in an `improve` call, the safe form on every system.
-   Without `--source`, `improve` reads stdin whenever it is not a terminal. On macOS and
-   Linux, Espanso's empty stdin is not a terminal, so the trigger pastes
-   `[promptmend: Input is empty]` instead of rewriting the clipboard. On Windows a null stdin
-   counts as a terminal, so such a trigger still reads the clipboard, as before. Never add
-   `--fail-on-marker`: its exit code 1 makes Espanso fail the expansion instead of pasting
-   the marker.
+   Without `--source`, `improve` reads stdin whenever it is not a terminal. Under a null
+   stdin (`< /dev/null`, `< NUL`) it reads that empty stdin on macOS and Linux, and pastes
+   `[promptmend: Input is empty]`, but reads the clipboard on Windows, where a null stdin
+   counts as a terminal. Never add `--fail-on-marker`: its exit code 1 makes Espanso fail
+   the expansion instead of pasting the marker.
 
 `promptmend espanso deploy` and `detach` handle only the files they deployed
 (`prompts-core.yml`, `prompts-llm.yml`, `prompts-template.yml`), so they never change yours;

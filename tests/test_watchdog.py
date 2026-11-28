@@ -616,36 +616,43 @@ def test_final_exit_keeps_the_code(
     assert capfd.readouterr().out == "output"
 
 
-# --- A stdin that never delivers its draft (#407) --------------------------------------------
+# --- A stdin that is never closed (#407) ----------------------------------------------------
 
 STDIN_MARKER = (
-    "[promptmend: no draft arrived on stdin within {}s (it stayed open), so nothing was sent: "
+    "[promptmend: stdin was not closed within {}s, so nothing was sent: "
     "close stdin after the draft, or pass --source clipboard]"
 )
 
 
 class _OpenPipe:
-    """A stdin that is a pipe and whose read() blocks until ``release`` is set, as a pipe a
-    launcher leaves open blocks."""
+    """A stdin that is a pipe left open: read() blocks until ``release`` is set. A pipe that
+    already holds ``delivered`` text blocks the same way (read(n) returns only at the end, or
+    once n characters are in), and returns it only then."""
 
-    def __init__(self, release: threading.Event) -> None:
-        self._release = release
+    def __init__(self, release: threading.Event, delivered: str = "") -> None:
+        self._release, self._delivered = release, delivered
 
     def isatty(self) -> bool:
         return False
 
     def read(self, size: int = -1) -> str:
         self._release.wait(30)
-        return "too late"
+        return self._delivered + " too late"
 
 
 # A run still reading stdin when the watchdog fires gets the stdin marker, not one blaming the
 # provider; nothing is built or sent, the history says error_marker, and with
-# --fail-on-marker the exit code is 1. Without --source (a pipe) and with --source stdin.
+# --fail-on-marker the exit code is 1. Without --source (a pipe) and with --source stdin, and
+# for a pipe that delivered a draft and then stayed open, which the marker words truthfully.
 @pytest.mark.parametrize(
-    ("args", "code"),
-    [([], 0), (["--source", "stdin"], 0), (["--fail-on-marker"], 1)],
-    ids=["default", "explicit", "fail-on-marker"],
+    ("args", "code", "delivered"),
+    [
+        ([], 0, ""),
+        (["--source", "stdin"], 0, ""),
+        (["--fail-on-marker"], 1, ""),
+        ([], 0, "a real draft\n"),
+    ],
+    ids=["default", "explicit", "fail-on-marker", "delivered-then-open"],
 )
 def test_open_stdin_gets_the_stdin_marker(
     monkeypatch: pytest.MonkeyPatch,
@@ -654,6 +661,7 @@ def test_open_stdin_gets_the_stdin_marker(
     history_rows: HistoryRows,
     args: list[str],
     code: int,
+    delivered: str,
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
     release = threading.Event()
@@ -667,7 +675,7 @@ def test_open_stdin_gets_the_stdin_marker(
     choose = pipeline.choose_source
 
     def with_open_pipe(source: str | None, text: str | None) -> str:
-        sys.stdin = _OpenPipe(release)
+        sys.stdin = _OpenPipe(release, delivered)
         return choose(source, text)
 
     monkeypatch.setattr(pipeline, "choose_source", with_open_pipe)

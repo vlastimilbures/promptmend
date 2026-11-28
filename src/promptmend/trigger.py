@@ -123,7 +123,7 @@ class Watchdog:
     fires anyway does nothing. persona arms only the provisional timer. When the real timer
     fires, by state:
 
-    - reading stdin (the draft has not arrived: a pipe left open): the same as idle, with
+    - reading stdin (stdin has not been closed: a pipe left open): the same as idle, with
       stdin_marker() in place of the timed-out marker, since nothing was called and a longer
       limit would only wait longer (#407).
     - idle (the run is still reading its input or calling the provider): it writes the
@@ -287,10 +287,12 @@ class Watchdog:
             self._move(_READING_STDIN)
 
     def stdin_marker(self) -> str:
-        """The watchdog's marker for a run still reading stdin: nothing was sent."""
+        """The watchdog's marker for a run still reading stdin: nothing was sent. Worded from
+        what is known: read_input() reads to the end, so a pipe that delivered a draft and
+        stayed open ends here too."""
         return (
-            f"[promptmend: no draft arrived on stdin within {self._limit}s (it stayed open), "
-            "so nothing was sent: close stdin after the draft, or pass --source clipboard]"
+            f"[promptmend: stdin was not closed within {self._limit}s, so nothing was sent: "
+            "close stdin after the draft, or pass --source clipboard]"
         )
 
     def proceed(self) -> None:

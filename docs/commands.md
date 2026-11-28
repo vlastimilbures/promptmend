@@ -58,7 +58,8 @@ Espanso something to paste:
   `--fail-on-marker`).
 - Without `--source`, a draft piped or redirected to stdin is read; from a terminal, the
   clipboard. An empty pipe gives `[promptmend: Input is empty]` and sends nothing; one left
-  open ends at the time limit with `[promptmend: no draft arrived on stdin …]`. On Windows a
+  open ends at the time limit with `[promptmend: stdin was not closed within …s, so nothing
+  was sent: …]`, even when a draft arrived before. On Windows a
   null stdin (`< NUL`) counts as a terminal and reads the clipboard. A script should pass
   `--source` explicitly.
 - Drafts over 50,000 characters are refused.
@@ -76,8 +77,9 @@ a nonzero exit.
 
 Without the flag, a run failed when its whole output is one `[promptmend: …]` marker. A
 rewrite starts with a marker only after `--allow-flagged` (`[promptmend: sent despite: …]`)
-or a failed `--copy` (`[promptmend: Clipboard unavailable: …; the rewrite is pasted
-instead]`), and ends with one only when it is cut off. This prefix is stable. With `clipboard` output, a successful run prints nothing,
+or a failed or stalled copy (`--copy` or `clipboard` output: `[promptmend: Clipboard
+unavailable: …; the rewrite is pasted instead]`, `[promptmend: the clipboard did not answer
+in time, …; it is pasted instead]`), and ends with one only when it is cut off. This prefix is stable. With `clipboard` output, a successful run prints nothing,
 or only those markers, and the rewrite is on the clipboard.
 
 ## persona
