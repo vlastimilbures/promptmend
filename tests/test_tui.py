@@ -3033,7 +3033,9 @@ def test_checks_test_call_works_on_the_quick_state(
         await pilot.click("#smoke")
         await until(pilot, lambda: isinstance(app.screen, FormModal))
         assert _dialog(app).dialog_title == "Test call"
-        assert _focused_id(app) == "provider"
+        # The dialog focuses its field once it is mounted: on a slow runner the screen is
+        # there a moment before the focus is (seen on windows-latest, 3.12).
+        await until(pilot, lambda: _focused_id(app) == "provider")
         await pilot.click("#submit")
         await until(pilot, lambda: checks.last_message.startswith("ok: "), lambda: called)
         assert checks.last_message == "ok: improve reached the stub"
