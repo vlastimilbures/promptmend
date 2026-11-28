@@ -103,6 +103,31 @@ class UsageObserver(Protocol):
 
     def __call__(self, usage: AttemptUsage, /) -> None: ...
 
+    def begin(self, usage: AttemptUsage, /) -> None:
+        """An attempt is starting, with the record it will have if it never ends (a
+        ``timeout`` with no status). It may raise RunEnded to stop the attempt; anything else
+        it raises is swallowed. A no-op for an observer that keeps finished attempts only."""
+        ...
+
+    @property
+    def recording(self) -> bool:
+        """Whether the records are kept: when false (the CLI's, with the history off), only
+        the transport facts are reported and no response body is parsed."""
+        ...
+
+
+class AttemptList(list[AttemptUsage]):
+    """The plain observer: keeps every finished attempt, in order (the Try tab's, the
+    tests'). It is not told when an attempt begins, and always records."""
+
+    recording = True
+
+    def __call__(self, usage: AttemptUsage, /) -> None:
+        self.append(usage)
+
+    def begin(self, usage: AttemptUsage, /) -> None:
+        pass
+
 
 class RunEnded(Exception):
     """Raised by an observer's ``begin`` when the run it records is over (improve's watchdog
@@ -126,16 +151,12 @@ class Meter:
     local: bool = False
 
     def begin(self, *, loopback: bool, attempt: int) -> None:
-        """An attempt is starting. An observer with a ``begin`` method (the CLI's recorder)
+        """An attempt is starting. The observer's ``begin`` (the CLI's recorder keeps it)
         gets the record the attempt will have if it never ends: a ``timeout`` with no status,
         which improve's watchdog stores when it ends the process first. Only RunEnded
-        reaches the caller, which then sends nothing; an observer without ``begin`` is not
-        told."""
-        started = getattr(self.observer, "begin", None)
-        if started is None:
-            return
+        reaches the caller, which then sends nothing."""
         try:
-            started(
+            self.observer.begin(
                 AttemptUsage(
                     provider=self.provider,
                     requested_model=self.model,
@@ -179,9 +200,10 @@ class Meter:
             cost_state="not_applicable" if self.local else "unknown",
         )
         usage = base
-        if isinstance(body, Mapping) and getattr(self.observer, "recording", True):
+        if isinstance(body, Mapping):
             try:
-                usage = self.parse(body, base)
+                if self.observer.recording:
+                    usage = self.parse(body, base)
             except Exception:
                 usage = base
         if usage.charged_amount is not None:

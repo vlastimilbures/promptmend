@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from promptmend.wordings import DOMAIN, default_wordings
+from wordings_module import DOMAIN, default_wordings
 
 __all__ = ["GOOD", "bench"]
 

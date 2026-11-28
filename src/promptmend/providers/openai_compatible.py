@@ -6,6 +6,12 @@ from dataclasses import dataclass, field
 from .base import ProviderError, body_error, chat_messages, finalize_content, post_json
 from .usage import Meter, UsageObserver, UsageParser, openai_usage
 
+# Refused in extra_body: keys that would send different text, or send it to a different model
+# or service. extra_body is merged over the payload, past what the data-protection gate checked.
+# OpenRouter's: ``models`` (fallback models), ``prompt`` (instead of messages), ``preset`` (can
+# set the model and a system prompt), ``plugins`` (web search sends the draft to a provider).
+_RESERVED_BODY_KEYS = frozenset({"model", "messages", "models", "prompt", "preset", "plugins"})
+
 
 @dataclass
 class OpenAICompatibleProvider:
@@ -49,6 +55,11 @@ class OpenAICompatibleProvider:
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
+        # A programming error (extra_body is built in code, never from a setting's name):
+        # refused here, so no provider is ever built that would send another model or text.
+        # Names the key only, never its value.
+        if reserved := sorted(_RESERVED_BODY_KEYS.intersection(self.extra_body)):
+            raise ValueError(f"extra_body cannot set {', '.join(reserved)}")
 
     def generate(self, prompt: str, system_prompt: str) -> str:
         headers = {"Content-Type": "application/json", **self.extra_headers}

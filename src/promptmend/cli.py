@@ -33,6 +33,8 @@ from .prompt_builder import PERSONA_PLACEHOLDER
 from .redaction import redact_words
 
 if TYPE_CHECKING:
+    # Private, but for type checking only: a Typer release that moves it breaks mypy, never
+    # a run. TyperGroup's methods take these classes; typer.Context is only a subclass.
     from typer._click import Command, Context
 
 # The management commands and the interface, each in a module under commands/: command
@@ -98,11 +100,11 @@ PROGRAM = "promptmend"
 
 @contextlib.contextmanager
 def _redacted_usage_errors() -> Iterator[None]:
-    from typer._click.exceptions import ClickException
-
+    # TyperException is public and the base of every usage error Typer raises (its vendored
+    # Click's ClickException), so no private module is named here (#414).
     try:
         yield
-    except ClickException as exc:
+    except typer.TyperException as exc:
         exc.message = redact_words(exc.message)
         raise
 

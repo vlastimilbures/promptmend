@@ -50,6 +50,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
+from wordings import default_wordings
+
 from promptmend import prompt_builder
 from promptmend.config import Settings, split_model_spec
 from promptmend.factory import make_provider
@@ -62,7 +64,6 @@ from promptmend.prompt_builder import (
 )
 from promptmend.providers.base import ProviderError, split_stop_note
 from promptmend.providers.usage import AttemptUsage
-from promptmend.wordings import default_wordings
 
 MODELS: list[str] = [
     # Standard tier (-i-). The first is the shipped default.
@@ -790,7 +791,7 @@ def opening(wording: str, words: int) -> str:
     return needle
 
 
-# The fixed wordings come from prompts/default.md, their only source (promptmend.wordings,
+# The fixed wordings come from prompts/default.md, their only source (scripts/wordings.py,
 # #283), whatever --system-prompt-file a run scores. A check looks for the opening words of
 # each, so a rewrite that slips later in a wording still counts as having made that choice.
 WORDINGS = default_wordings()
@@ -1188,7 +1189,10 @@ class Budget:
 
 class Attempts:
     """The usage observer of one run: keeps each HTTP attempt's record and charges it to the
-    budget as it arrives, so a failed or retried attempt costs what it reported too."""
+    budget as it arrives, so a failed or retried attempt costs what it reported too. It
+    reads every body (``recording``) and is not told when an attempt begins."""
+
+    recording = True
 
     def __init__(self, budget: Budget) -> None:
         self.budget = budget
@@ -1197,6 +1201,9 @@ class Attempts:
     def __call__(self, usage: AttemptUsage) -> None:
         self.records.append(usage)
         self.budget.charge(usage)
+
+    def begin(self, usage: AttemptUsage) -> None:
+        pass
 
     @property
     def cost(self) -> float | None:

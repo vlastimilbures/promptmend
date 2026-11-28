@@ -34,7 +34,13 @@ from promptmend.gate import GatedProvider
 from promptmend.pipeline import Rewrite
 from promptmend.providers import base
 from promptmend.providers.base import post_json, timed_out_message
-from promptmend.providers.usage import AttemptUsage, Meter, RunEnded, openai_usage
+from promptmend.providers.usage import (
+    AttemptList,
+    AttemptUsage,
+    Meter,
+    RunEnded,
+    openai_usage,
+)
 from promptmend.trigger import Watchdog
 
 if TYPE_CHECKING:
@@ -370,10 +376,10 @@ def test_finished_attempt_is_not_pending() -> None:
     assert [a.error_kind for a in rec.attempts] == [None]
 
 
-# A plain callable observer (the Try tab's list.append) is not told an attempt began.
-def test_begin_without_begin_method() -> None:
-    seen: list[AttemptUsage] = []
-    Meter(seen.append, "ollama", "m", openai_usage).begin(loopback=True, attempt=1)
+# The plain observer (the Try tab's AttemptList) is not told an attempt began.
+def test_plain_observer_is_not_told_an_attempt_began() -> None:
+    seen = AttemptList()
+    Meter(seen, "ollama", "m", openai_usage).begin(loopback=True, attempt=1)
     assert seen == []
 
 

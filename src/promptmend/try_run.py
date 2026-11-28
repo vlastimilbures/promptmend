@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from . import pipeline, recorder, sanitize, smoke
 from .factory import check_base_url, leaves_machine
 from .providers.registry import PROVIDERS
+from .providers.usage import AttemptList
 
 if TYPE_CHECKING:
     from .config import Settings
@@ -120,7 +121,7 @@ def run(
     ``profile`` (None: as configured), against the stub (a dry run) when ``stub``. ``show`` gets the
     outcome before a real run is recorded, as improve records after printing; the run is
     recorded even when ``show`` raises (which then propagates). Returns the outcome."""
-    attempts: list[AttemptUsage] = []
+    attempts = AttemptList()
     ran = pipeline.Rewrite()
     rec: recorder.Recorder | None = None
     if not stub:
@@ -147,7 +148,7 @@ def _rewrite(
     provider: str,
     profile: str | None,
     cfg: Settings,
-    attempts: list[AttemptUsage],
+    attempts: AttemptList,
     ran: pipeline.Rewrite,
     rec: recorder.Recorder | None,
 ) -> Outcome:
@@ -172,7 +173,7 @@ def _rewrite(
                         stub_cfg,
                         profile,
                         ran,
-                        observer=attempts.append,
+                        observer=attempts,
                         force_remote=remote,
                     )
                 finally:
@@ -182,9 +183,7 @@ def _rewrite(
         else:
             started = time.monotonic()
             try:
-                text = pipeline.rewrite(
-                    draft, provider, cfg, profile, ran, observer=attempts.append
-                )
+                text = pipeline.rewrite(draft, provider, cfg, profile, ran, observer=attempts)
             finally:
                 latency = (time.monotonic() - started) * 1000
             requests = len(attempts)

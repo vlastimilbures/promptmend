@@ -29,7 +29,7 @@ def test_default_profile_emits_golden_template() -> None:
 # default profile's system prompt describes both the plan-first/execute-now and
 # independent-review/self-review instruction branches for the model to choose between.
 def test_default_profile_offers_both_branches() -> None:
-    from promptmend.wordings import DOMAIN, default_wordings
+    from wordings_module import DOMAIN, default_wordings
 
     text = system_prompt("default")
     wordings = default_wordings()

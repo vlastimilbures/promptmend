@@ -130,6 +130,30 @@ def test_openai_compatible_request_shape(fake_http: FakeHttp) -> None:
     ]
 
 
+# extra_body is merged over the payload, so a key that carries the model or the draft would
+# replace what the gate checked: refused when the provider is built, naming the key, never
+# its value, and nothing is sent. The bodies make_provider() builds today still pass.
+@pytest.mark.parametrize("key", ["messages", "model", "models", "prompt", "preset", "plugins"])
+def test_openai_compatible_refuses_reserved_extra_body(fake_http: FakeHttp, key: str) -> None:
+    with pytest.raises(ValueError, match="extra_body cannot set") as caught:
+        OpenAICompatibleProvider("http://x/v1", "m", extra_body={key: "SECRET-VALUE"})
+    assert str(caught.value) == f"extra_body cannot set {key}"
+    assert fake_http.calls == []
+
+
+def test_openai_compatible_accepts_the_bodies_built_today() -> None:
+    body: dict[str, object] = {
+        "provider": {"order": ["p"], "allow_fallbacks": False, "data_collection": "deny"},
+        "reasoning": {"effort": "low", "exclude": True},
+        "usage": {"include": True},
+        # Allowed: they change neither the text nor where it goes.
+        "transforms": [],
+        "route": "fallback",
+        "stream": False,
+    }
+    assert OpenAICompatibleProvider("http://x/v1", "m", extra_body=body).extra_body == body
+
+
 # Without a key (LM Studio) no Authorization header is sent, and unset optional
 # fields (max_tokens, temperature) are omitted: some models reject temperature.
 def test_openai_compatible_minimal_request(fake_http: FakeHttp) -> None:

@@ -268,7 +268,6 @@ FORBIDDEN = (
     "promptmend.settings_checks",
     "promptmend.update_check",
     "promptmend.local_probe",
-    "promptmend.wordings",
 )
 # The usage history (#89) writes each run after its output, so sqlite3 loads on the trigger
 # path when tracking is on (PROMPT_HISTORY, the default), and never when it is off.

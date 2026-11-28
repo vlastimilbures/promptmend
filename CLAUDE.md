@@ -45,7 +45,7 @@ uv run pre-commit run --all-files               # also YAML checks, gitleaks and
 - After editing `espanso/match/`, rerun `scripts/update_match_history.py` (it regenerates
   `match_history.KNOWN_SOURCES`; `tests/test_deploy.py` checks it).
 - The fixed wordings live only in `src/promptmend/prompts/default.md` (parsed by
-  `promptmend.wordings`). After editing one, run `scripts/render_prompt_template.py`
+  `scripts/wordings.py`). After editing one, run `scripts/render_prompt_template.py`
   (`tests/test_wordings.py` fails while the `-p-` template is stale), then
   `scripts/update_match_history.py`, and keep the in-file few-shot examples in step (tested).
   `tests/test_bench.py::test_needles_are_unchanged` fails when a needle moves. Before shipping a `default` change, ask the owner to re-run the benchmark

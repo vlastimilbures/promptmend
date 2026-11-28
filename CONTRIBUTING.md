@@ -471,7 +471,6 @@ promptmend/
 │   ├── history_spool.py          the usage history's spool, drop files, sidecar lock, temp sweep
 │   ├── recorder.py               records each improve/persona run in the usage history
 │   ├── prompt_builder.py         loads built-in and user profiles, fills in the persona rule
-│   ├── wordings.py               the fixed wordings, parsed from prompts/default.md (#283)
 │   ├── assets.py                 the packaged Espanso match files (importlib.resources)
 │   ├── deploy.py                 espanso deploy/status/detach: manifest, states, stable launcher
 │   ├── espanso_windows.py        Espanso on Windows without reading its output (#209-#211)
@@ -495,6 +494,7 @@ promptmend/
 │   ├── build_windows.py          release: the frozen Windows zip (PyInstaller), trigger timing
 │   ├── check_tool_lock.py        the tool venv's packages match uv.lock (#34)
 │   ├── update_match_history.py   regenerate match_history.py from the release tags
+│   ├── wordings.py               the fixed wordings, parsed from prompts/default.md (#283)
 │   ├── render_prompt_template.py the -p- template's wording lines from prompts/default.md
 │   ├── bench_models.py           score models on template fidelity, latency, cost
 │   ├── check_wheel.py            CI: what an installed wheel really contains
@@ -633,7 +633,7 @@ literal lands in the repo. Patterns specific to one organisation belong in the u
 The fixed wordings have one source, their definitions in `prompts/default.md`: the planning and
 review variants (`<variant id="a">`/`"b"`), the inputs and judgment steps (the line after
 `Always...:`) and the document OUTPUTS line (after `use exactly this line:`).
-`promptmend.wordings` parses them (#283). `default.md` also repeats them in its own few-shot
+`scripts/wordings.py` parses them (#283). `default.md` also repeats them in its own few-shot
 `<rewrite>` examples and quotes the planning variant's opening in a formatting rule; those
 copies stay hand-written (they are prompt text the model reads), and `tests/test_wordings.py`
 checks them against the variants: each example's planning, inputs, review and judgment steps
