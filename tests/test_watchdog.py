@@ -2,9 +2,11 @@
 clipboard, a server that never answers or trickles its reply), the run ends within its limit
 plus trigger.WATCHDOG_MARGIN with exactly one result on stdout, exit code 0 and empty stderr.
 
-The in-process tests patch trigger._hard_exit, so the watchdog never ends pytest; the
-real-process tests run the CLI the way Espanso does, against smoke.stub_server()'s slow modes,
-with a 1 s limit to keep the suite fast."""
+The in-process tests patch trigger._hard_exit, so the watchdog never ends pytest, and run the
+watchdog on conftest's FakeClock: its timers fire when the test moves the clock on, on the
+test's thread (or one it starts), never on the wall clock. Only the history's bounded wait is
+real time. The real-process tests run the CLI the way Espanso does, with its real timers,
+against smoke.stub_server()'s slow modes, with a 1 s limit to keep the suite fast."""
 
 from __future__ import annotations
 
@@ -16,12 +18,11 @@ import subprocess
 import sys
 import threading
 import time
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
 import typer
-from conftest import resolved_settings
+from conftest import FakeClock, FakeTimer, resolved_settings
 from typer.testing import CliRunner
 
 from promptmend import config, factory, pipeline, recorder, smoke, trigger
@@ -72,9 +73,31 @@ def exits(monkeypatch: pytest.MonkeyPatch) -> Exits:
     return fake
 
 
-def _watchdog(provider: str = "openrouter") -> tuple[Watchdog, recorder.Recorder]:
+# Far past any deadline here: advancing the fake clock by this much fires every timer due.
+LATER = 1000.0
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    """The fake clock and timers of every watchdog the test builds: _watchdog(clock)'s, and the
+    CLI's, through a trigger.Watchdog that passes them."""
+    fake = FakeClock()
+
+    class OnTheFakeClock(Watchdog):
+        def __init__(
+            self, rec: recorder.Recorder, ran: Rewrite, *, fail_on_marker: bool = False
+        ) -> None:
+            super().__init__(rec, ran, fail_on_marker=fail_on_marker, clock=fake, timers=fake.start)
+
+    monkeypatch.setattr(trigger, "Watchdog", OnTheFakeClock)
+    return fake
+
+
+def _watchdog(clock: FakeClock | None = None) -> tuple[Watchdog, recorder.Recorder]:
+    """A watchdog on ``clock`` (a fresh fake one by default), its marker the call's."""
+    fake = clock if clock is not None else FakeClock()
     rec = recorder.Recorder("improve", "i")
-    watch = Watchdog(rec, Rewrite())
+    watch = Watchdog(rec, Rewrite(), clock=fake, timers=fake.start)
     watch._marker = f"[promptmend: {timed_out_message('OpenRouter', LIMIT, FLAG_HINT)}]"
     return watch, rec
 
@@ -255,7 +278,7 @@ def test_arm_words_marker(provider: str, label: str) -> None:
     watch.arm(cfg, provider)
     try:
         assert watch._marker == f"[promptmend: {label} timed out after 1e+300s: {SETTING_HINT}]"
-        assert watch._timer is not None
+        assert isinstance(watch._timer, FakeTimer)
         assert watch._timer.interval == threading.TIMEOUT_MAX
     finally:
         watch.cancel()
@@ -325,17 +348,21 @@ def test_blocking_name_lookup_in_process(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
     history_rows: HistoryRows,
+    clock: FakeClock,
 ) -> None:
     release = threading.Event()
 
     def getaddrinfo(*args: Any, **kwargs: Any) -> Any:
+        clock.advance(LATER)  # the lookup outlasts the deadline: the watchdog fires
         release.wait(30)
         raise socket.gaierror("released by the test")
 
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
     fake = Exits(then=release)
     monkeypatch.setattr(trigger, "_hard_exit", fake)
-    # Fires 0.1 s after the limit, with time for history_rows' generous write budget.
+    # Fires 0.1 s after the limit, with time for history_rows' generous write budget (the
+    # history wait is real time). The margin stays above the history wait, as in production,
+    # so no timer is due the moment it starts.
     monkeypatch.setattr(trigger, "_WATCHDOG_HISTORY", 5.0)
     monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 5.1)
     monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
@@ -372,26 +399,17 @@ def test_blocking_name_lookup_in_process(
     )
 
 
-# A run that ends normally cancels its timer: the timer's thread ends without firing.
+# A run that ends normally cancels its timers: none fires, even long after the deadline.
 def test_normal_run_cancels_the_timer(
-    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, exits: Exits
+    stub_provider: StubProvider, exits: Exits, clock: FakeClock
 ) -> None:
-    timers: list[threading.Timer] = []
-    arm = Watchdog.arm
-
-    def recorded(self: Watchdog, cfg: Settings, provider: str) -> None:
-        arm(self, cfg, provider)
-        assert self._timer is not None
-        timers.append(self._timer)
-
-    monkeypatch.setattr(Watchdog, "arm", recorded)
     args = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
     result = runner.invoke(app, args)
     assert (result.exit_code, result.stdout) == (0, "improved")
-    (timer,) = timers
-    timer.join(5)
-    assert not timer.is_alive()
-    assert timer.finished.is_set()
+    assert clock.timers
+    assert all(timer.cancelled for timer in clock.timers)
+    clock.advance(LATER)
+    assert not any(timer.fired for timer in clock.timers)
     assert exits.codes == []
 
 
@@ -401,17 +419,18 @@ def test_no_provider_call_after_the_marker(
     monkeypatch: pytest.MonkeyPatch,
     stub_provider: StubProvider,
     capfd: pytest.CaptureFixture[str],
+    clock: FakeClock,
 ) -> None:
     release = threading.Event()
 
     def stalled(op: str, *args: str) -> str:
+        clock.advance(LATER)
         release.wait(30)
         return "a draft"
 
     monkeypatch.setattr(pipeline, "_clipboard", stalled)
     fake = Exits(then=release)
     monkeypatch.setattr(trigger, "_hard_exit", fake)
-    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
     result = runner.invoke(
         app, ["improve", "--provider", "ollama", "--source", "clipboard", "--timeout", "0.05"]
     )
@@ -432,6 +451,7 @@ def test_stalled_copy(
     stub_provider: StubProvider,
     capfdbinary: pytest.CaptureFixture[bytes],
     history_rows: HistoryRows,
+    clock: FakeClock,
     args: list[str],
     env: dict[str, str],
 ) -> None:
@@ -441,11 +461,15 @@ def test_stalled_copy(
 
     def stalled(op: str, *args: str) -> None:
         assert op == "copy"
+        clock.advance(LATER)
         release.wait(30)
 
     monkeypatch.setattr(pipeline, "_clipboard", stalled)
     fake = Exits(then=release)
     monkeypatch.setattr(trigger, "_hard_exit", fake)
+    # Fires 0.1 s after the limit, with time for history_rows' generous write budget (the
+    # history wait is real time). The margin stays above the history wait, as in production,
+    # so no timer is due the moment it starts.
     monkeypatch.setattr(trigger, "_WATCHDOG_HISTORY", 5.0)
     monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 5.1)
     command = ["improve", "--provider", "ollama", "--source", "argument", "--text", "x"]
@@ -484,16 +508,15 @@ def test_entry_start_is_taken_once(monkeypatch: pytest.MonkeyPatch) -> None:
 # run that began past its limit gets only the margin, for its marker and history.
 @pytest.mark.parametrize(("ago", "timeout", "wait"), [(10.0, 30.0, 20.0), (100.0, 1.0, 0.0)])
 def test_limit_counts_from_entry_start(
-    monkeypatch: pytest.MonkeyPatch, ago: float, timeout: float, wait: float
+    monkeypatch: pytest.MonkeyPatch, clock: FakeClock, ago: float, timeout: float, wait: float
 ) -> None:
     from promptmend import entry
 
-    monkeypatch.setattr(entry, "_started", time.monotonic() - ago)
-    watch, _ = _watchdog()
-    monkeypatch.setattr(Watchdog, "_fire", lambda self: None)
+    monkeypatch.setattr(entry, "_started", clock() - ago)
+    watch, _ = _watchdog(clock)
     watch.arm(Settings(timeout=timeout), "ollama")
     try:
-        assert watch._timer is not None
+        assert isinstance(watch._timer, FakeTimer)
         expected = wait + trigger.WATCHDOG_MARGIN - trigger._WATCHDOG_HISTORY
         assert watch._timer.interval == pytest.approx(expected, abs=0.5)
     finally:
@@ -534,7 +557,10 @@ def test_closed_observer_stops_the_retry(
 # The watchdog fires while the provider is being built (after proceed()): with the history
 # off, the run still sends nothing after the marker.
 def test_no_request_after_marker_while_building(
-    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, capfd: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    fake_http: FakeHttp,
+    capfd: pytest.CaptureFixture[str],
+    clock: FakeClock,
 ) -> None:
     monkeypatch.setenv("PROMPT_HISTORY", "false")
     monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
@@ -543,12 +569,12 @@ def test_no_request_after_marker_while_building(
     make_provider = factory.make_provider
 
     def slow_build(*args: Any, **kwargs: Any) -> Any:
+        clock.advance(LATER)
         release.wait(30)
         return make_provider(*args, **kwargs)
 
     monkeypatch.setattr(pipeline, "make_provider", slow_build)
     monkeypatch.setattr(trigger, "_hard_exit", Exits(then=release))
-    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
     args = ["improve", "--provider", "openrouter", "--source", "argument", "--text", "x"]
     result = runner.invoke(app, [*args, "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")
@@ -628,17 +654,18 @@ STDIN_MARKER = (
 
 
 class _OpenPipe:
-    """A stdin that is a pipe left open: read() blocks until ``release`` is set. A pipe that
-    already holds ``delivered`` text blocks the same way (read(n) returns only at the end, or
-    once n characters are in), and returns it only then."""
+    """A stdin that is a pipe left open: read() outlasts the deadline on ``clock`` and blocks
+    until ``release`` is set. A pipe that already holds ``delivered`` text blocks the same way
+    (read(n) returns only at the end, or once n characters are in), and returns it only then."""
 
-    def __init__(self, release: threading.Event, delivered: str = "") -> None:
-        self._release, self._delivered = release, delivered
+    def __init__(self, release: threading.Event, clock: FakeClock, delivered: str = "") -> None:
+        self._release, self._clock, self._delivered = release, clock, delivered
 
     def isatty(self) -> bool:
         return False
 
     def read(self, size: int = -1) -> str:
+        self._clock.advance(LATER)
         self._release.wait(30)
         return self._delivered + " too late"
 
@@ -662,6 +689,7 @@ def test_open_stdin_gets_the_stdin_marker(
     fake_http: FakeHttp,
     capfd: pytest.CaptureFixture[str],
     history_rows: HistoryRows,
+    clock: FakeClock,
     args: list[str],
     code: int,
     delivered: str,
@@ -670,7 +698,6 @@ def test_open_stdin_gets_the_stdin_marker(
     release = threading.Event()
     exits = Exits(then=release)
     monkeypatch.setattr(trigger, "_hard_exit", exits)
-    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
     built: list[str] = []
     monkeypatch.setattr(pipeline, "make_provider", lambda name, *a, **k: built.append(name))
     # CliRunner puts its own stdin in place for the run, and its own back after it: the open
@@ -678,7 +705,7 @@ def test_open_stdin_gets_the_stdin_marker(
     choose = pipeline.choose_source
 
     def with_open_pipe(source: str | None, text: str | None) -> str:
-        sys.stdin = _OpenPipe(release, delivered)
+        sys.stdin = _OpenPipe(release, clock, delivered)
         return choose(source, text)
 
     monkeypatch.setattr(pipeline, "choose_source", with_open_pipe)
@@ -725,27 +752,21 @@ def test_flushed_run_keeps_its_code(
 
 
 # Claiming the output of an armed run starts a timer at the hard deadline (limit + margin).
-# trigger's clock is held still: each timer turns its deadline into a wait when it starts, so
-# on a real clock the time between arm() and claim() would come off the final timer's wait.
-def test_claim_starts_the_final_timer(monkeypatch: pytest.MonkeyPatch) -> None:
-    from promptmend import entry
-
-    monkeypatch.setattr(Watchdog, "_fire", lambda self: None)
-    monkeypatch.setattr(Watchdog, "_final_exit", lambda self: None)
-    monkeypatch.setattr(entry, "_started", None)
-    monkeypatch.setattr(trigger, "time", SimpleNamespace(monotonic=lambda: 1000.0))
+# The fake clock is held still: each timer turns its deadline into a wait when it starts, so
+# on a moving clock the time between arm() and claim() would come off the final timer's wait.
+def test_claim_starts_the_final_timer() -> None:
     watch, _ = _watchdog()
     watch.arm(Settings(timeout=30), "ollama")
     try:
         watch.claim()
-        assert watch._final is not None
-        assert watch._timer is not None
+        assert isinstance(watch._final, FakeTimer)
+        assert isinstance(watch._timer, FakeTimer)
         deadline = 30 + trigger.WATCHDOG_MARGIN
         assert watch._timer.interval == pytest.approx(deadline - trigger._WATCHDOG_HISTORY)
         assert watch._final.interval == pytest.approx(deadline)
     finally:
         watch.cancel()
-    assert watch._final.finished.is_set()
+    assert watch._final.cancelled
 
 
 # Unarmed (the settings did not load), claiming starts nothing.
@@ -815,7 +836,10 @@ def test_stalled_copy_with_lone_surrogate(
 # name lookup, say) and is released while the history is written sends it before the marker:
 # the marker is written last and the process ends right after it.
 def test_attempt_begun_before_the_marker_sends_before_it(
-    monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, capfd: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    fake_http: FakeHttp,
+    capfd: pytest.CaptureFixture[str],
+    clock: FakeClock,
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
     fake_http.reply({"choices": [{"message": {"content": "rewrite"}}]})
@@ -850,11 +874,9 @@ def test_attempt_begun_before_the_marker_sends_before_it(
         events.append("marker")
         write_fd(fd, data)
 
-    fire = Watchdog._fire
-
-    def fire_once_begun(self: Watchdog) -> None:
+    def fire_once_begun() -> None:
         begun.wait(10)  # however slow the run is to reach its request
-        fire(self)
+        clock.advance(LATER)  # the watchdog fires on this thread, as on its own timer's
 
     class Exit(Exits):
         def __call__(self, code: int) -> None:
@@ -862,16 +884,20 @@ def test_attempt_begun_before_the_marker_sends_before_it(
             super().__call__(code)
 
     monkeypatch.setattr(base, "_exchange", blocked)
-    monkeypatch.setattr(Watchdog, "_fire", fire_once_begun)
     monkeypatch.setattr(fake_http, "handler", handled)
     monkeypatch.setattr(recorder.Recorder, "finish", history_write)
     monkeypatch.setattr(trigger, "_write_fd", marker_out)
     monkeypatch.setattr(trigger, "_hard_exit", Exit(then=unblock))
-    # A history wait far longer than the test needs: the order comes from the events alone.
+    # A history wait (real time) far longer than the test needs: the order comes from the
+    # events alone. The margin stays above it, as in production.
     monkeypatch.setattr(trigger, "_WATCHDOG_HISTORY", 10.0)
     monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 10.1)
+    watchdog = threading.Thread(target=fire_once_begun, daemon=True)
+    watchdog.start()
     args = ["improve", "--provider", "openrouter", "--source", "argument", "--text", "x"]
     result = runner.invoke(app, [*args, "--timeout", "0.05"])
+    watchdog.join(10)
+    assert not watchdog.is_alive()
     assert (result.exit_code, result.stdout) == (0, "")
     assert capfd.readouterr().out == f"[promptmend: OpenRouter timed out after 0.05s: {FLAG_HINT}]"
     assert events == ["begun", "request", "marker", "exit"]
@@ -880,12 +906,16 @@ def test_attempt_begun_before_the_marker_sends_before_it(
 # The watchdog ended the run while the draft was read: proceed()'s Exit ends the run as it is,
 # never taken for a failure of the run with a marker of its own.
 def test_proceed_exit_is_not_a_failure(
-    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, clock: FakeClock
 ) -> None:
     release = threading.Event()
-    monkeypatch.setattr(pipeline, "_clipboard", lambda op, *args: release.wait(30) and "a draft")
+
+    def stalled(op: str, *args: str) -> object:
+        clock.advance(LATER)
+        return release.wait(30) and "a draft"
+
+    monkeypatch.setattr(pipeline, "_clipboard", stalled)
     monkeypatch.setattr(trigger, "_hard_exit", Exits(then=release))
-    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
     failures: list[Exception] = []
 
     def failed(exc: Exception) -> str:
@@ -941,7 +971,7 @@ def test_arm_loading_words_its_marker() -> None:
     watch.arm_loading("1e300")
     try:
         assert watch._marker == "[promptmend: the settings did not load within 1e+300s]"
-        assert watch._timer is not None
+        assert isinstance(watch._timer, FakeTimer)
         assert watch._timer.interval == threading.TIMEOUT_MAX
     finally:
         watch.cancel()
@@ -986,7 +1016,7 @@ def test_arm_loading_words_its_marker() -> None:
     ids=["slow-load", "slow-start", "load-used-the-limit", "start-used-the-limit"],
 )
 def test_arm_words_the_load(
-    monkeypatch: pytest.MonkeyPatch,
+    clock: FakeClock,
     startup: float,
     load: float,
     timeout: float,
@@ -995,9 +1025,8 @@ def test_arm_words_the_load(
 ) -> None:
     import re
 
-    monkeypatch.setattr(Watchdog, "_fire", lambda self: None)
-    watch, _ = _watchdog()
-    now = time.monotonic()
+    watch, _ = _watchdog(clock)
+    now = clock()
     watch._started, watch._load_started = now - startup - load, now - load
     returned = watch.arm(Settings(timeout=timeout), "ollama")
     watch.cancel()
@@ -1012,13 +1041,10 @@ def test_arm_retires_the_provisional_timer(exits: Exits) -> None:
     provisional = watch._timer
     watch.arm(Settings(timeout=30), "ollama")
     try:
-        assert provisional is not None
+        assert isinstance(provisional, FakeTimer)
         assert watch._timer is not provisional
-        assert provisional.finished.is_set()
-        late = threading.Timer(0, watch._fire)
-        watch._retired = late  # stands in for the provisional timer's thread
-        late.start()
-        late.join(5)
+        assert provisional.cancelled
+        provisional.fire_anyway()  # its wait had already ended: it runs all the same
         assert exits.codes == []
         assert watch._state == trigger._IDLE
     finally:
@@ -1038,16 +1064,16 @@ def test_arm_after_the_provisional_fired(exits: Exits, capfd: pytest.CaptureFixt
     assert exits.codes == [0]
 
 
-def _blocking_load(monkeypatch: pytest.MonkeyPatch) -> threading.Event:
+def _blocking_load(monkeypatch: pytest.MonkeyPatch, clock: FakeClock) -> threading.Event:
     release = threading.Event()
 
     def load(*args: Any, **kwargs: Any) -> Settings:
+        clock.advance(LATER)
         release.wait(30)
         raise OSError("released by the test")
 
     monkeypatch.setattr(Settings, "load", load)
     monkeypatch.setattr(trigger, "_hard_exit", Exits(then=release))
-    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
     monkeypatch.setattr(config, "DEFAULT_TIMEOUT", "0.05")
     return release
 
@@ -1060,9 +1086,10 @@ def test_blocking_load_in_process(
     capfd: pytest.CaptureFixture[str],
     history_rows: HistoryRows,
     stub_provider: StubProvider,
+    clock: FakeClock,
     command: str,
 ) -> None:
-    _blocking_load(monkeypatch)
+    _blocking_load(monkeypatch, clock)
     started = time.monotonic()
     result = runner.invoke(app, [command, "--trigger-id", "i" if command == "improve" else "p"])
     assert time.monotonic() - started < 10
@@ -1074,9 +1101,9 @@ def test_blocking_load_in_process(
 
 # The call's --timeout bounds the load too, so a short one keeps its hard limit.
 def test_blocking_load_on_the_call_timeout(
-    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], clock: FakeClock
 ) -> None:
-    _blocking_load(monkeypatch)
+    _blocking_load(monkeypatch, clock)
     monkeypatch.setattr(config, "DEFAULT_TIMEOUT", "1e300")
     result = runner.invoke(app, ["improve", "--timeout", "0.05"])
     assert (result.exit_code, result.stdout) == (0, "")
@@ -1089,22 +1116,16 @@ def test_slow_load_then_stall_in_process(
     monkeypatch: pytest.MonkeyPatch,
     stub_provider: StubProvider,
     capfd: pytest.CaptureFixture[str],
+    clock: FakeClock,
 ) -> None:
     import re
 
-    watches: list[Watchdog] = []
-    arm = Watchdog.arm
-
-    def recorded(self: Watchdog, cfg: Settings, provider: str) -> str | None:
-        watches.append(self)
-        return arm(self, cfg, provider)
+    _slow_load(monkeypatch, clock, 3.0)
 
     def stalled(op: str, *args: str) -> str:
-        watches[0]._fire()
+        clock.advance(LATER)
         return "a draft"
 
-    monkeypatch.setattr(Watchdog, "arm", recorded)
-    monkeypatch.setattr(trigger, "_SLOW_LOAD", 0.0)  # every load counts as slow
     monkeypatch.setattr(pipeline, "_clipboard", stalled)
     monkeypatch.setattr(trigger, "_hard_exit", Exits())
     result = runner.invoke(
@@ -1120,25 +1141,40 @@ def test_slow_load_then_stall_in_process(
     assert stub_provider.calls == []
 
 
-# Start-up and load used up the call's limit (start-up back-dated, a fast load): the run ends
-# at once with a marker that says so, and the draft is never sent; the history keeps the run.
+def _slow_load(monkeypatch: pytest.MonkeyPatch, clock: FakeClock, seconds: float) -> None:
+    """Settings.load() takes ``seconds`` on the fake clock (a timer that falls due in them
+    fires)."""
+    load = Settings.load
+
+    def slow(cls: type[Settings], *args: Any, **kwargs: Any) -> Settings:
+        clock.advance(seconds)
+        return load(*args, **kwargs)
+
+    monkeypatch.setattr(Settings, "load", classmethod(slow))
+
+
+# Start-up and load used up the call's limit (start-up back-dated, a fast load or a slow one):
+# the run ends at once with a marker that says so, and the draft is never sent; the history
+# keeps the run.
 @pytest.mark.parametrize("slow_load", [False, True])
 def test_used_up_limit_sends_nothing(
     monkeypatch: pytest.MonkeyPatch,
     stub_provider: StubProvider,
     capfd: pytest.CaptureFixture[str],
     history_rows: HistoryRows,
+    clock: FakeClock,
     slow_load: bool,
 ) -> None:
     import re
 
     from promptmend import entry
 
-    monkeypatch.setattr(entry, "_started", time.monotonic() - 10)
-    # The real timer's deadline stays well ahead, so the run's own marker is the one printed.
+    monkeypatch.setattr(entry, "_started", clock() - 10)
+    # The real timer's deadline stays well ahead, so the run's own marker is the one printed:
+    # start-up used up the call's limit, but neither timer is due yet.
     monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 60.0)
     if slow_load:
-        monkeypatch.setattr(trigger, "_SLOW_LOAD", 0.0)
+        _slow_load(monkeypatch, clock, 2.0)
     read: list[str] = []
 
     def clipboard(op: str, *args: str) -> str:
@@ -1166,19 +1202,26 @@ def test_used_up_limit_sends_nothing(
 
 
 # Start-up alone ran past the provisional limit: arm_loading()'s marker says so, not that the
-# settings did not load (they have not begun to).
-def test_arm_loading_after_a_slow_start(monkeypatch: pytest.MonkeyPatch) -> None:
+# settings did not load (they have not begun to). Its timer is due at once, and fires so.
+def test_arm_loading_after_a_slow_start(
+    clock: FakeClock, exits: Exits, capfd: pytest.CaptureFixture[str]
+) -> None:
     import re
 
-    monkeypatch.setattr(Watchdog, "_fire", lambda self: None)
-    watch, _ = _watchdog()
-    watch._started = time.monotonic() - 100
+    watch, _ = _watchdog(clock)
+    watch._started = clock() - 100
     watch.arm_loading("1")
-    watch.cancel()
     expected = (
         r"\[promptmend: starting up took 1\d\d\.\ds, past the 1\.0s time limit; nothing was sent\]"
     )
     assert re.fullmatch(expected, watch._marker)
+    (timer,) = clock.timers
+    assert timer.interval == 0.0
+    clock.advance(0)  # due at once: a real timer fires straight away
+    assert timer.fired
+    assert capfd.readouterr().out == watch._marker
+    assert exits.codes == [0]
+    watch.cancel()
 
 
 # A run that reaches arm() 3 s past its hard deadline still gets one bounded window for its
@@ -1187,11 +1230,12 @@ def test_used_up_limit_still_records(
     monkeypatch: pytest.MonkeyPatch,
     stub_provider: StubProvider,
     history_rows: HistoryRows,
+    clock: FakeClock,
 ) -> None:
     from promptmend import entry
 
     monkeypatch.setenv("PROMPT_TIMEOUT_SECONDS", "5")
-    monkeypatch.setattr(entry, "_started", time.monotonic() - (5 + trigger.WATCHDOG_MARGIN + 3))
+    monkeypatch.setattr(entry, "_started", clock() - (5 + trigger.WATCHDOG_MARGIN + 3))
     exits = Exits()
     monkeypatch.setattr(trigger, "_hard_exit", exits)
     result = runner.invoke(app, ["improve", "--provider", "ollama", "--trigger-id", "il"])
@@ -1206,7 +1250,7 @@ def test_used_up_limit_still_records(
 # A run whose start-up used up its limit ends in its own marker: exit 1 with
 # --fail-on-marker (#407), the same output.
 def test_used_up_limit_fails_on_marker(
-    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, clock: FakeClock
 ) -> None:
     from promptmend import entry
 
@@ -1214,7 +1258,7 @@ def test_used_up_limit_fails_on_marker(
     exits = Exits()
     monkeypatch.setattr(trigger, "_hard_exit", exits)
     args = ["improve", "--provider", "ollama", "--source", "argument", "--text", "d"]
-    monkeypatch.setattr(entry, "_started", time.monotonic() - 5)
+    monkeypatch.setattr(entry, "_started", clock() - 5)
     result = runner.invoke(app, [*args, "--fail-on-marker"])
     assert result.exit_code == 1
     assert result.stdout.startswith("[promptmend: starting up took 5")
@@ -1223,13 +1267,10 @@ def test_used_up_limit_fails_on_marker(
 
 # A timer that cannot start costs neither improve nor persona its output.
 def test_no_thread_left_still_prints(
-    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, clock: FakeClock
 ) -> None:
-    def no_thread(at: float, action: Any) -> threading.Timer:
-        raise RuntimeError("can't start new thread")
-
     monkeypatch.setenv("PROMPT_PERSONA", "I am a tester.")
-    monkeypatch.setattr(trigger, "_start_timer", no_thread)
+    clock.no_thread = True
     result = runner.invoke(app, ["persona", "--trigger-id", "p"])
     assert (result.exit_code, result.stdout) == (0, "I am a tester.")
     result = runner.invoke(app, ["improve", "--provider", "ollama", "--source", "argument"])
@@ -1239,16 +1280,12 @@ def test_no_thread_left_still_prints(
 
 # The final timer in claim() cannot start: the output is still printed.
 def test_claim_without_a_final_timer_still_prints(
-    monkeypatch: pytest.MonkeyPatch, exits: Exits, capfd: pytest.CaptureFixture[str]
+    exits: Exits, capfd: pytest.CaptureFixture[str], clock: FakeClock
 ) -> None:
-    watch, _ = _watchdog()
+    watch, _ = _watchdog(clock)
     watch.arm(Settings(timeout=30), "ollama")
     watch.cancel()
-
-    def no_thread(at: float, action: Any) -> threading.Timer:
-        raise RuntimeError("can't start new thread")
-
-    monkeypatch.setattr(trigger, "_start_timer", no_thread)
+    clock.no_thread = True
     trigger.emit("the rewrite", watch)
     assert watch._final is None
     assert capfd.readouterr().out == "the rewrite"

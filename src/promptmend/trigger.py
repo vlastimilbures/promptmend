@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from typing import Protocol
 
 import typer
 
@@ -87,10 +88,20 @@ _FLUSHED = "flushed"
 _FIRED = "fired"
 
 
-def _start_timer(at: float, action: Callable[[], None]) -> threading.Timer:
-    """A daemon timer running ``action`` at monotonic time ``at`` (at once if it has passed).
-    Clamped: a wait past TIMEOUT_MAX would fail in the timer's thread instead of waiting."""
-    delay = min(max(at - time.monotonic(), 0.0), threading.TIMEOUT_MAX)
+class Timer(Protocol):
+    """What the watchdog keeps of a timer it started: a way to cancel it."""
+
+    def cancel(self) -> None: ...
+
+
+# Starts a timer that runs its action once, after a wait in seconds (0 or more, at most
+# threading.TIMEOUT_MAX) on the watchdog's clock: Watchdog's ``timers``.
+TimerFactory = Callable[[float, Callable[[], None]], Timer]
+
+
+def _start_timer(delay: float, action: Callable[[], None]) -> threading.Timer:
+    """The watchdog's timers in production: a daemon threading.Timer running ``action`` after
+    ``delay`` seconds of time.monotonic()."""
     timer = threading.Timer(delay, action)
     timer.daemon = True
     timer.start()
@@ -166,8 +177,17 @@ class Watchdog:
     """
 
     def __init__(
-        self, rec: recorder.Recorder, ran: pipeline.Rewrite, *, fail_on_marker: bool = False
+        self,
+        rec: recorder.Recorder,
+        ran: pipeline.Rewrite,
+        *,
+        fail_on_marker: bool = False,
+        clock: Callable[[], float] = time.monotonic,
+        timers: TimerFactory = _start_timer,
     ) -> None:
+        """``clock`` (monotonic seconds) and ``timers`` are every time read and every timer
+        start of the watchdog; a test passes a fake pair, to move time on a thread of its
+        choosing. The history's bounded wait in _finish_run() is real time either way."""
         from . import entry
 
         self._rec, self._ran = rec, ran
@@ -176,12 +196,14 @@ class Watchdog:
         # marker goes out; the watchdog's own timed-out marker sets it in _fire().
         self._fail_on_marker = fail_on_marker
         self._failed = False
-        self._started = entry.take_start() or time.monotonic()
+        self._clock = clock
+        self._timers = timers
+        self._started = entry.take_start() or clock()
         self._lock = threading.Lock()
         self._state = _IDLE
         self._done = threading.Event()
-        self._timer: threading.Timer | None = None
-        self._final: threading.Timer | None = None
+        self._timer: Timer | None = None
+        self._final: Timer | None = None
         self._deadline = 0.0
         self._marker = ""
         # The call's limit, for stdin_marker(); the provisional one until arm().
@@ -191,8 +213,9 @@ class Watchdog:
         self._final_missed = False
         # The provisional timer is armed (arm_loading()) and not yet replaced (arm()).
         self._loading = False
-        # The provisional timer arm() replaced: if it fires anyway, it does nothing.
-        self._retired: threading.Timer | None = None
+        # How many _fire() timers were started: one that fires with an older number (the
+        # provisional timer arm() replaced) does nothing.
+        self._armed = 0
         # When the settings load began (arm_loading()), so arm() words the load alone, not
         # the start-up before it (imports, a scanned machine).
         self._load_started = self._started
@@ -201,7 +224,7 @@ class Watchdog:
         """Before Settings.load(): the provisional limit, from the call's ``timeout`` option
         or the built-in default; nothing about the settings is known yet."""
         limit = self._limit = loading_limit(timeout)
-        now = self._load_started = time.monotonic()
+        now = self._load_started = self._clock()
         self._loading = True
         self._deadline = self._started + limit + WATCHDOG_MARGIN
         if now >= self._deadline - _WATCHDOG_HISTORY:
@@ -212,7 +235,7 @@ class Watchdog:
             )
         else:
             self._marker = f"[promptmend: the settings did not load within {limit}s]"
-        self._timer = _start_timer(self._deadline - _WATCHDOG_HISTORY, self._fire)
+        self._start_fire()
 
     def arm(self, cfg: Settings, provider: str) -> str | None:
         """The call's limit is known: replace the provisional timer with the real one, counted
@@ -224,7 +247,7 @@ class Watchdog:
         marker, so whichever of the two prints, the text is the same."""
         spec = PROVIDERS.get(provider)
         label = spec.label if spec is not None else _UNKNOWN_LABEL
-        now = time.monotonic()
+        now = self._clock()
         took, loading = now - self._started, now - self._load_started
         expired = took >= cfg.timeout
         limit = _past(cfg.timeout)
@@ -243,7 +266,6 @@ class Watchdog:
                 return None
             if self._timer is not None:
                 self._timer.cancel()
-            self._retired = self._timer
             self._loading = False
             self._marker = f"[promptmend: {text}]"
             self._limit = cfg.timeout
@@ -252,8 +274,21 @@ class Watchdog:
                 # The run ends at once with its marker: give its history row the same margin
                 # a run within its limit has, rather than a deadline already past.
                 self._deadline = max(self._deadline, now + WATCHDOG_MARGIN)
-            self._timer = _start_timer(self._deadline - _WATCHDOG_HISTORY, self._fire)
+            # Retires the provisional timer: its number is no longer the last.
+            self._start_fire()
         return self._marker if expired else None
+
+    def _start(self, at: float, action: Callable[[], None]) -> Timer:
+        """A timer running ``action`` at ``at`` on the clock (at once if it has passed).
+        Clamped: a wait past TIMEOUT_MAX would fail in the timer's thread instead of waiting."""
+        delay = min(max(at - self._clock(), 0.0), threading.TIMEOUT_MAX)
+        return self._timers(delay, action)
+
+    def _start_fire(self) -> None:
+        """The timer that fires _WATCHDOG_HISTORY seconds before the deadline, numbered."""
+        self._armed += 1
+        armed = self._armed
+        self._timer = self._start(self._deadline - _WATCHDOG_HISTORY, lambda: self._fire(armed))
 
     def failed(self) -> None:
         """The run's output is a failure marker, not a rewrite (--fail-on-marker)."""
@@ -313,7 +348,7 @@ class Watchdog:
         if self._timer is not None and self._final is None:
             # A timer that cannot start (no thread left) must not cost the run its output.
             with contextlib.suppress(Exception):
-                self._final = _start_timer(self._deadline, self._final_exit)
+                self._final = self._start(self._deadline, self._final_exit)
 
     def flushed(self) -> None:
         """The output is out and flushed. If the final timer already came and went while the
@@ -326,10 +361,11 @@ class Watchdog:
         if late:
             self._exit()
 
-    def _fire(self) -> None:
+    def _fire(self, armed: int | None = None) -> None:
+        """The deadline's timer, numbered ``armed`` (None: called directly, by a test)."""
         with self._lock:
             was = self._state
-            retired = self._retired is not None and threading.current_thread() is self._retired
+            retired = armed is not None and armed != self._armed
             if retired or was in (_CLAIMED, _FIRED):
                 return
             # A reply may have just arrived and the main thread be about to claim the output:

@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 
 import pytest
 import yaml
-from conftest import resolved_settings
+from conftest import FakeClock, resolved_settings
 from typer.testing import CliRunner
 
 from promptmend import smoke
@@ -469,16 +469,14 @@ def _used_the_limit(limit: float) -> str:
 # The regex follows the watchdog's real wording: each used-the-limit marker it makes matches,
 # the timed-out marker does not.
 @pytest.mark.parametrize(("startup", "load"), [(5.0, 0.0), (0.0, 5.0)], ids=["start", "load"])
-def test_used_the_limit_matches_the_watchdog(
-    monkeypatch: pytest.MonkeyPatch, startup: float, load: float
-) -> None:
+def test_used_the_limit_matches_the_watchdog(startup: float, load: float) -> None:
     from promptmend import recorder
     from promptmend.pipeline import Rewrite
     from promptmend.trigger import Watchdog
 
-    monkeypatch.setattr(Watchdog, "_fire", lambda self: None)
-    watch = Watchdog(recorder.Recorder("improve", "i"), Rewrite())
-    now = time.monotonic()
+    clock = FakeClock()  # its timers never fire on their own
+    watch = Watchdog(recorder.Recorder("improve", "i"), Rewrite(), clock=clock, timers=clock.start)
+    now = clock()
     watch._started, watch._load_started = now - startup - load, now - load
     marker = watch.arm(Settings(timeout=LIMIT), "openrouter")
     watch.cancel()
