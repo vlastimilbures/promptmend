@@ -1037,11 +1037,16 @@ def test_a_set_up_machine_without_config_toml_is_told_the_fix(
 
 
 def _deployed(espanso: Path) -> str:
-    """A launcher file that exists, with the match files deployed for it, in sync."""
+    """A launcher file that exists, with the match files deployed for it, in sync. Planned
+    with deploy.launcher_text(), as `espanso deploy` and setup do: on Windows it writes the
+    path with `/`, which doctor's own comparison renders too."""
     launcher = espanso.parent / "bin" / f"promptmend{EXE}"
     launcher.parent.mkdir()
     launcher.write_text("", "utf-8")
-    deploy.apply(deploy.plan(espanso, str(launcher), deploy.Manifest.load()))
+    deploy.apply(deploy.plan(espanso, deploy.launcher_text(launcher), deploy.Manifest.load()))
+    report = doctor.run(espanso_dir=espanso, launcher=str(launcher), runner=_runner())
+    assert _status("match_files", report).status == doctor.OK
+    assert _status("launcher", report).status == doctor.OK
     return str(launcher)
 
 
