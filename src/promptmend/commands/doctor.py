@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 
 from .. import doctor as service
+from .. import timing as timing_service
 from . import common
 from .common import guard
 
@@ -46,9 +47,9 @@ def doctor(
     runs: int | None = typer.Option(
         None,
         "--runs",
-        min=service.RUNS_RANGE[0],
-        max=service.RUNS_RANGE[1],
-        help=f"With --timing: warm runs after each cold one (default {service.WARM_RUNS})",
+        min=timing_service.RUNS_RANGE[0],
+        max=timing_service.RUNS_RANGE[1],
+        help=f"With --timing: warm runs after each cold one (default {timing_service.WARM_RUNS})",
     ),
 ) -> None:
     """Check the install, settings, keys (set or not, never the value), Espanso, the deployed
@@ -66,11 +67,11 @@ def doctor(
         clipboard=clipboard,
         durations=durations,
     )
-    warm = service.WARM_RUNS if runs is None else runs
+    warm = timing_service.WARM_RUNS if runs is None else runs
     if as_json:
         data = report.to_json()
         if timing:
-            data["timing"] = service.timing(report, durations or {}, warm).to_json()
+            data["timing"] = timing_service.timing(report, durations or {}, warm).to_json()
         common.json_dump(data)
     else:
         for check in report.checks:
@@ -86,7 +87,7 @@ def doctor(
         if timing:
             # The checks are on screen first; the children take a few seconds.
             typer.echo("timing...", err=True)
-            _print_timing(service.timing(report, durations or {}, warm))
+            _print_timing(timing_service.timing(report, durations or {}, warm))
         # The last line: how many problems, and what to do first (#402).
         typer.echo("")
         typer.echo(service.verdict(report).line)
@@ -98,7 +99,7 @@ def _cell(ms: float | None) -> str:
     return "-" if ms is None else f"{ms:.0f}"
 
 
-def _print_timing(timed: service.Timing) -> None:
+def _print_timing(timed: timing_service.Timing) -> None:
     """The timing table: ms per run, the first one cold, then the median of the warm ones."""
     typer.echo("")
     typer.echo(
@@ -114,7 +115,7 @@ def _print_timing(timed: service.Timing) -> None:
     for run in timed.runs:
         row = f"  {run.command:<{width}}  {run.via:<11}  {_cell(_ms(run.cold)):>6}  "
         row += f"{_cell(_ms(run.warm)):>6}"
-        if run.status != service.TIMED_OK:
+        if run.status != timing_service.TIMED_OK:
             row += f"  {run.status}: {run.message}"
         typer.echo(row)
     checks = ", ".join(f"{k} {_cell(_ms(v))}" for k, v in timed.checks.items())
