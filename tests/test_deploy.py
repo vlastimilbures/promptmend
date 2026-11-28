@@ -410,6 +410,10 @@ def test_detach_remove_all(espanso: Path) -> None:
     assert [p.name for p in (espanso / "match").iterdir()] == [STATIC]
     assert "# my tweak" in edited.read_text("utf-8")
     edited.unlink()
+    planned = deploy.detach(deploy.Manifest.load(), espanso, remove_all=True, dry_run=True)
+    assert any(line.startswith("would forget") for line in planned.lines)
+    assert not planned.changed
+    assert deploy.Manifest.load().entries  # a dry run forgets nothing
     outcome = deploy.detach(deploy.Manifest.load(), espanso, remove_all=True)
     assert any("already gone" in line for line in outcome.lines)
     assert not (user_data_dir() / deploy.MANIFEST_NAME).exists()
@@ -1333,6 +1337,35 @@ def test_cli_detach(espanso: Path, fake_run: FakeRunner) -> None:
     assert [p.name for p in (espanso / "match").iterdir()] == [STATIC]
     result = _cli("detach", "--remove-all", "--yes", "--no-restart", *where)
     assert not list((espanso / "match").iterdir())
+
+
+# detach --dry-run (#405): the same decisions as the real detach, nothing removed, no command
+# run, no question asked.
+@pytest.mark.parametrize("mode", [[], ["--remove-all"]])
+def test_cli_detach_dry_run_lists_what_detach_removes(
+    espanso: Path, fake_run: FakeRunner, mode: list[str]
+) -> None:
+    where = ["--espanso-dir", str(espanso), *mode]
+    _cli("deploy", "--yes", *_where(espanso))
+    _edit(espanso, "prompts-template.yml")
+    manifest = user_data_dir() / deploy.MANIFEST_NAME
+    before, record = _tree(espanso), manifest.read_bytes()
+    fake_run.calls.clear()
+
+    dry = _cli("detach", "--dry-run", *where)
+    assert dry.exit_code == 0, dry.output
+    assert dry.stdout.rstrip().endswith("Dry run: nothing was removed.")
+    assert "Detach?" not in dry.output
+    assert (_tree(espanso), manifest.read_bytes(), fake_run.calls) == (before, record, [])
+    would = {line.split()[-1] for line in dry.stdout.splitlines() if "would remove" in line}
+    assert "kept" in dry.stdout  # the edited file
+
+    real = _cli("detach", "--yes", "--no-restart", *where)
+    removed = {line.split()[-1] for line in real.stdout.splitlines() if line.startswith("removed")}
+    assert would == removed
+    gone = {Path(name).name for name in set(before) - set(_tree(espanso))}
+    assert {Path(path).name for path in removed} == gone
+    assert removed  # the CLI-calling files at least
 
 
 def test_cli_detach_bad_manifest(fake_run: FakeRunner) -> None:

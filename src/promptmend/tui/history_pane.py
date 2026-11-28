@@ -185,7 +185,7 @@ class HistoryPane(Pane):
         fmt, raw = values["format"], values["path"].strip()
         # A path that looks like a key is never shown.
         shown = teach.WITHHELD if looks_like_a_key(raw) else raw
-        argv = ("history", "export", "--format", fmt, "-o", shown if raw else "<FILE>")
+        argv = ("history", "export", "--format", fmt, "--file", shown if raw else "<FILE>")
         self.attempt(export, reload=False, command=teach.equivalent(*argv))
 
     @on(Button.Pressed, "#prune")

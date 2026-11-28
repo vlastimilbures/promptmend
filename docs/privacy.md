@@ -361,7 +361,7 @@ which is why only your settings and the provider's reply fill those columns, nev
   over the next few runs).
 - **Last runs:** `promptmend history last [-n N]` lists the newest runs, one line each, from
   the same metadata (the History tab shows the last 5).
-- **Export, prune, reset:** `promptmend history export [--format json|csv] [-o FILE]` writes
+- **Export, prune, reset:** `promptmend history export [--format json|csv] [--file FILE]` writes
   every record (the same metadata, nothing more), `promptmend history prune [--older-than DAYS]`
   deletes older records now, and `promptmend history reset` deletes them all. Uninstalling does
   not delete the history.

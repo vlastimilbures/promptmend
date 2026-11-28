@@ -188,12 +188,14 @@ def improve(
         None,
         "--output",
         help=f"{' or '.join(OUTPUTS)}: paste the rewrite, or copy it and print only markers; "
-        "default: PROMPT_OUTPUT",
+        "default: PROMPT_OUTPUT. A script that wants the rewrite on the clipboard passes "
+        "--output clipboard",
     ),
     copy: bool = typer.Option(
         False,
-        help="With paste output, also copy it to the clipboard (overwrites --source "
-        "clipboard's draft)",
+        help="With paste output, also copy the printed rewrite (overwrites --source "
+        "clipboard's draft); no effect with clipboard output. Printed and copied: "
+        "--output paste --copy",
     ),
     allow_flagged: bool = typer.Option(
         False,

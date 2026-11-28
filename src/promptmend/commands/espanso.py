@@ -27,6 +27,11 @@ _ESPANSO_DIR = typer.Option(None, "--espanso-dir", help="Default: `espanso path 
 _LAUNCHER = typer.Option(
     None, "--launcher", help="CLI path to write into the matches; default: this install's own"
 )
+_STATUS_LAUNCHER = typer.Option(
+    None,
+    "--launcher",
+    help="CLI path to compare the matches against; default: this install's own",
+)
 _YES = typer.Option(False, "--yes", "-y", help="Apply without asking")
 _NO_RESTART = typer.Option(False, "--no-restart", help="Do not restart Espanso afterwards")
 
@@ -77,7 +82,7 @@ def restart(no_restart: bool) -> None:
 @guard
 def espanso_status(
     espanso_dir: str | None = _ESPANSO_DIR,
-    launcher: str | None = _LAUNCHER,
+    launcher: str | None = _STATUS_LAUNCHER,
     diff: bool = typer.Option(False, "--diff", help="Show what deploy would change"),
 ) -> None:
     """Report each match file: missing, in sync, stale, modified or foreign, then your own."""
@@ -189,6 +194,9 @@ def espanso_detach(
     espanso_dir: str | None = _ESPANSO_DIR,
     yes: bool = _YES,
     no_restart: bool = _NO_RESTART,
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be removed, then stop without removing"
+    ),
 ) -> None:
     """Remove the match files promptmend deployed. Files you edited are kept."""
     from .. import deploy
@@ -200,6 +208,15 @@ def espanso_detach(
         return
     mode = "the CLI-calling match files" if keep_static else "every deployed match file"
     typer.echo(f"Detach removes {mode} that you have not edited:")
+    if dry_run:
+        # The same decisions as a real detach (deploy.detach), reported, nothing removed.
+        planned = deploy.detach(
+            manifest, _espanso_root(espanso_dir), remove_all=not keep_static, dry_run=True
+        )
+        for line in planned.lines:
+            typer.echo(f"  {line}")
+        typer.echo("Dry run: nothing was removed.")
+        return
     for target in sorted(manifest.entries):
         typer.echo(f"  {target}")
     confirm("Detach?", yes=yes)

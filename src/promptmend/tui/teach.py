@@ -29,7 +29,7 @@ BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
     "show-diff": (("espanso", "status", "--diff"),),
     "deploy": (("espanso", "deploy"),),
     "detach": (("espanso", "detach"),),
-    "export": (("history", "export", "--format", "json", "-o", "<FILE>"),),
+    "export": (("history", "export", "--format", "json", "--file", "<FILE>"),),
     "prune": (("history", "prune", "--older-than", "<DAYS>"),),
     "reset": (("history", "reset"),),
     "use-default": (("config", "unset", "<NAME>"),),  # the Settings pick and edit dialogs
