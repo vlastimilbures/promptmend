@@ -116,7 +116,8 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "--strict-markers -m 'not live'"
 markers = ["live: calls the real OpenRouter API (opt-in: pytest -m live)"]
-# A hang fails its test instead of the CI job (#375). The slowest test takes ~5 s; a test
+# A hang fails its test instead of the CI job (#375). The slowest tests (interface ones) take
+# under 10 s on a developer's Mac, up to about 2.5 times that on the Windows runners; a test
 # stuck for 120 s fails with every thread's stack (pytest-timeout; SIGALRM on macOS/Linux,
 # so the run goes on, a watcher thread that ends the run on Windows). A wait the signal
 # cannot break gets the faulthandler dump and an exit at 180 s, well inside the CI job's

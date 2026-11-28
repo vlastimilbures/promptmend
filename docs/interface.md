@@ -305,6 +305,12 @@ models, never a made-up 0.
 | Up, Down, Enter | Move in [Home's rows](#home) and open the tab a row names |
 | Up, Down, `j`, `k`, Space, Enter, `/` | Move and change in the [Settings list](#settings-tab) |
 
+A digit switches tabs wherever the focus is on the tab you leave (a button, a table, a
+picker), except while you type in the Settings filter or the Try tab's draft, where it is
+typed. Home and Settings give the focus to their list as they open. On the other tabs, a focus
+you leave on the old tab moves to the tab bar; when nothing had the focus (after Escape in the
+draft, say), nothing has it on the new tab either.
+
 The footer shows the keys of the tab you are on, Reload and Quit. `a` and `t` are left out of
 it, so Quit fits a 70-column terminal; they work on every tab, the Settings list included, but
 not while you type in the Settings filter or the Try tab's draft (letters go into the text;

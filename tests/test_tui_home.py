@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 from rich.text import Text
+from test_tui import tab_changes as _tab_changes
 from test_tui_snapshots import fixed_state, quick_of
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, TabbedContent, Tabs
@@ -619,17 +620,6 @@ def test_enter_on_a_newer_release_shows_about(monkeypatch: pytest.MonkeyPatch) -
         assert isinstance(app.screen, AboutScreen)
 
     _drive(lambda: _update(ready(), update_check.AVAILABLE), scenario)
-
-
-def _tab_changes(app: ManageApp) -> list[str]:
-    """Every value TabbedContent.active takes from now on."""
-    changes: list[str] = []
-
-    def changed(tab: str) -> None:
-        changes.append(tab)
-
-    app.main.watch(app.main.query_one(TabbedContent), "active", changed, init=False)
-    return changes
 
 
 async def _press_fix(app: ManageApp, pilot: Pilot[int], button: str, how: str) -> None:

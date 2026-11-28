@@ -225,6 +225,14 @@ All notable changes to this project are documented here. The format follows
   in a later release.
 
 ### Fixed
+- Interface: a digit pressed for another tab no longer bounces back to the tab you were on
+  (#428). It did with the focus on one of Profiles' two buttons, Triggers' three buttons,
+  History's picker, table or buttons, or the Try tab's result box: the digit of any tab but
+  Home or Settings seemed to do nothing (`1` and `2` arrived only after the tab had flipped
+  three times), the focus going to the old tab's next widget, which opened that tab again.
+  Leaving any tab with the focus on it now gives the focus to the tab bar, as leaving Home
+  already did; Home and Settings still focus their list as they open, and a digit typed in
+  the Settings filter or the Try tab's draft is still text.
 - `doctor`'s timing runs and setup's test no longer copy the stub's reply to the clipboard
   when `PROMPT_OUTPUT=clipboard` (#390). The stub run used your output setting, so with
   clipboard output it overwrote the clipboard, printed nothing and failed (`exit code 0, no

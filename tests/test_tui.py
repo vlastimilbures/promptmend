@@ -1371,6 +1371,179 @@ def test_digits_switch_tabs_and_t_toggles_contrast(espanso: FakeRunner) -> None:
     assert seen == [True] * 9
 
 
+# The digit of each tab, as its label shows it.
+DIGITS = {tab: str(n) for n, tab in enumerate(TABS, start=1)}
+# What has the focus as a tab opens: its list on Home and Settings, the tab bar elsewhere.
+ARRIVAL = {"home": "#home-rows", "settings": "#settings-list"}
+
+
+def tab_changes(app: ManageApp) -> list[str]:
+    """Every value TabbedContent.active takes from now on."""
+    from textual.widgets import TabbedContent
+
+    changes: list[str] = []
+
+    def changed(tab: str) -> None:
+        changes.append(tab)
+
+    app.main.watch(app.main.query_one(TabbedContent), "active", changed, init=False)
+    return changes
+
+
+def _takes_text(widget: Widget) -> bool:
+    """An Input or a TextArea that can be typed into: a digit typed there is text."""
+    from textual.widgets import TextArea
+
+    return isinstance(widget, Input) or (isinstance(widget, TextArea) and not widget.read_only)
+
+
+def _arrived(app: ManageApp, tab: str) -> bool:
+    """``tab`` is shown and has its arrival focus; nothing in a hidden pane has it."""
+    from textual.widgets import TabbedContent, Tabs
+
+    if app.main.query_one(TabbedContent).active != tab:
+        return False
+    if tab in ARRIVAL:
+        return app.focused is pane(app, tab).query_one(ARRIVAL[tab])
+    return isinstance(app.focused, Tabs)
+
+
+async def _walk_to(app: ManageApp, pilot: Pilot[int], widget: Widget) -> None:
+    """Move the focus to ``widget`` with Tab or Shift+Tab, whichever is shorter, as a person
+    does."""
+    chain = app.main.focus_chain
+    start = chain.index(app.focused) if app.focused in chain else 0
+    ahead = (chain.index(widget) - start) % len(chain)
+    key = "tab" if ahead <= len(chain) - ahead else "shift+tab"
+    for _ in range(len(chain)):
+        if app.focused is widget:
+            return
+        await pilot.press(key)
+    assert app.focused is widget, f"Tab never reaches {widget!r}"
+
+
+# A tab's steps in the test below: one per widget to leave, at least one per digit; more
+# means a pane gives new widgets on each visit, and the test would never end.
+MAX_STEPS = 20
+
+
+# #428: a digit leaves a tab whatever of the tab has the focus, changing the tab exactly once
+# (a hidden button, select or table took the focus back and its tab bounced back). One app run
+# per tab: every focusable widget of the tab (found at run time, so a widget added later is
+# covered too) is left by a digit, every other tab's digit is pressed once, and the tab's own
+# digit brings the tour back. A widget that takes text keeps the digit as text. No animation:
+# the tab bar's underline was a third of the time.
+@pytest.mark.parametrize("tab", list(TABS))
+def test_a_digit_changes_the_tab_once_wherever_the_focus_is(
+    espanso: FakeRunner, record_ops: Callable[..., None], tab: str
+) -> None:
+    from textual.widgets import TabPane
+
+    record_ops()  # History's table, picker and buttons shown
+    others = [t for t in TABS if t != tab]
+    digits = list(others)  # the other tabs whose digit is still to be pressed here
+    left: set[int] = set()  # the widgets already left, by id()
+    seen: list[tuple[str, str, list[str]]] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        app.animation_level = "none"
+        await open_tab(app, pilot, *TABS)
+        changes = tab_changes(app)
+        await pilot.click(f"#--content-tab-{tab}")
+        await settle(pilot)
+        here = app.main.query_one(f"TabPane#{tab}", TabPane)
+
+        def to_leave() -> list[Widget]:
+            return [w for w in app.main.focus_chain if here in w.ancestors and id(w) not in left]
+
+        for widget in [w for w in to_leave() if _takes_text(w)]:
+            await _walk_to(app, pilot, widget)
+            changes.clear()
+            await pilot.press(DIGITS[others[0]])
+            await settle(pilot)
+            assert changes == [], widget
+            assert app.focused is widget
+            text = widget.value if isinstance(widget, Input) else getattr(widget, "text", "")
+            assert text.endswith(DIGITS[others[0]]), widget
+            await pilot.press("backspace")  # the Settings filter shows every row again
+            left.add(id(widget))
+        for _ in range(MAX_STEPS):
+            todo = to_leave()
+            if not todo and not digits:
+                return
+            # The next widget to leave, else the arrival focus; the next digit to press.
+            leaving = todo[0] if todo else app.focused
+            assert leaving is not None
+            other = digits.pop(0) if digits else others[0]
+            name = f"{type(leaving).__name__}#{leaving.id}"
+            await _walk_to(app, pilot, leaving)
+            changes.clear()
+            await pilot.press(DIGITS[other])
+            await settle(pilot)
+            seen.append((name, other, list(changes)))
+            assert changes == [other], (name, other)
+            assert _arrived(app, other), (name, other, app.focused)
+            left.add(id(leaving))
+            # Back by this tab's digit, from the arrival focus.
+            await pilot.press(DIGITS[tab])
+            await settle(pilot)
+            assert changes == [other, tab], (name, other)
+            assert _arrived(app, tab), (name, other, app.focused)
+        raise AssertionError(f"{tab}: still to leave after {MAX_STEPS} steps: {to_leave()}")
+
+    drive(scenario)
+    assert {other for _, other, _ in seen} == set(others)
+
+
+# The other ways of changing the tab with a tab's button focused (#428): a click on a tab,
+# a digit while a reload is still running, the tab bar's arrows: each changes it once.
+def test_a_click_a_reload_or_the_arrows_change_the_tab_once(espanso: FakeRunner) -> None:
+    from textual.widgets import TabPane, Tabs
+
+    blocked = BlockedLoad()
+    blocked.release.set()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        app.animation_level = "none"
+        await open_tab(app, pilot, *TABS)
+        changes = tab_changes(app)
+
+        async def on_a_button(tab: str) -> None:
+            await pilot.click(f"#--content-tab-{tab}")
+            await settle(pilot)
+            here = app.main.query_one(f"TabPane#{tab}", TabPane)
+            button = next(
+                w for w in app.main.focus_chain if isinstance(w, Button) and here in w.ancestors
+            )
+            await _walk_to(app, pilot, button)
+            changes.clear()
+
+        await on_a_button("triggers")
+        await pilot.click("#--content-tab-history")
+        await settle(pilot)
+        assert changes == ["history"]
+        assert _arrived(app, "history")
+        await on_a_button("profiles")
+        blocked.release.clear()
+        await pilot.press("r", DIGITS["triggers"])
+        await until(pilot, lambda: blocked.calls == 2, lambda: blocked.calls)
+        assert changes == ["triggers"]  # while the reload's full read still waits
+        assert _arrived(app, "triggers")
+        blocked.release.set()
+        await settle(pilot)
+        assert changes == ["triggers"]
+        assert _arrived(app, "triggers")
+        await on_a_button("history")
+        await _walk_to(app, pilot, app.main.query_one(Tabs))  # back to the tab bar
+        assert changes == []
+        await pilot.press("right")
+        await settle(pilot)
+        assert changes == ["diagnostics"]
+        assert _arrived(app, "diagnostics")
+
+    drive(scenario, loader=blocked)
+
+
 def _quit_shown(app: ManageApp, width: int) -> bool:
     """The footer's Quit key is drawn whole inside a ``width``-column screen."""
     from textual.widgets._footer import FooterKey

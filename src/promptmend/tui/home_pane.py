@@ -16,7 +16,7 @@ from rich.table import Table
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
-from textual.widgets import Button, OptionList, Static, TabbedContent, Tabs
+from textual.widgets import Button, OptionList, Static, TabbedContent
 from textual.widgets.option_list import Option
 
 from .. import doctor
@@ -199,19 +199,11 @@ class HomePane(Pane):
         self.watch(self.query_ancestor(TabbedContent), "active", self._tab_changed, init=False)
 
     def _tab_changed(self, tab: str) -> None:
-        """Called synchronously as the active tab changes, before the switch is drawn or any
-        handler runs. Home left with the focus in it: the tab bar takes the focus now, never
-        deferred. A Home widget that kept it would be blurred as Home hides, and Textual
-        hands the focus to a sibling, still in Home: focus inside a tab pane makes that tab
-        active again, which pulled Home back (#395 review). Home shown: its list takes the
-        focus after the refresh, once it is displayed, unless another tab is active by
-        then."""
+        """Home shown: its list takes the focus after the refresh, once it is displayed,
+        unless another tab is active by then. Leaving Home, MainScreen._tab_changed gives the
+        focus to the tab bar (#428)."""
         if tab == "home":
             self.call_after_refresh(self._focus_list)
-            return
-        screen = self.screen
-        if screen.focused is not None and self in screen.focused.ancestors:
-            screen.set_focus(self.query_ancestor(TabbedContent).query_one(Tabs))
 
     def _focus_list(self) -> None:
         """Focus the rows, only while Home is still the active tab: a deferred focus never
