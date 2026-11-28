@@ -11,7 +11,18 @@ from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlsplit
 
 from ..redaction import safe_repr, scan
-from .usage import Meter
+from .usage import (
+    ERROR_BODY,
+    ERROR_INVALID_HEADER,
+    ERROR_INVALID_JSON,
+    ERROR_INVALID_URL,
+    ERROR_NON_2XX,
+    ERROR_REFUSED,
+    ERROR_TIMEOUT,
+    ERROR_TRANSPORT,
+    ERROR_UNEXPECTED,
+    Meter,
+)
 
 if TYPE_CHECKING:
     import ssl
@@ -279,7 +290,7 @@ def _attempt(
     try:
         return _exchange(label, url, timeout, budget, json, headers, outcome, wording or _Wording())
     except BaseException:
-        outcome.error_kind = outcome.error_kind or "unexpected"
+        outcome.error_kind = outcome.error_kind or ERROR_UNEXPECTED
         raise
     finally:
         if meter is not None:
@@ -421,23 +432,23 @@ def _exchange(
             for chunk in response.iter_bytes():
                 content += chunk
                 if time.monotonic() > stop_at:
-                    outcome.error_kind = "timeout"
+                    outcome.error_kind = ERROR_TIMEOUT
                     raise timed_out
     except httpx.TimeoutException as exc:
-        outcome.error_kind = "timeout"
+        outcome.error_kind = ERROR_TIMEOUT
         raise timed_out from exc
     except httpx.InvalidURL as exc:
-        outcome.error_kind = "invalid_url"
+        outcome.error_kind = ERROR_INVALID_URL
         raise ProviderError(f"{label} base URL invalid: {safe_repr(str(exc))}") from exc
     except httpx.LocalProtocolError as exc:
         # Raised for a header value with characters HTTP forbids; its message quotes the
         # value, which is the API key, so it is not repeated.
-        outcome.error_kind = "invalid_header"
+        outcome.error_kind = ERROR_INVALID_HEADER
         raise ProviderError(
             f"{label} request failed: invalid header value (check the API key)"
         ) from exc
     except httpx.ConnectError as exc:
-        outcome.error_kind = "refused"
+        outcome.error_kind = ERROR_REFUSED
         tls = _tls_failure(exc)
         loopback = is_loopback(url)
         if tls is not None:
@@ -454,7 +465,7 @@ def _exchange(
             raise refused from exc
         raise _Retry(refused) from exc
     except httpx.HTTPError as exc:
-        outcome.error_kind = "transport"
+        outcome.error_kind = ERROR_TRANSPORT
         raise ProviderError(_failed(label, exc)) from exc
 
     try:
@@ -463,17 +474,17 @@ def _exchange(
         body = None
     outcome.body = body
     if not response.is_success:
-        outcome.error_kind = "non_2xx"
+        outcome.error_kind = ERROR_NON_2XX
         error = http_error(label, response.status_code, body)
         delay = _retry_delay(response.headers.get("retry-after"))
         if response.status_code in RETRY_STATUSES and delay is not None:
             raise _Retry(error, delay)
         raise error
     if body is None:
-        outcome.error_kind = "invalid_json"
+        outcome.error_kind = ERROR_INVALID_JSON
         raise ProviderError(f"{label} returned invalid JSON")
     if failure := body_error(label, body):
-        outcome.error_kind = "body_error"
+        outcome.error_kind = ERROR_BODY
         if failure.status in RETRY_STATUSES:
             raise _Retry(failure)
         raise failure

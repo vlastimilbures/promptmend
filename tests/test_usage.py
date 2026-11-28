@@ -11,9 +11,10 @@ import httpx
 import pytest
 from conftest import resolved_settings
 
+from promptmend import history
 from promptmend.factory import make_provider
 from promptmend.prompt_builder import PERSONA_TOKEN, render
-from promptmend.providers import base
+from promptmend.providers import base, usage
 from promptmend.providers.anthropic import AnthropicProvider
 from promptmend.providers.base import Provider, ProviderError
 from promptmend.providers.ollama import OllamaProvider
@@ -385,6 +386,70 @@ def test_failed_attempt_is_recorded(
     with pytest.raises(ProviderError):
         _remote_ollama(records).generate("d", "s")
     assert [(r.error_kind, r.status) for r in records] == [(kind, status)]
+
+
+class _Attempts:
+    """An observer with a ``begin``, like the CLI's recorder: keeps what begin() is told and
+    every finished attempt."""
+
+    def __init__(self) -> None:
+        self.begun: list[AttemptUsage] = []
+        self.records: list[AttemptUsage] = []
+
+    def begin(self, usage: AttemptUsage) -> None:
+        self.begun.append(usage)
+
+    def __call__(self, usage: AttemptUsage) -> None:
+        self.records.append(usage)
+
+
+# Each way post_json() can end an attempt, and the error kind it records for it.
+_FAILURES: list[tuple[dict[str, Any] | Exception, str]] = [
+    (httpx.ReadTimeout("slow"), usage.ERROR_TIMEOUT),
+    (httpx.InvalidURL("bad url"), usage.ERROR_INVALID_URL),
+    (httpx.LocalProtocolError("bad header"), usage.ERROR_INVALID_HEADER),
+    (httpx.ConnectError("refused"), usage.ERROR_REFUSED),
+    (httpx.RemoteProtocolError("dropped"), usage.ERROR_TRANSPORT),
+    ({"status_code": 400}, usage.ERROR_NON_2XX),
+    ({"bad_json": True}, usage.ERROR_INVALID_JSON),
+    ({"json_data": {"error": {"code": 400, "message": "no"}}}, usage.ERROR_BODY),
+    (RuntimeError("boom"), usage.ERROR_UNEXPECTED),
+]
+
+
+# Every failure records its kind, one the history stores; an attempt that has begun is
+# provisionally a timeout (what improve's watchdog keeps when it ends the run first).
+@pytest.mark.parametrize(("reply", "kind"), _FAILURES)
+def test_each_failure_records_its_error_kind(
+    fake_http: FakeHttp, reply: dict[str, Any] | Exception, kind: str
+) -> None:
+    observer = _Attempts()
+    meter = Meter(observer, "p", "m", openai_usage)
+    fake_http.queue(reply)
+    with pytest.raises(Exception):  # noqa: B017, PT011 - a ProviderError, or the RuntimeError
+        base.post_json("P", "http://127.0.0.1:9/v1", 30, json={}, meter=meter)
+    assert [r.error_kind for r in observer.records] == [kind]
+    assert [r.error_kind for r in observer.begun] == [usage.ERROR_TIMEOUT]
+    assert kind in history.ERROR_KINDS
+
+
+# The history accepts exactly the kinds an attempt can record: each has a failure above, and
+# no two share a value.
+def test_history_stores_exactly_the_recorded_error_kinds() -> None:
+    assert history.ERROR_KINDS is usage.ERROR_KINDS
+    # The values are stored in history rows: a renamed one would orphan the rows already there.
+    assert usage.ERROR_KINDS == (
+        "timeout",
+        "non_2xx",
+        "invalid_json",
+        "body_error",
+        "refused",
+        "transport",
+        "invalid_url",
+        "invalid_header",
+        "unexpected",
+    )
+    assert {kind for _, kind in _FAILURES} == set(history.ERROR_KINDS)
 
 
 # A refused connection to another machine is retried: both attempts are recorded.

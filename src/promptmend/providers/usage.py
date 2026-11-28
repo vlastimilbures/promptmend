@@ -19,6 +19,30 @@ if TYPE_CHECKING:
     from decimal import Decimal
 
 CostState = Literal["reported", "estimated", "unknown", "not_applicable"]
+
+# How an attempt failed (AttemptUsage.error_kind), as post_json() and Meter.begin() record it.
+ERROR_TIMEOUT = "timeout"
+ERROR_NON_2XX = "non_2xx"
+ERROR_INVALID_JSON = "invalid_json"
+ERROR_BODY = "body_error"
+ERROR_REFUSED = "refused"
+ERROR_TRANSPORT = "transport"
+ERROR_INVALID_URL = "invalid_url"
+ERROR_INVALID_HEADER = "invalid_header"
+# Anything else that ended the attempt.
+ERROR_UNEXPECTED = "unexpected"
+# Every one of them: the values history.py stores in an attempt's error_kind column.
+ERROR_KINDS = (
+    ERROR_TIMEOUT,
+    ERROR_NON_2XX,
+    ERROR_INVALID_JSON,
+    ERROR_BODY,
+    ERROR_REFUSED,
+    ERROR_TRANSPORT,
+    ERROR_INVALID_URL,
+    ERROR_INVALID_HEADER,
+    ERROR_UNEXPECTED,
+)
 # Longest model, provider or generation id kept from a response; anything longer is dropped.
 _ID_MAX = 200
 
@@ -29,8 +53,7 @@ class AttemptUsage:
 
     ``returned_model``, ``returned_provider`` and ``generation_id`` are set only when the
     response reports them. ``error_kind`` is None for a 2xx reply with no error inside it;
-    otherwise one of ``timeout``, ``non_2xx``, ``invalid_json``, ``body_error``, ``refused``,
-    ``transport``, ``invalid_url``, ``invalid_header`` or ``unexpected``.
+    otherwise one of ERROR_KINDS.
 
     Every token count is None when the response does not report it. ``input_uncached``,
     ``cache_read``, ``cache_write`` and ``output`` do not overlap; ``reasoning`` is the part of
@@ -119,7 +142,7 @@ class Meter:
                     endpoint="loopback" if loopback else "remote",
                     attempt=attempt,
                     status=None,
-                    error_kind="timeout",
+                    error_kind=ERROR_TIMEOUT,
                     latency_ms=0.0,
                     cost_state="not_applicable" if self.local else "unknown",
                 )
