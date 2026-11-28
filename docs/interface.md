@@ -304,7 +304,9 @@ models, never a made-up 0.
 The footer shows the keys of the tab you are on, Reload and Quit. `a` and `t` are left out of
 it, so Quit fits a 70-column terminal; they work on every tab, the Settings list included, but
 not while you type in the Settings filter or the Try tab's draft (letters go into the text;
-the footer then shows only Escape), and not on a dialog, About or the setup wizard.
+the footer then shows only Escape), and not on a dialog, About or the setup wizard. While a
+picker's list is open it takes letters and digits (type to search), so `a`, `t`, `q`, `r` and
+the digits do nothing until Escape closes it; on About, `a` closes About.
 
 ## Accessibility
 

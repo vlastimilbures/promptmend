@@ -215,11 +215,20 @@ class TryPane(Pane):
         length: int,
     ) -> str:
         """What the Send dialog names. The profile whole, since the closed picker cuts a long
-        name; "as configured" with what it resolves to for this call (cfg is for_call()'s:
-        PROMPT_PRO_PROFILE on the pro tier when set, else PROMPT_PROFILE)."""
+        name; "as configured" with what it resolves to for this call. cfg is for_call()'s:
+        PROMPT_PRO_PROFILE when set, on the pro tier of a provider that has one, else
+        PROMPT_PROFILE. Whichever applied is shown as Model and Base URL are
+        (common.shown_value(): a key-like value withheld, a control character as its repr)."""
         model = model_setting(provider, tier)
         url = f"{provider.upper()}_BASE_URL"
-        shown_profile = profile or f"{cfg.profile or 'empty'} (as configured)"
+        shown_profile = profile
+        if not shown_profile:
+            # The setting cfg's profile came from: PROMPT_PROFILE's value unless for_call()
+            # swapped in another.
+            name = "PROMPT_PROFILE"
+            if cfg.profile != layers.settings().profile:
+                name = "PROMPT_PRO_PROFILE"
+            shown_profile = f"{common.shown_value(name, layers.entries[name])} (as configured)"
         recorded = (
             "It is recorded in the usage history as -try- (a direct call, no trigger)."
             if cfg.history

@@ -106,11 +106,12 @@ def drive(
     scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]],
     extra: dict[str, str] | None = None,
     profiles: list[prompt_builder.UserProfile] | None = None,
+    size: tuple[int, int] = (120, 50),
 ) -> Seen:
-    """Run ``scenario`` on the Try tab. A fixed State (``extra`` added to its environment, read
-    again on each reload, so a scenario may change it; ``profiles`` in place of its own): the
-    tab reads the (per-test) settings itself when it runs, and the State only for where "Run
-    against" starts and for the profile picker's names."""
+    """Run ``scenario`` on the Try tab in a ``size`` terminal. A fixed State (``extra`` added to
+    its environment, read again on each reload, so a scenario may change it; ``profiles`` in
+    place of its own): the tab reads the (per-test) settings itself when it runs, and the State
+    only for where "Run against" starts and for the profile picker's names."""
 
     def state(group_by: str) -> State:
         fixed = fixed_state(group_by, extra)
@@ -123,7 +124,7 @@ def drive(
     seen: list[Seen] = []
 
     async def main() -> None:
-        async with app.run_test(size=(120, 50)) as pilot:
+        async with app.run_test(size=size) as pilot:
             await settle(pilot)
             await pilot.press("7")
             await scenario(app, pilot)
@@ -500,17 +501,57 @@ def test_the_send_dialog_names_the_pro_profile_as_configured(
     assert fake_http.requests == []
 
 
+# "as configured" names a free setting (#394): it is shown as Model and Base URL are, so a
+# key-like value is withheld and a control character is quoted, never drawn raw, whichever
+# of PROMPT_PROFILE and PROMPT_PRO_PROFILE applied.
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [
+        (KEY, "<set>"),
+        ("bad\x1b[2Jname", repr("bad\x1b[2Jname")),
+        ("two\nlines", repr("two\nlines")),
+    ],
+)
+@pytest.mark.parametrize(
+    ("name", "tier"), [("PROMPT_PROFILE", "standard"), ("PROMPT_PRO_PROFILE", "pro")]
+)
+def test_the_send_dialog_never_draws_a_profile_setting_raw(
+    value: str,
+    shown: str,
+    name: str,
+    tier: str,
+    cloud: None,
+    fake_http: FakeHttp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(name, value)
+    notes: list[str] = []
+    screens: list[str] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await run(app, pilot, DRAFT, target=REAL, tier=tier)
+        assert isinstance(app.screen, ConfirmModal)
+        notes.append(app.screen.preview)
+        screens.append(app.export_screenshot())
+        await pilot.press("escape")
+        await settle(pilot)
+
+    drive(scenario)
+    (preview,) = notes
+    assert f"Profile: {shown} (as configured)" in preview.splitlines()
+    assert value not in preview
+    assert value not in screens[0]
+    assert fake_http.requests == []
+
+
 # A profile's name may be 64 characters (#394): the closed picker cuts a long one, so the Send
 # dialog names the picked profile whole, and two names alike up to the cut stay apart there.
 LONG_PROFILES = ("customer-support-german-formal", "customer-support-german-casual")
+PICKERS = ("target", "provider", "profile", "tier")
 
 
 def test_the_send_dialog_names_a_long_profile_whole(cloud: None, fake_http: FakeHttp) -> None:
     notes: list[str] = []
-    profiles = [
-        prompt_builder.UserProfile(name, Path(f"/home/me/profiles/{name}.md"), prompt_builder.ADDED)
-        for name in LONG_PROFILES
-    ]
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         options = tab(app).query_one("#try-profile", Select)
@@ -522,11 +563,43 @@ def test_the_send_dialog_names_a_long_profile_whole(cloud: None, fake_http: Fake
             await pilot.press("escape")
             await settle(pilot)
 
-    drive(scenario, profiles=profiles)
+    drive(scenario, profiles=_long_profiles())
     assert [line for n in notes for line in n.splitlines() if line.startswith("Profile:")] == [
         f"Profile: {name}" for name in LONG_PROFILES
     ]
     assert fake_http.requests == []
+
+
+def _long_profiles() -> list[prompt_builder.UserProfile]:
+    return [
+        prompt_builder.UserProfile(name, Path(f"/home/me/profiles/{name}.md"), prompt_builder.ADDED)
+        for name in LONG_PROFILES
+    ]
+
+
+# The closed Profile picker cuts a long name with an ellipsis on its one line (#394: app.CSS's
+# nowrap rule on the pickers' labels); it never wraps, and the four pickers keep one row.
+@pytest.mark.parametrize("width", [80, 70])
+def test_a_long_profile_is_cut_on_one_line_in_the_closed_picker(width: int) -> None:
+    seen: list[tuple[int, str]] = []
+    rows: set[int] = set()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        pane = tab(app)
+        options = pane.query_one("#try-profile", Select)
+        options.value = LONG_PROFILES[0]
+        await settle(pilot)
+        label = options.query_one("SelectCurrent #label", Static)
+        drawn = "".join(segment.text for segment in label.render_line(0)).rstrip()
+        seen.append((options.region.height, drawn))
+        rows.update(pane.query_one(f"#try-{id_}", Select).region.y for id_ in PICKERS)
+
+    drive(scenario, profiles=_long_profiles(), size=(width, 24))
+    ((height, drawn),) = seen
+    assert height == 1
+    assert drawn.endswith("…")
+    assert LONG_PROFILES[0].startswith(drawn[:-1])
+    assert len(rows) == 1
 
 
 def test_escape_leaves_the_draft_so_the_tab_keys_work() -> None:
