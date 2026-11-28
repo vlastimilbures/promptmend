@@ -125,6 +125,34 @@ fixes it. Below, each row has a status word (ok, warn, FAIL) and the tab that fi
 - the output mode (`PROMPT_OUTPUT`: paste or clipboard), which the Settings tab switches;
 - the `doctor` checks.
 
+The rows are a list with the focus when the interface opens: the arrows move along it, and
+Enter (or a click) on a row opens the tab it names; on a `not checked` row it checks again,
+as `r` does, and on a newer release it opens About, as `a` does. The digits and `a`, `r`,
+`t` and `q` work as everywhere. Leaving Home gives the focus to the tab bar (on the Settings tab its list takes it, as
+before); coming back
+gives it to the list, on the row it was on, which a reload keeps too.
+
+When the headline names a problem, the first button opens its fix (Tab, then Enter, from
+the list), always on the tab the headline points to:
+
+- `Deploy or repair…` when match files are not deployed, out of date or edited, or an older
+  deployed `-ip-` needs a redeploy (even when its key is missing: once redeployed it runs on
+  `PROMPT_PRO_PROVIDER`, which may need another key): the Triggers tab's deploy preview, as
+  its own Deploy or repair button opens it. Nothing is written until you press Deploy in that
+  dialog (`promptmend espanso deploy`); it is greyed out until the checks are done, as that
+  button is.
+- `Set OPENROUTER_API_KEY…` (or the key that is missing): the Settings tab's Set key dialog
+  for that key (`promptmend secrets set OPENROUTER_API_KEY`). A missing key is known from
+  your settings alone, so this button shows while the other checks still run.
+- `Open` and the tab, for anything else.
+
+When no row is a problem (you are ready, or the only rows left are still being checked),
+there is no such button, nor when the headline names a row that could not be checked
+(`not checked`: no tab fixes it, Check again or `r` tries again).
+
+The row under the highlight is drawn in the highlight's own colours, its status word too, so
+it reads in either theme.
+
 The header shows the same status (`ok`, or `1 problem, 2 warnings`). Home also lists this
 session's commands, or a few useful ones before you have done anything.
 
@@ -265,6 +293,7 @@ models, never a made-up 0.
 | `t` | Switch to the high-contrast theme |
 | `q` | Quit |
 | Escape | Leave the Try tab's draft, so the tab keys work again; clear the Settings filter |
+| Up, Down, Enter | Move in [Home's rows](#home) and open the tab a row names |
 | Up, Down, `j`, `k`, Space, Enter, `/` | Move and change in the [Settings list](#settings-tab) |
 
 ## Accessibility

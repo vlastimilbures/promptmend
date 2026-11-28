@@ -112,6 +112,20 @@ def test_tooltips() -> None:
     assert teach.tooltip("no-such-button") is None
 
 
+# Home's fix button (#395): one id per action, each naming the same command as the button it
+# stands in for (the Triggers tab's Deploy or repair, Enter on a key on the Settings tab).
+def test_home_fix_tooltips_name_the_command_of_the_action_they_open() -> None:
+    assert teach.BUTTONS["home-deploy"] == teach.BUTTONS["deploy"]
+    assert teach.BUTTONS["home-set-key"] == (teach.SETTING_ACTIONS["set-key"],)
+    deploy = teach.tooltip("home-deploy") or ""
+    assert deploy.startswith(f"{teach.tooltip('deploy')}\n")
+    assert "nothing is written until you press Deploy" in deploy
+    set_key = teach.tooltip("home-set-key") or ""
+    assert set_key.startswith("In a terminal:\n$ promptmend secrets set <NAME>\n")
+    assert teach.tooltip("home-open") == teach.NO_COMMAND["home-open"]
+    assert "home-open" not in teach.BUTTONS
+
+
 def test_entry_summary_is_the_first_line() -> None:
     assert teach.Entry("c", "one\ntwo").summary == "one"
     assert teach.Entry("c", "").summary == ""

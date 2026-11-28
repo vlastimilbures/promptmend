@@ -5,7 +5,11 @@ it is a pure function a test can call without the interface (and without Textual
 
 A quick State has no doctor report, plan or stats yet: the rows read from them say
 `checking` (status WAIT) until the full State replaces it, or `not checked` when its read
-failed."""
+failed.
+
+fix() names the one action that opens the headline's fix (Home's button for it), from the
+same row the headline names: the deploy preview, the Set key dialog for a missing key, or
+the tab the row points to."""
 
 from __future__ import annotations
 
@@ -57,7 +61,9 @@ _NUMBERS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight"
 class HomeRow:
     """``status`` is ok, warn, fail, note or checking (WAIT); ``detail`` is the short note on
     the right (key set); ``jump`` the tab id that shows more; ``problem`` the headline's
-    sentence when not ok."""
+    sentence when not ok; ``key`` the key this row's trigger is missing; ``redeploy``
+    whether a deploy fixes this row (match files not deployed, out of date or edited,
+    or a stale deployed -ip-, its key missing or not)."""
 
     status: str
     label: str
@@ -65,6 +71,8 @@ class HomeRow:
     detail: str = ""
     jump: str | None = None
     problem: str = ""
+    key: str = ""
+    redeploy: bool = False
 
 
 def _status(check_status: str) -> str:
@@ -131,12 +139,21 @@ def trigger_row(state: State, label: str, name: str) -> HomeRow:
         )
     if route.key and not entries[route.key].value:
         problem = f"{route.key} is not set, so {name} cannot rewrite"
+        # A stale -ip- points to Triggers: once redeployed it runs on PROMPT_PRO_PROVIDER,
+        # which may need another key or none, so the redeploy comes first (fix()).
         return HomeRow(
-            FAIL, label, text, "key not set", jump, "; ".join(filter(None, (problem, redeploy)))
+            FAIL,
+            label,
+            text,
+            "key not set",
+            jump,
+            "; ".join(filter(None, (problem, redeploy))),
+            key=route.key,
+            redeploy=bool(stale),
         )
     detail = "key set" if route.key else ("no key needed" if route.remote else "stays local")
     if stale:
-        return HomeRow(WARN, label, text, "redeploy", "triggers", redeploy)
+        return HomeRow(WARN, label, text, "redeploy", "triggers", redeploy, redeploy=True)
     return HomeRow(OK, label, text, detail, "settings")
 
 
@@ -187,7 +204,8 @@ def _triggers_row(state: State) -> HomeRow:
         problem = others[0].message if others else ""
     if status == OK and (outdated or edited):
         status = WARN  # the plan says so even where doctor could not compare
-    return HomeRow(status, "Triggers", text, "", "triggers", problem)
+    fixed = bool(outdated or edited)
+    return HomeRow(status, "Triggers", text, "", "triggers", problem, redeploy=fixed)
 
 
 def _history_row(state: State) -> HomeRow:
@@ -237,24 +255,76 @@ def home_rows(state: State) -> list[HomeRow]:
     ]
 
 
+def headline_row(rows: list[HomeRow]) -> HomeRow | None:
+    """The row the headline names: the first of the worst ones, so the reading order
+    decides; None when every row is ok (a row still checking counts as ok)."""
+    status = worst(*(r.status for r in rows))
+    if status == OK:
+        return None
+    return next(r for r in rows if r.status == status)
+
+
 def headline(rows: list[HomeRow]) -> tuple[str, str | None]:
     """The worst row's problem as one sentence, with the tab that fixes it; ``READY`` when
     every row is ok, CHECKING_HEADLINE while one is still checking. The first of
     equally bad rows wins, so the reading order decides."""
-    status = worst(*(r.status for r in rows))
-    if status == OK:
+    row = headline_row(rows)
+    if row is None:
         waiting = {r.label for r in rows if r.status == WAIT}
         if not waiting:
             return READY, None
         if "History" in waiting:
             return CHECKING_HEADLINE, None
         return CHECKING_HEADLINE_NO_HISTORY, None
-    row = next(r for r in rows if r.status == status)
-    lead = "Not ready" if status == FAIL else "Almost ready"
+    lead = "Not ready" if row.status == FAIL else "Almost ready"
     # A doctor message marks a command with Markdown backticks; stripped, since plain text
     # would show them literally.
     problem = (row.problem or f"{row.label}: {row.text}").replace("`", "").rstrip(".")
     return f"{lead}: {problem}.", row.jump
+
+
+# What Home's fix button opens (Fix.action).
+DEPLOY = "deploy"  # the Triggers tab's deploy preview, as its Deploy or repair button
+SET_KEY = "set-key"  # the Settings tab's Set key dialog for Fix.key
+OPEN = "open"  # the tab Fix.tab
+
+
+@dataclass(frozen=True)
+class Fix:
+    """The action that opens the headline's fix: ``action`` (DEPLOY, SET_KEY or OPEN) on
+    ``tab``; ``key`` the key SET_KEY opens the dialog for."""
+
+    action: str
+    tab: str
+    key: str = ""
+
+    @property
+    def label(self) -> str:
+        """The button's label: an ellipsis when it opens a dialog."""
+        if self.action == DEPLOY:
+            return "Deploy or repair…"
+        if self.action == SET_KEY:
+            return f"Set {self.key}…"
+        return f"Open {TAB_LABELS[self.tab]}"
+
+
+def fix(rows: list[HomeRow]) -> Fix | None:
+    """What opens the fix of the row the headline names (headline_row()), always on the tab
+    its `->` pointer names: the deploy preview when the row points to Triggers and a deploy
+    fixes it, Set key when it points to Settings for a missing key, else that tab. None when
+    no row is a problem (ready, or only checking rows, which the full State fills in) and
+    for a row no tab fixes (`not checked`, which Check again reads again). On the quick
+    State a problem it already knows (a missing key) has its fix at once."""
+    row = headline_row(rows)
+    if row is None:
+        return None
+    if row.redeploy and row.jump == "triggers":
+        return Fix(DEPLOY, "triggers")
+    if row.key and row.jump == "settings":
+        return Fix(SET_KEY, "settings", row.key)
+    if row.jump:
+        return Fix(OPEN, row.jump)
+    return None
 
 
 def pill(report: doctor.Report) -> str:
