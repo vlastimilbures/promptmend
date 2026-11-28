@@ -448,6 +448,7 @@ promptmend/
 │   ├── update_check.py           asks PyPI, at most once a day, for a newer release
 │   ├── local_probe.py            asks a loopback Ollama or LM Studio whether it answers
 │   ├── smoke.py                  setup's smoke test: improve against a stub on 127.0.0.1
+│   ├── timing.py                 doctor --timing: start-up times against smoke's stub
 │   ├── setup_guide.py            what setup says at each step (wizard and text flow), no Textual
 │   ├── setup_flow.py             what setup decides and writes, shared by the wizard and text flow
 │   ├── config.py                 Settings from the environment, config.toml or a named .env

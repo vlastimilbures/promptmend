@@ -152,7 +152,7 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   `tui/`; it raises `ServiceError` (`usage` for exit 2). `settings_checks.py` holds the
   persona and gate-pack checks and `rewrites()`. No module outside `commands/`, `tui/` and
   `cli.py`'s lazy imports imports `promptmend.commands`, and `setup_flow`, `settings_service`,
-  `settings_checks`, `doctor` and `try_run` reach neither Typer nor `cli`/`trigger`
+  `settings_checks`, `doctor`, `timing` and `try_run` reach neither Typer nor `cli`/`trigger`
   (`tests/test_layering.py`).
 - Adding a setting: a field and parser in `config.py`, a row in docs/configuration.md, a line
   in `.env.example` and an entry in `tui/settings_model.SETTINGS`; `tests/test_docs.py` and

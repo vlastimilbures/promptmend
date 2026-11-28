@@ -657,7 +657,7 @@ def test_doctor_timing_table(
     out = result.stdout
     assert "Timing against a local stub (no provider call)" in out
     assert "median of 2 warm" in out
-    # Normalised as doctor.timing() does it: on Windows the POSIX literal gains a drive letter.
+    # Normalised as timing.timing() does it: on Windows the POSIX literal gains a drive letter.
     shown = Path(os.path.abspath(Path(LAUNCHER).expanduser()))
     assert f"launcher:    {shown} is not a file; timed through the interpreter only" in out
     assert re.search(r"--version\s+interpreter\s+300\s+100\n", out)

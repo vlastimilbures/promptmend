@@ -15,7 +15,7 @@ import pytest
 from conftest import resolved_settings
 
 import promptmend
-from promptmend import assets, config, deploy, doctor, update_check
+from promptmend import assets, config, deploy, doctor, timing, update_check
 from promptmend.config import ConfigLayers, Settings
 from promptmend.history import Health
 
@@ -1511,7 +1511,7 @@ def test_timing_runs_each_command_through_the_launcher_and_the_interpreter(
     launcher = tmp_path / "promptmend"
     launcher.write_text("#!/bin/sh\n", "utf-8")
     timer = FakeTimer()
-    timed = doctor.timing(_report(str(launcher)), {"version": 0.01, "cli": 0.002}, 3, timer=timer)
+    timed = timing.timing(_report(str(launcher)), {"version": 0.01, "cli": 0.002}, 3, timer=timer)
     data = timed.to_json()
     assert data["launcher"] == str(launcher)
     assert data["launcher_note"] is None
@@ -1558,7 +1558,7 @@ def test_timing_runs_each_command_through_the_launcher_and_the_interpreter(
 @pytest.mark.parametrize("current", [None, "/nowhere/promptmend"])
 def test_timing_without_a_launcher_times_the_interpreter_only(current: str | None) -> None:
     timer = FakeTimer()
-    timed = doctor.timing(_report(current), {}, 1, timer=timer)
+    timed = timing.timing(_report(current), {}, 1, timer=timer)
     assert timed.launcher is None
     assert timed.launcher_note
     assert "interpreter only" in timed.launcher_note
@@ -1574,7 +1574,7 @@ def test_timing_a_frozen_exe_that_is_its_own_launcher(
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(exe))
     timer = FakeTimer()
-    timed = doctor.timing(_report(str(exe)), {}, 1, timer=timer)
+    timed = timing.timing(_report(str(exe)), {}, 1, timer=timer)
     assert timed.launcher is None
     assert timed.launcher_note == f"the launcher is this executable ({exe}); timed once"
     assert timer.calls[0] == [str(exe), "--version"]
@@ -1584,7 +1584,7 @@ def test_timing_a_frozen_exe_that_is_its_own_launcher(
 
 
 def test_a_failing_run_is_reported_not_raised() -> None:
-    timed = doctor.timing(_report(None), {}, 2, timer=FakeTimer(fail="persona"))
+    timed = timing.timing(_report(None), {}, 2, timer=FakeTimer(fail="persona"))
     persona = next(r for r in timed.runs if r.command == "persona")
     assert persona.to_json() == {
         "command": "persona",
@@ -1606,7 +1606,7 @@ def test_unreadable_trigger_args_are_reported(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(smoke, "trigger_args", missing)
     timer = FakeTimer()
-    timed = doctor.timing(_report(None), {}, 1, timer=timer)
+    timed = timing.timing(_report(None), {}, 1, timer=timer)
     improve = next(r for r in timed.runs if r.command.startswith("improve"))
     assert improve.status == "failed"
     assert improve.message
@@ -1616,7 +1616,7 @@ def test_unreadable_trigger_args_are_reported(monkeypatch: pytest.MonkeyPatch) -
 
 def test_timing_against_the_real_cli() -> None:
     """The expected outputs hold for the real children (the interpreter, one warm run)."""
-    timed = doctor.timing(_report(None), {}, 1)
+    timed = timing.timing(_report(None), {}, 1)
     assert [(r.command, r.status, r.message) for r in timed.runs] == [
         ("--version", "ok", None),
         ("persona", "ok", None),
@@ -1629,11 +1629,11 @@ def test_timing_against_the_real_cli() -> None:
 def test_doctor_and_smoke_agree_on_the_default_runs() -> None:
     from promptmend import smoke
 
-    assert doctor.WARM_RUNS == smoke.WARM_RUNS
+    assert timing.WARM_RUNS == smoke.WARM_RUNS
 
 
 def test_timing_without_a_launcher_check_times_the_interpreter_only() -> None:
-    timed = doctor.timing(doctor.Report(()), {}, 1, timer=FakeTimer())
+    timed = timing.timing(doctor.Report(()), {}, 1, timer=FakeTimer())
     assert timed.launcher is None
     assert timed.launcher_note == "no launcher found; timed through the interpreter only"
 
@@ -1644,7 +1644,7 @@ def test_a_relative_launcher_is_timed_by_its_absolute_path(
     (tmp_path / "promptmend").write_text("#!/bin/sh\n", "utf-8")
     monkeypatch.chdir(tmp_path)
     timer = FakeTimer()
-    timed = doctor.timing(_report("promptmend"), {}, 1, timer=timer)
+    timed = timing.timing(_report("promptmend"), {}, 1, timer=timer)
     assert timed.launcher == str(tmp_path / "promptmend")
     assert timer.calls[0] == [str(tmp_path / "promptmend"), "--version"]
 
@@ -1666,7 +1666,7 @@ def test_a_frozen_exe_with_another_launcher_times_both(
     alias.parent.mkdir()
     alias.write_bytes(b"MZ")  # another file, as WinGet's alias can be
     timer = FakeTimer()
-    timed = doctor.timing(_report(str(alias)), {}, 1, timer=timer)
+    timed = timing.timing(_report(str(alias)), {}, 1, timer=timer)
     assert timed.launcher == str(alias)
     assert timer.calls[:2] == [[str(alias), "--version"], [str(exe), "--version"]]
     assert [r.via for r in timed.runs[:6]] == ["launcher", "interpreter"] * 3
@@ -1681,7 +1681,7 @@ def test_a_launcher_samefile_cannot_compare_is_timed(
         raise OSError("cannot stat")
 
     monkeypatch.setattr(os.path, "samefile", unreadable)
-    timed = doctor.timing(_report(str(exe)), {}, 1, timer=FakeTimer())
+    timed = timing.timing(_report(str(exe)), {}, 1, timer=FakeTimer())
     assert timed.launcher == str(exe)
     assert timed.launcher_note is None
 
@@ -1690,7 +1690,7 @@ def test_a_launcher_whose_version_fails_runs_nothing_else(tmp_path: Path) -> Non
     launcher = tmp_path / "promptmend"
     launcher.write_text("#!/bin/sh\n", "utf-8")
     timer = FakeTimer(fail_argv=[str(launcher), "--version"])
-    timed = doctor.timing(_report(str(launcher)), {}, 1, timer=timer)
+    timed = timing.timing(_report(str(launcher)), {}, 1, timer=timer)
     rows = {(r.command, r.via): r for r in timed.runs}
     assert rows[("--version", "launcher")].status == "failed"
     for command in ("persona", "improve (-i-)"):
@@ -1704,14 +1704,14 @@ def test_a_launcher_whose_version_fails_runs_nothing_else(tmp_path: Path) -> Non
 
 
 def test_timing_names_a_drift_from_the_deployed_launcher(tmp_path: Path) -> None:
-    timed = doctor.timing(
+    timed = timing.timing(
         _report(None, drift=True, deployed=["/old/promptmend"]), {}, 1, timer=FakeTimer()
     )
     assert timed.drift_note == (
         "Espanso's deployed matches call /old/promptmend, not the interpreter, which was timed"
     )
     assert timed.to_json()["drift_note"] == timed.drift_note
-    assert doctor.timing(_report(None), {}, 1, timer=FakeTimer()).drift_note is None
+    assert timing.timing(_report(None), {}, 1, timer=FakeTimer()).drift_note is None
 
 
 def test_the_real_environment_never_reaches_a_child(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1723,7 +1723,7 @@ def test_the_real_environment_never_reaches_a_child(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("PROMPT_EXTRA_PATTERNS", "draft")
     monkeypatch.setenv("PROMPT_OUTPUT", "clipboard")
     timer = FakeTimer()
-    doctor.timing(_report(None), {}, 1, timer=timer)
+    timing.timing(_report(None), {}, 1, timer=timer)
     from promptmend import smoke
 
     for env in timer.envs:
@@ -1753,10 +1753,10 @@ def test_timing_env_refuses_anything_but_the_stub(
         smoke, "stub_env", lambda port, environ: {**stub_env(port, environ), name: value}
     )
     with pytest.raises(RuntimeError, match=match):
-        doctor.timing_env(8080, {})
+        timing.timing_env(8080, {})
     # The unpatched stub env passes.
     monkeypatch.setattr(smoke, "stub_env", stub_env)
-    assert doctor.timing_env(8080, {})["OPENROUTER_BASE_URL"].startswith("http://127.0.0.1:8080")
+    assert timing.timing_env(8080, {})["OPENROUTER_BASE_URL"].startswith("http://127.0.0.1:8080")
 
 
 # #368: Settings refuses a malformed base URL, but one that got past it (dataclasses.replace)
