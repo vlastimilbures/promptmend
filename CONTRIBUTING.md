@@ -452,6 +452,7 @@ promptmend/
 │   ├── setup_flow.py             what setup decides and writes, shared by the wizard and text flow
 │   ├── config.py                 Settings from the environment, config.toml or a named .env
 │   ├── config_files.py           reads config.toml/secrets.toml; atomic, private writes
+│   ├── winacl.py                 Windows only: the user-only DACL and its check (ctypes)
 │   ├── config_store.py           saves settings and secrets
 │   ├── settings_service.py       config set/unset and secrets set's checks and saves, Typer-free,
 │   │                             shared by the commands, setup and the interface

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-from promptmend import config, config_files, config_store
+from promptmend import config, config_files, config_store, winacl
 from promptmend.cli import app
 from promptmend.config import ConfigLayers, Settings, env_names, secret_names
 from promptmend.config_files import FileSecretStore, SecretStoreError
@@ -736,10 +736,10 @@ def test_secrets_file_is_private_to_the_user_on_windows(saved_mode: Path) -> Non
     config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
     config_store.save_secret("ANTHROPIC_API_KEY", ANTHROPIC_VALUE)  # a rewrite keeps it private
     path = saved_mode / "secrets.toml"
-    sid = config_files.current_user_sid()
-    dacl = config_files._read_dacl(path)
-    alias = config_files._canonical_dacl(f"D:P(A;;FA;;;{sid})").rpartition(";")[2].rstrip(")")
-    assert config_files.only_user(dacl, (sid, alias)), dacl
+    sid = winacl.current_user_sid()
+    dacl = winacl._read_dacl(path)
+    alias = winacl._canonical_dacl(f"D:P(A;;FA;;;{sid})").rpartition(";")[2].rstrip(")")
+    assert winacl.only_user(dacl, (sid, alias)), dacl
     assert dacl.count("(") == 1, dacl
     whoami = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "whoami.exe"
     me = subprocess.run([str(whoami)], capture_output=True, timeout=30, check=True).stdout
@@ -779,7 +779,7 @@ SID = "S-1-5-21-1-2-3-1001"
     ],
 )
 def test_only_user(sddl: str, private: bool) -> None:
-    assert config_files.only_user(sddl, (SID, "LA")) is private
+    assert winacl.only_user(sddl, (SID, "LA")) is private
 
 
 # restrict_to_user sets a protected single-ACE DACL, reads it back, and refuses anything
@@ -804,16 +804,16 @@ def test_restrict_to_user_refuses_leftovers(
         return read_back
 
     monkeypatch.setattr(config_files, "_WINDOWS", True)
-    monkeypatch.setattr(config_files, "current_user_sid", lambda: SID)
-    monkeypatch.setattr(config_files, "_set_dacl", lambda path, sddl: applied.append(sddl))
-    monkeypatch.setattr(config_files, "_read_dacl", read_dacl)
-    monkeypatch.setattr(config_files, "_canonical_dacl", lambda sddl: sddl)
+    monkeypatch.setattr(winacl, "current_user_sid", lambda: SID)
+    monkeypatch.setattr(winacl, "_set_dacl", lambda path, sddl: applied.append(sddl))
+    monkeypatch.setattr(winacl, "_read_dacl", read_dacl)
+    monkeypatch.setattr(winacl, "_canonical_dacl", lambda sddl: sddl)
     with pytest.raises(SecretStoreError, match=error):
         config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
     assert applied == [f"D:P(A;;FA;;;{SID})"]
     assert list(saved_mode.iterdir()) == []
 
-    monkeypatch.setattr(config_files, "_read_dacl", lambda path: f"D:P(A;;FA;;;{SID})")
+    monkeypatch.setattr(winacl, "_read_dacl", lambda path: f"D:P(A;;FA;;;{SID})")
     config_store.save_secret("OPENROUTER_API_KEY", OPENROUTER_VALUE)
     assert Settings.load().openrouter_api_key == OPENROUTER_VALUE
 
@@ -867,7 +867,7 @@ def test_restrict_to_user_refuses_leftovers(
     ],
 )
 def test_opens_to_others(sddl: str, open_: bool) -> None:
-    assert config_files.opens_to_others(sddl, (SID, "LA")) is open_
+    assert winacl.opens_to_others(sddl, (SID, "LA")) is open_
 
 
 _FIX = (
@@ -910,9 +910,9 @@ def test_windows_exposed_secrets_file_is_reported(
         return descriptor
 
     monkeypatch.setattr(config_files, "_WINDOWS", True)
-    monkeypatch.setattr(config_files, "current_user_sid", lambda: SID)
-    monkeypatch.setattr(config_files, "_canonical_dacl", lambda sddl: sddl)
-    monkeypatch.setattr(config_files, "_read_security", read_security)
+    monkeypatch.setattr(winacl, "current_user_sid", lambda: SID)
+    monkeypatch.setattr(winacl, "_canonical_dacl", lambda sddl: sddl)
+    monkeypatch.setattr(winacl, "_read_security", read_security)
     assert FileSecretStore(path).exposed() is exposed
     assert asked == [(Path(os.path.realpath(path)), 0x1 | 0x4)]
     assert ConfigLayers.resolve().findings == ()
@@ -928,7 +928,7 @@ def test_windows_exposed_without_a_file_or_a_sid(
     missing = FileSecretStore(saved_mode / "secrets.toml")
     assert (missing.exposed(), missing.exposure()) == (False, None)
     path = _write(saved_mode / "secrets.toml", f'OPENROUTER_API_KEY = "{OPENROUTER_VALUE}"\n')
-    monkeypatch.setattr(config_files, "current_user_sid", lambda: "")
+    monkeypatch.setattr(winacl, "current_user_sid", lambda: "")
     assert (FileSecretStore(path).exposed(), FileSecretStore(path).exposure()) == (
         False,
         _WINDOWS_UNKNOWN,
@@ -951,7 +951,7 @@ def test_posix_mode_that_cannot_be_checked(
 def _widen(path: Path, sddl: str) -> None:
     """Windows: give ``path`` the DACL in ``sddl``, as another tool (icacls, Explorer) could;
     the CLI's own ctypes helper, so no external command runs."""
-    config_files._set_dacl(path, sddl)
+    winacl._set_dacl(path, sddl)
 
 
 # The real Windows API: a file saved by secrets set is not exposed; widened to the Users group
@@ -963,7 +963,7 @@ def test_widened_secrets_file_is_exposed_on_windows(saved_mode: Path) -> None:
     path = saved_mode / "secrets.toml"
     store = FileSecretStore(path)
     assert store.exposed() is False
-    sid = config_files.current_user_sid()
+    sid = winacl.current_user_sid()
     _widen(path, f"D:P(A;;FA;;;{sid})(A;;FR;;;BU)")
     assert store.exposed() is True
     findings = [f.message for f in ConfigLayers.resolve(strict=False).findings]
