@@ -10,7 +10,10 @@ places use them and take them from here rather than carrying copies:
   tests/test_wordings.py fails when the file is not what the script writes;
 - scripts/bench_models.py, which scores a rewrite by the opening words of each wording.
 
-Contributor tooling: nothing on the trigger path imports this module.
+Contributor tooling, not part of the package (#414): the scripts import it as `wordings`
+(Python puts scripts/ first on the path of a script it runs; mypy checks scripts/ as
+top-level modules), tests/wordings_module.py loads it for the tests. default.md comes
+through promptmend.prompt_builder, as the package reads it.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .prompt_builder import PROFILES
+from promptmend.prompt_builder import PROFILES
 
 # The placeholder default.md's independent-review variant carries for the domain.
 DOMAIN = "[domain]"

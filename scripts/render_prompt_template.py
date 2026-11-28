@@ -3,7 +3,7 @@
     uv run python scripts/render_prompt_template.py           # rewrite the wording lines
     uv run python scripts/render_prompt_template.py --check   # exit 1 when they are stale
 
-prompts/default.md is the only source of the fixed wordings (promptmend.wordings). The -p-
+prompts/default.md is the only source of the fixed wordings (scripts/wordings.py). The -p-
 template, espanso/match/prompts-template.yml, stays a checked-in match file: the script
 rewrites only its wording lines (steps 1a/ 1b/ 2/ 4a/ 4b/ 5/ and the line after <OUTPUTS>)
 and keeps every other line, so the template's own text (its header, CONTEXT, GOAL, step 3,
@@ -20,7 +20,7 @@ import re
 import sys
 from pathlib import Path
 
-from promptmend.wordings import DOMAIN, Wordings, default_wordings
+from wordings import DOMAIN, Wordings, default_wordings
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "espanso" / "match" / "prompts-template.yml"

@@ -9,11 +9,11 @@ built wheel into a clean venv and runs this with that venv's Python (not from th
 It checks that the package was imported from the venv, that every match file under the repo's
 espanso/match/ resolves through importlib.resources and every profile under
 src/promptmend/prompts/ is a real file in the installed package (prompt_builder reads them
-from its own folder, #312), that espanso/config/ was not shipped, that `promptmend
---version` prints the version, and that `promptmend persona` runs with an empty config. With
-`--constraints` (the release's constraints.txt, exported from uv.lock), every distribution
-installed next to the package must be pinned there at the installed version. Exits nonzero
-on the first failure.
+from its own folder, #312), that neither espanso/config/ nor the contributor tooling
+scripts/wordings.py was shipped, that `promptmend --version` prints the version, and that
+`promptmend persona` runs with an empty config. With `--constraints` (the release's
+constraints.txt, exported from uv.lock), every distribution installed next to the package
+must be pinned there at the installed version. Exits nonzero on the first failure.
 """
 
 from __future__ import annotations
@@ -70,9 +70,13 @@ def _check_profiles(repo: Path, package: Path) -> None:
 
 def _check_wheel_contents(wheel: Path) -> None:
     with zipfile.ZipFile(wheel) as archive:
-        shipped = [n for n in archive.namelist() if "/espanso/config/" in n]
+        names = archive.namelist()
+    shipped = [n for n in names if "/espanso/config/" in n]
     if shipped:
         _fail(f"espanso/config must not ship, found {shipped}")
+    # Contributor tooling lives in scripts/, never in the package (#414).
+    if "promptmend/wordings.py" in names:
+        _fail("promptmend/wordings.py must not ship: it is scripts/wordings.py")
 
 
 def _exe(name: str) -> Path:

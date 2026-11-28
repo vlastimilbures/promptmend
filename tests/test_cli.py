@@ -1851,3 +1851,15 @@ def test_fail_on_marker_exits_0_on_a_rewrite(
     result = improve(*flagged)
     assert result.exit_code == 1
     assert result.stdout.startswith("[promptmend: sent despite: a confidentiality label]\n\n[")
+
+
+# cli._redacted_usage_errors() catches the public typer.TyperException, the base of Typer's
+# usage errors (#414). Catching a class the usage error is not an instance of would silently
+# stop redacting a key from it, so a real usage error must be one, with the key redacted.
+# tests/test_commands.py::test_usage_errors_never_repeat_a_key covers every command's output.
+def test_a_usage_error_is_the_typer_exception_cli_catches() -> None:
+    with pytest.raises(typer.TyperException) as caught:
+        typer.main.get_command(app).main(["improve", FAKE_KEY], standalone_mode=False)
+    message = caught.value.format_message()
+    assert "cdcd" not in message
+    assert "<redacted," in message

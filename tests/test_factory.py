@@ -493,6 +493,14 @@ def test_openrouter_extra_body_on_response_and_title(monkeypatch: pytest.MonkeyP
     assert inner.extra_headers == {"X-Title": "bench"}
 
 
+# An extra_body that would replace the gated draft or the model builds no provider at all.
+def test_openrouter_extra_body_cannot_replace_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    with pytest.raises(ValueError, match="extra_body cannot set messages") as caught:
+        make_provider("openrouter", resolved_settings(), extra_body={"messages": []})
+    assert str(caught.value) == "extra_body cannot set messages"
+
+
 @pytest.mark.parametrize(
     ("pin", "allow", "expected"),
     [

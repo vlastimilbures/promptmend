@@ -13,9 +13,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 import yaml
+from wordings_module import DOMAIN, Wordings, default_wordings, parse
 
 from promptmend.prompt_builder import PROFILES
-from promptmend.wordings import DOMAIN, Wordings, default_wordings, parse
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -41,6 +41,11 @@ def _replace() -> str:
     assert match["trigger"] == "-p-"
     text: str = match["replace"]
     return text
+
+
+# Contributor tooling lives in scripts/, never in the package (#414).
+def test_wordings_is_not_in_the_package() -> None:
+    assert importlib.util.find_spec("promptmend.wordings") is None
 
 
 # The checked-in -p- template is exactly what the generator writes from default.md, so a
