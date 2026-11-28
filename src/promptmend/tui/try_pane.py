@@ -97,9 +97,11 @@ class TryPane(Pane):
                 ("try-profile", "Profile", _profiles(list(PROFILES)), CONFIGURED),
                 ("try-tier", "Tier", [(t, t) for t in TIERS], TIERS[0]),
             ):
-                with Vertical(classes="try-option"):
+                with Vertical(classes="try-option", id=f"{id_}-option"):
                     yield Label(label)
-                    yield Select(options, value=value, allow_blank=False, id=id_)
+                    # Compact (borderless, one line): four fit one row at 70 columns with no
+                    # value wrapped (#394; their widths are in app.CSS).
+                    yield Select(options, value=value, allow_blank=False, compact=True, id=id_)
         yield button_row(("try-run", "Run"))
         yield Static("No run yet.", id="try-usage", markup=False)
         yield TextArea("", id="try-result", read_only=True, soft_wrap=True)
@@ -197,17 +199,36 @@ class TryPane(Pane):
         self.app.push_screen(
             ConfirmModal(
                 f"Send this draft to {provider}?",
-                self._preview(layers, cfg, provider, tier, len(draft)),
+                self._preview(layers, cfg, provider, tier, profile, len(draft)),
                 confirm="Send",
             ),
             done,
         )
 
     def _preview(
-        self, layers: ConfigLayers, cfg: Settings, provider: str, tier: str, length: int
+        self,
+        layers: ConfigLayers,
+        cfg: Settings,
+        provider: str,
+        tier: str,
+        profile: str | None,
+        length: int,
     ) -> str:
+        """What the Send dialog names. The profile whole, since the closed picker cuts a long
+        name; "as configured" with what it resolves to for this call. cfg is for_call()'s:
+        PROMPT_PRO_PROFILE when set, on the pro tier of a provider that has one, else
+        PROMPT_PROFILE. Whichever applied is shown as Model and Base URL are
+        (common.shown_value(): a key-like value withheld, a control character as its repr)."""
         model = model_setting(provider, tier)
         url = f"{provider.upper()}_BASE_URL"
+        shown_profile = profile
+        if not shown_profile:
+            # The setting cfg's profile came from: PROMPT_PROFILE's value unless for_call()
+            # swapped in another.
+            name = "PROMPT_PROFILE"
+            if cfg.profile != layers.settings().profile:
+                name = "PROMPT_PRO_PROFILE"
+            shown_profile = f"{common.shown_value(name, layers.entries[name])} (as configured)"
         recorded = (
             "It is recorded in the usage history as -try- (a direct call, no trigger)."
             if cfg.history
@@ -218,6 +239,7 @@ class TryPane(Pane):
                 f"Provider: {provider}",
                 f"Model: {common.shown_value(model, layers.entries[model])}",
                 f"Base URL: {common.shown_value(url, layers.entries[url])}",
+                f"Profile: {shown_profile}",
                 f"Draft: {length} characters, typed here (the clipboard is not read)",
                 "",
                 "It goes through the data-protection gate as a trigger's draft does. A cloud "

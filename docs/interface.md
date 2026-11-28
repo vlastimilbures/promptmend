@@ -99,8 +99,11 @@ and on cloud otherwise. `--non-interactive` (or `--plain`) runs without the wiza
 | `3` | Profiles | Built-in and your own profiles; pick the default profile (Set default starts at the highlighted row: a retired name at its target, one of yours only when a trigger would use it, added or replacing a built-in), edit a profile in `$VISUAL` or `$EDITOR` |
 | `4` | Triggers | The match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
 | `5` | History | Usage statistics by trigger, provider, model or day; export, prune, reset |
-| `6` | Diagnostics | Each provider's model, base URL, key and whether the draft leaves this machine; the settings layers and any problem in the settings files; the `doctor` checks |
+| `6` | Checks | Each provider's model, base URL, key and whether the draft leaves this machine; the settings layers and any problem in the settings files; the `doctor` checks |
 | `7` | Try | Rewrite a typed draft with a confirmed provider, or check the wiring with a dry run |
+
+The Checks tab was called Diagnostics in 0.27.0 and earlier. All seven tabs fit a 70-column
+terminal: below 80 columns the tabs have one space between them instead of two.
 
 Every button's tooltip shows the command that does the same in a terminal, and every result
 starts with that command (`$ promptmend config set …`).
@@ -252,11 +255,13 @@ result before a trigger pastes one.
 1. Type the draft.
 2. Pick the provider, the profile, the tier and where it runs (Real provider or Dry run).
    The profile starts at "as configured", which uses `PROMPT_PROFILE` (or `PROMPT_PRO_PROFILE`,
-   if set, on the pro tier) exactly as a trigger does.
+   if set, on the pro tier) exactly as a trigger does. A long profile name is cut in the
+   closed picker; its list and the Send dialog show it whole.
 3. Press Run. One run at a time.
 
-- **Real provider** first asks, naming the provider, model and base URL; nothing is sent
-  before you confirm. A confirmed call may be charged and is recorded in the
+- **Real provider** first asks, naming the provider, model, base URL and profile ("as
+  configured" with the profile it uses); nothing is sent before you confirm. A confirmed
+  call may be charged and is recorded in the
   [usage history](privacy.md#usage-history) as a direct call with the trigger `-try-`, so
   `stats` tells it from `promptmend improve` typed in a terminal. Home's session log shows it
   with the draft withheld.
@@ -296,6 +301,13 @@ models, never a made-up 0.
 | Up, Down, Enter | Move in [Home's rows](#home) and open the tab a row names |
 | Up, Down, `j`, `k`, Space, Enter, `/` | Move and change in the [Settings list](#settings-tab) |
 
+The footer shows the keys of the tab you are on, Reload and Quit. `a` and `t` are left out of
+it, so Quit fits a 70-column terminal; they work on every tab, the Settings list included, but
+not while you type in the Settings filter or the Try tab's draft (letters go into the text;
+the footer then shows only Escape), and not on a dialog, About or the setup wizard. While a
+picker's list is open it takes letters and digits (type to search), so `a`, `t`, `q`, `r` and
+the digits do nothing until Escape closes it; on About, `a` closes About.
+
 ## Accessibility
 
 - `t` switches to a high-contrast theme.
@@ -307,4 +319,4 @@ models, never a made-up 0.
 
 - [Commands](commands.md): the headless commands behind every button
 - [Install](install.md#set-up): `setup` and `setup --non-interactive`
-- [Troubleshooting](troubleshooting.md): what the Diagnostics checks mean
+- [Troubleshooting](troubleshooting.md): what the Checks tab's checks mean

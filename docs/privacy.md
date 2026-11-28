@@ -61,7 +61,7 @@ name or one of your `PROMPT_EXTRA_PATTERNS` in the persona is sent even where th
 the draft would be blocked. Keep the persona to what you are happy to send to every recipient
 below.
 
-`config validate` and `doctor` (and the interface's Home and Diagnostics tabs) run the
+`config validate` and `doctor` (and the interface's Home and Checks tabs) run the
 gate's scan over the persona when your profiles send it (not with `PROMPT_LOCAL_ONLY=true`
 unless `PROMPT_GATE_LOCAL=true`), and name what it matches, never the text.
 

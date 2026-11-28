@@ -356,6 +356,13 @@ def test_snapshot_home_70_columns() -> None:
     _check("home-70", _shoot("1", size=(70, 24)))
 
 
+# The Try tab at 80 and 70 columns (#394): all seven tabs, the four compact pickers in one row
+# with no value wrapped, and Quit in the footer.
+@pytest.mark.parametrize(("name", "size"), [("try-80", (80, 24)), ("try-70", (70, 24))])
+def test_snapshot_try_narrow(name: str, size: tuple[int, int]) -> None:
+    _check(name, _shoot("7", size=size))
+
+
 def test_snapshot_about() -> None:
     _check("about", _shoot("a"))
 

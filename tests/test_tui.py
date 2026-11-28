@@ -18,12 +18,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from rich.cells import cell_len
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
 from promptmend import config, config_store, deploy, history, settings_service, smoke, update_check
+from promptmend.factory import PROVIDER_NAMES
 from promptmend.history import HistoryStore
+from promptmend.prompt_builder import PROFILES
 from promptmend.tui import (
     base,
     history_pane,
@@ -33,6 +36,7 @@ from promptmend.tui import (
     settings_model,
     settings_pane,
     triggers_pane,
+    try_pane,
 )
 from promptmend.tui.app import HIGH_CONTRAST, TABS, ManageApp
 from promptmend.tui.home import pill
@@ -1367,6 +1371,147 @@ def test_digits_switch_tabs_and_t_toggles_contrast(espanso: FakeRunner) -> None:
     assert seen == [True] * 9
 
 
+def _quit_shown(app: ManageApp, width: int) -> bool:
+    """The footer's Quit key is drawn whole inside a ``width``-column screen."""
+    from textual.widgets._footer import FooterKey
+
+    keys = [k for k in app.screen.query(FooterKey) if k.description == "Quit"]
+    return len(keys) == 1 and keys[0].region.width > 0 and keys[0].region.right <= width
+
+
+# At 70 columns (#394), every tab label lies whole inside the screen and the footer still
+# shows Quit on every tab, each opened from Home's focused rows (#395): Home with its list
+# focused and the Settings list focused (Edit, Toggle, Reset, Filter added) included. About
+# and High contrast are off the footer and still work. Pilot, not a snapshot, so Windows
+# checks it too.
+def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
+    from textual.widgets._footer import FooterKey
+    from textual.widgets._tabbed_content import ContentTab
+
+    width = 70
+    seen: dict[str, Any] = {}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        tabs = list(app.main.query(ContentTab))
+        seen["labels"] = [str(t.label) for t in tabs]
+        seen["inside"] = [t.region.x >= 0 and t.region.right <= width for t in tabs]
+        seen["narrow"] = app.main.has_class("-narrow")
+        quit_by_tab = {}
+        home_list = []
+        for n, tab in enumerate(TABS, start=1):
+            # Each tab opened from Home's rows, which have the focus there (#395).
+            await pilot.press("1")
+            await settle(pilot)
+            focused = app.focused
+            home_list.append(focused is not None and focused.id == "home-rows")
+            quit_by_tab[f"home list, before {tab}"] = _quit_shown(app, width)
+            await pilot.press(str(n))
+            await settle(pilot)
+            if tab == "settings":
+                focused = app.focused
+                seen["settings focused"] = focused is not None and focused.id == "settings-list"
+                # t works with the list focused too, as docs/interface.md "Keys" says.
+                await pilot.press("t")
+                seen["t on the list"] = app.theme == HIGH_CONTRAST.name
+                await pilot.press("t")
+            quit_by_tab[tab] = _quit_shown(app, width)
+        seen["quit"] = quit_by_tab
+        seen["home list"] = home_list
+        # In the draft a letter is typed, not a key: the footer shows only Leave (Escape).
+        app.main.query_one("#try-draft").focus()
+        await settle(pilot)
+        seen["draft footer"] = [
+            (k.description, k.region.right <= width) for k in app.screen.query(FooterKey)
+        ]
+        app.main.set_focus(None)
+        await pilot.press("t")
+        seen["t"] = app.theme == HIGH_CONTRAST.name
+        await pilot.press("a")
+        await pilot.pause()
+        seen["a"] = type(app.screen).__name__ == "AboutScreen"
+
+    drive(scenario, size=(width, 24))
+    assert seen.pop("labels") == [label for label, _ in TABS.values()]
+    assert seen.pop("inside") == [True] * len(TABS)
+    assert seen.pop("quit") == {
+        key: True for tab in TABS for key in (f"home list, before {tab}", tab)
+    }
+    assert seen.pop("home list") == [True] * len(TABS)
+    assert seen.pop("draft footer") == [("Leave", True)]
+    assert seen == {
+        "narrow": True,
+        "settings focused": True,
+        "t on the list": True,
+        "t": True,
+        "a": True,
+    }
+
+
+# The tab bar keeps Textual's two spaces between tabs from 80 columns on (#394).
+def test_the_tab_spacing_narrows_only_below_80_columns(espanso: FakeRunner) -> None:
+    from textual.widgets._tabbed_content import ContentTab
+
+    widths: dict[int, list[int]] = {}
+    for width in (80, 79, 70):
+
+        async def scenario(app: ManageApp, pilot: Pilot[int], width: int = width) -> None:
+            widths[width] = [t.region.width for t in app.main.query(ContentTab)]
+
+        drive(scenario, size=(width, 24))
+    labels = [len(label) for label, _ in TABS.values()]
+    assert widths[80] == [n + 2 for n in labels]
+    assert widths[79] == widths[70] == [n + 1 for n in labels]
+
+
+# The Try tab's four pickers (#394): compact, one row, one line each, and every built-in value
+# drawn whole at 80 and 70 columns (no ellipsis): each target, provider and tier, "as
+# configured" and the built-in profiles. Measured against the cells the value gets on screen,
+# not the label's text, which keeps the whole value however it is cut. A failure names the
+# width in app.CSS to raise.
+_TRY_PICKERS = {
+    "try-target": (
+        {value: text for text, value in try_pane.TARGETS},
+        "the 1fr of #try-target-option",
+    ),
+    "try-provider": ({n: n for n in PROVIDER_NAMES}, "#try-provider-option"),
+    "try-profile": (
+        {try_pane.CONFIGURED: "as configured", **{n: n for n in PROFILES}},
+        "the 1fr of #try-profile-option",
+    ),
+    "try-tier": ({t: t for t in config.TIERS}, "#try-tier-option"),
+}
+
+
+@pytest.mark.parametrize("width", [80, 70])
+def test_the_try_pickers_never_wrap_or_cut(width: int, espanso: FakeRunner) -> None:
+    cut: list[str] = []
+    texts: list[str] = []
+    rows: set[int] = set()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("7")
+        await settle(pilot)
+        for id_, (values, css) in _TRY_PICKERS.items():
+            select = app.main.query_one(f"#{id_}", Select)
+            rows.add(select.region.y)
+            assert select.region.right <= width
+            label = select.query_one("SelectCurrent #label", Static)
+            for value, text in values.items():
+                select.value = value
+                await pilot.pause()
+                texts.append(str(label.render()))
+                if select.region.height != 1 or label.region.width < cell_len(text):
+                    cut.append(
+                        f"{text!r} needs {cell_len(text)} cells, {label.region.width} drawn "
+                        f"at {width} columns: raise {css} in app.CSS"
+                    )
+
+    drive(scenario, size=(width, 24))
+    assert len(rows) == 1
+    assert texts == [text for values, _ in _TRY_PICKERS.values() for text in values.values()]
+    assert cut == []
+
+
 def test_only_home_is_built_until_a_tab_opens(espanso: FakeRunner) -> None:
     """#316: the other tabs are built the first time they open, by a digit, by the arrows on
     the tab bar or by a click, and each shows the current State at once."""
@@ -1677,7 +1822,7 @@ def test_home_shows_doctor_and_checks_again(espanso: FakeRunner) -> None:
         )
         shown = _rendered(home, "#home-headline") + _rendered(home, "#home-rows")
         assert "Not ready: OPENROUTER_API_KEY is not set, so -i- cannot rewrite." in shown
-        assert "fail  Rewrites" not in shown  # the label is FAIL, as in Diagnostics
+        assert "fail  Rewrites" not in shown  # the label is FAIL, as on the Checks tab
         assert "FAIL  Rewrites" in shown
         assert "-> 2 Settings" in shown
         await press(app, pilot, "#home-reload")
@@ -1690,7 +1835,7 @@ def test_home_shows_doctor_and_checks_again(espanso: FakeRunner) -> None:
     assert {" ".join(c[:2]) for c in espanso.calls} <= {"espanso path", "espanso status"}
 
 
-# A persona matching the gate's patterns is a warning on Home and in Diagnostics, by finding
+# A persona matching the gate's patterns is a warning on Home and on the Checks tab, by finding
 # label only (#29 B).
 def test_home_warns_of_a_persona_matching_the_patterns(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
@@ -3325,7 +3470,7 @@ def test_history_unreadable_store(espanso: FakeRunner, monkeypatch: pytest.Monke
     drive(scenario)
 
 
-# --- Diagnostics --------------------------------------------------------------------------
+# --- Checks (diagnostics_pane) ------------------------------------------------------------
 
 
 def test_diagnostics_store_and_layers(espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch) -> None:

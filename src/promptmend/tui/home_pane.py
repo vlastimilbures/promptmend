@@ -134,7 +134,7 @@ FIX_BUTTONS = {DEPLOY: "home-deploy", SET_KEY: "home-set-key", OPEN: "home-open"
 
 class HomePane(Pane):
     """This install at a glance: a headline naming the worst problem, then one row per part.
-    The Diagnostics tab has every check; nothing here calls a provider."""
+    The Checks tab has every check; nothing here calls a provider."""
 
     rows: tuple[HomeRow, ...] = ()
     # The deploy preview reads the plan, as the Triggers tab's own Deploy or repair does.

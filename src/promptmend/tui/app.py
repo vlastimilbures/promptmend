@@ -118,6 +118,8 @@ def _setup_screen_class() -> type[SetupScreen]:
 
 CSS = """
 Pane { padding: 0 1; }
+/* Below 80 columns one space between tabs, not two, so all seven fit 70 columns (#394). */
+MainScreen.-narrow ContentTab { padding: 0 0 0 1; }
 .note { color: $text-muted; margin-bottom: 1; }
 DataTable { height: auto; max-height: 14; margin-bottom: 1; }
 #policy, #deploy-target, #disclosure, #layers, #findings, #all-checks, #profile-settings {
@@ -151,7 +153,14 @@ DataTable { height: auto; max-height: 14; margin-bottom: 1; }
 #settings-pane .result { margin-top: 0; height: auto; max-height: 3; }
 #try-draft { height: 6; }
 #try-options { height: auto; margin-top: 1; }
+/* The four compact pickers in one row (#394): Provider and Tier as wide as their longest
+   value ("openrouter", "standard") plus the arrow, the other two share the rest, so at 70
+   columns "Real provider" and "as configured" fit; a longer value (a profile's name) is cut,
+   never wrapped. */
 .try-option { width: 1fr; height: auto; margin-right: 1; }
+#try-provider-option { width: 14; }
+#try-tier-option { width: 12; }
+#try-options SelectCurrent Static#label { text-wrap: nowrap; text-overflow: ellipsis; }
 #try-usage { margin-top: 1; color: $text-muted; }
 #try-result { height: 10; }
 ModalScreen { align: center middle; }
@@ -190,15 +199,24 @@ class LateUpdate(Message):
 
 
 class MainScreen(Screen[None]):
-    # On this screen, not the app, so no letter reaches the app while a dialog is open.
+    # The screen has the class -narrow below 80 columns, -wide from 80 on (the tab bar's
+    # spacing, see CSS). Not annotated ClassVar: Textual's own `ClassVar[...] | None` reads to
+    # mypy as an instance variable, which a ClassVar cannot override.
+    HORIZONTAL_BREAKPOINTS = [  # noqa: RUF012
+        (0, "-narrow"),
+        (80, "-wide"),
+    ]
+    # On this screen, not the app, so no letter reaches the app while a dialog is open. About
+    # and High contrast stay off the footer, so Quit fits it at 70 columns on every tab (#394);
+    # docs/interface.md lists both keys.
     BINDINGS: ClassVar[list[BindingType]] = [
         *(
             Binding(str(n), f"show('{tab}')", label, show=False)
             for n, (tab, (label, _)) in enumerate(TABS.items(), start=1)
         ),
-        Binding("a", "app.about", "About"),
+        Binding("a", "app.about", "About", show=False),
         Binding("r", "app.reload", "Reload"),
-        Binding("t", "app.toggle_contrast", "High contrast"),
+        Binding("t", "app.toggle_contrast", "High contrast", show=False),
         Binding("q", "app.quit", "Quit"),
     ]
 
@@ -422,7 +440,7 @@ class ManageApp(App[int]):
     @on(LateUpdate)
     def _late_update(self, message: LateUpdate) -> None:
         """The same moment with the update check filled in: every pane gets the new State
-        object, but only what shows the update repaints (Home, Diagnostics' checks, an
+        object, but only what shows the update repaints (Home, the Checks tab, an
         open About), so no table cursor moves and the setup screen keeps its focus."""
         # The reload on screen: a newer one that failed showed nothing, so this one's Version
         # row still fills in; one that showed its own State (quick or full) drops this.

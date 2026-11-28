@@ -39,14 +39,15 @@ HOW_TO_UPDATE = "a: how to update"
 _RANK = {OK: 0, WARN: 1, FAIL: 2}
 
 # Tab id -> its label; the digit in each label is its key (app.TABS adds each pane's module
-# and class, imported when its tab first opens).
+# and class, imported when its tab first opens). Short enough for 70 columns (#394): the tab
+# `diagnostics` shows as Checks.
 TAB_LABELS = {
     "home": "1 Home",
     "settings": "2 Settings",
     "profiles": "3 Profiles",
     "triggers": "4 Triggers",
     "history": "5 History",
-    "diagnostics": "6 Diagnostics",
+    "diagnostics": "6 Checks",
     "try": "7 Try",
 }
 READY = "Ready: type -i- in any text field."
