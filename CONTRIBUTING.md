@@ -465,6 +465,7 @@ promptmend/
 │   ├── sanitize.py               clean(): strips control and invisible characters
 │   ├── tls.py                    verify(): https certificates against the OS trust store
 │   ├── history.py                local usage history (SQLite, metadata only, fail-open)
+│   ├── history_spool.py          the usage history's spool, drop files, sidecar lock, temp sweep
 │   ├── recorder.py               records each improve/persona run in the usage history
 │   ├── prompt_builder.py         loads built-in and user profiles, fills in the persona rule
 │   ├── wordings.py               the fixed wordings, parsed from prompts/default.md (#283)
