@@ -52,7 +52,9 @@ All notable changes to this project are documented here. The format follows
   with `PROMPTMEND_ENV` set, says to add `PROMPT_HISTORY=false` to the file it names. The
   Triggers table shows the provider and profile each trigger runs with (`openrouter`, with
   `PROMPT_PRO_PROVIDER` under it when a setting supplies it) instead of the setting's name,
-  and its note is shorter. The Test call button moved from the Settings tab to the Checks
+  and its note is shorter; the table scrolls inside itself, with Show diff, Deploy and Detach
+  right under it and then the deploy target, so the buttons stay on screen down to 70x24.
+  The Test call button moved from the Settings tab to the Checks
   tab, so Settings' list is a line taller. Before any action, Home's session log is one
   line instead of eight.
 - Interface: on the Settings tab a row at its built-in default no longer looks disabled

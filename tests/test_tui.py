@@ -4241,3 +4241,72 @@ def test_triggers_cells_name_the_setting_a_value_comes_from(
     assert seen["-i-"][1:4] == ["openrouter", "standard", f"{standard}\nPROMPT_PROFILE"]
     assert seen["-il-"][1:4] == ["ollama", "standard", "general"]
     assert seen["-p-"][1:4] == ["prints PROMPT_PERSONA", "-", "-"]
+
+
+# Review of #396: the -ip- Provider cell draws the provider a call runs, as Home's Pro row
+# names it, not PROMPT_PRO_PROVIDER's raw text (empty means openrouter; the parser strips
+# and lowercases it).
+@pytest.mark.parametrize(
+    ("raw", "runs"), [("", "openrouter"), ("OpenAI", "openai"), (" anthropic ", "anthropic")]
+)
+def test_triggers_ip_cell_and_home_name_the_same_provider(
+    espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, raw: str, runs: str
+) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROVIDER", raw)
+    seen: dict[str, Any] = {}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        seen["home"] = next(line for line in _home_text(app).splitlines() if "Pro (-ip-)" in line)
+        await pilot.press("4")
+        await settle(pilot)
+        seen["rows"] = table_rows(app, "triggers", "#triggers")
+        seen["runs"] = _state(app).settings.pro_provider
+
+    drive(scenario)
+    assert seen["runs"] == runs
+    assert seen["rows"]["-ip-"][1] == f"{runs}\nPROMPT_PRO_PROVIDER"
+    assert f"{runs} · " in seen["home"]
+
+
+# Review of #396: the Triggers table takes the height the note, the deploy target and the
+# buttons leave and scrolls inside itself, so Show diff, Deploy and Detach (under the table)
+# and the deploy target's first line are on screen without scrolling the pane, and Down on
+# the table reaches the last trigger.
+@pytest.mark.parametrize("size", [(70, 24), (80, 24), (110, 36)])
+def test_triggers_buttons_stay_on_screen_and_the_table_scrolls(
+    espanso: FakeRunner, size: tuple[int, int]
+) -> None:
+    from textual.widgets import DataTable
+
+    width, height = size
+    seen: dict[str, Any] = {}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("4")
+        await settle(pilot)
+        triggers = pane(app, "triggers")
+        seen["pane scroll"] = (triggers.max_scroll_y, triggers.scroll_y)
+        inside = []
+        for id_ in ("show-diff", "deploy", "detach"):
+            region = triggers.query_one(f"#{id_}").region
+            inside.append(region.height > 0 and region.bottom <= height - 1)
+            inside.append(region.x >= 0 and region.right <= width)
+        # The deploy target's first line too (its paths wrap; tests' temp paths are long).
+        target = triggers.query_one("#deploy-target").region
+        inside.append(target.height > 0 and target.y < height - 1)
+        seen["inside"] = inside
+        table = triggers.query_one("#triggers", DataTable)
+        table.focus()
+        await pilot.pause()
+        for _ in range(table.virtual_size.height):
+            await pilot.press("down")
+        await pilot.pause()
+        # Scrolled as far as it goes: the last trigger's row is the table's last line.
+        seen["table"] = (table.scroll_y, table.max_scroll_y, table.size.height > 1)
+
+    drive(scenario, size=size)
+    assert seen["pane scroll"][1] == 0
+    assert seen["inside"] == [True] * 7
+    scroll_y, max_scroll_y, shown = seen["table"]
+    assert shown
+    assert scroll_y == max_scroll_y

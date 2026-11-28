@@ -9,6 +9,7 @@ columns."""
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -40,12 +41,15 @@ def _servers_down(state: State) -> set[str]:
 
 def hinted(resolved: Resolved, entries: Mapping[str, Entry]) -> Text:
     """A Provider or Profile cell: the value a call runs with and, under it (muted), the
-    setting that supplied it, its value drawn through common.shown_value() (a key-like or
-    control-character value is never drawn raw). A value the trigger's command line names
+    setting that supplied it. The resolved value is drawn, not the setting's raw text (an
+    empty or `OpenAI` PROMPT_PRO_PROVIDER runs openrouter or openai, as Home's Pro row
+    says), through common.shown_value() with that setting's source, so a key-like or
+    control-character value is never drawn raw. A value the trigger's command line names
     stands alone."""
     if resolved.setting is None:
         return Text(resolved.value)
-    cell = Text(common.shown_value(resolved.setting, entries[resolved.setting]))
+    entry = dataclasses.replace(entries[resolved.setting], value=resolved.value)
+    cell = Text(common.shown_value(resolved.setting, entry))
     cell.append(f"\n{resolved.setting}", style="dim")
     return cell
 
@@ -63,13 +67,15 @@ class TriggersPane(Pane):
             markup=False,
         )
         yield DataTable(id="triggers", cursor_type="none", zebra_stripes=True)
-        yield Static("", markup=False, id="deploy-target")
+        # The buttons and their result right under the table, before the deploy target, whose
+        # paths can wrap to several lines: Deploy stays on screen however long they are.
         yield button_row(
             ("show-diff", "Show diff"),
             ("deploy", "Deploy"),
             ("detach", "Detach"),
         )
         yield self.result()
+        yield Static("", markup=False, id="deploy-target")
 
     def setup(self) -> None:
         self.query_one("#triggers", DataTable).add_columns(

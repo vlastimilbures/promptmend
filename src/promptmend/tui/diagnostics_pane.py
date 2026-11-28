@@ -1,8 +1,10 @@
 """The Checks tab (id `diagnostics`): the provider routes, the settings layers and every
 doctor check, and the Test call under the routes: `improve` on a provider the person picks
 against a stub on 127.0.0.1 with a placeholder key (smoke.run(), as setup's Test step), never
-a real provider or the real key (#396: the one stub test outside setup and the Try tab's
-Dry run). It needs only the settings, so it works on the quick State too."""
+a real provider or the real key (#396: moved here from the Settings tab). The interface's
+other stub runs are setup's Test step and the Try tab's Dry run; outside it, `doctor
+--timing` runs a stub improve too, to time it. It needs only the settings, so it works on the
+quick State too."""
 
 from __future__ import annotations
 

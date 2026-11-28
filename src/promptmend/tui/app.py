@@ -122,9 +122,12 @@ Pane { padding: 0 1; }
 MainScreen.-narrow ContentTab { padding: 0 0 0 1; }
 .note { color: $text-muted; margin-bottom: 1; }
 DataTable { height: auto; max-height: 14; margin-bottom: 1; }
-/* A Provider or Profile cell a setting supplies is two lines (#396): every trigger still
-   fits, the pane scrolls instead. */
-#triggers { max-height: 24; }
+/* The Triggers tab (#396): a Provider or Profile cell a setting supplies is two lines, so
+   the table takes the height the note, the buttons and the deploy target leave and scrolls
+   inside itself, and Show diff, Deploy and Detach (under the table, above the target) stay
+   on screen down to 70x24. The result sits right under the buttons. */
+#triggers { height: 1fr; max-height: 100%; min-height: 3; }
+#triggers-pane .result { margin-top: 0; }
 #policy, #deploy-target, #disclosure, #layers, #findings, #all-checks, #profile-settings {
     margin-bottom: 1;
 }

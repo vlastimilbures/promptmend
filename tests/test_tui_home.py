@@ -932,3 +932,18 @@ def test_triggers_cell_hint_and_shown_value() -> None:
     )
     assert "\x1b" not in drawn.plain
     assert triggers_pane.hinted(home.Resolved("general"), {}).plain == "general"
+
+
+# Review of #396: the cell draws the resolved value, not the setting's raw text: an empty
+# PROMPT_PRO_PROVIDER runs openrouter, and the parser strips and lowercases it.
+@pytest.mark.parametrize(
+    ("raw", "runs"), [("", "openrouter"), ("OpenAI", "openai"), (" anthropic ", "anthropic")]
+)
+def test_triggers_cell_draws_the_resolved_value(raw: str, runs: str) -> None:
+    from promptmend.config import Entry
+
+    cfg = _cfg(PROMPT_PRO_PROVIDER=raw)
+    resolved = home.trigger_provider(cfg, "pro", None)
+    assert resolved == home.Resolved(runs, "PROMPT_PRO_PROVIDER")
+    entries = {"PROMPT_PRO_PROVIDER": Entry(raw, "environment")}
+    assert triggers_pane.hinted(resolved, entries).plain == f"{runs}\nPROMPT_PRO_PROVIDER"
