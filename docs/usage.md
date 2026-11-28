@@ -313,7 +313,7 @@ It records them in `espanso-manifest.json` in the
 |---------|--------------|
 | `promptmend espanso status [--diff]` | Shows each file's state (table below), then each other `.yml`/`.yaml` file in `match/` as `yours` |
 | `promptmend espanso deploy` | Shows the plan and a diff, asks, then writes and restarts Espanso. `--yes` skips the question, `--dry-run` stops after the diff; a run with nothing to change does nothing |
-| `promptmend espanso detach` | Removes the matches that call the CLI and keeps `-risk-` as a static snippet (`--keep-static`, the default); `--remove-all` removes every file it deployed |
+| `promptmend espanso detach` | Removes the matches that call the CLI and keeps `-risk-` as a static snippet (`--keep-static`, the default); `--remove-all` removes every file it deployed. `--dry-run` lists what it would remove, keep or forget, then stops: nothing is removed and Espanso is not restarted |
 
 | State | Meaning |
 |-------|---------|
@@ -339,7 +339,7 @@ what was written, and reports any you edited.
 The launcher written into the matches is the install channel's stable entry point (uv's tool
 bin, Homebrew's `bin/`, WinGet's alias, or on Windows the exe the one-command install put in
 `%LOCALAPPDATA%\Programs\promptmend`), never a versioned path an upgrade would remove; `--launcher PATH`
-overrides it. A manifest entry for a file that no longer exists (its folder was deleted, or
+overrides it (for `status`, it is the path the matches are compared against). A manifest entry for a file that no longer exists (its folder was deleted, or
 Espanso now uses another config folder) is forgotten by the next `deploy`; until then `doctor`
 mentions it but does not judge its launcher.
 

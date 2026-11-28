@@ -36,6 +36,9 @@ All notable changes to this project are documented here. The format follows
   names and UTC times. The History tab shows the last 5 runs under its stats table (the time
   without the year, `(none)` for a direct call), and docs/troubleshooting.md ("The trigger
   stays and nothing happens") points there.
+- `promptmend espanso detach --dry-run` (#405), as `deploy --dry-run`: it lists what a
+  detach would remove, keep or forget, with the same decisions, then stops. No file is
+  removed, the deploy record is not changed and Espanso is not restarted.
 
 ### Changed
 - Windows one-command install: the closing check prints only `doctor`'s verdict line, read
@@ -214,6 +217,13 @@ All notable changes to this project are documented here. The format follows
   already gives it; a choice at its built-in default removes the entry instead of pinning
   it. Where an environment variable makes a choice differ, setup says so next to the value,
   and a `PROMPT_LOCAL_ONLY` set only in the shell is reported as a mismatch, not as local.
+- `setup --plain` is hidden from the help and the docs (#405); it still works, as
+  `--non-interactive`.
+- Help wording (#405): `espanso status --launcher` now says it is the CLI path the matches
+  are compared against (it said "to write into the matches"; `status` writes nothing), and
+  `improve --output` and `--copy` say which one a script uses: `--output clipboard` to get
+  the rewrite on the clipboard, `--output paste --copy` to have it printed and copied
+  (`--copy` has no effect with clipboard output). docs/commands.md says the same.
 
 ### Deprecated
 - `setup --provider` (#390): with `--non-interactive` it still saves `PROMPT_PROVIDER` and
@@ -223,6 +233,10 @@ All notable changes to this project are documented here. The format follows
   PROMPT_PROVIDER <name>` saves it, and without `--use` the Cloud or local step starts on
   local for Ollama or LM Studio and on cloud otherwise (a highlight; Next saves it). It goes
   in a later release.
+- `history export --output FILE` is now `history export --file FILE` (#405), since
+  `--output` elsewhere (`improve`, `setup`) says where the rewrite goes; `-o` stays. `--output`
+  is still accepted, hidden from the help, and 0.29.0 removes it. Passing both with
+  different files is a usage error (exit 2). The History tab's Export shows `--file`.
 
 ### Fixed
 - Interface: a digit pressed for another tab no longer bounces back to the tab you were on

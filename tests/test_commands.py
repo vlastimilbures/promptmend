@@ -517,7 +517,10 @@ def _commands(espanso: Path) -> dict[tuple[str, ...], list[list[str]]]:
         ("profiles", "list"): [["profiles", "list"]],
         ("stats",): [["stats"], ["stats", "--json", "--by", "day"]],
         ("history", "last"): [["history", "last"], ["history", "last", "-n", "3", "--json"]],
-        ("history", "export"): [["history", "export"]],
+        ("history", "export"): [
+            ["history", "export"],
+            ["history", "export", "--file", str(espanso / "export.json")],
+        ],
         ("history", "prune"): [["history", "prune"]],
         ("history", "reset"): [["history", "reset", "--yes"]],
         ("doctor",): [
@@ -527,7 +530,10 @@ def _commands(espanso: Path) -> dict[tuple[str, ...], list[list[str]]]:
         ],
         ("espanso", "status"): [["espanso", "status", *where]],
         ("espanso", "deploy"): [["espanso", "deploy", "--dry-run", *where]],
-        ("espanso", "detach"): [["espanso", "detach", "--yes"]],
+        ("espanso", "detach"): [
+            ["espanso", "detach", "--yes"],
+            ["espanso", "detach", "--dry-run", "--espanso-dir", str(espanso)],
+        ],
         ("improve",): [["improve", "--source", "argument", "--text", "a draft"]],
         ("persona",): [["persona"]],
         # Without a terminal (as here) the interface exits 3 before reading anything.
@@ -1015,6 +1021,26 @@ def test_history_export_prune_reset(tmp_path: Path, record_ops: Callable[..., No
     assert _run("history", "reset", "--yes").exit_code == 0
     assert json.loads(_run("history", "export").stdout)["operations"] == []
     assert _run("history", "prune", "--older-than", "soon").exit_code == 2
+
+
+# export's file is --file (-o) since #405; the old --output is hidden and still accepted.
+def test_history_export_file_and_the_hidden_output(
+    tmp_path: Path, record_ops: Callable[..., None]
+) -> None:
+    record_ops()
+    # _plain(): under GitHub Actions Typer colours an option's name in pieces.
+    help_text = _plain(_run("history", "export", "--help").stdout)
+    assert "--file" in help_text
+    assert "--output" not in help_text
+    first, second, third = (tmp_path / f"{n}.json" for n in ("a", "b", "c"))
+    assert _run("history", "export", "--file", str(first)).exit_code == 0
+    assert _run("history", "export", "--output", str(second)).exit_code == 0
+    assert first.read_bytes() == second.read_bytes()
+    assert _run("history", "export", "--file", str(third), "--output", str(third)).exit_code == 0
+    both = _run("history", "export", "--file", str(tmp_path / "d"), "--output", str(first))
+    assert both.exit_code == 2
+    assert "--file" in _plain(both.stderr)
+    assert not (tmp_path / "d").exists()
 
 
 # --- history last (#400) ----------------------------------------------------------------------
@@ -1528,6 +1554,15 @@ def test_setup_names_an_unread_dotenv(
     assert 'PROMPT_PROFILE = "general"' in (saved / "config.toml").read_text("utf-8")
     assert env.read_bytes() == before
     assert KEY not in result.output
+
+
+# --plain is hidden since #405 and still accepted: the same run as --non-interactive.
+def test_setup_plain_is_hidden_and_still_works(espanso: Path, fake_run: FakeRunner) -> None:
+    assert "--plain" not in _plain(_run("setup", "--help").stdout)
+    plain = _setup(espanso, "--plain", "--no-smoke-test")
+    assert plain.exit_code == 0, plain.output
+    same = _setup(espanso, "--non-interactive", "--no-smoke-test")
+    assert (plain.stdout, plain.stderr) == (same.stdout, same.stderr)
 
 
 def test_setup_in_legacy_mode_writes_no_settings(

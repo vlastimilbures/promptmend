@@ -1,5 +1,5 @@
 """`setup`: the first-run flow. On a terminal it opens the wizard (tui/setup_wizard.py), its
-options prefilling the steps. With --non-interactive (or --plain) it asks nothing:
+options prefilling the steps. With --non-interactive (or the hidden alias --plain) it asks nothing:
 cloud or local, the profile and the output from the options, the API key from
 --api-key-stdin, a deploy preview (applied with --deploy), and a smoke test on the path of
 the answer's triggers against a stub on 127.0.0.1, never a paid call. --provider is
@@ -242,17 +242,14 @@ def setup(
     smoke_test: bool = typer.Option(
         True, "--smoke-test/--no-smoke-test", help="Run improve against a local stub at the end"
     ),
-    plain: bool = typer.Option(
-        False,
-        "--plain",
-        help="The same as --non-interactive: print each step, ask nothing",
-    ),
+    # An old alias of --non-interactive, hidden since #405 and still accepted (no removal date).
+    plain: bool = typer.Option(False, "--plain", hidden=True),
 ) -> None:
     """First run: cloud or local, the API keys, the profile, paste or clipboard, the Espanso
     match files and a smoke test against a stub on 127.0.0.1 (never a paid call). On a
     terminal it opens full screen, one step at a time: --use, --profile and --output preselect
-    a choice, and --no-deploy or --no-smoke-test skip a step. With --non-interactive (or
-    --plain) it asks nothing. Re-run it any time; it changes only what you choose."""
+    a choice, and --no-deploy or --no-smoke-test skip a step. With --non-interactive it asks
+    nothing. Re-run it any time; it changes only what you choose."""
     interactive = not (non_interactive or plain)
     if interactive and not ui_cmd.on_a_terminal():
         common.fail(

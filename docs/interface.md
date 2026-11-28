@@ -86,7 +86,7 @@ that choice (Next still saves it), `--deploy` puts the focus on the Deploy butto
 (nothing is written until you press it), and `--no-deploy` and `--no-smoke-test` leave out
 the Espanso and Test steps. The deprecated `--provider` has no step: Welcome says it was not
 saved, and without `--use` the Cloud or local step starts on local for Ollama or LM Studio
-and on cloud otherwise. `--non-interactive` (or `--plain`) runs without the wizard and asks nothing
+and on cloud otherwise. `--non-interactive` runs without the wizard and asks nothing
 (see [Commands](commands.md#management-commands)).
 
 ![The setup's cloud or local step](../tests/snapshots/setup-use.svg)

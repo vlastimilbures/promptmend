@@ -949,12 +949,16 @@ def apply(the_plan: Plan, choices: Mapping[str, str] | None = None) -> Outcome:
 # --- Detach -------------------------------------------------------------------------------
 
 
-def detach(manifest: Manifest, espanso: Path, *, remove_all: bool = False) -> Outcome:
+def detach(
+    manifest: Manifest, espanso: Path, *, remove_all: bool = False, dry_run: bool = False
+) -> Outcome:
     """Remove the files we own. --keep-static (the default, D-UNI-1) removes only the files
     that call the CLI, so -risk- stays as a plain static snippet; --remove-all removes
     every owned file. A file the user edited since our last deploy is kept and reported, and
     our backups (the user's earlier versions) are never deleted here. Only entries for one of
-    our match files in ``espanso``'s match/ folder are acted on; any other is reported."""
+    our match files in ``espanso``'s match/ folder are acted on; any other is reported.
+    ``dry_run`` (`detach --dry-run`) makes the same decisions and reports them as `would
+    remove`/`would forget`, but deletes nothing and leaves the manifest as it is."""
     outcome = Outcome()
     match_dir = (espanso / "match").resolve()
     names = set(assets.match_names())
@@ -968,15 +972,19 @@ def detach(manifest: Manifest, espanso: Path, *, remove_all: bool = False) -> Ou
             continue
         current = _read(target)
         if current is None:
-            del manifest.entries[key]
-            outcome.add(f"forgot {target} (already gone)", changed=False)
+            if not dry_run:
+                del manifest.entries[key]
+            forgot = "would forget" if dry_run else "forgot"
+            outcome.add(f"{forgot} {target} (already gone)", changed=False)
         elif _digest(current) != entry.digest:
             outcome.add(f"kept {target}: edited since promptmend deployed it", changed=False)
         elif remove_all or entry.calls_cli:
-            target.unlink()
-            del manifest.entries[key]
-            outcome.add(f"removed {target}")
+            if not dry_run:
+                target.unlink()
+                del manifest.entries[key]
+            outcome.add(f"{'would remove' if dry_run else 'removed'} {target}", changed=not dry_run)
         else:
             outcome.add(f"kept static snippets in {target}", changed=False)
-    manifest.save()
+    if not dry_run:
+        manifest.save()
     return outcome

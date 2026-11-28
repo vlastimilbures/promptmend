@@ -323,14 +323,20 @@ def history_last(
 @guard
 def history_export(
     fmt: str = typer.Option("json", "--format", help="json or csv"),
-    output: str | None = typer.Option(
-        None, "--output", "-o", help="Write to this new file instead of stdout"
+    file: str | None = typer.Option(
+        None, "--file", "-o", help="Write to this new file instead of stdout"
     ),
+    # The spelling before 0.28.0 (#405), hidden and still accepted; 0.29.0 removes it.
+    old_output: str | None = typer.Option(None, "--output", hidden=True),
 ) -> None:
     """Write every record (metadata only) as JSON or CSV."""
     if fmt not in ("json", "csv"):
         raise typer.BadParameter(f"--format must be json or csv, got {safe_repr(fmt)}")
-    common.no_key(output, "--output")
+    common.no_key(file, "--file")
+    common.no_key(old_output, "--output")
+    if file is not None and old_output is not None and file != old_output:
+        raise typer.BadParameter("give the file once, with --file (--output is its old name)")
+    output = file if file is not None else old_output
     _, settings = settings_service.load_layers()
     if output is None:
         store(settings).export(sys.stdout, fmt)  # type: ignore[arg-type]
