@@ -34,16 +34,11 @@ All notable changes to this project are documented here. The format follows
   the provider and model of the run's last request, so a lost paste no longer means
   exporting the whole history and searching it by a UTC time. `--json` keeps the stored
   names and UTC times. The History tab shows the last 5 runs under its stats table (the time
-<<<<<<< HEAD
   without the year, `(none)` for a direct call), and docs/troubleshooting.md ("The trigger
   stays and nothing happens") points there.
-=======
-  without the year, `(none)` for a direct call), and docs/troubleshooting.md ("The trigger stays and nothing happens") points
-  there.
 - `promptmend espanso detach --dry-run` (#405), as `deploy --dry-run`: it lists what a
   detach would remove, keep or forget, with the same decisions, then stops. No file is
   removed, the deploy record is not changed and Espanso is not restarted.
->>>>>>> bc8170c (chore(cli): history export --file, espanso detach --dry-run, setup --plain hidden, clearer help (#405))
 
 ### Changed
 - Windows one-command install: the closing check prints only `doctor`'s verdict line, read
