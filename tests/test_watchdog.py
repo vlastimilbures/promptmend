@@ -592,13 +592,15 @@ def test_settings_load_marker_exits_1(exits: Exits, capfd: pytest.CaptureFixture
 # A stalled copy prints its marker before the rewrite: exit 1 with the flag, 0 without.
 @pytest.mark.parametrize("flag", [True, False])
 def test_stalled_copy_exit_code(
-    exits: Exits, capfd: pytest.CaptureFixture[str], flag: bool
+    exits: Exits, capfdbinary: pytest.CaptureFixture[bytes], flag: bool
 ) -> None:
     watch, _ = _flagged() if flag else _watchdog()
     watch.delivering("", "the rewrite")
     watch._fire()
     assert exits.codes == [1 if flag else 0]
-    assert capfd.readouterr().out == trigger.CLIPBOARD_STALLED + "the rewrite"
+    # Written straight to fd 1 with this platform's newlines, as sys.stdout writes them.
+    stalled = trigger.CLIPBOARD_STALLED.replace("\n", os.linesep).encode()
+    assert capfdbinary.readouterr().out == stalled + b"the rewrite"
 
 
 # The final timer ends a flushed run with the code its output had: 1 after a failure marker.
