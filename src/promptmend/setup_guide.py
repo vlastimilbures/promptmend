@@ -42,7 +42,8 @@ WELCOME = (
     "This setup takes a few steps. Each one shows what it changes before it does, and you "
     "can skip any of them and come back later (`promptmend setup`, or Home > Setup… in "
     "`promptmend`).\n\n"
-    "Move with Next and Back (Escape). Nothing calls a paid provider."
+    "Move with Next and Back (Escape); q, or Escape here, leaves setup. Nothing calls a "
+    "paid provider."
 )
 
 USE_INTRO = (
@@ -171,11 +172,34 @@ class KeyRow:
     needed: bool
 
 
+# What a fact of setup came to, worked out once (done_rows()) for both the Done checklist
+# and the rail (rail()), so the two never disagree (#393): ok, skipped or not run (a step
+# `setup --no-deploy`/`--no-smoke-test` leaves out, a test not run), or failed (what leaves a
+# trigger not working: an answer PROMPT_LOCAL_ONLY contradicts, a needed key not set, the
+# match files not found or not installed, a test that failed).
+OK, SKIPPED, FAILED = "ok", "skipped", "failed"
+MARKS = {OK: "✓", SKIPPED: "\u2013", FAILED: "✗"}
+CURRENT = "▶"
+
+
 @dataclass(frozen=True)
 class DoneRow:
-    ok: bool
+    """One line of the Done checklist. ``step`` is the step it belongs to: the Triggers row
+    to "use", each needed key's to "keys", Profile and Output to theirs, Match files to
+    "espanso" and Test to "test"; Welcome and Done have none."""
+
+    status: str
     label: str
     text: str
+    step: str
+
+    @property
+    def ok(self) -> bool:
+        return self.status == OK
+
+    @property
+    def mark(self) -> str:
+        return MARKS[self.status]
 
 
 @dataclass(frozen=True)
@@ -556,12 +580,12 @@ def _use_row(settings: Settings, use: str, legacy: str | None, from_env: bool) -
     saved, in legacy mode, or an environment variable may outrank config.toml)."""
     problem = use_problem(settings, use, legacy=legacy, from_env=from_env)
     if problem:
-        return DoneRow(False, "Triggers", problem)
+        return DoneRow(FAILED, "Triggers", problem, "use")
     if use == LOCAL:
         return DoneRow(
-            True, "Triggers", "local (PROMPT_LOCAL_ONLY=true: the cloud triggers refuse)"
+            OK, "Triggers", "local (PROMPT_LOCAL_ONLY=true: the cloud triggers refuse)", "use"
         )
-    return DoneRow(True, "Triggers", use)
+    return DoneRow(OK, "Triggers", use, "use")
 
 
 def done_rows(
@@ -580,42 +604,81 @@ def done_rows(
     """What is set and what is left; ``use`` is the Cloud or local step's answer and
     ``legacy`` the .env PROMPTMEND_ENV names, where a missing setting or key then goes. A step
     in ``skipped`` ("espanso", "test": left out by `setup --no-deploy`/`--no-smoke-test`) says
-    so and is not a problem. ``from_env``: PROMPT_LOCAL_ONLY comes from an environment
-    variable (use_problem()). The answer is checked against the effective ``settings``; the
-    profile and output shown are ``saved`` (setup_flow.saved_settings()), with ``overrides``
-    naming an environment variable that changes them."""
+    so, SKIPPED, not a problem; so does a test not run. ``from_env``: PROMPT_LOCAL_ONLY comes
+    from an environment variable (use_problem()). The answer is checked against the effective
+    ``settings``; the profile and output shown are ``saved`` (setup_flow.saved_settings()),
+    with ``overrides`` naming an environment variable that changes them. Each row names its
+    step (DoneRow), so the rail's marks come from these rows (rail())."""
     shown = saved or settings
     over = overrides or {}
     rows = [
         _use_row(settings, use, legacy, from_env),
-        DoneRow(True, "Profile", shown_choice("PROMPT_PROFILE", shown.profile, over)),
-        DoneRow(True, "Output", shown_choice("PROMPT_OUTPUT", shown.output, over)),
+        DoneRow(OK, "Profile", shown_choice("PROMPT_PROFILE", shown.profile, over), "profile"),
+        DoneRow(OK, "Output", shown_choice("PROMPT_OUTPUT", shown.output, over), "output"),
     ]
     for key in keys:
         if not key.needed:
             continue
         if key.set:
-            rows.append(DoneRow(True, key.name, "set"))
+            rows.append(DoneRow(OK, key.name, "set", "keys"))
         else:
             fix = (
                 f"add {key.name}= to {legacy}" if legacy else f"`promptmend secrets set {key.name}`"
             )
-            rows.append(DoneRow(False, key.name, f"not set: {fix}"))
-    if "espanso" in skipped:
-        rows.append(DoneRow(True, "Match files", "skipped (--no-deploy)"))
-    elif plan is None:
-        rows.append(DoneRow(False, "Match files", "Espanso's folder was not found"))
-    elif not _writes(plan):
-        text = f"installed in {plan.espanso_dir / 'match'}"
-        if plan.conflicts:
-            text += f"; {len(plan.conflicts)} file(s) you changed were kept"
-        rows.append(DoneRow(True, "Match files", text))
-    else:
-        rows.append(DoneRow(False, "Match files", "not installed: `promptmend espanso deploy`"))
+            rows.append(DoneRow(FAILED, key.name, f"not set: {fix}", "keys"))
+    rows.append(_match_row(plan, skipped))
     if "test" in skipped:
-        rows.append(DoneRow(True, "Test", "skipped (--no-smoke-test)"))
+        rows.append(DoneRow(SKIPPED, "Test", "skipped (--no-smoke-test)", "test"))
     elif test is None:
-        rows.append(DoneRow(False, "Test", "not run"))
+        rows.append(DoneRow(SKIPPED, "Test", "not run", "test"))
+    elif test:
+        rows.append(DoneRow(OK, "Test", "passed", "test"))
     else:
-        rows.append(DoneRow(test, "Test", "passed" if test else "failed (see the Test step)"))
+        rows.append(DoneRow(FAILED, "Test", "failed (see the Test step)", "test"))
     return rows
+
+
+def _match_row(plan: deploy.Plan | None, skipped: Sequence[str]) -> DoneRow:
+    """The Match files row: skipped by --no-deploy, failed while Espanso's folder cannot be
+    read or a file is left to write (the triggers do not run until it is), else ok."""
+    label = "Match files"
+    if "espanso" in skipped:
+        return DoneRow(SKIPPED, label, "skipped (--no-deploy)", "espanso")
+    if plan is None:
+        return DoneRow(FAILED, label, "Espanso's folder was not found", "espanso")
+    if _writes(plan):
+        return DoneRow(FAILED, label, "not installed: `promptmend espanso deploy`", "espanso")
+    text = f"installed in {plan.espanso_dir / 'match'}"
+    if plan.conflicts:
+        text += f"; {len(plan.conflicts)} file(s) you changed were kept"
+    return DoneRow(OK, label, text, "espanso")
+
+
+def step_status(step: str, rows: Sequence[DoneRow]) -> str:
+    """A step's status from its rows (DoneRow.step): FAILED when any failed, else SKIPPED
+    when any was skipped or not run, else OK. Welcome has no row, nor the keys step when no
+    key is needed: there is nothing to fail, so passed it is OK."""
+    statuses = {row.status for row in rows if row.step == step}
+    for status in (FAILED, SKIPPED):
+        if status in statuses:
+            return status
+    return OK
+
+
+def rail(at: str, order: Sequence[str], rows: Sequence[DoneRow]) -> list[tuple[str, str]]:
+    """The left rail: every step in STEPS with its mark. ``at`` is the current step (▶),
+    ``order`` the steps the wizard visits (setup --no-deploy/--no-smoke-test leave one out:
+    it is listed still, marked from its row, SKIPPED, as Done lists it); a step before ``at``
+    is marked by step_status(), so on Done the rail and the checklist say the same; a step
+    not reached yet has no mark ("")."""
+    passed = order[: order.index(at)] if at in order else []
+    marks = []
+    for step in STEPS:
+        if step == at:
+            mark = CURRENT
+        elif step in passed or step not in order:
+            mark = MARKS[step_status(step, rows)]
+        else:
+            mark = ""
+        marks.append((step, mark))
+    return marks
