@@ -209,11 +209,14 @@ jobs:
           if (-not (Select-String -Path $log -SimpleMatch 'uv was not found: installing it' -Quiet)) {
             throw "install.ps1 found a uv on PATH; the install-uv branch did not run"
           }
-          # #402: its closing doctor shows only the verdict, which names setup here.
+          # #402: its closing doctor shows only the verdict, which names setup here (nothing is
+          # deployed on this runner). Every printed row set holds the version row, always
+          # info (`[info] version: promptmend X`, the label maybe coloured), which the verdict
+          # never quotes (it names a failed or warning check only) and nothing else prints.
           if (-not (Select-String -Path $log -SimpleMatch 'Next: `promptmend setup`' -Quiet)) {
             throw "install.ps1 did not end with doctor's verdict naming setup"
           }
-          if (Select-String -Path $log -SimpleMatch '[FAIL]' -Quiet) { throw "install.ps1 printed doctor's rows" }
+          if (Select-String -Path $log -SimpleMatch '] version: promptmend ' -Quiet) { throw "install.ps1 printed doctor's rows" }
           exit 0
       - name: Run install.ps1 again with uv and check the installed CLI
         working-directory: ${{ runner.temp }}
@@ -231,7 +234,8 @@ jobs:
           if ($installed -ne $expected) { throw "installed $installed, expected $expected" }
           Write-Host "promptmend $installed from $bin"
           # https is verified against the Windows certificate store (#314): truststore came
-          # with the constraints. doctor exits 4 here (no key, no Espanso).
+          # with the constraints. No key and no Espanso here only warn, so doctor exits 0 (4
+          # would mean a check failed; either is accepted, only tls matters).
           $PSNativeCommandUseErrorActionPreference = $false
           $report = (& "$bin\promptmend.exe" doctor --no-clipboard --json) | Out-String | ConvertFrom-Json
           if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE" }
@@ -277,7 +281,8 @@ jobs:
           $exe = "$bin\promptmend.exe"
           # One run, as JSON: the rows' status is checked from it, and the table rendered.
           $json = & $exe doctor --timing --no-clipboard --json --launcher $exe | Out-String
-          # doctor exits 4 here (no key, no Espanso); only its timing matters.
+          # doctor exits 0 here (no key, no Espanso: warnings only), or 4 should a check fail;
+          # only its timing matters.
           if ($LASTEXITCODE -notin 0, 4) { throw "doctor exited $LASTEXITCODE`n$json" }
           $t = ($json | ConvertFrom-Json).timing
           if (-not $t -or @($t.runs).Count -eq 0) { throw "doctor --timing reported no timing`n$json" }

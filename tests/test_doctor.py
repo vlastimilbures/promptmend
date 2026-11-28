@@ -995,17 +995,148 @@ def test_a_never_set_up_machine_is_told_to_run_setup(
     assert report.to_json()["verdict"] == found.to_json()
 
 
-@pytest.mark.parametrize(
-    ("data", "words"),
-    [
-        ({"config": {"mode": "defaults"}}, "no settings are saved yet"),
-        ({"pro_provider": {"deployed": False}}, "no match files are deployed yet"),
-    ],
-)
-def test_setup_is_next_when_either_part_is_missing(data: dict[str, Any], words: str) -> None:
-    found = _verdict(("keys", doctor.WARN, "-i- will use OpenRouter once deployed"), **data)
-    assert found.line == f"1 warning: {words}. Next: `promptmend setup`"
-    assert (found.problems, found.warnings, found.setup) == (0, 1, True)
+KEY = "sk-or-v1-" + "ab12" * 16
+
+
+def _stale_deploy(espanso: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The match files deployed, then made stale: this release would write another
+    prompts-template.yml than the one deployed."""
+    deploy.apply(deploy.plan(espanso, LAUNCHER, deploy.Manifest.load()))
+    real = assets.read_match
+
+    def newer(name: str) -> str:
+        return real(name) + ("# newer\n" if name == "prompts-template.yml" else "")
+
+    monkeypatch.setattr(assets, "read_match", newer)
+
+
+@pytest.mark.parametrize("key_in", ["secrets file", "environment"])
+def test_a_set_up_machine_without_config_toml_is_told_the_fix(
+    espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch, key_in: str
+) -> None:
+    """Setup with the default answers writes no config.toml (the key goes to the secrets
+    file), and an environment-only user has none either: with the match files deployed, a
+    stale one is fixed by its own row's hint, never by `promptmend setup`."""
+    from promptmend import settings_service
+
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    if key_in == "environment":
+        monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+    else:
+        settings_service.store_key("OPENROUTER_API_KEY", KEY)
+    _stale_deploy(espanso, monkeypatch)
+    report = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner())
+    assert _status("config", report).data["mode"] == "defaults"
+    assert _status("keys", report).status == doctor.OK
+    found = doctor.verdict(report)
+    assert (found.setup, found.first) == (False, "match_files")
+    hint = "Fix first: match_files: prompts-template.yml: stale; run `promptmend espanso deploy`"
+    assert hint in found.line
+    assert "promptmend setup" not in found.line
+    assert KEY not in found.line
+
+
+def _deployed(espanso: Path) -> str:
+    """A launcher file that exists, with the match files deployed for it, in sync."""
+    launcher = espanso.parent / "bin" / f"promptmend{EXE}"
+    launcher.parent.mkdir()
+    launcher.write_text("", "utf-8")
+    deploy.apply(deploy.plan(espanso, str(launcher), deploy.Manifest.load()))
+    return str(launcher)
+
+
+def _fail_profiles(monkeypatch: pytest.MonkeyPatch, text: str) -> None:
+    def broken(settings: Settings) -> doctor.Check:
+        raise RuntimeError(text)
+
+    monkeypatch.setattr(doctor, "_profiles_check", broken)
+
+
+def test_a_failure_setup_cannot_fix_comes_before_setup(
+    espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never set up, and a check outside setup's reach failed: that one first, setup on the
+    next run, even though match_files (which setup fixes) fails earlier in the report."""
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    _fail_profiles(monkeypatch, "no such profile")
+    report = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner())
+    assert _status("match_files", report).status == doctor.FAIL
+    found = doctor.verdict(report)
+    assert (found.setup, found.first, found.problems) == (False, "profiles", 2)
+    assert found.line.startswith("2 problems, ")
+    assert found.line.endswith(". Fix first: profiles: check failed: RuntimeError: no such profile")
+
+
+def test_a_history_failure_also_comes_before_setup(
+    espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(settings: Settings) -> None:
+        raise OSError("disk")
+
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    monkeypatch.setattr(doctor, "_history_checks", broken)
+    found = doctor.verdict(doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner()))
+    assert (found.setup, found.first) == (False, "history")
+    assert found.line.endswith("Fix first: history: check failed: OSError")
+
+
+def test_warnings_outside_setup_never_hold_it_back(
+    tmp_path: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No Espanso folder at all (the CI runner of install.ps1): every wrong check only warns,
+    and setup is next."""
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    report = doctor.run(espanso_dir=tmp_path / "none", launcher=LAUNCHER, runner=_runner())
+    assert report.status == doctor.WARN
+    found = doctor.verdict(report)
+    assert found.setup
+    assert (
+        found.line == f"{found.warnings} warnings: nothing is set up yet. Next: `promptmend setup`"
+    )
+
+
+def test_no_match_files_with_a_config_toml_says_so(
+    espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    config.settings_file().parent.mkdir(parents=True, exist_ok=True)
+    config.settings_file().write_text("config_version = 1\n", "utf-8")
+    found = doctor.verdict(doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner()))
+    assert found.setup
+    assert found.line.endswith(": no match files are deployed yet. Next: `promptmend setup`")
+
+
+def test_the_verdict_is_one_line(
+    espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_safely() puts an exception's text in the message, newlines and all."""
+    _fail_profiles(monkeypatch, "first line\n\tsecond   line\r\n")
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+    launcher = _deployed(espanso)
+    found = doctor.verdict(doctor.run(espanso_dir=espanso, launcher=launcher, runner=_runner()))
+    assert found.first == "profiles"
+    end = "Fix first: profiles: check failed: RuntimeError: first line second line"
+    assert found.line.endswith(end)
+    assert len(found.line.splitlines()) == 1
+
+
+def test_warnings_only_point_at_the_first(
+    espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deployed and in sync, the key set, the launcher there: what is left only warns
+    (Espanso not found here)."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+    launcher = _deployed(espanso)
+    report = doctor.run(espanso_dir=espanso, launcher=launcher, runner=_runner())
+    assert report.status == doctor.WARN
+    found = doctor.verdict(report)
+    warns = [c for c in report.checks if c.status == doctor.WARN]
+    assert (found.problems, found.warnings, found.first) == (0, len(warns), warns[0].id)
+    plural = "" if len(warns) == 1 else "s"
+    assert found.line == (
+        f"No problems, {len(warns)} warning{plural}. Check first: {warns[0].id}: {warns[0].message}"
+    )
+    assert not found.setup
 
 
 def test_one_failure_is_fixed_first() -> None:
@@ -1020,36 +1151,16 @@ def test_one_failure_is_fixed_first() -> None:
     assert (found.problems, found.warnings, found.first, found.setup) == (1, 1, "launcher", False)
 
 
-def test_the_first_failure_in_report_order_comes_first() -> None:
-    found = _verdict(
-        ("config", doctor.FAIL, "improve would stop with: PROMPT_LOCAL_ONLY must be true"),
-        ("match_files", doctor.FAIL, "prompts.yml: missing; run `promptmend espanso deploy`"),
-        config={"mode": "defaults"},
-        pro_provider={"deployed": False},
-    )
-    # The settings fail: a trigger stops on them first, so they beat setup too.
-    assert found.line.startswith("2 problems. Fix first: config: improve would stop with")
+def test_a_failing_config_comes_first_on_a_fresh_machine(
+    espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bad setting in the environment: a trigger stops on it first, so it beats setup."""
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    monkeypatch.setenv("PROMPT_LOCAL_ONLY", "maybe")
+    report = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner())
+    found = doctor.verdict(report)
     assert (found.first, found.setup) == ("config", False)
-
-
-def test_warnings_only_point_at_the_first() -> None:
-    found = _verdict(
-        ("espanso", doctor.WARN, "Espanso is not running"),
-        ("clipboard", doctor.WARN, "cannot be read (PyperclipException)"),
-    )
-    assert found.line == "No problems, 2 warnings. Check first: espanso: Espanso is not running"
-    assert (found.problems, found.warnings, found.first) == (0, 2, "espanso")
-
-
-def test_setup_is_not_named_for_what_it_does_not_fix() -> None:
-    """Saved in the environment only (no config.toml), deployed, and the one warning is the
-    clipboard: setup would not change it."""
-    found = _verdict(
-        ("clipboard", doctor.WARN, "cannot be read (PyperclipException)"),
-        config={"mode": "defaults"},
-    )
-    assert not found.setup
-    assert found.first == "clipboard"
+    assert "Fix first: config: improve would stop with" in found.line
 
 
 def test_a_clean_report_says_so() -> None:

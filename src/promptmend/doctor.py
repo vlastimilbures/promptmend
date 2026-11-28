@@ -181,41 +181,46 @@ class Verdict:
         }
 
 
-# The checks whose fail or warning `promptmend setup` deals with: it saves the settings and
-# the key and deploys the match files (which the launcher and pro_provider checks read).
-SETUP_CHECKS = ("keys", "pro_provider", "match_files", "launcher")
+# The checks whose fail or warning `promptmend setup` deals with on a machine with no match
+# files deployed: it saves the key and deploys the match files (which the launcher check
+# reads). pro_provider is not one: it warns only about a deployed file.
+SETUP_CHECKS = ("keys", "match_files", "launcher")
 
 
 def _count(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
+def _one_line(text: str) -> str:
+    """``text`` with every run of whitespace (a newline in an exception's text) one space."""
+    return " ".join(text.split())
+
+
 def _not_set_up(report: Report) -> str | None:
-    """What is not set up yet, or None: no saved settings (config mode ``defaults``: no
-    config.toml and no PROMPTMEND_ENV), no managed match file in Espanso's folder
-    (deployed_triggers(), as pro_provider reports it), or both. A check that could not run
-    says neither."""
+    """What is not set up yet, or None. It hinges on the match files: none managed in
+    Espanso's folder (deployed_triggers(), as pro_provider reports it). A setup with the
+    default answers writes no config.toml, so a missing one alone means nothing; with the
+    match files missing too (config mode ``defaults``) nothing is set up. A check that could
+    not run says neither."""
     data = {c.id: c.data for c in report.checks}
-    unsaved = data.get("config", {}).get("mode") == "defaults"
-    undeployed = data.get("pro_provider", {}).get("deployed") is False
-    if unsaved and undeployed:
+    if data.get("pro_provider", {}).get("deployed") is not False:
+        return None
+    if data.get("config", {}).get("mode") == "defaults":
         return "nothing is set up yet"
-    if unsaved:
-        return "no settings are saved yet"
-    if undeployed:
-        return "no match files are deployed yet"
-    return None
+    return "no match files are deployed yet"
 
 
 def verdict(report: Report) -> Verdict:
-    """What doctor's text output ends with, and doctor --json's ``verdict``.
+    """What doctor's text output ends with, and doctor --json's ``verdict``: always one line.
 
     Problems are the failed checks, the ones that make doctor exit 4; warnings are counted
     beside them and point the line only when nothing failed. "First" is the first such check
     in report order (CHECK_IDS), which already runs install, settings, keys, Espanso, match
-    files, launcher. On a machine that is not set up (_not_set_up()) where a check setup deals
-    with (SETUP_CHECKS) is wrong, the line names `promptmend setup` instead, unless the
-    settings fail: a trigger stops on them before anything else, so they come first."""
+    files, launcher. On a machine with no match files deployed (_not_set_up()) where a check
+    setup deals with (SETUP_CHECKS) is wrong, the line names `promptmend setup` instead;
+    unless a check outside setup's reach failed (the settings, the profiles, the history):
+    then the first of those comes first, and setup on the next run. Warnings outside its
+    reach never hold setup back."""
     fails = [c for c in report.checks if c.status == FAIL]
     warns = [c for c in report.checks if c.status == WARN]
     if not fails and not warns:
@@ -226,17 +231,21 @@ def verdict(report: Report) -> Verdict:
     if warns:
         parts.append(_count(len(warns), "warning"))
     counts = ", ".join(parts)
+    candidates = fails
     missing = _not_set_up(report)
-    wrong = {c.id for c in fails + warns}
-    if missing and wrong & set(SETUP_CHECKS) and "config" not in {c.id for c in fails}:
-        line = f"{counts}: {missing}. Next: `{SETUP_COMMAND}`"
-        return Verdict(len(fails), len(warns), None, True, line)
-    if fails:
-        first = fails[0]
-        line = f"{counts}. Fix first: {first.id}: {first.message}"
+    if missing:
+        beyond = [c for c in fails if c.id not in SETUP_CHECKS]
+        if beyond:
+            candidates = beyond
+        elif {c.id for c in fails + warns} & set(SETUP_CHECKS):
+            line = f"{counts}: {missing}. Next: `{SETUP_COMMAND}`"
+            return Verdict(len(fails), len(warns), None, True, line)
+    if candidates:
+        first = candidates[0]
+        line = f"{counts}. Fix first: {first.id}: {_one_line(first.message)}"
     else:
         first = warns[0]
-        line = f"No problems, {counts}. Check first: {first.id}: {first.message}"
+        line = f"No problems, {counts}. Check first: {first.id}: {_one_line(first.message)}"
     return Verdict(len(fails), len(warns), first.id, False, line)
 
 
