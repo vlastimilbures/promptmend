@@ -1640,12 +1640,18 @@ def test_no_color_is_left_to_textual(monkeypatch: pytest.MonkeyPatch, espanso: F
 
 
 def _rendered(widget: Widget, selector: str, width: int = 116) -> str:
-    """What a Static shows, as plain text at ``width`` columns (Home's grids are Rich
-    tables, not Text)."""
+    """What a Static or an OptionList (Home's rows, #395) shows, as plain text at ``width``
+    columns (Home's grids are Rich tables, not Text)."""
     from rich.console import Console
 
     console = Console(width=width, record=True, color_system=None, file=io.StringIO())
-    console.print(widget.query_one(selector, Static).content)
+    found = widget.query_one(selector)
+    if isinstance(found, OptionList):
+        for option in found.options:
+            console.print(option.prompt)
+    else:
+        assert isinstance(found, Static)
+        console.print(found.content)
     return console.export_text()
 
 
@@ -2716,7 +2722,8 @@ def test_settings_keys_act_only_on_their_tab(espanso: FakeRunner) -> None:
         await on_row(app, pilot, "PROMPT_HISTORY")
         await pilot.press("1")
         await settle(pilot)
-        assert app.focused is None
+        # Home's list takes the focus as its tab opens (#395): nothing of Settings keeps it.
+        assert app.focused is pane(app, "home").query_one("#home-rows")
         # r is Reload, as on every tab, and Space nothing.
         await pilot.press("r", "space")
         await settle(pilot)

@@ -17,6 +17,15 @@ All notable changes to this project are documented here. The format follows
   has the focus, and Escape on Welcome leaves as well: `promptmend setup` exits 0, as Done's
   Quit; opened from Home, it goes back to Home. While the match files install or the test
   runs, `q` and Escape are refused and greyed out in the footer.
+- Interface: Home takes you to the fix of the problem it names (#395). Its rows are a list
+  with the focus when the interface opens: Enter (or a click) on a row opens the tab it
+  names, checks again on a `not checked` row and shows About on a newer release; the row
+  stays highlighted through a reload, and leaving Home gives the focus to the tab bar. A
+  new first button opens the headline's fix: `Deploy or repair…` opens the Triggers tab's
+  deploy preview (nothing is written until you press Deploy there), `Set <KEY>…` the
+  Settings tab's Set key dialog for the missing key, and `Open` the tab the problem points
+  to otherwise; there is none when you are ready or the checks still run. From Home, Tab
+  then Enter reaches it.
 - Interface: on the Settings tab a row at its built-in default no longer looks disabled
   (#388). Names and values always have the normal text colour; only the word `default` in
   the source column is muted. The dot means only "set by you": a filled `●`, in the theme's

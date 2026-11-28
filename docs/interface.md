@@ -125,6 +125,25 @@ fixes it. Below, each row has a status word (ok, warn, FAIL) and the tab that fi
 - the output mode (`PROMPT_OUTPUT`: paste or clipboard), which the Settings tab switches;
 - the `doctor` checks.
 
+The rows are a list with the focus when the interface opens: the arrows move along it, and
+Enter (or a click) on a row opens the tab it names; on a `not checked` row it checks again,
+as `r` does, and on a newer release it opens About, as `a` does. The digits and `a`, `r`,
+`t` and `q` work as everywhere. Leaving Home gives the focus to the tab bar; coming back
+gives it to the list, on the row it was on, which a reload keeps too.
+
+When the headline names a problem, the first button opens its fix (Tab, then Enter, from
+the list):
+
+- `Deploy or repair…` when match files are not deployed, out of date or edited: the Triggers
+  tab's deploy preview, as its own Deploy or repair button opens it. Nothing is written until
+  you press Deploy in that dialog (`promptmend espanso deploy`); it waits for the checks, as
+  that button does.
+- `Set OPENROUTER_API_KEY…` (or the key that is missing): the Settings tab's Set key dialog
+  for that key (`promptmend secrets set OPENROUTER_API_KEY`).
+- `Open` and the tab, for anything else.
+
+When you are ready, or the checks are still running, there is no such button.
+
 The header shows the same status (`ok`, or `1 problem, 2 warnings`). Home also lists this
 session's commands, or a few useful ones before you have done anything.
 
@@ -265,6 +284,7 @@ models, never a made-up 0.
 | `t` | Switch to the high-contrast theme |
 | `q` | Quit |
 | Escape | Leave the Try tab's draft, so the tab keys work again; clear the Settings filter |
+| Up, Down, Enter | Move in [Home's rows](#home) and open the tab a row names |
 | Up, Down, `j`, `k`, Space, Enter, `/` | Move and change in the [Settings list](#settings-tab) |
 
 ## Accessibility

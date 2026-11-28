@@ -126,11 +126,14 @@ DataTable { height: auto; max-height: 14; margin-bottom: 1; }
 #group-by { width: 30; margin-bottom: 1; }
 .buttons { height: auto; margin-top: 1; }
 .buttons Button { margin-right: 1; }
-/* Home's four buttons as wide as their labels, so the row fits 70 columns (#111). */
+/* Home's buttons (its fix button and three more) as wide as their labels, so the row fits
+   70 columns (#111). */
 #home-pane .buttons Button { min-width: 0; }
 .result { margin-top: 1; }
 #home-headline { margin: 1 0; }
-#home-rows { height: auto; }
+/* Home's rows (#395): a list with no border or padding of its own, so they line up as the
+   plain rows did; the highlight marks the row Enter opens. */
+#home-rows { height: auto; border: none; padding: 0; background: transparent; }
 #home-session { margin-top: 1; text-wrap: nowrap; text-overflow: ellipsis; }
 /* The Settings tab (#199): a one-line filter, the list filling the tab, two help lines. */
 #settings-pane { overflow-y: hidden; }

@@ -19,6 +19,9 @@ WITHHELD = "<value withheld>"
 BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
     "home-reload": (("doctor",),),
     "home-setup": (("setup",),),
+    # Home's button for the headline's problem: one of these three shows at a time.
+    "home-deploy": (("espanso", "deploy"),),
+    "home-set-key": (("secrets", "set", "<NAME>"),),
     "setup-save-keys": (("secrets", "set", "<NAME>"),),
     "setup-deploy": (("espanso", "deploy"),),
     "setup-run-test": (("setup",),),
@@ -60,6 +63,8 @@ NOTES = {
     "smoke": "Its last step, the smoke test against a stub on 127.0.0.1.",
     "setup-run-test": "Its last step, the smoke test against a stub on 127.0.0.1.",
     "home-setup": "On a terminal it opens this same setup; --non-interactive asks nothing.",
+    "home-deploy": "Opens the deploy preview first: nothing is written until you press Deploy.",
+    "home-set-key": "Opens the Set key dialog for the key the headline names, typed hidden.",
     "edit-profile": "Shows where each profile is; open the file in your editor.",
     "export": "Or --format csv.",
     "try-run": "Dry run sends it to a stub on 127.0.0.1 instead: no provider is called and "
@@ -69,6 +74,7 @@ NOTES = {
 NO_COMMAND = {
     "home-copy": "Copy the latest command of this session, as Home's log shows it, to the\n"
     "terminal clipboard (OSC 52); the clipboard is never read.",
+    "home-open": "Open the tab the headline names, as its digit does.",
     "setup-back": "",
     "setup-next-step": "",
     "setup-open": "",

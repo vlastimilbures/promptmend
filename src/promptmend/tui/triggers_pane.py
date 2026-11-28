@@ -121,7 +121,11 @@ class TriggersPane(Pane):
 
     @on(Button.Pressed, "#deploy")
     def _deploy(self) -> None:
-        """Read the plan in a worker, then preview it in a dialog."""
+        self.preview_deploy()
+
+    def preview_deploy(self) -> None:
+        """Read the plan in a worker, then preview it in a dialog (Deploy or repair, and
+        Home's button for a deploy)."""
         if self.claim():
             self.report("Reading the match files…")
             self.background(lambda: self.app.call_from_thread(self._ask_deploy, current_plan()))
