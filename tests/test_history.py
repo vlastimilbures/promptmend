@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from promptmend import history
+from promptmend import history, history_spool
 from promptmend.config import Settings, user_data_dir
 from promptmend.history import HistoryError, HistoryStore, load_price_table
 
@@ -665,7 +665,7 @@ def test_bad_spool_entries_are_skipped_and_counted(store: HistoryStore) -> None:
 def test_a_full_spool_counts_the_record_as_lost(
     store: HistoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(history, "_SPOOL_LIMIT", 2)
+    monkeypatch.setattr(history_spool, "_SPOOL_LIMIT", 2)
     assert store.record(_op())
     with contextlib.closing(sqlite3.connect(store.path, isolation_level=None)) as other:
         other.execute("BEGIN EXCLUSIVE")
@@ -788,7 +788,7 @@ def test_many_dropped_writes_take_one_drop_file(
     store.path.parent.mkdir(parents=True)
     dropped = 250_000
     store.spool_path.write_text(json.dumps({"version": 1, "records": [0] * dropped}), "utf-8")
-    monkeypatch.setattr(history, "_SPOOL_BYTES", 10 * 1024 * 1024)
+    monkeypatch.setattr(history_spool, "_SPOOL_BYTES", 10 * 1024 * 1024)
     monkeypatch.setattr(HistoryStore, "_count_lost", fail)
     store._settle_spool(set(), (), time.monotonic() + 5)
     (drop,) = store._drop_files()
@@ -821,7 +821,7 @@ def test_a_drop_file_removed_while_health_reads_is_skipped(
     store: HistoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert store.record(_op())
-    gone = store.lost_path.with_name(f"{history.LOST_NAME}.{'b' * 32}.4.drop")
+    gone = store.lost_path.with_name(f"{history_spool.LOST_NAME}.{'b' * 32}.4.drop")
     monkeypatch.setattr(HistoryStore, "_drop_files", lambda self: [gone])
     health = store.health()  # a concurrent reset() removed it between the listing and stat
     assert (health.lost_writes, health.tracking_incomplete) == (0, False)
@@ -833,7 +833,7 @@ def test_a_garbage_lock_file_never_fails_the_work_done_under_it(
     store: HistoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert store.record(_op())
-    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock = store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock")
     real_save = HistoryStore._save_spool
 
     def save(self: HistoryStore, records: list[object]) -> None:
@@ -897,13 +897,13 @@ def test_a_sidecar_lock_pending_deletion_on_windows_is_waited_for(
         return real_open(path, flags, *args)
 
     monkeypatch.setattr(os, "open", pending_once)
-    monkeypatch.setattr(history, "_WINDOWS", True)
+    monkeypatch.setattr(history_spool, "_WINDOWS", True)
     with store._sidecar_lock(time.monotonic() + 1):
-        assert store.lost_path.with_name(f"{history.LOST_NAME}.lock").exists()
+        assert store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock").exists()
     assert len(refused) == 1
     # Elsewhere a PermissionError is a real denial: it is not retried.
     refused.clear()
-    monkeypatch.setattr(history, "_WINDOWS", False)
+    monkeypatch.setattr(history_spool, "_WINDOWS", False)
     with pytest.raises(PermissionError), store._sidecar_lock(time.monotonic() + 1):
         pass
 
@@ -912,7 +912,7 @@ def test_a_lock_whose_nonce_cannot_be_written_is_removed(
     store: HistoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store.path.parent.mkdir(parents=True)
-    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock = store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock")
     real_fdopen = os.fdopen
     opened: list[int] = []
 
@@ -1000,7 +1000,7 @@ def test_the_spool_is_read_only_under_the_sidecar_lock(
     store: HistoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _spool_one(store, monkeypatch)
-    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock = store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock")
     real_load = HistoryStore._load_spool
     locked: list[bool] = []
 
@@ -1019,7 +1019,7 @@ def test_a_spool_locked_by_another_process_is_left_for_later(
     store: HistoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spooled = _spool_one(store, monkeypatch)
-    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock = store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock")
     lock.touch()  # another process is reading or writing the spool
     assert store._replayable((), time.monotonic() + 0.05) == ([], False)
     # Waiting for the lock would spend the write budget and spool this record too.
@@ -1061,7 +1061,7 @@ def test_health_reads_the_sidecar_only_under_its_lock(
     taken.clear()
     assert store.health().spooled == 1
     assert len(taken) == 1
-    held = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    held = store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock")
     held.touch()  # another process holds it
     health = store.health()
     assert (health.spooled, health.tracking_incomplete) == (0, True)
@@ -1322,7 +1322,7 @@ def test_the_sidecar_marker_is_updated_atomically(store: HistoryStore, tmp_path:
     drops = store._drop_files()
     assert _lost(store) + len(drops) == store.health().lost_writes == 4 * 25
     names = {p.name for p in store.path.parent.iterdir()} - {p.name for p in drops}
-    assert names == {history.LOST_NAME}
+    assert names == {history_spool.LOST_NAME}
 
 
 # -- services ------------------------------------------------------------------------------
@@ -1533,8 +1533,8 @@ def test_creating_write_gets_extra_time(
 def _leftover_temp_files(store: HistoryStore, age: float) -> list[Path]:
     """The temp files a write killed between its write and its os.replace leaves (#413)."""
     temps = [
-        store.lost_path.with_name(f"{history.LOST_NAME}.4242.tmp"),
-        store.spool_path.with_name(f"{history.SPOOL_NAME}.4243.tmp"),
+        store.lost_path.with_name(f"{history_spool.LOST_NAME}.4242.tmp"),
+        store.spool_path.with_name(f"{history_spool.SPOOL_NAME}.4243.tmp"),
     ]
     when = time.time() - age
     for temp in temps:
@@ -1653,7 +1653,7 @@ def test_a_stale_sidecar_lock_is_broken_and_a_held_one_times_out(
     store: HistoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store.path.parent.mkdir(parents=True)
-    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock = store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock")
     lock.touch()
     old = time.time() - 60
     os.utime(lock, (old, old))
@@ -1762,9 +1762,9 @@ def test_retention_is_capped_and_prune_never_overflows(
 
 def test_a_fresh_lock_is_never_broken_and_only_the_holder_removes_it(store: HistoryStore) -> None:
     store.path.parent.mkdir(parents=True)
-    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock = store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock")
     lock.write_text("someone else", "ascii")
-    assert history._break_stale(lock) is False
+    assert history_spool._break_stale(lock) is False
     assert lock.read_text("ascii") == "someone else"
     lock.unlink()
     with store._sidecar_lock(time.monotonic() + 1):
@@ -1781,7 +1781,7 @@ def test_breaking_a_stale_lock_never_leaves_two_holders(
     takes a fresh lock; then C tries to take the lock while B is at work. B must not move A's
     fresh lock aside, or A and C would both hold the lock."""
     store.path.parent.mkdir(parents=True)
-    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock = store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock")
     lock.write_text("dead", "ascii")
     old = time.time() - 60
     os.utime(lock, (old, old))
@@ -1810,7 +1810,7 @@ def test_breaking_a_stale_lock_never_leaves_two_holders(
 
     monkeypatch.setattr(Path, "stat", stat_then_a)
     monkeypatch.setattr(os, "replace", replace_then_c)
-    assert history._break_stale(lock) is False  # B
+    assert history_spool._break_stale(lock) is False  # B
     monkeypatch.setattr(Path, "stat", real_stat)
     monkeypatch.setattr(os, "replace", real_replace)
     if "C" not in tried:
@@ -1826,17 +1826,17 @@ def test_breaking_a_stale_lock_never_leaves_two_holders(
 
 def test_a_claim_left_by_a_killed_breaker_is_cleared(store: HistoryStore) -> None:
     store.path.parent.mkdir(parents=True)
-    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock = store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock")
     claim = lock.with_name(f"{lock.name}.break")
     lock.write_text("dead", "ascii")
     claim.touch()
     old = time.time() - 60
     os.utime(lock, (old, old))
-    assert history._break_stale(lock) is False  # another process is breaking it
+    assert history_spool._break_stale(lock) is False  # another process is breaking it
     assert lock.exists()
     assert claim.exists()
     os.utime(claim, (old, old))
-    assert history._break_stale(lock) is False  # the breaker was killed: its claim goes
+    assert history_spool._break_stale(lock) is False  # the breaker was killed: its claim goes
     assert not claim.exists()
     real_unlink = Path.unlink
 
@@ -1847,17 +1847,17 @@ def test_a_claim_left_by_a_killed_breaker_is_cleared(store: HistoryStore) -> Non
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(Path, "unlink", held_open)
-        assert history._break_stale(lock) is False  # tried again later
+        assert history_spool._break_stale(lock) is False  # tried again later
     assert not claim.exists()
-    assert history._break_stale(lock) is True
+    assert history_spool._break_stale(lock) is True
     assert not lock.exists()
     assert not claim.exists()
 
 
 def test_replay_removes_only_old_temp_files(store: HistoryStore) -> None:
     store.path.parent.mkdir(parents=True)
-    old = _leftover_temp_files(store, history._STALE_TEMP + 5)
-    fresh = store.lost_path.with_name(f"{history.LOST_NAME}.4244.tmp")
+    old = _leftover_temp_files(store, history_spool._STALE_TEMP + 5)
+    fresh = store.lost_path.with_name(f"{history_spool.LOST_NAME}.4244.tmp")
     fresh.write_text("{}", "utf-8")  # a live write's, about to be replaced
     other = store.path.with_name("notes.tmp")
     other.write_text("", "utf-8")  # not ours
@@ -1885,7 +1885,7 @@ def test_a_write_blocked_everywhere_gives_up(
     store: HistoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert store.record(_op())
-    lock = store.lost_path.with_name(f"{history.LOST_NAME}.lock")
+    lock = store.lost_path.with_name(f"{history_spool.LOST_NAME}.lock")
     lock.write_text("held", "ascii")
     with contextlib.closing(sqlite3.connect(store.path, isolation_level=None)) as other:
         other.execute("BEGIN EXCLUSIVE")

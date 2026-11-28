@@ -208,7 +208,7 @@ class Watchdog:
       sleeps on until the hard deadline.
     - flushed (only the run's history write is left): the process ends at once, silently.
       That write is then cut off: its row is lost without the lost-write count going up, and
-      a sidecar lock or temp file it held stays until history._STALE_LOCK lets the next write
+      a sidecar lock or temp file it held stays until history_spool._STALE_LOCK lets the next write
       take it over.
 
     A claimed run that has not flushed by the hard deadline (limit + WATCHDOG_MARGIN) is left

@@ -272,7 +272,7 @@ FORBIDDEN = (
 )
 # The usage history (#89) writes each run after its output, so sqlite3 loads on the trigger
 # path when tracking is on (PROMPT_HISTORY, the default), and never when it is off.
-HISTORY_MODULES = ("promptmend.history", "sqlite3", "_sqlite3")
+HISTORY_MODULES = ("promptmend.history", "promptmend.history_spool", "sqlite3", "_sqlite3")
 
 # Modules the trigger scenarios add to a bare interpreter, macOS: 307 on Python 3.12 and 306 on
 # 3.14 with the usage history on, 296 on both with it off (see "Trigger start-up budget" in

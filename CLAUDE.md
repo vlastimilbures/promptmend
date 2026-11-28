@@ -178,8 +178,8 @@ the CLI again.
   holds the allowlist. Add a column only through a new `_MIGRATIONS` step (forward only).
 - Money is exact decimal text plus a unit, never REAL; a missing cost is `unknown`, never 0.
 - `record()` never raises and stays within `_BUDGET`; recording never changes stdout, the exit
-  code or a retry. With `PROMPT_HISTORY=false` the trigger path never imports `history` or
-  `sqlite3`.
+  code or a retry. With `PROMPT_HISTORY=false` the trigger path never imports `history`,
+  `history_spool` or `sqlite3`.
 
 ## Management commands
 

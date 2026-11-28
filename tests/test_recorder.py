@@ -14,7 +14,7 @@ import pyperclip
 import pytest
 from typer.testing import CliRunner
 
-from promptmend import history, recorder
+from promptmend import history, history_spool, recorder
 from promptmend.cli import app
 from promptmend.history import HistoryStore
 from promptmend.providers.usage import AttemptUsage
@@ -85,7 +85,7 @@ def test_history_rows_finds_a_spooled_record(
     assert _run(LOCAL) == "improved"
     path = history.history_path()
     assert path.is_file()
-    assert path.with_name(history.SPOOL_NAME).is_file()
+    assert path.with_name(history_spool.SPOOL_NAME).is_file()
     assert _only_op(history_rows)["outcome"] == "ok"
 
 
