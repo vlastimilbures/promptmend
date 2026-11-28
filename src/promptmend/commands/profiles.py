@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from .. import settings_service
-from ..prompt_builder import ALIASES, PROFILES, user_profiles, user_profiles_dir
+from ..prompt_builder import PROFILES, user_profiles, user_profiles_dir
 from . import common
 from .common import guard
 
@@ -33,8 +33,6 @@ def profiles_list() -> None:
     typer.echo("Built in:")
     for name in PROFILES:
         typer.echo(f"  {name}")
-    for alias, target in ALIASES.items():
-        typer.echo(f"  {alias} (retired; means {target})")
     typer.echo(f"Yours, in {user_profiles_dir()}:")
     found = user_profiles(settings.profile_overrides)
     if not found:

@@ -899,7 +899,7 @@ def test_the_full_stage_keeps_the_persons_place(espanso: FakeRunner) -> None:
         await app.main.build("profiles")
         await pilot.pause()
         table = pane(app, "profiles").query_one("#profiles", DataTable)
-        table.move_cursor(row=2)
+        table.move_cursor(row=1)  # general: off the first row (default-pro was row 2, #414)
         await pilot.pause()
         key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
         app.open_setup()
@@ -910,7 +910,7 @@ def test_the_full_stage_keeps_the_persons_place(espanso: FakeRunner) -> None:
         blocked.release.set()
         await settle(pilot)
         assert _state(app).full
-        assert table.cursor_row == 2
+        assert table.cursor_row == 1
         assert table.coordinate_to_cell_key(table.cursor_coordinate).row_key == key
         assert wizard.at == "keys"
         assert app.screen is wizard
@@ -1915,10 +1915,9 @@ def test_a_destructive_dialog_still_opens_on_cancel(saved: Path, espanso: FakeRu
     ("row", "picked"),
     [
         ("general", "general"),  # built in, not the list's first choice
-        ("default-pro", "default"),  # a retired name means its target
         ("user:other", "other"),  # one of yours, added
         ("user:general", "general"),  # yours, replacing a built-in (overrides)
-        ("user:default-pro", "mine"),  # shadowed (named like an alias): the current default
+        ("user:default-pro", "default-pro"),  # no longer a retired name (#414): yours, added
         ("user:Bad", "mine"),  # an invalid name: the current default
         ("user:default", "mine"),  # an override without its file (missing): the same
     ],
@@ -1929,7 +1928,7 @@ def test_set_default_opens_on_the_highlighted_profile(
     """#392: Set default starts at the highlighted row, not at the current profile. The
     current one (`mine`) is not the list's first choice, so a value the list does not offer
     (which falls back to that first choice) cannot pass for the fallback."""
-    from promptmend.prompt_builder import ADDED, INVALID_NAME, MISSING, OVERRIDES, SHADOWED
+    from promptmend.prompt_builder import ADDED, INVALID_NAME, MISSING, OVERRIDES
 
     monkeypatch.setenv("PROMPT_PROFILE", "mine")
     monkeypatch.setenv("PROMPT_PROFILE_OVERRIDES", "general,default")
@@ -1946,7 +1945,7 @@ def test_set_default_opens_on_the_highlighted_profile(
             "mine": ADDED,
             "other": ADDED,
             "general": OVERRIDES,
-            "default-pro": SHADOWED,
+            "default-pro": ADDED,
             "Bad": INVALID_NAME,
             "default": MISSING,
         }
@@ -4503,15 +4502,22 @@ def test_about_before_the_state_is_read(espanso: FakeRunner) -> None:
     drive(scenario, loader=broken)
 
 
-@pytest.mark.parametrize("args", [("ui",), (), ("ui", "--no-intro")])
-def test_ui_opens_and_no_intro_is_a_hidden_no_op(
-    terminal: dict[str, Any], args: tuple[str, ...]
-) -> None:
-    # The intro is gone (#245); `--no-intro` is still accepted so old scripts keep working.
+@pytest.mark.parametrize("args", [("ui",), ()])
+def test_ui_opens(terminal: dict[str, Any], args: tuple[str, ...]) -> None:
     result = _invoke(*args)
     assert result.exit_code == 0, result.output
     assert terminal["launched"] == 1
-    assert "--no-intro" not in _invoke("ui", "--help").output
+
+
+# The intro is gone (#245), and so, since #414, is its `--no-intro`: a usage error, which
+# opens nothing.
+def test_ui_no_intro_is_a_usage_error(terminal: dict[str, Any]) -> None:
+    from test_commands import _plain
+
+    result = _invoke("ui", "--no-intro")
+    assert result.exit_code == 2
+    assert "No such option: --no-intro" in _plain(result.output)
+    assert terminal["launched"] == 0
 
 
 def test_brand_is_ascii() -> None:

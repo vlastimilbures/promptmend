@@ -364,6 +364,82 @@ def test_config_validate_unknown_profile(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "Unknown profile" in result.stdout
 
 
+# The retired `default-pro` (an alias of default from 0.14.0 until #414) is now an unknown
+# profile like any other: `config set` saves it, as it saves any name (a profile of yours may
+# be added later), and `config validate` and doctor report it, naming the valid profiles.
+@pytest.mark.parametrize("name", ["PROMPT_PROFILE", "PROMPT_PRO_PROFILE"])
+def test_retired_default_pro_is_an_unknown_profile(saved: Path, name: str) -> None:
+    assert _run("config", "set", name, "default-pro").exit_code == 0
+    result = _run("config", "validate")
+    assert result.exit_code == common.PROBLEMS
+    expected = "Unknown profile: 'default-pro'. Choose from: default, general"
+    assert f"problem: {expected}" in result.stdout
+    _, settings = settings_service.load_layers()
+    check = doctor._profiles_check(settings)
+    assert (check.status, check.message) == (doctor.FAIL, expected)
+
+
+# A removed setting left in config.toml (PROMPT_UI_INTRO, #245) is named, with the file, by
+# `config validate` and counted by doctor's config check (#414). `config unset` removes it
+# and leaves the rest; a name that is no setting and not in the file stays a usage error, as
+# it does in legacy mode.
+def test_a_removed_setting_in_config_toml_is_reported(
+    saved: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from promptmend.config import ConfigLayers
+
+    saved.mkdir(parents=True, exist_ok=True)
+    toml = saved / "config.toml"
+    toml.write_text('PROMPT_UI_INTRO = false\nOLLAMA_MODEL = "m"\n', "utf-8")
+    result = _run("config", "validate")
+    assert result.exit_code == common.PROBLEMS
+    assert (
+        f"problem: {toml}: 'PROMPT_UI_INTRO' in config.toml is not a setting; it was ignored"
+    ) in result.stdout
+    check = doctor._config_check(ConfigLayers.resolve(strict=False), None)
+    assert (check.status, check.message) == (doctor.WARN, "1 finding(s); run `config validate`")
+    missing = _run("config", "unset", "NOT_THERE")
+    assert missing.exit_code == 2
+    assert "'NOT_THERE' is not a setting; see `config show`" in _plain(missing.output)
+    version = _run("config", "unset", "config_version")
+    assert version.exit_code == 2
+    unset = _run("config", "unset", "PROMPT_UI_INTRO")
+    assert (unset.exit_code, unset.stderr) == (0, "")
+    assert unset.stdout == f"'PROMPT_UI_INTRO' removed from {toml} (not a setting).\n"
+    assert config_store.read_settings().table == {"config_version": 1, "OLLAMA_MODEL": "m"}
+    assert _run("config", "validate").exit_code == 0
+    again = _run("config", "unset", "PROMPT_UI_INTRO")
+    assert again.exit_code == 2
+    assert "'PROMPT_UI_INTRO' is not a setting" in _plain(again.output)
+    # Legacy mode: the .env is the user's to edit; the name is refused as before.
+    env = tmp_path / "legacy.env"
+    env.write_text("PROMPT_UI_INTRO=false\n", "utf-8")
+    monkeypatch.setenv("PROMPTMEND_ENV", str(env))
+    legacy = _run("config", "unset", "PROMPT_UI_INTRO")
+    assert legacy.exit_code == 2
+    assert "'PROMPT_UI_INTRO' is not a setting" in _plain(legacy.output)
+    assert env.read_text("utf-8") == "PROMPT_UI_INTRO=false\n"
+
+
+# The name `config unset` removes is the user's own text: a key pasted on the left of a line
+# is removed without being repeated, a control character is shown as its escape, and the
+# refusal quotes a name the same way before the CLI's own redaction of usage errors.
+def test_config_unset_never_repeats_a_key_like_name(saved: Path) -> None:
+    saved.mkdir(parents=True, exist_ok=True)
+    toml = saved / "config.toml"
+    toml.write_text(f'"{KEY}" = 1\n"\\u001b[31mX" = 2\nOLLAMA_MODEL = "m"\n', "utf-8")
+    unset = _run("config", "unset", KEY)
+    assert (unset.exit_code, unset.stderr) == (0, "")
+    assert KEY not in unset.stdout
+    assert unset.stdout == f"<redacted, {len(KEY)} chars> removed from {toml} (not a setting).\n"
+    escape = _run("config", "unset", "\x1b[31mX")
+    assert escape.exit_code == 0
+    assert "\x1b" not in escape.stdout
+    assert escape.stdout.startswith("'\\x1b[31mX' removed from ")
+    assert config_store.read_settings().table == {"config_version": 1, "OLLAMA_MODEL": "m"}
+    assert KEY not in str(settings_service.NotASetting(KEY))
+
+
 def _dotenv(saved: Path) -> Path:
     saved.mkdir(parents=True, exist_ok=True)
     env = saved / ".env"
@@ -1352,6 +1428,7 @@ def test_profiles_list(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "  default" in result.stdout
     assert "mine: added" in result.stdout
     assert "general: shadowed" in result.stdout
+    assert "default-pro" not in result.stdout  # the retired name is gone (#414)
 
 
 # --- espanso deploy --dry-run -------------------------------------------------------------
@@ -1514,7 +1591,7 @@ def test_setup_deploy_applies(
     note = setup_guide.PROVIDER_DEPRECATED
     assert f"  {note}" in result.stdout
     # The note's facts, so an emptied or reworded constant fails here.
-    assert note.startswith("--provider is deprecated and will be removed in a later release")
+    assert note.startswith("--provider is deprecated and 0.30.0 removes it")
     assert "no trigger reads it" in note
     assert "--use cloud|local|both" in note
 
@@ -1522,9 +1599,7 @@ def test_setup_deploy_applies(
 def test_setup_help_marks_provider_deprecated_and_names_use() -> None:
     out = " ".join(_plain(_run("setup", "--help").stdout).split())
     assert "--provider" in out
-    assert "Deprecated, will be removed in a later release (use --use): saves PROMPT_PROVIDER" in (
-        out
-    )
+    assert "Deprecated, removed in 0.30.0 (use --use): saves PROMPT_PROVIDER" in (out)
     assert "which no trigger reads" in out
     assert "--use" in out
     assert (
@@ -1654,6 +1729,7 @@ def test_smoke_and_setup_add_no_history_row(
         ["doctor", KEY],
         ["secrets", "set", "OPENROUTER_API_KEY", KEY],
         ["config", "set", "PROMPT_PROFILE", "general", KEY],
+        ["config", "unset", KEY],
         ["stats", "--by", KEY],
         ["history", "prune", "--older-than", KEY],
         ["history", "last", "-n", KEY],
@@ -1665,6 +1741,7 @@ def test_smoke_and_setup_add_no_history_row(
         "doctor",
         "secrets-set",
         "config-set",
+        "config-unset",
         "stats",
         "prune",
         "last",

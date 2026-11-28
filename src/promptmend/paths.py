@@ -55,7 +55,8 @@ def settings_file(environ: Mapping[str, str] = os.environ) -> Path:
 def unread_env_files(environ: Mapping[str, str] = os.environ) -> list[Path]:
     """The .env files earlier releases read and this one does not: the user config
     folder's, and an editable install's checkout's. Their settings would be lost without a
-    word, so repair mode and setup name them."""
+    word, so repair mode and setup name them. Removed in the first release from 0.28.0 on
+    that is out on or after 2026-12-16 (CONTRIBUTING.md, "Compatibility paths")."""
     candidates = [user_config_dir(environ) / ".env"]
     if (_PROJECT_ROOT / "pyproject.toml").is_file():
         candidates.append(_PROJECT_ROOT / ".env")

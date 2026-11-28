@@ -129,9 +129,17 @@ def config_set(
 @config_app.command("unset")
 @guard
 def config_unset(name: str = _NAME) -> None:
-    """Remove a setting from config.toml, so its default applies again."""
-    _setting(name)
-    removed, path = settings_service.unset_setting(name)
+    """Remove a setting from config.toml, so its default applies again (or a name there
+    that is no setting)."""
+    try:
+        removed, path = settings_service.unset_setting(name)
+    except settings_service.NotASetting as exc:
+        raise typer.BadParameter(str(exc)) from None
+    if name not in env_names():
+        # Not one of ours, so quoted as an error would quote it: a key-like name is not
+        # repeated, a control character shows as its escape.
+        typer.echo(f"{safe_repr(name)} removed from {path} (not a setting).")
+        return
     if not removed:
         typer.echo(f"{name} is not saved in {path}; nothing to do.")
         return

@@ -65,10 +65,11 @@ def test_builtin_profiles_load_on_first_use(monkeypatch: pytest.MonkeyPatch) -> 
     assert dict(PROFILES) == expected
 
 
-# The retired default-pro profile (an old .env's PROMPT_PRO_PROFILE) renders default.
-def test_default_pro_alias() -> None:
+# The retired default-pro (an alias of default from 0.14.0 until #414) is an unknown name.
+def test_default_pro_is_gone() -> None:
     assert "default-pro" not in PROFILES
-    assert system_prompt("default-pro", "I test.") == system_prompt("default", "I test.")
+    with pytest.raises(ValueError, match=r"Unknown profile: 'default-pro'\. Choose from: default"):
+        system_prompt("default-pro", "I test.")
 
 
 # general profile returns a non-empty system prompt distinct from default's golden template.

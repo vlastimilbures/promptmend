@@ -15,8 +15,8 @@ import os
 from pathlib import Path
 
 from . import config_files, config_store, paths
-from .config import ConfigLayers, Settings
-from .redaction import looks_like_a_key
+from .config import ConfigLayers, Settings, env_names
+from .redaction import looks_like_a_key, safe_repr
 
 # The user's own credential patterns: its value may match itself, so it is never hidden or
 # refused by them.
@@ -44,6 +44,13 @@ class ServiceError(Exception):
     def __init__(self, message: str, *, usage: bool = False) -> None:
         super().__init__(message)
         self.usage = usage
+
+
+class NotASetting(ServiceError):
+    """`config unset` of a name that is no setting and that config.toml does not hold."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"{safe_repr(name)} is not a setting; see `config show`", usage=True)
 
 
 # --- the settings --------------------------------------------------------------------------
@@ -119,10 +126,17 @@ def save_setting(name: str, value: str) -> config_store.SavedSettings:
 def unset_setting(name: str) -> tuple[bool, Path]:
     """`config unset` without the printing, shared with setup and the interface's reset:
     refuse a secret and legacy mode (ServiceError), then remove ``name`` from config.toml.
-    Whether it was saved there, and the file's path."""
+    Whether it was saved there, and the file's path. A name that is no setting (one a
+    release removed, PROMPT_UI_INTRO) is removed only when config.toml holds it, else
+    NotASetting, as in legacy mode."""
     _not_a_secret(name, "remove")
+    known = name in env_names()
+    if not known and legacy_env():
+        raise NotASetting(name)
     refuse_in_legacy_mode(config_files.SETTINGS_FILE)
     snapshot = config_store.read_settings()
+    if not known and (name == config_files.VERSION_KEY or name not in snapshot.table):
+        raise NotASetting(name)
     if name not in snapshot.table:
         return False, snapshot.path
     config_store.save_settings(snapshot, {name: None})

@@ -6,7 +6,6 @@ from __future__ import annotations
 import dataclasses
 import os
 import sys
-import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -449,30 +448,35 @@ V0_20_0_BLOCKS = r"""matches:
 """  # noqa: E501 - the shipped lines, verbatim
 
 
-# A file deployed by v0.7.0 to v0.20.0 is read too: its triggers name OpenRouter, so the keys
-# check and pro_provider are right for it (#278).
-def test_shell_form_triggers_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
+# A file deployed by v0.7.0 to v0.20.0 is no longer read for its triggers (#414): each reads
+# as one with no command line, so the keys check names none of them and no old -ip- pin is
+# reported. match_files still fails it as stale and names the deploy, which replaces it
+# (tests/test_deploy.py, the 0.20.0 cases).
+def test_shell_form_triggers_read_as_static(monkeypatch: pytest.MonkeyPatch, espanso: Path) -> None:
     found = assets.triggers_in(V0_20_0_BLOCKS, "prompts-llm.yml")
-    assert [(t.trigger, t.command, t.provider, t.tier) for t in found] == [
-        ("-i-", "improve", "openrouter", None),
-        ("-ip-", "improve", "openrouter", "pro"),
+    assert [(t.trigger, t.active, t.command, t.provider, t.tier) for t in found] == [
+        ("-i-", True, None, None, None),
+        ("-ip-", True, None, None, None),
     ]
     monkeypatch.setenv("PROMPT_PROVIDER", "ollama")
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
     settings = resolved_settings()
-    assert doctor.stale_pro_pins(found, settings) == {"-ip-": "openrouter"}
+    assert doctor.stale_pro_pins(found, settings) == {}
     keys = doctor._keys_check(ConfigLayers.resolve(strict=False), settings, found, True)
-    assert keys.data["triggers"] == {"OPENROUTER_API_KEY": ["-i-", "-ip-"]}
-
-
-# A crafted 400 KB line that never closes the shell form is refused in linear time: the
-# launcher pattern cannot backtrack over `\"`, which a launcher never holds.
-@pytest.mark.parametrize("unit", ["a", "\\a", 'a\\" b', "\\\\"])
-def test_shell_form_parse_is_linear(unit: str) -> None:
-    line = 'cmd: "\\"' + unit * (400_000 // len(unit))
-    started = time.perf_counter()
-    assert assets.triggers_in(f'- trigger: "-x-"\n{line}\n', "x.yml")[0].command is None
-    assert time.perf_counter() - started < 1.0
+    assert keys.data["triggers"] == {}
+    manifest = deploy.Manifest.load()
+    deploy.apply(deploy.plan(espanso, LAUNCHER, manifest))
+    old = (Path(__file__).parent / "golden" / "match-0.20.0" / "prompts-llm.yml").read_text("utf-8")
+    target = espanso / "match" / "prompts-llm.yml"
+    target.write_text(old.replace(deploy.PLACEHOLDER, LAUNCHER), "utf-8")
+    deployed, read = doctor.deployed_triggers(espanso)
+    assert read
+    assert all(t.command is None for t in deployed if t.file == "prompts-llm.yml")
+    check = doctor._match_check(espanso, LAUNCHER, deploy.Manifest.load())
+    assert (check.status, check.message) == (
+        "fail",
+        "prompts-llm.yml: stale; run `promptmend espanso deploy`",
+    )
 
 
 # A deployed pin that names no provider is never counted, so its text is never echoed.

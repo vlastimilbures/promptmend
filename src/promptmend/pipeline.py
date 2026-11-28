@@ -25,7 +25,6 @@ from .gate import GateBlocked, GatedProvider
 from .prompt_builder import (
     TEMPLATE_MARKER,
     repair_template_tags,
-    resolve_profile_name,
     strip_outer_fence,
     system_prompt,
 )
@@ -216,7 +215,7 @@ def rewrite(
     # machine in GatedProvider, so it cannot be bypassed.
     name = profile or cfg.profile
     system = system_prompt(name, cfg.persona, cfg.profile_overrides)
-    ran.profile_id = resolve_profile_name(name)
+    ran.profile_id = name
     built = make_provider(
         provider, cfg, allow_flagged=allow_flagged, observer=observer, force_remote=force_remote
     )

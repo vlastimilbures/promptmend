@@ -326,7 +326,7 @@ def history_export(
     file: str | None = typer.Option(
         None, "--file", "-o", help="Write to this new file instead of stdout"
     ),
-    # The spelling before 0.28.0 (#405), hidden and still accepted; 0.29.0 removes it.
+    # The spelling before 0.28.0 (#405), hidden and still accepted; 0.30.0 removes it.
     old_output: str | None = typer.Option(None, "--output", hidden=True),
 ) -> None:
     """Write every record (metadata only) as JSON or CSV."""

@@ -391,7 +391,7 @@ def test_wizard_names_the_deprecated_provider_and_saves_it_not(
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         wizard = _wizard(app)
         notes = _text(app, "#setup-welcome-notes")
-        assert "--provider is deprecated and will be removed in a later release" in notes
+        assert "--provider is deprecated and 0.30.0 removes it" in notes
         assert "this setup has no step for it, so PROMPT_PROVIDER was not saved" in notes
         assert "no trigger reads it" in notes
         assert "`promptmend config set PROMPT_PROVIDER ollama` saves it" in notes

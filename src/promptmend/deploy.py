@@ -63,7 +63,9 @@ _UNSAFE = re.compile(
 )
 # The launcher as the match files hold it: the first script arg, `args: ["<path>", ...`,
 # or the quoted path in a shell cmd line, as files deployed by older releases still hold
-# it, `cmd: "\"<path>\" improve`.
+# it, `cmd: "\"<path>\" improve`. The latter has no removal date (CONTRIBUTING.md,
+# "Compatibility paths"): with it, such a file deployed from another launcher and with no
+# deploy record is still recognised as ours and stale (every one from 0.18.0 or earlier).
 _SCRIPT_LAUNCHER = re.compile(r'args: \["([^"\\]+)"')
 _QUOTED_LAUNCHER = re.compile(r'\\"([^"\\]+)\\"')
 # A path component that names a release (0.15.0, 0.15.0_1): gone after the next upgrade.

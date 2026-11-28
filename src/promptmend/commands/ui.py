@@ -23,10 +23,7 @@ def on_a_terminal() -> bool:
 
 
 @app.command("ui", short_help="Open the full-screen interface to set up and manage (a terminal).")
-def ui(
-    # The option opens no intro; it stays accepted, hidden, so old scripts still run.
-    no_intro: bool = typer.Option(False, "--no-intro", hidden=True),
-) -> None:
+def ui() -> None:
     """Open the full-screen interface: status, settings and keys, profiles, triggers, usage
     history and diagnostics. It needs a terminal; every screen has a headless command (see
     --help), which scripts and screen readers can use instead."""

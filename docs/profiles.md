@@ -40,7 +40,10 @@ invented.
 The prompt itself is organised in lowercase XML sections (`<section_rules>`, `<step>`,
 `<decision_rule>`, `<example>`…), which keeps its own scaffolding visibly apart from the
 uppercase sections the model must write. `default-pro`, the pro tier's own
-variant in 0.12.0 and 0.13.0, is now an alias of `default`.
+variant in 0.12.0 and 0.13.0, was an alias of `default` from 0.14.0 and is gone since 0.28.0:
+a setting or `--profile` that still names it stops with `Unknown profile: 'default-pro'`.
+Remove the setting (`promptmend config unset PROMPT_PRO_PROFILE`; the pro tier then sends
+`PROMPT_PROFILE`) or set it to `default`.
 
 ### general
 

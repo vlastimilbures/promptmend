@@ -41,9 +41,6 @@ from .providers.registry import PROVIDERS
 from .redaction import compile_extra, safe_repr, set_user_patterns
 
 _EXTRA = "PROMPT_EXTRA_PATTERNS"
-# Names that are no longer settings: a saved one is skipped without a finding, since the user
-# saved it when it was a setting (and `config unset` does not take the name).
-RETIRED = frozenset({"PROMPT_UI_INTRO"})  # the switch for the intro screen, which was removed
 
 
 def _saved_layer(
@@ -78,7 +75,7 @@ def _saved_layer(
     known, secrets = env_names(), secret_names()
     values = {}
     for key, value in table.items():
-        if key == VERSION_KEY or key in RETIRED:
+        if key == VERSION_KEY:
             continue
         if key not in known:
             note(source, f"{safe_repr(key)} in {name} is not a setting; it was ignored")
@@ -202,7 +199,8 @@ def saved_text(name: str, value: object) -> str | None:
     """A config.toml value as setting text (config_files.scalar_text), or None when it is not
     one. A list setting also takes an array of text, joined with commas: releases up to 0.26.0
     saved PROMPT_PROFILE_OVERRIDES that way, and such a file loads instead of failing every
-    trigger. Any other array, or one holding anything but text, stays refused."""
+    trigger (0.29.0 removes it, not before 2026-12-17: CONTRIBUTING.md, "Compatibility
+    paths"). Any other array, or one holding anything but text, stays refused."""
     if isinstance(value, list) and name in list_names():
         return ",".join(value) if all(isinstance(v, str) for v in value) else None
     return config_files.scalar_text(value)

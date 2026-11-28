@@ -53,7 +53,7 @@ USE_INTRO = (
 )
 
 # `setup --provider` (deprecated, #390): no step of setup sets PROMPT_PROVIDER any more.
-_DEPRECATED = "--provider is deprecated and will be removed in a later release"
+_DEPRECATED = "--provider is deprecated and 0.30.0 removes it"
 _NOT_READ = "no trigger reads it (only a bare `promptmend improve` and the Try tab)"
 PROVIDER_DEPRECATED = (
     f"{_DEPRECATED}: PROMPT_PROVIDER is saved, but {_NOT_READ}. --use cloud|local|both "
