@@ -56,7 +56,7 @@ WATCHDOG_MARGIN = 2.0
 # Of WATCHDOG_MARGIN, the most the watchdog waits for the usage history before its marker.
 _WATCHDOG_HISTORY = 0.5
 # Of _WATCHDOG_HISTORY, what the history wait leaves for writing the marker and for a late
-# timer (Windows' run up to ~15 ms late), so the marker still lands by the deadline.
+# wake (Windows' run up to ~15 ms late), so the marker still lands by the deadline.
 _WATCHDOG_HEADROOM = 0.1
 # A settings load that took this many seconds or more (a healthy one takes milliseconds) is
 # named in the watchdog's timed-out marker, which would otherwise blame the provider alone.
@@ -88,24 +88,76 @@ _FLUSHED = "flushed"
 _FIRED = "fired"
 
 
-class Timer(Protocol):
-    """What the watchdog keeps of a timer it started: a way to cancel it."""
+class Alarm(Protocol):
+    """The watchdog's one wake-up: it calls its ``on_wake`` once the clock reaches the time
+    last set, on a thread of its own and never from inside set()."""
 
-    def cancel(self) -> None: ...
+    def set(self, at: float) -> None:
+        """Wake at ``at`` on the watchdog's clock (at once if it has passed), in place of any
+        time set before and not yet reached."""
+
+    def cancel(self) -> None:
+        """No wake from now on (one already under way still runs)."""
 
 
-# Starts a timer that runs its action once, after a wait in seconds (0 or more, at most
-# threading.TIMEOUT_MAX) on the watchdog's clock: Watchdog's ``timers``.
-TimerFactory = Callable[[float, Callable[[], None]], Timer]
+# Makes the watchdog's alarm from its clock and its wake (Watchdog's ``alarms``); raises when
+# no thread can be started.
+AlarmFactory = Callable[[Callable[[], float], Callable[[], None]], Alarm]
 
 
-def _start_timer(delay: float, action: Callable[[], None]) -> threading.Timer:
-    """The watchdog's timers in production: a daemon threading.Timer running ``action`` after
-    ``delay`` seconds of time.monotonic()."""
-    timer = threading.Timer(delay, action)
-    timer.daemon = True
-    timer.start()
-    return timer
+class _ThreadAlarm:
+    """The watchdog's alarm in production: one daemon thread that sleeps on a condition until
+    the time set, the wait worked out from the clock each time round (clamped to
+    0..threading.TIMEOUT_MAX, so an early or spurious return only loops), then calls
+    ``on_wake`` and waits for the next set() or cancel().
+
+    Lock order: a caller may hold the watchdog's lock while it calls set() or cancel() (which
+    take the condition's lock), and on_wake takes the watchdog's lock; so this thread never
+    calls on_wake with the condition's lock held, and set() called from on_wake is safe."""
+
+    def __init__(self, clock: Callable[[], float], on_wake: Callable[[], None]) -> None:
+        self._clock, self._on_wake = clock, on_wake
+        self._cond = threading.Condition(threading.Lock())
+        self._at: float | None = None
+        self._cancelled = False
+        self._thread = threading.Thread(target=self._run, name="promptmend-watchdog", daemon=True)
+        self._thread.start()
+
+    def set(self, at: float) -> None:
+        with self._cond:
+            self._at = at
+            self._cond.notify()
+
+    def cancel(self) -> None:
+        with self._cond:
+            self._cancelled = True
+            self._cond.notify()
+
+    def _due(self) -> bool:
+        """Wait until the time set is reached (True, the time then cleared) or the alarm is
+        cancelled (False)."""
+        with self._cond:
+            while not self._cancelled:
+                if self._at is None:
+                    self._cond.wait()
+                    continue
+                wait = self._at - self._clock()
+                if wait <= 0:
+                    self._at = None
+                    return True
+                self._cond.wait(min(wait, threading.TIMEOUT_MAX))
+            return False
+
+    def _run(self) -> None:
+        while self._due():
+            try:
+                self._on_wake()
+            except Exception:
+                # Reported as an uncaught thread exception is, and the wait goes on: a time
+                # set before the failure must still wake.
+                threading.excepthook(
+                    threading.ExceptHookArgs([*sys.exc_info(), threading.current_thread()])
+                )
 
 
 def _past(limit: float) -> str:
@@ -122,18 +174,23 @@ class Watchdog:
     """improve's hard time limit, and the one decision of what is printed: the run's
     own output (emit()) or the watchdog's marker, exactly one of them.
 
-    arm_loading() starts a provisional daemon timer before the settings load, on
-    config.loading_limit() (the call's --timeout, else the built-in default), since a stalled
-    file system can block Settings.load() too (#331). Firing, it writes only its own marker
-    ("the settings did not load within ...s") and no history: whether the history is on is
-    itself a setting, and history must not be imported when it is off. arm() retires that
-    timer and starts the real one once the call's limit is known, on the same start, so a
-    longer configured limit is unaffected; its marker names a load that took _SLOW_LOAD
-    seconds or more (measured from arm_loading(), not counting start-up), instead of blaming
-    the provider. A run whose start-up and load used up the whole limit ends in arm()'s
-    caller with a marker saying so, before its draft is read or sent. A retired timer that
-    fires anyway does nothing. persona arms only the provisional timer. When the real timer
-    fires, by state:
+    The watchdog is one daemon thread (its alarm, _ThreadAlarm), started by arm_loading()
+    before the settings load and set to a provisional limit, config.loading_limit() (the
+    call's --timeout, else the built-in default), since a stalled file system can block
+    Settings.load() too (#331). Firing on it, the watchdog writes only its own marker ("the
+    settings did not load within ...s") and no history: whether the history is on is itself a
+    setting, and history must not be imported when it is off. arm() moves the deadline to the
+    real limit once the call's limit is known, on the same start, so a longer configured limit
+    is unaffected; its marker names a load that took _SLOW_LOAD seconds or more (measured from
+    arm_loading(), not counting start-up), instead of blaming the provider. A run whose
+    start-up and load used up the whole limit ends in arm()'s caller with a marker saying so,
+    before its draft is read or sent. persona sets only the provisional limit. arm() and
+    claim() start no thread: a process with none left fails in arm_loading(), before the
+    load, and each caller prints its own output then (run_improve()'s marker, persona's text).
+
+    Each wake (_wake()) decides from the state and the clock, read under the lock, what is due
+    now, so a deadline arm() moved later is data, not a timer to retire: a wake that finds the
+    fire time not yet reached goes back to sleep until it. At the fire time, by state:
 
     - reading stdin (stdin has not been closed: a pipe left open): the same as idle, with
       stdin_marker() in place of the timed-out marker, since nothing was called and a longer
@@ -146,20 +203,22 @@ class Watchdog:
       the attempt in flight kept as a timeout.
     - delivering (the rewrite came back, its clipboard copy has not returned): CLIPBOARD_STALLED
       and the rewrite, the way a failed copy prints them; outcome clipboard_failed.
-    - claimed (emit() is printing): nothing; the run finishes on its own.
+    - claimed (emit() is printing): nothing now; the run finishes on its own, and the thread
+      sleeps on until the hard deadline.
     - flushed (only the run's history write is left): the process ends at once, silently.
       That write is then cut off: its row is lost without the lost-write count going up, and
       a sidecar lock or temp file it held stays until history._STALE_LOCK lets the next write
       take it over.
 
     A claimed run that has not flushed by the hard deadline (limit + WATCHDOG_MARGIN) is left
-    alone, never printed over (a run blocked writing its own output is never cut off); a
-    final timer at that deadline ends a flushed run the same silent way, and a run that
-    flushes only after that timer passed ends at once in flushed(), so a slow first history
-    write cannot keep it running past the deadline.
+    alone, never printed over (a run blocked writing its own output is never cut off); the
+    wake at that deadline ends a flushed run the same silent way, and a run that flushes only
+    after that wake passed ends at once in flushed(), so a slow first history write cannot
+    keep it running past the deadline. That is the thread's last wake; cancel() (the run's
+    end) stops it sooner.
 
-    The timer fires _WATCHDOG_HISTORY seconds before the deadline. It first closes the run's
-    usage observer, then gives the history at most _WATCHDOG_HISTORY - _WATCHDOG_HEADROOM
+    The fire time is _WATCHDOG_HISTORY seconds before the deadline. Firing first closes the
+    run's usage observer, then gives the history at most _WATCHDOG_HISTORY - _WATCHDOG_HEADROOM
     seconds in a thread of its own, and only then writes its marker and ends the process with
     exit code 0 (1 with --fail-on-marker, whose stalled-copy marker counts too; a flushed run
     keeps the code its own output had), so the marker is out by the deadline. That history
@@ -183,39 +242,36 @@ class Watchdog:
         *,
         fail_on_marker: bool = False,
         clock: Callable[[], float] = time.monotonic,
-        timers: TimerFactory = _start_timer,
+        alarms: AlarmFactory = _ThreadAlarm,
     ) -> None:
-        """``clock`` (monotonic seconds) and ``timers`` are every time read and every timer
-        start of the watchdog; a test passes a fake pair, to move time on a thread of its
-        choosing. The history's bounded wait in _finish_run() is real time either way."""
+        """``clock`` (monotonic seconds) is every time read of the watchdog and ``alarms``
+        makes its one alarm (its thread); a test passes a fake pair, to move time on a thread
+        of its choosing. The history's bounded wait in _finish_run() is real time either way."""
         from . import entry
 
         self._rec, self._ran = rec, ran
         # --fail-on-marker (#407): a run that ended in a failure marker exits 1, however it
         # ends (raise typer.Exit or _hard_exit). The run says so with failed() before its
-        # marker goes out; the watchdog's own timed-out marker sets it in _fire().
+        # marker goes out; the watchdog's own timed-out marker sets it in _wake().
         self._fail_on_marker = fail_on_marker
         self._failed = False
         self._clock = clock
-        self._timers = timers
+        self._alarms = alarms
         self._started = entry.take_start() or clock()
         self._lock = threading.Lock()
         self._state = _IDLE
         self._done = threading.Event()
-        self._timer: Timer | None = None
-        self._final: Timer | None = None
+        # Made by the first arm_loading() (or arm()); None: unarmed, nothing wakes.
+        self._alarm: Alarm | None = None
         self._deadline = 0.0
         self._marker = ""
         # The call's limit, for stdin_marker(); the provisional one until arm().
         self._limit = 0.0
         self._delivered = ("", "")
-        # The final timer fired while the run was still printing (see flushed()).
+        # The wake at the hard deadline came while the run was still printing (see flushed()).
         self._final_missed = False
-        # The provisional timer is armed (arm_loading()) and not yet replaced (arm()).
+        # The provisional limit is set (arm_loading()) and not yet replaced (arm()).
         self._loading = False
-        # How many _fire() timers were started: one that fires with an older number (the
-        # provisional timer arm() replaced) does nothing.
-        self._armed = 0
         # When the settings load began (arm_loading()), so arm() words the load alone, not
         # the start-up before it (imports, a scanned machine).
         self._load_started = self._started
@@ -228,23 +284,26 @@ class Watchdog:
         self._loading = True
         self._deadline = self._started + limit + WATCHDOG_MARGIN
         if now >= self._deadline - _WATCHDOG_HISTORY:
-            # Start-up alone ran past the limit: the timer fires at once, and not because of
-            # the settings, which have not begun to load.
+            # Start-up alone ran past the limit: the watchdog fires at once, and not because
+            # of the settings, which have not begun to load.
             self._marker = (
                 f"[promptmend: starting up took {now - self._started:.1f}s, {_past(limit)}]"
             )
         else:
             self._marker = f"[promptmend: the settings did not load within {limit}s]"
-        self._start_fire()
+        # The only thread start of a run: a process with no thread left fails here, before
+        # the load (each caller turns that into its output, see run_improve() and persona).
+        with self._lock:
+            self._set_alarm(self._deadline - _WATCHDOG_HISTORY)
 
     def arm(self, cfg: Settings, provider: str) -> str | None:
-        """The call's limit is known: replace the provisional timer with the real one, counted
-        from the same start. Does nothing once the provisional one has fired.
+        """The call's limit is known: move the deadline from the provisional limit to the real
+        one, counted from the same start. Does nothing once the provisional one has fired.
 
         Returns the run's marker when start-up and the settings load have already used up the
         whole limit: the run then ends with it at once and sends nothing (no call that could
-        not finish in time, nothing paid). The real timer is still started, with that same
-        marker, so whichever of the two prints, the text is the same."""
+        not finish in time, nothing paid). The watchdog stays set, with that same marker, so
+        whichever of the two prints, the text is the same."""
         spec = PROVIDERS.get(provider)
         label = spec.label if spec is not None else _UNKNOWN_LABEL
         now = self._clock()
@@ -264,8 +323,6 @@ class Watchdog:
         with self._lock:
             if self._state == _FIRED:
                 return None
-            if self._timer is not None:
-                self._timer.cancel()
             self._loading = False
             self._marker = f"[promptmend: {text}]"
             self._limit = cfg.timeout
@@ -274,21 +331,17 @@ class Watchdog:
                 # The run ends at once with its marker: give its history row the same margin
                 # a run within its limit has, rather than a deadline already past.
                 self._deadline = max(self._deadline, now + WATCHDOG_MARGIN)
-            # Retires the provisional timer: its number is no longer the last.
-            self._start_fire()
+            # A wake already under way for the provisional time takes the lock after this
+            # and finds the fire time moved on (_wake()).
+            self._set_alarm(self._deadline - _WATCHDOG_HISTORY)
         return self._marker if expired else None
 
-    def _start(self, at: float, action: Callable[[], None]) -> Timer:
-        """A timer running ``action`` at ``at`` on the clock (at once if it has passed).
-        Clamped: a wait past TIMEOUT_MAX would fail in the timer's thread instead of waiting."""
-        delay = min(max(at - self._clock(), 0.0), threading.TIMEOUT_MAX)
-        return self._timers(delay, action)
-
-    def _start_fire(self) -> None:
-        """The timer that fires _WATCHDOG_HISTORY seconds before the deadline, numbered."""
-        self._armed += 1
-        armed = self._armed
-        self._timer = self._start(self._deadline - _WATCHDOG_HISTORY, lambda: self._fire(armed))
+    def _set_alarm(self, at: float) -> None:
+        """Wake at ``at`` on the clock; the first call makes the alarm (starts its thread).
+        Called with the lock held: the lock order is this lock, then the alarm's own."""
+        if self._alarm is None:
+            self._alarm = self._alarms(self._clock, self._wake)
+        self._alarm.set(at)
 
     def failed(self) -> None:
         """The run's output is a failure marker, not a rewrite (--fail-on-marker)."""
@@ -300,9 +353,9 @@ class Watchdog:
         return 1 if self._fail_on_marker and self._failed else 0
 
     def cancel(self) -> None:
-        for timer in (self._timer, self._final):
-            if timer is not None:
-                timer.cancel()
+        """The run is over: no wake from now on (its thread ends)."""
+        if self._alarm is not None:
+            self._alarm.cancel()
 
     def _move(self, state: str) -> None:
         """Move the main thread's state on, or, once the watchdog has fired, wait for it to
@@ -342,17 +395,14 @@ class Watchdog:
         self._move(_DELIVERING)
 
     def claim(self) -> None:
-        """Take the output for emit(); an armed watchdog then keeps a final timer at the hard
-        deadline, for a run that flushed but is still writing its history."""
+        """Take the output for emit(); an armed watchdog then wakes on to the hard deadline,
+        for a run that flushed but is still writing its history. Starts nothing: the thread
+        was started in arm_loading()."""
         self._move(_CLAIMED)
-        if self._timer is not None and self._final is None:
-            # A timer that cannot start (no thread left) must not cost the run its output.
-            with contextlib.suppress(Exception):
-                self._final = self._start(self._deadline, self._final_exit)
 
     def flushed(self) -> None:
-        """The output is out and flushed. If the final timer already came and went while the
-        run was printing, the hard deadline has passed: the process ends at once, silently."""
+        """The output is out and flushed. If the wake at the hard deadline already came and
+        went while the run was printing, the process ends at once, silently."""
         self._move(_FLUSHED)
         with self._lock:
             late = self._final_missed and self._state == _FLUSHED
@@ -361,12 +411,26 @@ class Watchdog:
         if late:
             self._exit()
 
-    def _fire(self, armed: int | None = None) -> None:
-        """The deadline's timer, numbered ``armed`` (None: called directly, by a test)."""
+    def _wake(self) -> None:
+        """The alarm's wake, on its thread: what is due now, read under the lock from the
+        clock, the deadline and the state. Before the fire time (arm() moved it later): sleep
+        on until it. At it, by state (class docstring): fire, end a flushed run, or, for a
+        claimed one, sleep on until the hard deadline, where a flushed run ends and one still
+        printing is left to flushed(). Once fired: nothing."""
         with self._lock:
-            was = self._state
-            retired = armed is not None and armed != self._armed
-            if retired or was in (_CLAIMED, _FIRED):
+            now, was = self._clock(), self._state
+            fire_at = self._deadline - _WATCHDOG_HISTORY
+            if was == _FIRED:
+                return
+            if now < fire_at:
+                self._set_alarm(fire_at)
+                return
+            if was == _CLAIMED:
+                if now < self._deadline:
+                    self._set_alarm(self._deadline)
+                else:
+                    # Still printing: never cut off or printed over; flushed() ends it later.
+                    self._final_missed = True
                 return
             # A reply may have just arrived and the main thread be about to claim the output:
             # the marker still wins, and that rewrite is dropped (an accepted race).
@@ -385,15 +449,6 @@ class Watchdog:
         finally:
             self._exit()
 
-    def _final_exit(self) -> None:
-        with self._lock:
-            if self._state != _FLUSHED:
-                # Still printing: never cut off or printed over; flushed() ends it later.
-                self._final_missed = True
-                return
-            self._state = _FIRED
-        self._exit()
-
     def _exit(self) -> None:
         try:
             _hard_exit(self.exit_code())
@@ -402,7 +457,7 @@ class Watchdog:
 
     def _finish_run(self, text: str, *, delivering: bool, loading: bool) -> None:
         """Close the run's observer (no attempt may start from here), give the history its
-        bounded write, then print the watchdog's marker ``text``; _fire() ends the process
+        bounded write, then print the watchdog's marker ``text``; _wake() ends the process
         right after it. The history is written first so its wait falls before the marker:
         after the marker only an attempt already begun can still act, for the few
         milliseconds until this thread holds the GIL again and exits (see the class

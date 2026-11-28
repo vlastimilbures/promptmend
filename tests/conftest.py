@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import faulthandler
 import json
+import math
 import os
 import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -407,52 +408,60 @@ def smoke_in_process(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return calls
 
 
-class FakeTimer:
-    """One of FakeClock's timers: ``action`` runs once the clock reaches ``due``, unless the
-    timer was cancelled first. ``interval`` is the wait it was started with, as on a
-    threading.Timer."""
+class FakeAlarm:
+    """FakeClock's stand-in for trigger._ThreadAlarm: ``on_wake`` runs once the clock reaches
+    ``at`` (the time last set; None once it woke or before any set()), unless cancelled.
+    ``wakes`` lists the clock's time at each wake."""
 
-    def __init__(
-        self, clock: FakeClock, interval: float, due: float, action: Callable[[], None]
-    ) -> None:
-        self._clock = clock
-        self.interval, self.due, self.action = interval, due, action
+    def __init__(self, clock: FakeClock, on_wake: Callable[[], None]) -> None:
+        self._clock, self.on_wake = clock, on_wake
+        self.at: float | None = None
         self.cancelled = False
-        self.fired = False
+        self.wakes: list[float] = []
+
+    def due(self) -> bool:
+        return not self.cancelled and self.at is not None and self.at <= self._clock.now
+
+    def _not_due(self, what: str) -> None:
+        if self.due():
+            # A real alarm's thread would have woken by now (at once, for a time already
+            # passed): a test that moves or cancels it first passes only on a race production
+            # would lose.
+            self._clock.problems.append(f"an alarm due at {self.at} was {what} before it woke")
+
+    def set(self, at: float) -> None:
+        with self._clock._lock:
+            if math.isnan(at):
+                self._clock.problems.append("an alarm was set to NaN")
+            self._not_due("moved")
+            self.at = at
 
     def cancel(self) -> None:
-        if not (self.fired or self.cancelled) and self.due <= self._clock.now:
-            # A threading.Timer would have fired by now (at once, for a wait of 0): a test
-            # that cancels it unfired passes only on a race production would lose.
-            self._clock.problems.append(f"a timer due at {self.due} was cancelled unfired")
-        self.cancelled = True
-
-    def fire_anyway(self) -> None:
-        """Run the action although the timer was cancelled, as a threading.Timer whose wait
-        had already ended does."""
-        self.fired = True
-        self.action()
+        with self._clock._lock:
+            self._not_due("cancelled")
+            self.cancelled = True
 
 
 class FakeClock:
-    """trigger.Watchdog's clock and timers in a test (``clock=fake, timers=fake.start``):
-    time moves only in advance(), which runs each timer that falls due, in the order they fall
-    due, on the thread that calls advance(); never inside start(), as a threading.Timer never
-    runs on the thread that starts it. With ``no_thread`` set, start() fails as a process
-    with no thread left does.
+    """trigger.Watchdog's clock and alarm in a test (``clock=fake, alarms=fake.alarm``): time
+    moves only in advance(), which wakes each alarm that falls due, in the order they fall due,
+    on the thread that calls advance(), again and again while a wake sets a time that the same
+    advance() reaches; never inside set(), as the real alarm never wakes on the thread that
+    sets it. With ``no_thread`` set, alarm() fails as a process with no thread left does.
 
-    It keeps the tests honest (verify(), run after every test by fake_clocks_are_honest): a
-    wait outside 0..threading.TIMEOUT_MAX, and a timer that fell due (a wait of 0 included)
-    but was cancelled or left unfired, fail the test, since a real timer would have fired. A
-    test that means a timer to be due at once fires it with advance(0)."""
+    It keeps the tests honest (verify(), run after every test by fake_clocks_are_honest): an
+    alarm that fell due (a time already passed included) but was moved, cancelled or left
+    without its wake fails the test, since the real alarm's thread would have woken. A test
+    that means an alarm to be due at once wakes it with advance(0)."""
 
+    START = 1000.0
     made: ClassVar[list[FakeClock]] = []
 
-    def __init__(self, now: float = 1000.0) -> None:
+    def __init__(self, now: float = START) -> None:
         import threading
 
         self.now = now
-        self.timers: list[FakeTimer] = []
+        self.alarms: list[FakeAlarm] = []
         self.problems: list[str] = []
         self.no_thread = False
         self._lock = threading.Lock()
@@ -461,47 +470,47 @@ class FakeClock:
     def __call__(self) -> float:
         return self.now
 
-    def start(self, delay: float, action: Callable[[], None]) -> FakeTimer:
-        import threading
-
-        if not 0.0 <= delay <= threading.TIMEOUT_MAX:
-            # Recorded as well as raised: the watchdog's caller may swallow the error.
-            self.problems.append(f"a timer was started with a wait of {delay}")
-            raise AssertionError(f"timer wait out of range: {delay}")
+    def alarm(self, clock: Callable[[], float], on_wake: Callable[[], None]) -> FakeAlarm:
+        assert clock is self, "the watchdog's alarm must run on its own clock"
         if self.no_thread:
             raise RuntimeError("can't start new thread")
+        alarm = FakeAlarm(self, on_wake)
         with self._lock:
-            timer = FakeTimer(self, delay, self.now + delay, action)
-            self.timers.append(timer)
-        return timer
+            self.alarms.append(alarm)
+        return alarm
 
     def advance(self, seconds: float) -> None:
         with self._lock:
             target = self.now + seconds
         while True:
             with self._lock:
-                due = [t for t in self.timers if not (t.cancelled or t.fired) and t.due <= target]
+                due = [
+                    a
+                    for a in self.alarms
+                    if not a.cancelled and a.at is not None and a.at <= target
+                ]
                 if not due:
                     self.now = max(self.now, target)
                     return
-                timer = min(due, key=lambda t: t.due)  # the first started of equals
-                timer.fired = True
-                self.now = max(self.now, timer.due)
-            timer.action()
+                alarm = min(due, key=lambda a: a.at or 0.0)  # the first made of equals
+                self.now = max(self.now, alarm.at or 0.0)
+                alarm.at = None
+                alarm.wakes.append(self.now)
+            alarm.on_wake()
+
+    def advance_to(self, at: float) -> None:
+        """advance() to the time ``at`` (nothing if it has passed)."""
+        self.advance(max(at - self.now, 0.0))
 
     def verify(self) -> list[str]:
-        """What this clock saw that a real timer would not allow."""
-        left = [
-            f"a timer due at {t.due} never fired"
-            for t in self.timers
-            if not (t.fired or t.cancelled) and t.due <= self.now
-        ]
+        """What this clock saw that a real alarm would not allow."""
+        left = [f"an alarm due at {a.at} never woke" for a in self.alarms if a.due()]
         return [*self.problems, *left]
 
 
 @pytest.fixture(autouse=True)
 def fake_clocks_are_honest() -> Iterator[None]:
-    """Fails a test whose FakeClock saw a wait out of range or a due timer left unfired."""
+    """Fails a test whose FakeClock saw a due alarm moved, cancelled or left without its wake."""
     FakeClock.made.clear()
     yield
     problems = [p for clock in FakeClock.made for p in clock.verify()]

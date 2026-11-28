@@ -257,7 +257,7 @@ def persona(trigger_id: str | None = _TRIGGER_ID) -> None:
     watch = trigger.Watchdog(rec, pipeline.Rewrite())
     try:
         try:
-            # Inside the try: a timer that cannot start still leaves the persona printed.
+            # Inside the try: a watchdog thread that cannot start still leaves the persona printed.
             watch.arm_loading(None)
             cfg = Settings.load()
             rec.track(cfg)
