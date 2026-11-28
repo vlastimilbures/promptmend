@@ -90,7 +90,7 @@ _FIRED = "fired"
 
 class Alarm(Protocol):
     """The watchdog's one wake-up: it calls its ``on_wake`` once the clock reaches the time
-    last set, never on the thread that sets it."""
+    last set, on a thread of its own and never from inside set()."""
 
     def set(self, at: float) -> None:
         """Wake at ``at`` on the watchdog's clock (at once if it has passed), in place of any

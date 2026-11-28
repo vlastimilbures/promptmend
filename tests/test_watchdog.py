@@ -1150,43 +1150,26 @@ def test_arm_after_the_provisional_fired(
     assert exits.codes == [0]
 
 
-# arm() and the provisional wake race on two threads: whichever takes the lock first, exactly
-# one outcome, every round: the settings marker and arm() returning None, or nothing printed
-# and the alarm moved to the real fire time.
-def test_arm_races_the_provisional_wake(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
-    for _ in range(20):
-        clock = FakeClock()
-        watch, _ = _watchdog(clock)
-        watch.arm_loading("1")
-        (alarm,) = clock.alarms
-        provisional = alarm.at
-        assert provisional is not None
-        started = threading.Barrier(2, timeout=10)
-
-        def wake(
-            clock: FakeClock = clock, at: float = provisional, started: threading.Barrier = started
-        ) -> None:
-            started.wait()
-            clock.advance_to(at)
-
-        thread = threading.Thread(target=wake, daemon=True)
-        thread.start()
-        before = len(exits.codes)
-        started.wait()
-        returned = watch.arm(Settings(timeout=30), "ollama")
-        thread.join(10)
-        assert not thread.is_alive()
-        fired = len(exits.codes) > before
-        out = capfd.readouterr().out
-        assert returned is None
-        if fired:
-            assert out == "[promptmend: the settings did not load within 1.0s]"
-            assert alarm.at is None
-        else:
-            assert out == ""
-            real = clock.START + 30 + trigger.WATCHDOG_MARGIN - trigger._WATCHDOG_HISTORY
-            assert alarm.at == pytest.approx(real)
-        watch.cancel()
+# arm() can also move the deadline earlier on the same alarm (a configured limit shorter than
+# the provisional one): the run fires at its own fire time, not at the provisional one.
+def test_arm_moves_the_deadline_earlier(
+    exits: Exits, clock: FakeClock, capfd: pytest.CaptureFixture[str]
+) -> None:
+    watch, _ = _watchdog(clock)
+    watch.arm_loading("30")
+    (alarm,) = clock.alarms
+    provisional = alarm.at
+    assert provisional is not None
+    assert watch.arm(Settings(timeout=1), "ollama") is None
+    real = clock.START + 1 + trigger.WATCHDOG_MARGIN - trigger._WATCHDOG_HISTORY
+    assert real < provisional
+    assert clock.alarms == [alarm]  # the same thread, its time moved
+    assert alarm.at == pytest.approx(real)
+    clock.advance_to(real - 0.01)
+    assert (exits.codes, capfd.readouterr().out) == ([], "")
+    clock.advance_to(real)
+    assert exits.codes == [0]
+    assert capfd.readouterr().out.startswith("[promptmend: Ollama timed out after 1")
 
 
 def _blocking_load(monkeypatch: pytest.MonkeyPatch, clock: FakeClock) -> threading.Event:
@@ -1487,9 +1470,14 @@ def test_alarm_moved_later_does_not_wake_at_the_old_time() -> None:
     with _real_alarm(woke.set, clock) as alarm:
         alarm.set(1.0)
         assert asked.wait(_BOUND)  # the thread is waiting on 1.0
-        now[0] = 1.5  # past the old time, before the new one
         asked.clear()
-        alarm.set(2.0)  # wakes the thread to look again
+        alarm.set(2.0)  # moved later; the thread looks again
+        assert asked.wait(_BOUND)
+        asked.clear()
+        # The time was moved before the clock is: a test stalled between the two lines cannot
+        # let the thread find the old time reached.
+        now[0] = 1.5  # past the old time, before the new one
+        alarm.set(2.0)  # only to make the thread read the clock again
         assert asked.wait(_BOUND)
         assert not woke.wait(0.2)
         now[0] = 2.0
