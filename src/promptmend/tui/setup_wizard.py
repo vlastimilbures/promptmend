@@ -4,7 +4,18 @@ picked from a list rather than typed, each change made through the same service 
 headless command and logged as that command. The test runs the path of the cloud-or-local
 answer's triggers, never PROMPT_PROVIDER (#390). What each step says comes from
 setup_guide.py, and what it decides and writes from setup_flow.py, shared with `setup
---non-interactive` (neither imports Textual)."""
+--non-interactive` (neither imports Textual).
+
+The rail marks each step from the Done checklist's rows (setup_guide.rail()), repainted
+whenever they change (_repaint() paints it and Done together), so the two never disagree
+(#393); a fact not known yet (the match folder still being read, no State) is neither ✓ nor
+✗. Quit setup is `q` on every step, shown in the footer except while a key field has the
+focus (the field takes the letter, so check_action() hides it there rather than advertise a
+key that types instead); Escape on Welcome leaves too. Both are refused, greyed out in the
+footer, while an install or the test runs, as Back and Next are. Leaving is the Done step's
+Quit (Close): opened by `setup` the interface exits 0, from Home it closes back to Home,
+where MainScreen's own `q` quits the interface. Textual's own ctrl+q (a priority binding of
+the app) still quits the whole interface."""
 
 from __future__ import annotations
 
@@ -66,9 +77,20 @@ def make_plan(options: SetupOptions) -> tuple[deploy.Plan, str | None]:
     return setup_flow.read_plan(options.espanso_dir, options.launcher)
 
 
+# How each mark is coloured, on the rail and in the Done checklist alike.
+_MARK_STYLES = {
+    setup_guide.MARKS[setup_guide.OK]: "green",
+    setup_guide.MARKS[setup_guide.SKIPPED]: "dim",
+    setup_guide.MARKS[setup_guide.FAILED]: "yellow",
+    setup_guide.MARKS[setup_guide.UNKNOWN]: "dim",
+    setup_guide.CURRENT: "bold",
+}
+
+
 class SetupScreen(Screen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "back", "Back"),
+        Binding("q", "quit_setup", "Quit setup"),
     ]
 
     def __init__(self, options: SetupOptions | None = None) -> None:
@@ -80,7 +102,7 @@ class SetupScreen(Screen[None]):
         self.plan_error: str | None = None
         self.plan_asked = False
         self.tested: bool | None = None
-        self.working = False
+        self._working = False
         self.keys: list[setup_guide.KeyRow] = []
         # The Cloud or local step's answer, once Next was pressed on it.
         self.use: str | None = None
@@ -173,6 +195,29 @@ class SetupScreen(Screen[None]):
     @staticmethod
     def _button(id_: str, label: str) -> Button:
         return Button(label, id=id_, tooltip=teach.tooltip(id_))
+
+    @property
+    def working(self) -> bool:
+        """An install or the test is running: Back, Next and Quit setup are refused until it
+        ends (nothing is queued)."""
+        return self._working
+
+    @working.setter
+    def working(self, value: bool) -> None:
+        self._working = value
+        self.refresh_bindings()  # Back and Quit setup grey out while it runs
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Quit setup is hidden while a key field has the focus (the field takes `q`); it and
+        Back are shown greyed out (refused) while an install or the test runs."""
+        if action == "back" and self.working:
+            return None
+        if action == "quit_setup":
+            if isinstance(self.focused, Input):
+                return False
+            if self.working:
+                return None
+        return True
 
     @property
     def manage(self) -> ManageApp:
@@ -298,11 +343,7 @@ class SetupScreen(Screen[None]):
         n = self.order.index(step) + 1 if step in self.order else 1
         title = f"Step {n} of {len(self.order)} · {setup_guide.STEPS[step]}"
         self.query_one("#setup-title", Static).update(title)
-        rail = Text()
-        for i, id_ in enumerate(self.order):
-            mark = "▶ " if id_ == step else "✓ " if i < n - 1 else "  "
-            rail.append(f"{mark}{setup_guide.STEPS[id_]}\n", style="bold" if id_ == step else "")
-        self.query_one("#setup-rail", Static).update(rail)
+        self._paint_rail()
         done = step == "done"
         # Hidden on the last step, and disabled too: Textual can focus a button whose row is
         # hidden (focusable ignores an ancestor's display), so a focus already on its way to
@@ -343,6 +384,43 @@ class SetupScreen(Screen[None]):
             self.call_after_refresh(self.query_one(focus).focus)
         else:
             self.call_after_refresh(self.query_one("#setup-next-step").focus)
+
+    def _rows(self) -> list[setup_guide.DoneRow] | None:
+        """The Done checklist's rows for what is known now (None before the first State):
+        the Done step lists them and the rail marks its steps from them."""
+        state = self.manage.state
+        if state is None:
+            return None
+        saved = setup_flow.saved_settings(state.settings)
+        return setup_guide.done_rows(
+            state.settings,
+            self.answer(state.settings),
+            self.keys,
+            self.plan,
+            self.tested,
+            setup_flow.storage().legacy,
+            self.skipped,
+            from_env=setup_flow.local_only_from_env(state.layers),
+            saved=saved,
+            overrides=setup_flow.env_overrides(state.layers, saved),
+            reading=self.plan is None and self.plan_error is None,
+        )
+
+    def _repaint(self) -> None:
+        """After a fact changed off a move (a plan read, a test run): the rail, and the Done
+        checklist when it is on screen, together, so the two never disagree."""
+        self._paint_rail()
+        if self.at == "done":
+            self._show_done(focus=not self._focus_in_step())
+
+    def _paint_rail(self) -> None:
+        """The rail, marked from the same rows as Done (setup_guide.rail())."""
+        rail = Text()
+        for id_, mark in setup_guide.rail(self.at, self.order, self._rows()):
+            current = mark == setup_guide.CURRENT
+            rail.append(f"{mark or ' '} ", style=_MARK_STYLES.get(mark, ""))
+            rail.append(f"{setup_guide.STEPS[id_]}\n", style="bold" if current else "")
+        self.query_one("#setup-rail", Static).update(rail)
 
     def _reveal_highlight(self, step: str, options: OptionList, *, fitted: bool = False) -> None:
         """Bring the focused list, with its highlighted choice, into view, scrolling the step
@@ -417,9 +495,8 @@ class SetupScreen(Screen[None]):
         if self.working:
             return
         i = self.order.index(self.at) if self.at in self.order else 0
-        if i == 0:
-            if not self.options.standalone:
-                self.dismiss()
+        if i == 0:  # Escape on Welcome leaves setup
+            self._leave()
             return
         self.report("")
         self.go(self.order[i - 1])
@@ -519,6 +596,7 @@ class SetupScreen(Screen[None]):
                 "docs/install.md; then `promptmend espanso deploy`."
             )
             button.disabled = True
+            self._repaint()
             return
         lines = [f"Match folder: {plan.espanso_dir / 'match'}"]
         if fallback:
@@ -529,8 +607,7 @@ class SetupScreen(Screen[None]):
         lines += ["", setup_guide.deploy_summary(plan)]
         self.query_one("#setup-files", Static).update("\n".join(lines))
         button.disabled = setup_flow.in_sync(plan)
-        if self.at == "done":
-            self._show_done(focus=not self._focus_in_step())
+        self._repaint()
 
     @on(Button.Pressed, "#setup-deploy")
     def _deploy(self) -> None:
@@ -609,31 +686,21 @@ class SetupScreen(Screen[None]):
         ok = all(passed for passed, _ in results)
         self.tested = ok
         self.report("\n".join(line for _, line in results), error=not ok)
+        self._repaint()
 
     # The last step.
 
     def _show_done(self, *, focus: bool = True) -> None:
         """The checklist; ``focus`` puts the focus on Quit (Close), off when a refresh comes
         while the person is already somewhere in this step."""
-        state = self.manage.state
-        if state is None:
+        state, rows = self.manage.state, self._rows()
+        if state is None or rows is None:
             return
         summary = Text()
         use = self.answer(state.settings)
         saved = setup_flow.saved_settings(state.settings)
-        for row in setup_guide.done_rows(
-            state.settings,
-            use,
-            self.keys,
-            self.plan,
-            self.tested,
-            setup_flow.storage().legacy,
-            self.skipped,
-            from_env=setup_flow.local_only_from_env(state.layers),
-            saved=saved,
-            overrides=setup_flow.env_overrides(state.layers, saved),
-        ):
-            summary.append("✓ " if row.ok else "✗ ", style="green" if row.ok else "yellow")
+        for row in rows:
+            summary.append(f"{row.mark} ", style=_MARK_STYLES[row.mark])
             summary.append(f"{row.label}: ", style="bold")
             summary.append(f"{row.text}\n")
         self.query_one("#setup-summary", Static).update(summary)
@@ -655,6 +722,15 @@ class SetupScreen(Screen[None]):
 
     @on(Button.Pressed, "#setup-quit")
     def _quit(self) -> None:
+        self._leave()
+
+    def action_quit_setup(self) -> None:
+        if self.working:
+            return
+        self._leave()
+
+    def _leave(self) -> None:
+        """Opened by `setup`: the interface exits 0; from Home: back to Home."""
         if self.options.standalone:
             self.app.exit(0)
         else:

@@ -349,14 +349,21 @@ def test_deploy_summary_and_done_rows(tmp_path: Path) -> None:
         (True, "Profile", "default"),
         (True, "Output", "paste"),
     ]
-    assert [(r.ok, r.label) for r in rows[3:]] == [
-        (False, "OPENROUTER_API_KEY"),
-        (False, "Match files"),
-        (False, "Test"),
+    assert [(r.status, r.label, r.step) for r in rows[3:]] == [
+        (setup_guide.FAILED, "OPENROUTER_API_KEY", "keys"),
+        (setup_guide.FAILED, "Match files", "espanso"),
+        (setup_guide.SKIPPED, "Test", "test"),  # not run: not a failure (#393)
     ]
+    assert rows[5].text == "not run"
     rows = setup_guide.done_rows(_settings(), "both", [], None, False)
-    assert rows[3].text == "Espanso's folder was not found"
+    assert (rows[3].status, rows[3].text) == (
+        setup_guide.FAILED,
+        "Espanso's folder was not found",
+    )
+    assert (rows[4].status, rows[4].mark) == (setup_guide.FAILED, "✗")
     assert rows[4].text.startswith("failed")
+    passed = setup_guide.done_rows(_settings(), "both", [], None, True)[4]
+    assert (passed.ok, passed.mark, passed.text) == (True, "✓", "passed")
 
 
 def test_done_rows_check_the_answer_against_local_only() -> None:
@@ -401,9 +408,9 @@ def test_done_rows_count_a_kept_edited_file_as_installed(tmp_path: Path) -> None
 
 def test_done_rows_say_a_skipped_step_is_skipped() -> None:
     rows = setup_guide.done_rows(_settings(), "cloud", [], None, None, skipped=["espanso", "test"])
-    assert [(r.ok, r.label, r.text) for r in rows[3:]] == [
-        (True, "Match files", "skipped (--no-deploy)"),
-        (True, "Test", "skipped (--no-smoke-test)"),
+    assert [(r.status, r.mark, r.label, r.text) for r in rows[3:]] == [
+        (setup_guide.SKIPPED, "\u2013", "Match files", "skipped (--no-deploy)"),
+        (setup_guide.SKIPPED, "\u2013", "Test", "skipped (--no-smoke-test)"),
     ]
 
 
@@ -411,3 +418,102 @@ def test_done_rows_point_a_missing_key_at_the_legacy_env_file() -> None:
     key = setup_guide.KeyRow("OPENROUTER_API_KEY", False, None, ("-i-",), True)
     rows = setup_guide.done_rows(_settings(), "cloud", [key], None, None, "/x/.env")
     assert rows[3].text == "not set: add OPENROUTER_API_KEY= to /x/.env"
+
+
+def _row(status: str, step: str) -> setup_guide.DoneRow:
+    return setup_guide.DoneRow(status, step, "", step)
+
+
+def test_step_status_takes_the_worst_of_its_rows() -> None:
+    ok, skipped, failed = setup_guide.OK, setup_guide.SKIPPED, setup_guide.FAILED
+    rows = [_row(ok, "keys"), _row(failed, "keys"), _row(skipped, "test"), _row(ok, "use")]
+    assert setup_guide.step_status("keys", rows) == failed
+    assert setup_guide.step_status("test", rows) == skipped
+    assert setup_guide.step_status("use", rows) == ok
+    # No row (Welcome, or no key needed): nothing could fail.
+    assert setup_guide.step_status("welcome", rows) == ok
+    assert setup_guide.step_status("keys", [_row(ok, "keys"), _row(skipped, "keys")]) == skipped
+
+
+def test_rail_marks_ok_skipped_failed_current_and_not_reached() -> None:
+    order = [s for s in setup_guide.STEPS if s != "test"]  # as --no-smoke-test leaves it
+    rows = setup_guide.done_rows(
+        _settings(),
+        "local",  # PROMPT_LOCAL_ONLY is off: the Triggers row fails
+        [],
+        None,
+        None,
+        skipped=["test"],
+    )
+    assert setup_guide.rail("output", order, rows) == [
+        ("welcome", "✓"),
+        ("use", "✗"),
+        ("keys", "✓"),  # no key needed
+        ("profile", "✓"),
+        ("output", "▶"),
+        ("espanso", ""),  # not reached yet, though its row would fail
+        ("test", "\u2013"),  # left out by the option: marked as Done lists it
+        ("done", ""),
+    ]
+
+
+def test_rail_on_done_says_what_the_checklist_says(tmp_path: Path) -> None:
+    """The acceptance criterion of #393: for the same facts, each step's mark on Done is the
+    mark of its rows in the checklist (every row of a step, the worst for the keys)."""
+    order = list(setup_guide.STEPS)
+    missing = setup_guide.KeyRow("OPENROUTER_API_KEY", False, None, ("-i-",), True)
+    present = dataclasses.replace(missing, set=True)
+    plan = _plan(tmp_path)
+    installed = dataclasses.replace(
+        plan, steps=[dataclasses.replace(s, state=deploy.IN_SYNC) for s in plan.steps]
+    )
+    cases = [
+        ([missing], None, None),  # key missing, Espanso's folder not found, test not run
+        ([present], plan, False),  # match files not installed, test failed
+        ([present], installed, True),  # everything done, test passed
+    ]
+    for keys, shown, test in cases:
+        rows = setup_guide.done_rows(_settings(), "cloud", keys, shown, test)
+        marks = dict(setup_guide.rail("done", order, rows))
+        for row in rows:
+            assert marks[row.step] == row.mark, (row, marks)
+        assert marks["done"] == "▶"
+    done = setup_guide.done_rows(_settings(), "cloud", [present], installed, True)
+    assert {mark for _, mark in setup_guide.rail("done", order, done)} == {"✓", "▶"}
+    rows = setup_guide.done_rows(_settings(), "cloud", [missing], None, None)
+    assert [(r.label, r.mark) for r in rows[3:]] == [
+        ("OPENROUTER_API_KEY", "✗"),
+        ("Match files", "✗"),
+        ("Test", "\u2013"),
+    ]
+
+
+def test_a_fact_not_known_yet_is_neither_ok_nor_failed() -> None:
+    """The match folder still being read is not "not found" (#393), and with no State at all
+    a passed step is not ✓; the rail and the checklist use the same mark."""
+    rows = setup_guide.done_rows(_settings(), "cloud", [], None, None, reading=True)
+    match = rows[3]
+    assert (match.status, match.mark, match.text) == (
+        setup_guide.UNKNOWN,
+        "\u2026",
+        "the match folder is being read",
+    )
+    assert dict(setup_guide.rail("done", list(setup_guide.STEPS), rows))["espanso"] == "\u2026"
+    # FAILED still outranks it, and it outranks SKIPPED.
+    mixed = [_row(setup_guide.UNKNOWN, "keys"), _row(setup_guide.SKIPPED, "keys")]
+    assert setup_guide.step_status("keys", mixed) == setup_guide.UNKNOWN
+    mixed.append(_row(setup_guide.FAILED, "keys"))
+    assert setup_guide.step_status("keys", mixed) == setup_guide.FAILED
+    # Read and not found: failed, as before.
+    assert setup_guide.done_rows(_settings(), "cloud", [], None, None)[3].mark == "✗"
+    order = [s for s in setup_guide.STEPS if s != "espanso"]
+    assert setup_guide.rail("output", order, None) == [
+        ("welcome", "✓"),  # nothing to know
+        ("use", "\u2026"),
+        ("keys", "\u2026"),
+        ("profile", "\u2026"),
+        ("output", "▶"),
+        ("espanso", "\u2013"),  # left out by the option: known without a State
+        ("test", ""),
+        ("done", ""),
+    ]

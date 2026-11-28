@@ -13,7 +13,15 @@ from textual.containers import VerticalScroll
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Static
 
-from promptmend import config, config_store, deploy, prompt_builder, settings_service, smoke
+from promptmend import (
+    config,
+    config_store,
+    deploy,
+    prompt_builder,
+    settings_service,
+    setup_guide,
+    smoke,
+)
 from promptmend.commands import common
 from promptmend.commands import setup as setup_cmd
 from promptmend.commands import ui as ui_cmd
@@ -92,6 +100,34 @@ def _marked(app: ManageApp, selector: str) -> list[str]:
     ]
 
 
+def _rail(app: ManageApp) -> dict[str, str]:
+    """The rail as shown: each step's name -> its mark ("" for none)."""
+    marks = {}
+    for line in _text(app, "#setup-rail").splitlines():
+        marks[line[2:]] = line[:1].strip()
+    return marks
+
+
+def _agrees(app: ManageApp) -> list[setup_guide.DoneRow]:
+    """On Done, the rail says what the checklist says (#393): each row is listed with its
+    mark, and its step carries that mark on the rail (the worst of them for the keys)."""
+    wizard = _wizard(app)
+    assert wizard.at == "done"
+    rows = wizard._rows()
+    assert rows is not None
+    summary = _text(app, "#setup-summary").splitlines()
+    rail = _rail(app)
+    assert rail["Done"] == "▶"
+    assert rail["Welcome"] == "✓"
+    for row, line in zip(rows, summary, strict=True):
+        assert line.startswith(f"{row.mark} {row.label}: "), (row, line)
+        name = setup_guide.STEPS[row.step]
+        assert rail[name] == setup_guide.MARKS[setup_guide.step_status(row.step, rows)]
+        if row.step != "keys":
+            assert rail[name] == row.mark, (row, rail)
+    return rows
+
+
 def _options(espanso: FakeRunner, **kw: object) -> SetupOptions:
     return SetupOptions(espanso_dir=str(espanso.root), standalone=True, **kw)  # type: ignore[arg-type]
 
@@ -163,6 +199,8 @@ def test_wizard_walks_every_step_and_saves(
         assert "OPENROUTER_API_KEY" not in summary
         assert "✓ Match files: installed" in summary
         assert "✓ Test: passed" in summary
+        _agrees(app)
+        assert set(_rail(app).values()) == {"✓", "▶"}
         await press(app, pilot, "#setup-quit")
 
     app = drive(scenario, setup=_options(espanso))
@@ -310,8 +348,11 @@ def test_wizard_test_result_goes_with_its_answer(
         wizard.go("done")
         await settle(pilot)
         summary = _text(app, "#setup-summary")
-        assert "✗ Test: not run" in summary
+        # Not run is not a failure: the rail and the checklist both say a dash (#393).
+        assert "\u2013 Test: not run" in summary
         assert "✓ Test" not in summary
+        assert _rail(app)["Test"] == "\u2013"
+        _agrees(app)
 
     drive(scenario, setup=_options(espanso))
     assert smoke_ok == ["openrouter"]
@@ -702,12 +743,12 @@ def test_wizard_back_and_escape(saved: Path, espanso: FakeRunner) -> None:
         await pilot.press("escape")
         await settle(pilot)
         assert wizard.at == "welcome"
-        # Standalone (`setup`): Escape on the first step does not leave.
+        # Standalone (`setup`): Escape on the first step leaves, as Quit does.
         await pilot.press("escape")
         await settle(pilot)
-        assert isinstance(app.screen, SetupScreen)
 
-    drive(scenario, setup=_options(espanso))
+    app = drive(scenario, setup=_options(espanso))
+    assert app.return_code == 0
 
 
 def test_wizard_from_home_closes_back_to_it(saved: Path, espanso: FakeRunner) -> None:
@@ -842,8 +883,12 @@ def test_wizard_options_prefill_and_skip_steps(
         wizard.go("done")
         await settle(pilot)
         summary = _text(app, "#setup-summary")
-        assert "✓ Match files: skipped (--no-deploy)" in summary
-        assert "✓ Test: skipped (--no-smoke-test)" in summary
+        assert "\u2013 Match files: skipped (--no-deploy)" in summary
+        assert "\u2013 Test: skipped (--no-smoke-test)" in summary
+        # Left out of the steps, still on the rail, marked as Done lists them.
+        assert list(_rail(app)) == list(setup_guide.STEPS.values())
+        assert (_rail(app)["Espanso"], _rail(app)["Test"]) == ("\u2013", "\u2013")
+        _agrees(app)
 
     drive(
         scenario,
@@ -888,3 +933,239 @@ def test_make_plan_with_options(saved: Path, espanso: FakeRunner) -> None:
     assert plan.espanso_dir == espanso.root.resolve()
     assert fallback is None
     assert all(step.state == deploy.MISSING for step in plan.steps)
+
+
+def test_wizard_rail_marks_failed_skipped_and_not_reached(saved: Path, espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        assert _rail(app) == {
+            "Welcome": "▶",
+            **{name: "" for step, name in setup_guide.STEPS.items() if step != "welcome"},
+        }
+        await press(app, pilot, "#setup-next-step")
+        await _pick(app, pilot, "#setup-uses", "cloud")
+        await press(app, pilot, "#setup-next-step")  # no key typed: OPENROUTER_API_KEY missing
+        rail = _rail(app)
+        assert (rail["Welcome"], rail["Cloud or local"], rail["API keys"]) == ("✓", "✓", "✗")
+        assert (rail["Profile"], rail["Output"], rail["Test"]) == ("▶", "", "")
+        wizard.go("test")
+        await settle(pilot)
+        assert _rail(app)["Espanso"] == "✗"  # passed without installing
+        # Repainted when the facts change, not only on a move: here the plan read again.
+        assert wizard.plan is not None
+        steps = [dataclasses.replace(s, state=deploy.IN_SYNC) for s in wizard.plan.steps]
+        wizard._show_plan(dataclasses.replace(wizard.plan, steps=steps), None, None)
+        assert _rail(app)["Espanso"] == "✓"
+        wizard._show_plan(None, None, "gone")
+        assert _rail(app)["Espanso"] == "✗"
+        wizard.go("done")
+        await settle(pilot)
+        rows = _agrees(app)
+        assert [(r.label, r.mark) for r in rows] == [
+            ("Triggers", "✓"),
+            ("Profile", "✓"),
+            ("Output", "✓"),
+            ("OPENROUTER_API_KEY", "✗"),
+            ("Match files", "✗"),
+            ("Test", "\u2013"),
+        ]
+
+    drive(scenario, setup=_options(espanso))
+
+
+def test_wizard_rail_follows_the_plan_and_the_test(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    results = iter([False, True])
+    monkeypatch.setattr(
+        smoke, "run", lambda p: smoke.SmokeResult(next(results), smoke.REPLY, 1, "stub")
+    )
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        config_store.save_secret("OPENROUTER_API_KEY", KEY)
+        app.reload()
+        await settle(pilot)
+        wizard.go("espanso")
+        await settle(pilot)
+        await press(app, pilot, "#setup-deploy")
+        wizard.go("test")
+        await settle(pilot)
+        assert _rail(app)["Espanso"] == "✓"
+        await press(app, pilot, "#setup-run-test")
+        assert wizard.tested is False
+        wizard.go("done")
+        await settle(pilot)
+        assert "✗ Test: failed (see the Test step)" in _text(app, "#setup-summary")
+        assert _rail(app)["Test"] == "✗"
+        _agrees(app)
+        wizard.go("test")
+        await settle(pilot)
+        await press(app, pilot, "#setup-run-test")
+        wizard.go("done")
+        await settle(pilot)
+        assert "✓ Test: passed" in _text(app, "#setup-summary")
+        _agrees(app)
+
+    drive(scenario, setup=_options(espanso))
+
+
+def test_wizard_rail_and_done_agree_without_espanso(saved: Path, espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        wizard.go("done")
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "✗ Match files: Espanso's folder was not found" in summary
+        assert "\u2013 Test: not run" in summary
+        assert (_rail(app)["Espanso"], _rail(app)["Test"]) == ("✗", "\u2013")
+        _agrees(app)
+
+    drive(scenario, setup=SetupOptions(launcher='/a"b/promptmend', standalone=True))
+
+
+def _quit_shown(app: ManageApp) -> bool | None:
+    """Whether the footer shows Quit setup: True, greyed out (None) or hidden (False)."""
+    active = app.screen.active_bindings.get("q")
+    if active is None:
+        return False
+    assert active.binding.description == "Quit setup"
+    return True if active.enabled else None
+
+
+def test_wizard_quit_is_shown_on_every_step_and_quits(saved: Path, espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        for step in wizard.order:
+            wizard.go(step)
+            await settle(pilot)
+            assert _quit_shown(app) is True, step
+        wizard.go("output")
+        await settle(pilot)
+        await pilot.press("q")
+        await settle(pilot)
+
+    app = drive(scenario, setup=_options(espanso))
+    assert app.return_code == 0  # as the Done step's Quit
+
+
+def test_wizard_quit_is_hidden_in_a_key_field_and_refused_while_working(
+    saved: Path, espanso: FakeRunner
+) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        wizard.go("keys")
+        await settle(pilot)
+        field = wizard.query_one("#setup-key-OPENROUTER_API_KEY", Input)
+        field.focus()
+        await settle(pilot)
+        # The field takes the letter, so the footer does not offer it.
+        assert _quit_shown(app) is False
+        await pilot.press("q")
+        await settle(pilot)
+        assert field.value == "q"
+        assert isinstance(app.screen, SetupScreen)
+        field.value = ""
+        wizard.query_one("#setup-next-step", Button).focus()
+        await settle(pilot)
+        assert _quit_shown(app) is True
+        wizard.working = True  # an install or the test is running
+        await settle(pilot)
+        assert _quit_shown(app) is None
+        await pilot.press("q")
+        await settle(pilot)
+        assert app.screen is wizard
+        wizard.working = False
+        await settle(pilot)
+        assert _quit_shown(app) is True
+
+    drive(scenario, setup=_options(espanso))
+
+
+def test_wizard_quit_from_home_returns_to_it(saved: Path, espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await press(app, pilot, "#home-setup")
+        wizard = _wizard(app)
+        wizard.go("profile")
+        await settle(pilot)
+        assert _quit_shown(app) is True
+        await pilot.press("q")
+        await settle(pilot)
+        assert app.screen is app.main
+        # Escape on Welcome closes it too.
+        await press(app, pilot, "#home-setup")
+        assert _wizard(app).at == "welcome"
+        await pilot.press("escape")
+        await settle(pilot)
+        assert app.screen is app.main
+
+    app = drive(scenario)
+    assert app.return_code is None
+
+
+def test_wizard_done_follows_a_plan_read_that_fails_while_it_is_open(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full State landing on Done reads the plan again; when that read fails, the
+    checklist changes with the rail, not the rail alone."""
+    from promptmend import setup_flow
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        config_store.save_secret("OPENROUTER_API_KEY", KEY)
+        wizard.go("espanso")
+        await settle(pilot)
+        await press(app, pilot, "#setup-deploy")
+        wizard.go("done")
+        await settle(pilot)
+        assert "✓ Match files: installed in " in _text(app, "#setup-summary")
+        assert _rail(app)["Espanso"] == "✓"
+        _agrees(app)
+
+        def gone(*_: object) -> None:
+            raise deploy.DeployError("espanso went away")
+
+        monkeypatch.setattr(setup_flow, "read_plan", gone)
+        app.reload()
+        await settle(pilot)
+        assert wizard.plan is None
+        assert "✗ Match files: Espanso's folder was not found" in _text(app, "#setup-summary")
+        assert _rail(app)["Espanso"] == "✗"
+        _agrees(app)
+
+    drive(scenario, setup=_options(espanso))
+
+
+def test_wizard_says_the_match_folder_is_being_read(saved: Path, espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        wizard.go("done")
+        await settle(pilot)
+        # As before the first read lands: no plan and no error yet.
+        wizard.plan, wizard.plan_error = None, None
+        wizard._repaint()
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "\u2026 Match files: the match folder is being read" in summary
+        assert "not found" not in summary
+        assert _rail(app)["Espanso"] == "\u2026"
+        _agrees(app)
+
+    drive(scenario, setup=_options(espanso))
+
+
+def test_wizard_greys_out_back_while_working(saved: Path, espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        wizard.go("profile")
+        await settle(pilot)
+        assert app.screen.active_bindings["escape"].enabled
+        wizard.working = True
+        await settle(pilot)
+        assert not app.screen.active_bindings["escape"].enabled
+        await pilot.press("escape")
+        await settle(pilot)
+        assert wizard.at == "profile"
+        wizard.working = False
+
+    drive(scenario, setup=_options(espanso))

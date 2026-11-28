@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 ### Changed
+- Setup: the wizard's rail marks each step as the Done checklist does (#393): `✓` done,
+  `–` skipped or not run, `✗` failed or still to do, worked out once for both, so the rail
+  no longer ticks a step whose checklist line says the match files were not found or the
+  test was not run; a fact not known yet (the match folder still being read) is `…` in
+  both. A test not run, and a step `--no-deploy` or `--no-smoke-test` leaves
+  out, are now `–` in the checklist too (they were `✗` and `✓`); a skipped step stays listed
+  on the rail. `q` (Quit setup) is in the footer on every step, except while a key field
+  has the focus, and Escape on Welcome leaves as well: `promptmend setup` exits 0, as Done's
+  Quit; opened from Home, it goes back to Home. While the match files install or the test
+  runs, `q` and Escape are refused and greyed out in the footer.
 - Interface: on the Settings tab a row at its built-in default no longer looks disabled
   (#388). Names and values always have the normal text colour; only the word `default` in
   the source column is muted. The dot means only "set by you": a filled `●`, in the theme's
