@@ -1,6 +1,7 @@
 """The domain steps of one rewrite, shared by the improve trigger (trigger.py) and the
-interface's Try tab (try_run.py): reading the draft (the clipboard, stdin or an argument,
-with the concealed-item check), the one length rule (check_length()), rewrite() through
+interface's Try tab (try_run.py): choosing improve's source when none is given
+(choose_source()), reading the draft (the clipboard, stdin or an argument, with the
+concealed-item check), the one length rule (check_length()), rewrite() through
 factory.make_provider() and its gate, the marker that words a failure, its history outcome,
 the sent-despite note, and the delivery of a finished rewrite to the clipboard.
 
@@ -65,6 +66,30 @@ def _clipboard(op: str, *args: str) -> object:
         return getattr(pyperclip, op)(*args)
     except pyperclip.PyperclipException as exc:
         raise ClipboardUnavailable(f"Clipboard unavailable: {exc}") from exc
+
+
+def _stdin_is_piped() -> bool:
+    """Whether stdin is a pipe or a file rather than a terminal. A missing stdin (None, as
+    under pythonw) or one whose isatty() fails (closed) is not a pipe: nothing can be read."""
+    stream = sys.stdin
+    if stream is None:
+        return False
+    try:
+        return not stream.isatty()
+    except (OSError, ValueError):
+        return False
+
+
+def choose_source(source: str | None, text: str | None) -> str:
+    """Where improve reads its draft when ``--source`` is not given (#407): ``--text`` names
+    its own draft (argument); otherwise a pipe or a file on stdin, else the clipboard. An
+    explicit ``source`` is returned as given. The managed Espanso matches always pass
+    ``--source`` (tests/test_yaml.py), so Espanso's own stdin never decides it."""
+    if source is not None:
+        return source
+    if text is not None:
+        return "argument"
+    return "stdin" if _stdin_is_piped() else "clipboard"
 
 
 def read_input(source: str, text: str | None) -> str:

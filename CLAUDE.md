@@ -94,6 +94,9 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   clipboard` on every CLI match, its own `label:` (`PromptMend: …`), `left_word: true`, and a
   literal `--trigger-id <id>` right after the subcommand from `recorder.TRIGGER_IDS`
   (`i iok ip if il ilm ic io p`), never a `{{form}}` value.
+- Every `improve` match passes one literal `--source` (`tests/test_yaml.py`): without it,
+  `improve` reads stdin whenever stdin is not a terminal (#407), as under Espanso.
+- No match passes `--fail-on-marker` (`tests/test_yaml.py`): its exit code 1 fails the expansion.
 - The `-if-` form's fields stay fixed choices, each a whole args item (no free text reaches
   the CLI), each list starting with and defaulting to `default`, timeouts at most 120 s.
 - `espanso/match/prompts-core.yml` holds static snippets (no CLI call); `-ic-` (Anthropic)

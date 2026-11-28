@@ -22,6 +22,12 @@ All notable changes to this project are documented here. The format follows
   `first`, `setup`, `line`); `schema_version` stays 1 and the exit codes are unchanged.
 - Homebrew: `brew install` ends with the formula's caveats (#402): start Espanso, then run
   `promptmend setup`.
+- `promptmend improve --fail-on-marker`, for scripts (#407): the run exits 1 when it ends in
+  a failure marker (a bad setting, a blocked or failed call, an empty or concealed draft, the
+  time limit) instead of a rewrite. Stdout and stderr are the same as without it, and a
+  rewrite still exits 0, a `sent despite` note in front of it included. Without the flag,
+  `improve` exits 0 as before; no Espanso match passes it, since Espanso fails the expansion
+  on a nonzero exit.
 
 ### Changed
 - Windows one-command install: the closing check prints only `doctor`'s verdict line, read
@@ -32,6 +38,14 @@ All notable changes to this project are documented here. The format follows
 - Docs: README's Requirements and docs/install.md say that OpenRouter needs an account with
   credits (a new account's first `-i-` fails without them), with a link to the benchmark
   page for what a rewrite costs (#402).
+- `promptmend improve` without `--source` now reads stdin when stdin is not a terminal, and
+  the clipboard only from a terminal (#407): `echo "draft" | promptmend improve` rewrites the
+  piped draft instead of sending the clipboard. `--text` without `--source` is now the draft
+  (it was ignored and the clipboard read). The managed Espanso matches all pass
+  `--source clipboard` and are not affected. A match you wrote yourself, a launcher or a
+  script that runs `improve` with no `--source` and no terminal now gets
+  `[promptmend: Input is empty]` (or waits for whatever its stdin delivers) instead of
+  rewriting the clipboard: add `--source clipboard` to it.
 - Setup: the wizard's rail marks each step as the Done checklist does (#393): `✓` done,
   `–` skipped or not run, `✗` failed or still to do, worked out once for both, so the rail
   no longer ticks a step whose checklist line says the match files were not found or the

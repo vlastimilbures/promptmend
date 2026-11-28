@@ -553,6 +553,65 @@ def test_no_request_after_marker_while_building(
     assert fake_http.requests == []
 
 
+# --- --fail-on-marker (#407) -----------------------------------------------------------------
+
+
+def _flagged() -> tuple[Watchdog, recorder.Recorder]:
+    watch, rec = _watchdog()
+    watch._fail_on_marker = True
+    return watch, rec
+
+
+# The watchdog's own timed-out marker (the run still reading or calling) exits 1 with the
+# flag, through _hard_exit and through the run's later step alike; without it, 0.
+@pytest.mark.parametrize("flag", [True, False])
+def test_timed_out_marker_exit_code(
+    exits: Exits, capfd: pytest.CaptureFixture[str], flag: bool
+) -> None:
+    watch, _ = _flagged() if flag else _watchdog()
+    watch._fire()
+    with pytest.raises(typer.Exit) as raised:
+        watch.proceed()
+    code = 1 if flag else 0
+    assert (exits.codes, raised.value.exit_code) == ([code], code)
+    assert capfd.readouterr().out == MARKER
+
+
+# The settings-load marker (provisional timer) is a failure too.
+def test_settings_load_marker_exits_1(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
+    watch, _ = _flagged()
+    watch.arm_loading("30")
+    watch.cancel()
+    watch._fire()
+    assert exits.codes == [1]
+    assert capfd.readouterr().out == "[promptmend: the settings did not load within 30.0s]"
+
+
+# A stalled copy still prints the rewrite: exit 0 with the flag.
+def test_stalled_copy_exits_0(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
+    watch, _ = _flagged()
+    watch.delivering("", "the rewrite")
+    watch._fire()
+    assert exits.codes == [0]
+    assert capfd.readouterr().out.endswith("the rewrite")
+
+
+# A flushed run that the deadline ends silently keeps the code its own output had: 1 after a
+# failure marker, 0 after a rewrite.
+@pytest.mark.parametrize("failed", [True, False])
+def test_flushed_run_keeps_its_code(
+    exits: Exits, capfd: pytest.CaptureFixture[str], failed: bool
+) -> None:
+    watch, _ = _flagged()
+    if failed:
+        watch.failed()
+    trigger.emit("output", watch)
+    watch.flushed()
+    watch._fire()
+    assert exits.codes == [1 if failed else 0]
+    assert capfd.readouterr().out == "output"
+
+
 # --- The final timer: a claimed run that flushed late ----------------------------------------
 
 
@@ -1028,6 +1087,24 @@ def test_used_up_limit_still_records(
     assert exits.codes == []
     (op,) = history_rows("operations")
     assert op["outcome"] == "error_marker"
+
+
+# A run whose start-up used up its limit ends in its own marker: exit 1 with
+# --fail-on-marker (#407), the same output.
+def test_used_up_limit_fails_on_marker(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
+) -> None:
+    from promptmend import entry
+
+    monkeypatch.setenv("PROMPT_TIMEOUT_SECONDS", "5")
+    exits = Exits()
+    monkeypatch.setattr(trigger, "_hard_exit", exits)
+    args = ["improve", "--provider", "ollama", "--source", "argument", "--text", "d"]
+    monkeypatch.setattr(entry, "_started", time.monotonic() - 5)
+    result = runner.invoke(app, [*args, "--fail-on-marker"])
+    assert result.exit_code == 1
+    assert result.stdout.startswith("[promptmend: starting up took 5")
+    assert (exits.codes, stub_provider.calls) == ([], [])
     assert stub_provider.calls == []
 
 
@@ -1184,6 +1261,24 @@ def test_settings_load_that_never_returns(args: list[str]) -> None:
 
 
 # A reply that lands before the limit prints only the rewrite.
+def test_settings_load_that_never_returns_fails_on_marker() -> None:
+    args = ["option", "improve", "--timeout", "1", "--fail-on-marker"]
+    proc, _ = _run([sys.executable, "-c", _BLOCKED_LOAD, *args], smoke.stub_env(9, os.environ))
+    assert (proc.returncode, proc.stderr) == (1, b"")
+    assert proc.stdout.decode("utf-8") == "[promptmend: the settings did not load within 1.0s]"
+
+
+# With --fail-on-marker the watchdog's os._exit ends the process with exit code 1 and the
+# same marker; stderr stays empty.
+def test_trickling_server_fails_on_marker() -> None:
+    with smoke.stub_server(trickle=0.2) as stub:
+        env = smoke.stub_env(stub.port, os.environ)
+        proc, seconds = _run([*_ENTRY, *_ARGS, "--fail-on-marker"], env)
+    assert (proc.returncode, proc.stderr) == (1, b"")
+    assert proc.stdout.decode("utf-8") == MARKER
+    assert seconds <= LIMIT + trigger.WATCHDOG_MARGIN + SLACK
+
+
 def test_reply_just_under_the_limit() -> None:
     with smoke.stub_server(0.3) as stub:
         proc, _ = _run([*_ENTRY, *_ARGS], smoke.stub_env(stub.port, os.environ))

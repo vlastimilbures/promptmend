@@ -75,6 +75,10 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import promptmend.pipeline as pipeline
 
     monkeypatch.setattr(pipeline, "is_concealed", lambda: None)
+    # ...and an in-process improve without --source runs as from a terminal (the clipboard),
+    # whatever stdin pytest or CliRunner gives it (#407): a test of the stdin default patches
+    # it back (test_cli.REAL_STDIN_IS_PIPED).
+    monkeypatch.setattr(pipeline, "_stdin_is_piped", lambda: False)
     # ...nor run the real espanso, uv or brew: a deploy test passes or patches in its own.
     import promptmend.deploy as deploy
 
