@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Protocol
 
 import typer
@@ -489,50 +490,56 @@ class Watchdog:
             _write_fd(1, data)
 
 
+@dataclass(frozen=True)
+class ImproveOptions:
+    """The options of one improve call as cli.improve() receives them, raw: the strings are
+    parsed later (Settings.for_call() and the rest), so a bad value is still a marker, reported
+    in the same order. --fail-on-marker and --trigger-id are not here: the first is the
+    watchdog's, the second the recorder's."""
+
+    provider: str | None
+    profile: str | None
+    model: str | None
+    tier: str
+    effort: str | None
+    max_tokens: str | None
+    timeout: str | None
+    source: str | None
+    text: str | None
+    output: str | None
+    copy: bool
+    allow_flagged: bool
+
+
 def run_improve(
-    watch: Watchdog,
-    rec: recorder.Recorder,
-    ran: pipeline.Rewrite,
-    *,
-    provider: str | None,
-    profile: str | None,
-    model: str | None,
-    tier: str,
-    effort: str | None,
-    max_tokens: str | None,
-    timeout: str | None,
-    source: str | None,
-    text: str | None,
-    output: str | None,
-    copy: bool,
-    allow_flagged: bool,
+    watch: Watchdog, rec: recorder.Recorder, ran: pipeline.Rewrite, options: ImproveOptions
 ) -> None:
     """One improve run. ``source`` None is chosen by pipeline.choose_source(); the exit code
     is the watchdog's (exit_code()): 0 unless --fail-on-marker and a failure marker."""
     try:
         # A stalled file system can block the load: bounded from the start (#331).
-        watch.arm_loading(timeout)
+        watch.arm_loading(options.timeout)
         loaded = Settings.load()
         rec.track(loaded)
-        provider = provider or loaded.provider_for(tier)
+        provider = options.provider or loaded.provider_for(options.tier)
         cfg = loaded.for_call(
-            tier,
+            options.tier,
             provider=provider,
-            model=model,
-            effort=effort,
-            max_tokens=max_tokens,
-            timeout=timeout,
-            output=output,
+            model=options.model,
+            effort=options.effort,
+            max_tokens=options.max_tokens,
+            timeout=options.timeout,
+            output=options.output,
         )
         # From here the run has a hard deadline: reading the clipboard can block too.
         expired = watch.arm(cfg, provider)
         if expired is None:
             # An unknown name is left to make_provider(), which reports it as such.
             if provider in PROVIDER_NAMES:
-                check_provider_options(provider, tier, effort)
-            source = pipeline.choose_source(source, text)
+                check_provider_options(provider, options.tier, options.effort)
+            source = pipeline.choose_source(options.source, options.text)
             watch.reading(source)
-            raw = pipeline.read_input(source, text)
+            raw = pipeline.read_input(source, options.text)
             watch.proceed()
             # The rewrite comes back cleaned, which matters here too: --copy and clipboard
             # output put it on the clipboard.
@@ -540,9 +547,9 @@ def run_improve(
                 raw,
                 provider,
                 cfg,
-                profile,
+                options.profile,
                 ran,
-                allow_flagged=allow_flagged,
+                allow_flagged=options.allow_flagged,
                 observer=rec.observer,
                 source=source,
             )
@@ -575,7 +582,7 @@ def run_improve(
         raise typer.Exit(watch.exit_code())
     rec.profile_id = ran.profile_id
     note = pipeline.sent_despite_note(ran.built)
-    if cfg.output == CLIPBOARD or copy:
+    if cfg.output == CLIPBOARD or options.copy:
         # Before the copy, so a watchdog firing during it says the clipboard stalled, not that
         # the call timed out.
         watch.delivering(note, result)
@@ -584,7 +591,9 @@ def run_improve(
     else:
         # Like clipboard output, the stop note is printed but not copied.
         printed = (
-            note + (pipeline.copy_failed(split_stop_note(result)[0], rec) if copy else "") + result
+            note
+            + (pipeline.copy_failed(split_stop_note(result)[0], rec) if options.copy else "")
+            + result
         )
     if rec.outcome == recorder.CLIPBOARD_FAILED:
         # The copy failed: its marker is a failure for --fail-on-marker, rewrite pasted or not.
