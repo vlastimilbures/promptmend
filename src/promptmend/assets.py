@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from importlib.resources import files
 from importlib.resources.abc import Traversable
 
-from .config import _PROJECT_ROOT
+from .paths import _PROJECT_ROOT
 from .redaction import safe_repr
 
 

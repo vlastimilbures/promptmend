@@ -44,7 +44,7 @@ class AnthropicProvider:
     timeout: float = 30
     max_tokens: int = 1200
     temperature: float | None = None
-    # `output_config.effort` (config.ANTHROPIC_EFFORTS); empty, or a model in
+    # `output_config.effort` (parsers.ANTHROPIC_EFFORTS); empty, or a model in
     # NO_EFFORT_MODELS, sends no output_config.
     effort: str = ""
     # Receives one AttemptUsage per HTTP attempt; see providers/usage.py.

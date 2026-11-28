@@ -21,14 +21,13 @@ from typer.core import TyperGroup
 
 from . import pipeline, recorder, trigger
 from .config import (
-    EFFORTS,
     KEEP,
-    OUTPUTS,
     TIERS,
     ConfigLayers,
     Settings,
 )
 from .factory import PROVIDER_NAMES
+from .parsers import EFFORTS, OUTPUTS
 from .prompt_builder import PERSONA_PLACEHOLDER
 from .redaction import redact_words
 

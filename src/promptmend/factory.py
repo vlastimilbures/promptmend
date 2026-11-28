@@ -4,8 +4,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from .config import Settings, env_file_override
+from .config import Settings
 from .gate import GateBlocked, GatedProvider
+from .paths import env_file_override
 from .providers.anthropic import AnthropicProvider
 from .providers.base import Provider, ProviderError, is_loopback
 from .providers.ollama import OllamaProvider

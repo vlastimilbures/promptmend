@@ -19,7 +19,16 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from . import assets, config, config_files, config_store, deploy, settings_service, setup_guide
+from . import (
+    assets,
+    config,
+    config_files,
+    config_store,
+    deploy,
+    paths,
+    settings_service,
+    setup_guide,
+)
 from .config import setting_fields
 from .factory import PROVIDER_KEYS
 from .prompt_builder import system_prompt
@@ -35,7 +44,7 @@ DEFAULTS = {f.metadata["env"]: f.metadata["default"] for f in setting_fields()}
 class Storage:
     """Where setup may save: ``legacy`` is the .env PROMPTMEND_ENV names (then neither
     config.toml nor the secrets file is read, so nothing is saved), and ``unread`` setup's
-    note on a .env this release does not read (config.unread_env_files()), looked for only
+    note on a .env this release does not read (paths.unread_env_files()), looked for only
     outside legacy mode."""
 
     legacy: str | None
@@ -50,7 +59,7 @@ def storage() -> Storage:
     legacy = settings_service.legacy_env()
     if legacy:
         return Storage(legacy, None)
-    return Storage(None, setup_guide.unread_env_note(config.unread_env_files()))
+    return Storage(None, setup_guide.unread_env_note(paths.unread_env_files()))
 
 
 # --- The choices: cloud or local, profile, output (and the deprecated --provider) ---------

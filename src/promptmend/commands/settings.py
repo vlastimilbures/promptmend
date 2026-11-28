@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import typer
 
-from .. import config, config_store, settings_service
+from .. import config, config_store, paths, settings_service
 from ..config import ConfigLayers, env_names, secret_names
 from ..redaction import safe_repr
 from . import common
@@ -66,7 +66,7 @@ def layers_lines(layers: ConfigLayers, raw: bool) -> list[str]:
                     lines.append(f"      {name} = {common.shown_value(name, entry)}")
     if settings_service.legacy_env():
         lines.append(
-            f"  ({config.ENV_FILE_VAR} is set: config.toml and the secrets file are not read)"
+            f"  ({paths.ENV_FILE_VAR} is set: config.toml and the secrets file are not read)"
         )
     return lines
 

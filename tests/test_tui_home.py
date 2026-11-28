@@ -16,7 +16,8 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, TabbedContent, Tabs
 
 from promptmend import deploy, doctor, update_check
-from promptmend.config import OUTPUTS, ConfigLayers, Settings
+from promptmend.config import ConfigLayers, Settings
+from promptmend.parsers import OUTPUTS
 from promptmend.tui import base, home, home_pane, triggers_pane
 from promptmend.tui.app import ManageApp
 from promptmend.tui.home import READY, HomeRow, headline, home_rows, pill

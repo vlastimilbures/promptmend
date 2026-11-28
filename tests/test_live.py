@@ -21,7 +21,7 @@ from conftest import read_env_file
 from typer.testing import CliRunner
 
 from promptmend.cli import app
-from promptmend.config import ENV_FILE_VAR
+from promptmend.paths import ENV_FILE_VAR
 
 if TYPE_CHECKING:
     from conftest import FakeHttp

@@ -37,7 +37,8 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal
 
 from . import history_spool, installed_version
-from .config import MAX_RETENTION_DAYS, user_config_dir, user_data_dir
+from .parsers import MAX_RETENTION_DAYS
+from .paths import user_config_dir, user_data_dir
 from .providers import usage
 from .redaction import compile_extra, is_bare_token, scan
 

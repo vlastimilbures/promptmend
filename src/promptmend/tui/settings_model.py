@@ -14,17 +14,13 @@ from pathlib import Path
 
 from ..commands import common
 from ..config import (
-    ANTHROPIC_EFFORTS,
-    DATA_COLLECTION,
     DEFAULT_SOURCE,
-    EFFORTS,
     ENV_SOURCE,
-    OUTPUTS,
-    PRO_PROVIDERS,
     Entry,
     setting_fields,
 )
 from ..factory import PROVIDER_NAMES
+from ..parsers import ANTHROPIC_EFFORTS, DATA_COLLECTION, EFFORTS, OUTPUTS, PRO_PROVIDERS
 from ..prompt_builder import ADDED, PROFILES
 from .state import State
 

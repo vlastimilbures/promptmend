@@ -11,10 +11,10 @@ import pytest
 from conftest import resolved_settings
 
 from promptmend import (
-    config,
     config_files,
     config_store,
     deploy,
+    paths,
     settings_service,
     setup_flow,
     setup_guide,
@@ -27,7 +27,7 @@ KEY = "sk-or-v1-" + "ab12" * 16
 def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
     """Saved mode: config.toml and the secrets file are read (conftest's per-test dir)."""
     monkeypatch.delenv("PROMPTMEND_ENV")
-    return config.user_config_dir()
+    return paths.user_config_dir()
 
 
 def _settings_file() -> Path:
@@ -55,7 +55,7 @@ def test_history_off_advice_follows_the_mode(monkeypatch: pytest.MonkeyPatch) ->
     legacy = usage.disclosure(resolved_settings())[-1]
     assert legacy.startswith(f"Switch it off: {in_file}; ")
     assert "config set" not in legacy
-    assert str(config.env_file_override()) not in legacy
+    assert str(paths.env_file_override()) not in legacy
     monkeypatch.delenv("PROMPTMEND_ENV")
     saved = usage.disclosure(resolved_settings())[-1]
     assert saved == f"Switch it off: {command}; `promptmend history reset` deletes the records."
@@ -73,7 +73,7 @@ def test_storage_names_an_unread_dotenv(
     saved: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     old = tmp_path / "old" / ".env"
-    monkeypatch.setattr(config, "unread_env_files", lambda: [old])
+    monkeypatch.setattr(paths, "unread_env_files", lambda: [old])
     where = setup_flow.storage()
     assert where.writable
     assert where.unread is not None

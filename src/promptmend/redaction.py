@@ -473,7 +473,7 @@ class InvalidExtraPattern(ValueError):
 
 def compile_extra(spec: str) -> tuple[re.Pattern[str], ...]:
     """Compile PROMPT_EXTRA_PATTERNS (`;`-separated regexes, case-insensitive). Settings
-    already rejects an invalid one (config._regexes); this check stays for a Settings built
+    already rejects an invalid one (parsers._regexes); this check stays for a Settings built
     without its parsers."""
     patterns = []
     for i, raw in enumerate((p.strip() for p in spec.split(EXTRA_SEPARATOR) if p.strip()), 1):

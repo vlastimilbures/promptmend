@@ -7,7 +7,7 @@ from __future__ import annotations
 import platform
 from collections.abc import Mapping
 
-from .. import config, config_store, installed_version, update_check
+from .. import config_store, installed_version, paths, update_check
 
 # The interface's display name: the header, the wordmark and About all read it
 # here, so a rename changes this one line (and the snapshots).
@@ -72,7 +72,7 @@ def about_facts(
         f"Installed: {channel}",
         f"Runs on:   Python {found['python']}, Textual {found['textual']}",
         f"Settings:  {config_store.config_dir()}",
-        f"History:   {config.user_data_dir()}",
+        f"History:   {paths.user_data_dir()}",
         f"Licence:   {LICENCE}",
         f"Source:    {REPO_URL}",
     ]

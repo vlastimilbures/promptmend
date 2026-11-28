@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import config, installed_version
+from . import installed_version, parsers
 from .doctor import CHECK_IDS, Report
 from .providers.registry import PROVIDERS
 
@@ -134,7 +134,7 @@ def timing_env(port: int, environ: Mapping[str, str]) -> dict[str, str]:
     env = {
         **smoke.stub_env(port, environ),
         "PROMPT_PERSONA": "",
-        "PROMPT_OUTPUT": config.PASTE,
+        "PROMPT_OUTPUT": parsers.PASTE,
         "PROMPT_LOCAL_ONLY": "false",
         "PROMPT_EXTRA_PATTERNS": "",
     }

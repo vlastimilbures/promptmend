@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import config, config_files
+from . import config, config_files, paths
 from .config import env_names, secret_names, setting_fields
 from .config_files import CONFIG_VERSION, VERSION_KEY
 from .redaction import safe_repr
@@ -44,7 +44,7 @@ def _env(environ: Mapping[str, str] | None) -> Mapping[str, str]:
 
 
 def config_dir(environ: Mapping[str, str] | None = None) -> Path:
-    return config.user_config_dir(_env(environ))
+    return paths.user_config_dir(_env(environ))
 
 
 # --- config.toml --------------------------------------------------------------------------
@@ -80,7 +80,7 @@ class SavedSettings:
 def read_settings(environ: Mapping[str, str] | None = None) -> SavedSettings:
     """Read config.toml (an empty snapshot when it does not exist). Raises ConfigFileError
     when it exists but cannot be read or parsed."""
-    path = config.settings_file(_env(environ))
+    path = paths.settings_file(_env(environ))
     return _snapshot(path)
 
 

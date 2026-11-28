@@ -25,8 +25,8 @@ from typer.testing import CliRunner, Result
 
 from promptmend import __version__, assets, deploy
 from promptmend.cli import app
-from promptmend.config import user_data_dir
 from promptmend.match_history import KNOWN_SOURCES
+from promptmend.paths import user_data_dir
 
 runner = CliRunner()
 REPO = Path(__file__).resolve().parents[1]

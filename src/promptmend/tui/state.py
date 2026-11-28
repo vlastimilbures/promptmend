@@ -24,12 +24,12 @@ from pathlib import Path
 
 from .. import (
     assets,
-    config,
     config_files,
     deploy,
     doctor,
     espanso_windows,
     history,
+    paths,
     settings_service,
     update_check,
 )
@@ -280,7 +280,7 @@ def needs_setup(state: State) -> bool:
     plan. Here, not in setup_wizard.py, so the app asks without importing the wizard."""
     if settings_service.legacy_env() or not state.full or state.plan is None:
         return False
-    if config_files.is_file(config.settings_file()):
+    if config_files.is_file(paths.settings_file()):
         return False
     if any(state.layers.entries[name].value for name in secret_names()):
         return False

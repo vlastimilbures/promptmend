@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import config, config_files, installed_version
+from . import config, config_files, installed_version, parsers, paths
 
 URL = "https://pypi.org/pypi/promptmend/json"
 SETTING = "PROMPT_UPDATE_CHECK"
@@ -171,7 +171,7 @@ def _within(seconds: float) -> str:
 
 
 def cache_path() -> Path:
-    return config.user_data_dir() / CACHE_FILE
+    return paths.user_data_dir() / CACHE_FILE
 
 
 def _fresh(latest: object, checked_at: object, now: datetime) -> bool:
@@ -254,7 +254,7 @@ def check_configured(now: datetime | None = None) -> UpdateStatus:
     (unknown), since the user may have turned it off there. Never raises."""
     try:
         layers = config.ConfigLayers.resolve(only=SETTING)
-        on = config._bool(layers.entries[SETTING].value)
+        on = parsers._bool(layers.entries[SETTING].value)
     except Exception:
         return UpdateStatus(UNKNOWN)
     return _check(on, now)

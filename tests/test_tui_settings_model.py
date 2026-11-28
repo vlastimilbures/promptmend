@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from promptmend import config, config_store
+from promptmend import config_store, parsers
 from promptmend.config import ConfigLayers, env_names, secret_names
 from promptmend.prompt_builder import PROFILES, UserProfile
 from promptmend.tui import settings_model as model
@@ -144,7 +144,7 @@ def test_profile_choices_are_the_builtins_and_your_added_ones() -> None:
     assert model.choices(model.BY_NAME["PROMPT_PROFILE"], state) == (*PROFILES, "mine")
     assert model.choices(model.BY_NAME["PROMPT_PRO_PROFILE"], state) == ("", *PROFILES, "mine")
     assert model.choices(model.BY_NAME["PROMPT_PROFILE"], None) == tuple(PROFILES)
-    assert model.choices(model.BY_NAME["PROMPT_OUTPUT"], state) == config.OUTPUTS
+    assert model.choices(model.BY_NAME["PROMPT_OUTPUT"], state) == parsers.OUTPUTS
 
 
 def test_a_bad_value_is_refused_naming_the_setting() -> None:

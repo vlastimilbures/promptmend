@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import config, config_files, config_store
+from . import config_files, config_store, paths
 from .config import ConfigLayers, Settings
 from .redaction import looks_like_a_key
 
@@ -60,7 +60,7 @@ def load_layers() -> tuple[ConfigLayers, Settings]:
 def legacy_env() -> str | None:
     """The .env PROMPTMEND_ENV names: then it alone is read, never config.toml
     or the secrets file, so a command that would write them refuses."""
-    return config.env_file_override()
+    return paths.env_file_override()
 
 
 def history_off(*, legacy: bool) -> str:
@@ -69,7 +69,7 @@ def history_off(*, legacy: bool) -> str:
     to the file it names (never its path, as factory.key_hint()). The one source of the
     advice for `stats --verbose`, `setup` and the History and setup screens."""
     if legacy:
-        return f"add PROMPT_HISTORY=false to the .env that {config.ENV_FILE_VAR} names"
+        return f"add PROMPT_HISTORY=false to the .env that {paths.ENV_FILE_VAR} names"
     return "`promptmend config set PROMPT_HISTORY false`"
 
 
@@ -77,7 +77,7 @@ def refuse_in_legacy_mode(what: str) -> None:
     """Raise ServiceError when PROMPTMEND_ENV means ``what`` would not be read."""
     path = legacy_env()
     if path:
-        name = config.ENV_FILE_VAR
+        name = paths.ENV_FILE_VAR
         raise ServiceError(
             f"{name} is set ({path}), so {what} would not be read; edit that file, "
             f"or unset {name} and save the settings with `promptmend setup`"

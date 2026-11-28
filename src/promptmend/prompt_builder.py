@@ -5,7 +5,7 @@ from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import user_config_dir
+from .paths import user_config_dir
 from .redaction import safe_repr
 
 # The built-in profiles, as real files next to this module: the wheel installs the package as

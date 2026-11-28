@@ -12,9 +12,9 @@ from dataclasses import replace
 
 import typer
 
-from .. import assets, config, deploy, settings_service, setup_flow, setup_guide, smoke
-from ..config import OUTPUTS
+from .. import assets, deploy, paths, settings_service, setup_flow, setup_guide, smoke
 from ..factory import PROVIDER_NAMES
+from ..parsers import OUTPUTS
 from ..redaction import safe_repr
 from . import common
 from . import ui as ui_cmd
@@ -50,7 +50,7 @@ def _settings_writable(steps: _Steps) -> bool:
     where = setup_flow.storage()
     if not where.writable:
         steps.later(
-            f"{config.ENV_FILE_VAR} is set, so settings and keys stay in that file; setup "
+            f"{paths.ENV_FILE_VAR} is set, so settings and keys stay in that file; setup "
             "does not write config.toml or the secrets file"
         )
         return False

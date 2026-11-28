@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from conftest import read_env_file, resolved_settings
 
-from promptmend import config
+from promptmend import config, parsers
 from promptmend.config import ConfigLayers, Finding, Settings, env_names, split_model_spec
 from promptmend.providers.registry import PROVIDERS
 
@@ -175,7 +175,7 @@ def test_pro_provider_picks_the_unnamed_provider(
 @pytest.mark.parametrize("raw", ["", "  "])
 def test_empty_pro_provider_is_openrouter(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", raw)
-    assert resolved_settings().pro_provider == config.DEFAULT_PRO_PROVIDER == "openrouter"
+    assert resolved_settings().pro_provider == parsers.DEFAULT_PRO_PROVIDER == "openrouter"
     assert ConfigLayers.resolve().settings().provider_for("pro") == "openrouter"
 
 
@@ -276,7 +276,7 @@ def test_model_setting() -> None:
     assert config.model_setting("openai", "pro") == "OPENAI_MODEL"
     assert config.model_setting("anthropic", "pro") == "ANTHROPIC_MODEL"
     assert config.model_setting("ollama", "pro") == "OLLAMA_MODEL"
-    assert config.PRO_PROVIDERS == ("openrouter", "anthropic", "openai")
+    assert parsers.PRO_PROVIDERS == ("openrouter", "anthropic", "openai")
 
 
 # --max-tokens is kept for the local providers too, which have no cap setting of their own.

@@ -20,8 +20,9 @@ from typing import Any
 import pytest
 
 from promptmend import history, history_spool
-from promptmend.config import Settings, user_data_dir
+from promptmend.config import Settings
 from promptmend.history import HistoryError, HistoryStore, load_price_table
+from promptmend.paths import user_data_dir
 
 SRC = Path(history.__file__).resolve().parents[1]
 

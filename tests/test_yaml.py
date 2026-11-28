@@ -5,8 +5,9 @@ from typing import Any
 
 import yaml
 
-from promptmend.config import EFFORTS, KEEP, TIERS, split_model_spec
+from promptmend.config import KEEP, TIERS, split_model_spec
 from promptmend.factory import PROVIDER_NAMES
+from promptmend.parsers import EFFORTS
 from promptmend.prompt_builder import PROFILES
 from promptmend.recorder import TRIGGER_IDS
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import os
 import re
 from collections.abc import Callable, Mapping
@@ -10,157 +9,41 @@ from typing import Any
 
 from . import config_files
 from .config_files import CONFIG_VERSION, VERSION_KEY, ConfigFileError, SecretStoreError
-from .providers.registry import PROVIDERS
-from .redaction import (
-    GATE_PACKS,
-    InvalidExtraPattern,
-    compile_extra,
-    safe_repr,
-    set_user_patterns,
+from .env_file import _read_env_file
+from .parsers import (
+    DEFAULT_PRO_PROVIDER,
+    EFFORTS,
+    PASTE,
+    _anthropic_effort,
+    _base_url,
+    _bool,
+    _builtin_profiles,
+    _data_collection,
+    _effort,
+    _gate_packs,
+    _optional_positive_int,
+    _output,
+    _positive_float,
+    _positive_int,
+    _pro_provider,
+    _regexes,
+    _retention_days,
+    _temperature,
 )
+from .paths import (
+    ENV_FILE_VAR,
+    env_file_override,
+    settings_file,
+    unread_env_files,
+    user_config_dir,
+)
+from .providers.registry import PROVIDERS
+from .redaction import compile_extra, safe_repr, set_user_patterns
 
-
-def _parse_value(raw: str) -> str:
-    """A .env value: the text inside a leading quote pair, else the text before an inline
-    ` # comment` (so `OPENROUTER_PROVIDER=openai  # note` is just `openai`)."""
-    value = raw.strip()
-    if value[:1] in ("'", '"'):
-        end = value.find(value[0], 1)
-        if end > 0:
-            return value[1:end]
-    return re.split(r"\s+#", value, maxsplit=1)[0]
-
-
-def _cut_at_comment(raw: str) -> bool:
-    """Whether _parse_value() dropped an unquoted ` #...` from ``raw``: a comment, or part of
-    the value (a regex, a persona) that needed quotes. Only the user can tell."""
-    return _parse_value(raw) != raw.strip() and raw.strip()[:1] not in ("'", '"')
-
-
-# Free-text settings whose value may well hold ` #` (a regex for `#12345`, "I am #1"), so a cut
-# there is reported. Elsewhere ` # note` is the usual dotenv comment and stays silent: no
-# model slug, profile name, number or key holds a space, and a base URL never needs ` #`.
-_HASH_IN_VALUE = frozenset({"PROMPT_EXTRA_PATTERNS", "PROMPT_PERSONA"})
 _EXTRA = "PROMPT_EXTRA_PATTERNS"
 # Names that are no longer settings: a saved one is skipped without a finding, since the user
 # saved it when it was a setting (and `config unset` does not take the name).
 RETIRED = frozenset({"PROMPT_UI_INTRO"})  # the switch for the intro screen, which was removed
-
-
-def _env_text(data: bytes) -> str:
-    """The text of a .env file's bytes. UTF-8, with a leading byte order mark (Windows
-    Notepad) dropped, so it never becomes part of the first key."""
-    return data.decode("utf-8-sig")
-
-
-# Root of an editable install (the repo checkout).
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-
-# The user folders' name.
-APP_DIR = "promptmend"
-# The .env that replaces config.toml and the secrets file (legacy mode), when set (non-empty).
-ENV_FILE_VAR = "PROMPTMEND_ENV"
-
-
-def env_file_override(environ: Mapping[str, str] = os.environ) -> str | None:
-    """The .env PROMPTMEND_ENV names, or None: then it alone holds the saved settings. An
-    empty value counts as unset."""
-    return environ.get(ENV_FILE_VAR) or None
-
-
-def user_config_dir(environ: Mapping[str, str] = os.environ) -> Path:
-    """The settings, the secrets file and the prices: %APPDATA% on Windows, $XDG_CONFIG_HOME
-    or ~/.config elsewhere."""
-    if os.name == "nt":
-        base = Path(environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
-    else:
-        base = Path(environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return base / APP_DIR
-
-
-def user_data_dir(environ: Mapping[str, str] = os.environ) -> Path:
-    """Per-device data (the usage history): never roamed or synced with the settings, since
-    it describes this machine's calls. %LOCALAPPDATA% on Windows, $XDG_DATA_HOME or
-    ~/.local/share elsewhere."""
-    if os.name == "nt":
-        base = Path(environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    else:
-        base = Path(environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-    return base / APP_DIR
-
-
-def settings_file(environ: Mapping[str, str] = os.environ) -> Path:
-    """The user TOML settings file (non-secret settings), the saved source unless
-    PROMPTMEND_ENV names a .env."""
-    return user_config_dir(environ) / config_files.SETTINGS_FILE
-
-
-def unread_env_files(environ: Mapping[str, str] = os.environ) -> list[Path]:
-    """The .env files earlier releases read and this one does not: the user config
-    folder's, and an editable install's checkout's. Their settings would be lost without a
-    word, so repair mode and setup name them."""
-    candidates = [user_config_dir(environ) / ".env"]
-    if (_PROJECT_ROOT / "pyproject.toml").is_file():
-        candidates.append(_PROJECT_ROOT / ".env")
-    return [path for path in candidates if config_files.is_file(path)]
-
-
-def _parse_env_text(text: str) -> tuple[dict[str, str], list[int], list[str]]:
-    """KEY=VALUE pairs of .env text, the numbers of the lines skipped for lacking `=`, and the
-    _HASH_IN_VALUE keys whose unquoted value was cut at ` #` (see _cut_at_comment)."""
-    pairs = {}
-    skipped = []
-    cut = []
-    for number, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip().removeprefix("export ")
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            skipped.append(number)
-            continue
-        key, _, value = line.partition("=")
-        pairs[key.strip()] = _parse_value(value)
-        if key.strip() in _HASH_IN_VALUE and _cut_at_comment(value):
-            cut.append(key.strip())
-    return pairs, skipped, cut
-
-
-def _cut_value_error(key: str) -> str:
-    return f"the value of {key} was cut at ' #' (a comment); quote the value"
-
-
-def _read_env_file(
-    path: Path,
-    note: Callable[[str, str], None],
-    fail: Callable[..., None],
-) -> dict[str, str] | None:
-    """The pairs of the .env PROMPTMEND_ENV names, or None when it cannot be read. A file
-    that exists but cannot be read is noted, as is a line without `=` (by line number or
-    setting name, never content), and a persona cut at ` #`. A file that is not UTF-8 text
-    goes to ``fail``: its settings are lost, which strict mode must not hide. So does
-    PROMPT_EXTRA_PATTERNS cut at ` #`: a gate missing part of its patterns fails closed, and
-    repair mode drops the cut value (the next layer's applies)."""
-    source = f"file:{path}"
-    try:
-        raw_text = _env_text(path.read_bytes())
-    except UnicodeDecodeError:
-        fail(source, f"the .env named by {ENV_FILE_VAR} is not UTF-8 text; save it as UTF-8")
-        return None
-    except OSError:
-        if config_files.lexists(path):
-            note(source, ".env cannot be read; it was skipped")
-        return None
-    pairs, skipped, cut = _parse_env_text(raw_text)
-    for number in skipped:
-        note(source, f"line {number} of .env has no '=' and was ignored")
-    for key in cut:
-        if key == "PROMPT_EXTRA_PATTERNS":
-            fail(source, _cut_value_error(key), (key,))
-            del pairs[key]
-        else:
-            note(source, _cut_value_error(key))
-    return pairs
 
 
 def _saved_layer(
@@ -325,186 +208,7 @@ def saved_text(name: str, value: object) -> str | None:
     return config_files.scalar_text(value)
 
 
-# Parsers raise ValueError(what the value must be); _env and _override name the setting.
-def _bool(raw: str) -> bool:
-    # Strict, so a typo such as OLLAMA_THINK=1 is reported instead of silently meaning false.
-    if raw.lower() not in ("true", "false"):
-        raise ValueError("true or false")
-    return raw.lower() == "true"
-
-
-def _number(
-    cast: Callable[[str], float], expected: str, ok: Callable[[float], bool]
-) -> Callable[[str], float]:
-    """Parser for a finite number that passes ``ok``: an `inf` timeout would hang Espanso."""
-
-    def parse(raw: str) -> float:
-        try:
-            value = cast(raw)
-        except ValueError:
-            value = math.nan
-        if not (math.isfinite(value) and ok(value)):
-            raise ValueError(expected)
-        return value
-
-    return parse
-
-
-_positive_int = _number(int, "a whole number above 0", lambda v: v > 0)
-_positive_float = _number(float, "a number above 0", lambda v: v > 0)
-_non_negative_float = _number(float, "a number of 0 or more", lambda v: v >= 0)
-
-
-def _temperature(raw: str) -> float | None:
-    """PROMPT_TEMPERATURE, ANTHROPIC_TEMPERATURE or OPENAI_TEMPERATURE: empty (set, but to
-    nothing) sends no temperature at all, for models that reject the field; unset keeps the
-    default."""
-    if raw == "":
-        return None
-    try:
-        return _non_negative_float(raw)
-    except ValueError:
-        raise ValueError("empty or a number of 0 or more") from None
-
-
-def _optional_positive_int(raw: str) -> int | None:
-    """An optional number such as OPENROUTER_PRO_MAX_TOKENS or OLLAMA_NUM_CTX: empty (the
-    default) means none of its own, so the caller falls back to another setting or sends
-    nothing."""
-    if raw == "":
-        return None
-    try:
-        return int(_positive_int(raw))
-    except ValueError:
-        raise ValueError("empty or a whole number above 0") from None
-
-
-# Longest usage-history retention, 100 years: a longer one overflows the date arithmetic.
-MAX_RETENTION_DAYS = 36500
-_retention_days = _number(
-    int, f"a whole number from 1 to {MAX_RETENTION_DAYS}", lambda v: 0 < v <= MAX_RETENTION_DAYS
-)
-
-
-def _builtin_profiles(raw: str) -> tuple[str, ...]:
-    """A comma-separated list of built-in profile names, duplicates dropped."""
-    names = tuple(dict.fromkeys(name.strip() for name in raw.split(",") if name.strip()))
-    if not names:
-        return ()
-    from .prompt_builder import PROFILES  # deferred: prompt_builder imports this module
-
-    if any(name not in PROFILES for name in names):
-        raise ValueError(f"empty or a comma-separated list of {', '.join(PROFILES)}")
-    return names
-
-
-def _gate_packs(raw: str) -> tuple[str, ...]:
-    """PROMPT_GATE_PACKS: a comma-separated list of redaction.GATE_PACKS names, duplicates
-    dropped; empty turns every pack off. An unknown name is an error, never a pack silently
-    left out of the gate."""
-    names = tuple(dict.fromkeys(name.strip().lower() for name in raw.split(",") if name.strip()))
-    if any(name not in GATE_PACKS for name in names):
-        raise ValueError(f"empty or a comma-separated list of {', '.join(GATE_PACKS)}")
-    return names
-
-
-def _regexes(raw: str) -> str:
-    """PROMPT_EXTRA_PATTERNS, kept as text (the gate and the history compile it), but
-    rejected here if an entry is not a valid regex. There is no timing probe for a
-    catastrophic pattern: it would run on every trigger and flake on a busy machine;
-    docs/privacy.md warns against nested quantifiers instead."""
-    try:
-        compile_extra(raw)
-    except InvalidExtraPattern as exc:
-        raise ValueError(
-            f"valid ';'-separated regexes; entry {exc.entry} (custom_{exc.entry}) is not a "
-            "valid regex"
-        ) from None
-    return raw
-
-
 TIERS = ("standard", "pro")
-# The providers with the pro tier (registry.ProviderSpec ``pro``): PROMPT_PRO_PROVIDER's
-# values, and the ones --tier pro accepts.
-PRO_PROVIDERS = tuple(name for name, spec in PROVIDERS.items() if spec.pro)
-# OpenRouter `reasoning.effort` and OpenAI `reasoning_effort` values accepted by --effort.
-EFFORTS = ("none", "minimal", "low", "medium", "high")
-# Anthropic Messages API `output_config.effort` values (ANTHROPIC_EFFORT). Not --effort's set:
-# Anthropic has no none or minimal, so --effort stays refused for Anthropic.
-ANTHROPIC_EFFORTS = ("low", "medium", "high", "xhigh", "max")
-
-
-def is_valid_url(url: str) -> bool:
-    """Whether ``url`` is an http:// or https:// URL that urlsplit() can take apart, with a
-    host and a usable port: `http://[::1` (no closing bracket) and `http://host:99999` make
-    urlsplit() or ``.port`` raise ValueError, which would surface later as a traceback."""
-    from urllib.parse import urlsplit
-
-    try:
-        parts = urlsplit(url)
-        _ = parts.port  # raises ValueError on a port out of range or not a number
-    except ValueError:
-        return False
-    return parts.scheme in ("http", "https") and bool(parts.hostname)
-
-
-def _base_url(raw: str) -> str:
-    """A provider's base URL (#368). Whether it must be https is make_provider()'s check: a
-    cloud provider may use plain http only to loopback."""
-    if not is_valid_url(raw):
-        raise ValueError("an http:// or https:// URL with a valid host and port")
-    return raw
-
-
-def _effort(raw: str) -> str:
-    # A typo would otherwise reach the API and come back as an opaque HTTP 400.
-    if raw.lower() not in ("", *EFFORTS):
-        raise ValueError(f"empty or one of {', '.join(EFFORTS)}")
-    return raw.lower()
-
-
-def _anthropic_effort(raw: str) -> str:
-    if raw.lower() not in ("", *ANTHROPIC_EFFORTS):
-        raise ValueError(f"empty or one of {', '.join(ANTHROPIC_EFFORTS)}")
-    return raw.lower()
-
-
-# OpenRouter `provider.data_collection` values: `deny` routes only to endpoints that do not
-# store or train on requests; empty sends no field (OpenRouter's account setting applies).
-DATA_COLLECTION = ("allow", "deny")
-
-
-# PROMPT_PRO_PROVIDER's default, which an empty value also means.
-DEFAULT_PRO_PROVIDER = "openrouter"
-
-
-def _pro_provider(raw: str) -> str:
-    """PROMPT_PRO_PROVIDER: a provider with the pro tier; empty means the default, as for a
-    line left as `PROMPT_PRO_PROVIDER=`. Strict otherwise: a typo would surface only when -ip-
-    runs."""
-    name = raw.strip().lower() or DEFAULT_PRO_PROVIDER
-    if name not in PRO_PROVIDERS:
-        raise ValueError(f"empty or one of {', '.join(PRO_PROVIDERS)}")
-    return name
-
-
-def _data_collection(raw: str) -> str:
-    if raw.lower() not in ("", *DATA_COLLECTION):
-        raise ValueError(f"empty or one of {', '.join(DATA_COLLECTION)}")
-    return raw.lower()
-
-
-# Where improve puts a successful rewrite (PROMPT_OUTPUT, --output): printed for Espanso to
-# paste at the caret, or copied to the clipboard with only markers printed.
-PASTE = "paste"
-CLIPBOARD = "clipboard"
-OUTPUTS = (PASTE, CLIPBOARD)
-
-
-def _output(raw: str) -> str:
-    if raw.lower() not in OUTPUTS:
-        raise ValueError(" or ".join(OUTPUTS))
-    return raw.lower()
 
 
 # Option value meaning "keep the configured setting"; the -if- popup's choice lists

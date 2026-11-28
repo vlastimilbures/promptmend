@@ -27,8 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import assets, installed_version
-from .config import user_data_dir
 from .match_history import KNOWN_SOURCES
+from .paths import user_data_dir
 
 PLACEHOLDER = "__PROMPT_WORKFLOW__"
 STAMP = "# promptmend {version} (managed; edit at your own risk)\n"
