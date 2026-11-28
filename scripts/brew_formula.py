@@ -10,7 +10,9 @@ with `Language::Python::Virtualenv`, and every runtime dependency as a `resource
 the exact sdist uv.lock records (URL and SHA-256), like homebrew-pypi-poet but from the lock,
 so `brew install` gets the versions the release was tested with. Dependencies whose markers
 hold only on macOS or only on Linux go into `on_macos`/`on_linux`; Windows-only ones (colorama)
-are left out. A marker this script cannot evaluate stops it rather than guess.
+are left out. A marker this script cannot evaluate stops it rather than guess. Its caveats,
+which `brew install` prints at the end, name the next steps: start Espanso, then run
+`promptmend setup` (CAVEATS).
 
 Standard library only, and offline: it reads files and never downloads anything.
 """
@@ -35,6 +37,13 @@ DESC = "Rewrite a rough draft into a precise LLM prompt from an Espanso trigger"
 # Homebrew's Python the virtualenv is built on; the markers are evaluated for this version.
 DEFAULT_PYTHON = "3.14"
 ROOT = Path(__file__).resolve().parents[1]
+# The formula's caveats, one line each: what to do after `brew install` (#402).
+CAVEATS = (
+    "PromptMend's triggers run in Espanso (https://espanso.org/install/).",
+    "1. Start Espanso: open the Espanso app, or run `espanso start`.",
+    f"2. Run `{COMMAND} setup`: the settings, an API key, a test call and the",
+    "   deploy of the Espanso match files.",
+)
 
 
 def formula_class(name: str) -> str:
@@ -309,6 +318,13 @@ def render(
     lines += [
         "  def install",
         "    virtualenv_install_with_resources",
+        "  end",
+        "",
+        # Shown after `brew install` (#402): the CLI alone does nothing until setup.
+        "  def caveats",
+        "    <<~EOS",
+        *(f"      {line}" for line in CAVEATS),
+        "    EOS",
         "  end",
         "",
         "  test do",

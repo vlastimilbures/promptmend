@@ -27,6 +27,8 @@ upgrading from an older release. The README's
   day to day, and the clipboard needs a helper tool (see [Linux](#linux)).
 - For the default `-i-` trigger, an [OpenRouter API key](https://openrouter.ai/keys). For
   fully local use, [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) instead.
+- For OpenRouter, an account with credits: without them a new account's first `-i-` fails
+  (see [the benchmark](benchmark.md#at-a-glance) for what a rewrite costs).
 - Python 3.12 or later. You do not install it yourself: Homebrew brings its own, and uv
   downloads one when needed.
 
@@ -66,7 +68,8 @@ The formula lives in the project's own tap,
 [vlastimilbures/homebrew-tap](https://github.com/vlastimilbures/homebrew-tap), not in
 homebrew/core. It installs the sdist attached to the GitHub Release and every dependency from
 PyPI, each pinned by SHA-256 to what the release's `uv.lock` records, into a virtual
-environment on Homebrew's Python.
+environment on Homebrew's Python. When it is done, `brew install` reminds you of the next
+steps: start Espanso, then run `promptmend setup` (see [Set up](#set-up)).
 
 A tap is a third-party repository: Homebrew runs its formulas with your user's rights and
 updates them on every `brew update`. Only add a tap you trust; `brew untap vlastimilbures/tap`
@@ -156,8 +159,9 @@ It prints each command before running it, and:
    from that folder runs (the interface, or a trigger), it stops and changes nothing;
 3. adds `%LOCALAPPDATA%\Programs\promptmend` to your user PATH (once), so a new terminal
    finds `promptmend` (in Windows Terminal, only once every window was closed);
-4. runs the new exe's `promptmend doctor --no-clipboard`, which lists what [Set up](#set-up)
-   still has to do.
+4. runs the new exe's `promptmend doctor --no-clipboard --json` and prints only its verdict
+   line, which before the first [Set up](#set-up) names `promptmend setup` as the next step
+   (run `promptmend doctor` for every check).
 
 It never runs `promptmend setup` or `promptmend espanso deploy`: it only names them as the
 next step. If a uv install of promptmend is still there, it warns that both are installed
@@ -189,8 +193,8 @@ It then installs uv if it is missing (`winget install --id astral-sh.uv -e`, or 
 official installer where there is no winget), installs the wheel attached to the same Release
 with its `constraints.txt` and `--force` (PyPI is not used) on Python 3.13 or later (from
 0.27.0 on; see [uv](#windows) below), and runs `uv tool update-shell`
-and `promptmend doctor --no-clipboard`. It says so when it replaces an editable install from a
-checkout. While a `promptmend` from uv's tool folder runs (the interface, or a trigger), or
+and `promptmend doctor --no-clipboard --json`, of which it prints the verdict line only. It
+says so when it replaces an editable install from a checkout. While a `promptmend` from uv's tool folder runs (the interface, or a trigger), or
 uv's `promptmend.exe` launcher, it stops before uv runs and changes nothing (see
 [Update](#update)). A `PROMPTMEND_CHANNEL` other than `exe` or `uv` is refused. If uv fails with
 `Failed to persist temporary file … Access is denied`, see

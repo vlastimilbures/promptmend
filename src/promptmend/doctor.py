@@ -9,7 +9,8 @@ certificate is checked against (tls), reads the deployed match files, and reads 
 only to report its length. The report never holds a key, the persona or clipboard text,
 since people paste it into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and
 keys are only ever added (the one exception: the previous_install check, removed by owner
-decision, #246; its PATH warning lives on as path_shadow).
+decision, #246; its PATH warning lives on as path_shadow). verdict() sums the report up in
+the one line doctor's text ends with (#402), which the JSON carries as ``verdict``.
 """
 
 from __future__ import annotations
@@ -149,7 +150,112 @@ class Report:
                 }
                 for c in self.checks
             },
+            # Added in #402, so schema_version stays 1.
+            "verdict": verdict(self).to_json(),
         }
+
+
+SETUP_COMMAND = "promptmend setup"
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """The report in one line (#402): how many problems (failed checks) and warnings, and
+    what to do first. ``first`` is the check the line points at; ``setup`` is True when it
+    points at `promptmend setup` instead. The line quotes only check ids and messages, which
+    are safe to paste already."""
+
+    problems: int
+    warnings: int
+    first: str | None
+    setup: bool
+    line: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "problems": self.problems,
+            "warnings": self.warnings,
+            "first": self.first,
+            "setup": self.setup,
+            "line": self.line,
+        }
+
+
+# The checks whose fail or warning `promptmend setup` deals with on a machine with no match
+# files deployed: it saves the key and deploys the match files (which the launcher check
+# reads). pro_provider is not one: it warns only about a deployed file. match_files counts
+# only when it failed (files missing in a folder that exists): its warnings (no Espanso
+# folder, cannot compare, files that are not ours) are ones a setup cannot change.
+SETUP_CHECKS = ("keys", "match_files", "launcher")
+
+
+def _count(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _one_line(text: str) -> str:
+    """``text`` with every run of whitespace (a newline in an exception's text) one space."""
+    return " ".join(text.split())
+
+
+def _not_set_up(report: Report) -> str | None:
+    """What is not set up yet, or None. It hinges on the match files: none managed in
+    Espanso's folder (deployed_triggers(), as pro_provider reports it). A setup with the
+    default answers writes no config.toml, so a missing one alone means nothing; only with no
+    config.toml, no PROMPTMEND_ENV (config mode ``defaults``) and no key set either is nothing
+    set up. A check that could not run says neither."""
+    data = {c.id: c.data for c in report.checks}
+    if data.get("pro_provider", {}).get("deployed") is not False:
+        return None
+    keys = data.get("keys", {}).get("keys") or {}
+    any_key = any(isinstance(k, Mapping) and k.get("set") for k in keys.values())
+    if data.get("config", {}).get("mode") == "defaults" and not any_key:
+        return "nothing is set up yet"
+    return "no match files are deployed yet"
+
+
+def _points_at_setup(check: Check) -> bool:
+    """Whether setup fixes this wrong check (SETUP_CHECKS; match_files only when it failed)."""
+    return check.id in SETUP_CHECKS and (check.id != "match_files" or check.status == FAIL)
+
+
+def verdict(report: Report) -> Verdict:
+    """What doctor's text output ends with, and doctor --json's ``verdict``: always one line.
+
+    Problems are the failed checks, the ones that make doctor exit 4; warnings are counted
+    beside them and point the line only when nothing failed. "First" is the first such check
+    in report order (CHECK_IDS), which already runs install, settings, keys, Espanso, match
+    files, launcher. On a machine with no match files deployed (_not_set_up()) where a check
+    setup deals with is wrong (_points_at_setup()), the line names `promptmend setup` instead;
+    unless a check outside setup's reach failed (the settings, the profiles, the history):
+    then the first of those comes first, and setup on the next run. Warnings outside its
+    reach never hold setup back."""
+    fails = [c for c in report.checks if c.status == FAIL]
+    warns = [c for c in report.checks if c.status == WARN]
+    if not fails and not warns:
+        return Verdict(0, 0, None, False, "No problems found.")
+    parts = []
+    if fails:
+        parts.append(_count(len(fails), "problem"))
+    if warns:
+        parts.append(_count(len(warns), "warning"))
+    counts = ", ".join(parts)
+    candidates = fails
+    missing = _not_set_up(report)
+    if missing:
+        beyond = [c for c in fails if c.id not in SETUP_CHECKS]
+        if beyond:
+            candidates = beyond
+        elif any(_points_at_setup(c) for c in fails + warns):
+            line = f"{counts}: {missing}. Next: `{SETUP_COMMAND}`"
+            return Verdict(len(fails), len(warns), None, True, line)
+    if candidates:
+        first = candidates[0]
+        line = f"{counts}. Fix first: {first.id}: {_one_line(first.message)}"
+    else:
+        first = warns[0]
+        line = f"No problems, {counts}. Check first: {first.id}: {_one_line(first.message)}"
+    return Verdict(len(fails), len(warns), first.id, False, line)
 
 
 # uv's `tool install --force` removes the old tool before it deletes its folder, so on

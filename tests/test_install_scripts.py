@@ -195,7 +195,7 @@ def test_install_command() -> None:
     assert "Assert-Native 'uv' $InstallArgs" in code
     assert "promptmend==" not in code
     assert "@('tool', 'update-shell')" in code
-    assert "@('doctor', '--no-clipboard')" in code
+    assert "$Arguments = @('doctor', '--no-clipboard', '--json')" in code
     assert "'--id', 'astral-sh.uv', '-e'" in code
     assert "'--source', 'winget'" in code
     assert "$WingetAlreadyInstalled = -1978335189" in code
@@ -302,7 +302,7 @@ def test_exe_order() -> None:
         # Interrupted between the two renames: the old folder goes back.
         code.index("if ($hadOld -and -not [IO.Directory]::Exists($Dest)"),
         code.index("Add-UserPath $Dest"),
-        code.index("Invoke-Native $Exe @('doctor', '--no-clipboard')"),
+        code.index("Show-Verdict $Exe"),
         code.index("if ($uvTool) {"),
     ]
     assert dry < steps[0]
@@ -313,6 +313,50 @@ def test_exe_order() -> None:
         "$Version = Get-Version"
     )
     assert "Expand-Archive" not in code
+
+
+# #402: after an install, only doctor's verdict line is shown, never its rows (before setup
+# they list what setup still does). It is read from --json by property name, a missing key
+# or output that is not JSON falls back to a pointer at doctor, and only exit codes 0 and 4
+# pass. Both channels run it, once each, after the CLI is in place; the dry run names it.
+def test_closing_doctor_prints_only_the_verdict() -> None:
+    show = _function("Show-Verdict")
+    steps = [
+        show.index("$Arguments = @('doctor', '--no-clipboard', '--json')"),
+        show.index("Write-Command $Exe $Arguments"),
+        show.index("$ErrorActionPreference = 'Continue'"),
+        show.index("$global:LASTEXITCODE = -1"),
+        show.index("$out = & $Exe @Arguments"),
+        show.index("$code = $LASTEXITCODE"),
+        show.index("if ($code -ne 0 -and $code -ne 4) {"),
+        show.index("try {"),
+        show.index("ConvertFrom-Json -ErrorAction Stop"),
+        show.index("$report.PSObject.Properties['verdict']"),
+        show.index("$verdict.Value.PSObject.Properties['line']"),
+        show.index("} catch {"),
+        show.index("if ($line) {"),
+        show.index("} elseif ($code -eq 4) {"),
+    ]
+    assert steps == sorted(steps)
+    # Never the rows: the output is captured, not passed to Out-Host, and no text is parsed.
+    assert "Out-Host" not in show
+    assert "Invoke-Native" not in show
+    assert "Write-Host $line" in show
+    # Strict mode: every property is looked up, never read blind.
+    assert "$report.verdict" not in show
+    text = INSTALL.read_text("utf-8")
+    assert "doctor found something to do: run 'promptmend doctor' to see what." in text
+    assert "expected before the first setup" not in text
+    code = "\n".join(_lines())
+    assert code.count("Show-Verdict $") == 2
+    assert "@('doctor'" not in code.replace("$Arguments = @('doctor'", "").replace(
+        "Write-Command $Exe @('doctor', '--no-clipboard', '--json')", ""
+    )
+    exe = _function("Install-Exe")
+    assert exe.index("Update-SessionPath @($Dest)") < exe.index("Show-Verdict $Exe")
+    assert "Write-Command $Exe @('doctor', '--no-clipboard', '--json')" in exe
+    uv = _function("Install-WithUv")
+    assert uv.index("Assert-Native $cli @('--version')") < uv.index("Show-Verdict $cli")
 
 
 # The zip is unpacked with .NET (it throws; 5.1's Expand-Archive ignores the error

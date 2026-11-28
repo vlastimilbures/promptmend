@@ -116,6 +116,8 @@ More: [docs/profiles.md](https://github.com/vlastimilbures/promptmend/blob/main/
 - macOS or Windows. Linux works too, with `xclip`, `xsel` or `wl-clipboard`.
 - An [OpenRouter API key](https://openrouter.ai/keys) for `-i-`, or
   [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) for fully local use.
+- For OpenRouter, an account with credits: without them a new account's first `-i-` fails
+  ([what a rewrite costs](https://github.com/vlastimilbures/promptmend/blob/main/docs/benchmark.md#at-a-glance)).
 - Python 3.12 or later, which Homebrew or uv installs for you.
 
 More: [docs/install.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/install.md#requirements).

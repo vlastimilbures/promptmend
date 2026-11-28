@@ -608,7 +608,7 @@ def test_doctor_timing_json_is_additive(
     monkeypatch.setattr(smoke, "time_runs", _fake_time_runs)
     result = _doctor("--no-clipboard", "--espanso-dir", str(espanso), "--json", "--timing")
     data = json.loads(result.stdout)
-    assert set(data) == {"schema_version", "version", "status", "checks", "timing"}
+    assert set(data) == {"schema_version", "version", "status", "checks", "verdict", "timing"}
     assert data["schema_version"] == 1
     assert tuple(data["checks"]) == doctor.CHECK_IDS
     timing = data["timing"]
@@ -672,6 +672,26 @@ def test_doctor_runs_is_bounded(runs: str) -> None:
     assert result.exit_code == common.USAGE
 
 
+# #402: the text ends with the verdict, once, after a blank line (and after --timing's
+# table); --json carries the same line and prints no text verdict; the exit code is the
+# checks' alone.
+def test_doctor_ends_with_the_verdict(
+    espanso: Path, monkeypatch: pytest.MonkeyPatch, fake_run: FakeRunner
+) -> None:
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    monkeypatch.setattr(smoke, "time_runs", _fake_time_runs)
+    where = ("--no-clipboard", "--espanso-dir", str(espanso))
+    data = json.loads(_doctor(*where, "--json").stdout)
+    line = data["verdict"]["line"]
+    assert line.endswith("Next: `promptmend setup`")
+    for extra in ((), ("--timing", "--runs", "1")):
+        result = _doctor(*where, *extra)
+        assert result.exit_code == common.PROBLEMS
+        lines = result.stdout.splitlines()
+        assert lines[-2:] == ["", line]
+        assert result.stdout.count("Next: `promptmend setup`") == 1
+
+
 def test_doctor_json_schema_is_stable(
     espanso: Path, clipboard: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -679,7 +699,7 @@ def test_doctor_json_schema_is_stable(
     monkeypatch.setattr(deploy, "run_command", fake)
     result = _doctor("--json")
     data = json.loads(result.stdout)
-    assert set(data) == {"schema_version", "version", "status", "checks"}
+    assert set(data) == {"schema_version", "version", "status", "checks", "verdict"}
     assert data["schema_version"] == doctor.SCHEMA_VERSION == 1
     assert tuple(data["checks"]) == doctor.CHECK_IDS
     for check in data["checks"].values():
