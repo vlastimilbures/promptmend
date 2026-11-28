@@ -36,7 +36,9 @@ All notable changes to this project are documented here. The format follows
   instead of two, so `7 Try` is no longer cut off. The footer leaves out About (`a`) and High
   contrast (`t`), which still work, so `q Quit` shows on every tab, the Settings list's keys
   included. The Try tab's four pickers are one line each, without a border, and fit one row
-  at 70 columns without wrapping a value such as `Real provider` or `as configured`.
+  at 70 columns without wrapping a value such as `Real provider` or `as configured`. A long
+  profile name of your own is cut in the closed picker, so the Send dialog now names the
+  profile too (for `as configured`, the one it uses).
 - Interface: on the Settings tab a row at its built-in default no longer looks disabled
   (#388). Names and values always have the normal text colour; only the word `default` in
   the source column is muted. The dot means only "set by you": a filled `●`, in the theme's

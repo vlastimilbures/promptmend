@@ -255,11 +255,13 @@ result before a trigger pastes one.
 1. Type the draft.
 2. Pick the provider, the profile, the tier and where it runs (Real provider or Dry run).
    The profile starts at "as configured", which uses `PROMPT_PROFILE` (or `PROMPT_PRO_PROFILE`,
-   if set, on the pro tier) exactly as a trigger does.
+   if set, on the pro tier) exactly as a trigger does. A long profile name is cut in the
+   closed picker; its list and the Send dialog show it whole.
 3. Press Run. One run at a time.
 
-- **Real provider** first asks, naming the provider, model and base URL; nothing is sent
-  before you confirm. A confirmed call may be charged and is recorded in the
+- **Real provider** first asks, naming the provider, model, base URL and profile ("as
+  configured" with the profile it uses); nothing is sent before you confirm. A confirmed
+  call may be charged and is recorded in the
   [usage history](privacy.md#usage-history) as a direct call with the trigger `-try-`, so
   `stats` tells it from `promptmend improve` typed in a terminal. Home's session log shows it
   with the draft withheld.
@@ -299,9 +301,10 @@ models, never a made-up 0.
 | Up, Down, Enter | Move in [Home's rows](#home) and open the tab a row names |
 | Up, Down, `j`, `k`, Space, Enter, `/` | Move and change in the [Settings list](#settings-tab) |
 
-The footer shows the keys of the tab you are on, Reload and Quit; `a` and `t` work everywhere
-but are left out of it, so Quit fits a 70-column terminal. While you type in the Try tab's
-draft, the footer shows only Escape: letters go into the draft.
+The footer shows the keys of the tab you are on, Reload and Quit. `a` and `t` are left out of
+it, so Quit fits a 70-column terminal; they work on every tab, the Settings list included, but
+not while you type in the Settings filter or the Try tab's draft (letters go into the text;
+the footer then shows only Escape), and not on a dialog, About or the setup wizard.
 
 ## Accessibility
 

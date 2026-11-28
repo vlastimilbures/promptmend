@@ -8,7 +8,8 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -28,6 +29,8 @@ from promptmend.tui.try_pane import CONFIGURED, REAL, STUB, TryPane
 
 if TYPE_CHECKING:
     from conftest import FakeHttp, HistoryRows
+
+    from promptmend.tui.state import State
 
 # Built at runtime, so no key-shaped literal lands in the repo (gitleaks).
 KEY = "sk-or-v1-" + "cd34" * 16
@@ -102,13 +105,20 @@ class Seen:
 def drive(
     scenario: Callable[[ManageApp, Pilot[int]], Awaitable[None]],
     extra: dict[str, str] | None = None,
+    profiles: list[prompt_builder.UserProfile] | None = None,
 ) -> Seen:
     """Run ``scenario`` on the Try tab. A fixed State (``extra`` added to its environment, read
-    again on each reload, so a scenario may change it): the tab reads the (per-test) settings
-    itself when it runs, and the State only for where "Run against" starts."""
+    again on each reload, so a scenario may change it; ``profiles`` in place of its own): the
+    tab reads the (per-test) settings itself when it runs, and the State only for where "Run
+    against" starts and for the profile picker's names."""
+
+    def state(group_by: str) -> State:
+        fixed = fixed_state(group_by, extra)
+        return fixed if profiles is None else replace(fixed, profiles=profiles)
+
     app = ManageApp(
-        loader=lambda g, _first: fixed_state(g, extra),
-        quick_loader=lambda g: quick_of(fixed_state(g, extra)),
+        loader=lambda g, _first: state(g),
+        quick_loader=lambda g: quick_of(state(g)),
     )
     seen: list[Seen] = []
 
@@ -465,6 +475,57 @@ def test_pro_tier_preview_names_the_pro_model(cloud: None, fake_http: FakeHttp) 
 
     drive(scenario)
     assert "Model: openai/gpt-6-luna" in notes[0]
+    # PROMPT_PRO_PROFILE is empty: the pro tier falls back to PROMPT_PROFILE.
+    assert "Profile: default (as configured)" in notes[0]
+    assert fake_http.requests == []
+
+
+def test_the_send_dialog_names_the_pro_profile_as_configured(
+    cloud: None, fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PROMPT_PRO_PROFILE", "general")
+    notes: list[str] = []
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        for tier in ("pro", "standard"):
+            await run(app, pilot, DRAFT, target=REAL, tier=tier)
+            assert isinstance(app.screen, ConfirmModal)
+            notes.append(app.screen.preview)
+            await pilot.press("escape")
+            await settle(pilot)
+
+    drive(scenario)
+    assert "Profile: general (as configured)" in notes[0]
+    assert "Profile: default (as configured)" in notes[1]
+    assert fake_http.requests == []
+
+
+# A profile's name may be 64 characters (#394): the closed picker cuts a long one, so the Send
+# dialog names the picked profile whole, and two names alike up to the cut stay apart there.
+LONG_PROFILES = ("customer-support-german-formal", "customer-support-german-casual")
+
+
+def test_the_send_dialog_names_a_long_profile_whole(cloud: None, fake_http: FakeHttp) -> None:
+    notes: list[str] = []
+    profiles = [
+        prompt_builder.UserProfile(name, Path(f"/home/me/profiles/{name}.md"), prompt_builder.ADDED)
+        for name in LONG_PROFILES
+    ]
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        options = tab(app).query_one("#try-profile", Select)
+        assert [value for _, value in options._options][-2:] == list(LONG_PROFILES)
+        for name in LONG_PROFILES:
+            await run(app, pilot, DRAFT, target=REAL, profile=name)
+            assert isinstance(app.screen, ConfirmModal)
+            notes.append(app.screen.preview)
+            await pilot.press("escape")
+            await settle(pilot)
+
+    drive(scenario, profiles=profiles)
+    assert [line for n in notes for line in n.splitlines() if line.startswith("Profile:")] == [
+        f"Profile: {name}" for name in LONG_PROFILES
+    ]
     assert fake_http.requests == []
 
 

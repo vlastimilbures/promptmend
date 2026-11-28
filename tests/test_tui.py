@@ -18,12 +18,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from rich.cells import cell_len
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
 from promptmend import config, config_store, deploy, history, settings_service, smoke, update_check
+from promptmend.factory import PROVIDER_NAMES
 from promptmend.history import HistoryStore
+from promptmend.prompt_builder import PROFILES
 from promptmend.tui import (
     base,
     history_pane,
@@ -33,6 +36,7 @@ from promptmend.tui import (
     settings_model,
     settings_pane,
     triggers_pane,
+    try_pane,
 )
 from promptmend.tui.app import HIGH_CONTRAST, TABS, ManageApp
 from promptmend.tui.home import pill
@@ -1398,6 +1402,10 @@ def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
             if tab == "settings":
                 focused = app.focused
                 seen["settings focused"] = focused is not None and focused.id == "settings-list"
+                # t works with the list focused too, as docs/interface.md "Keys" says.
+                await pilot.press("t")
+                seen["t on the list"] = app.theme == HIGH_CONTRAST.name
+                await pilot.press("t")
             quit_by_tab[tab] = _quit_shown(app, width)
         seen["quit"] = quit_by_tab
         # In the draft a letter is typed, not a key: the footer shows only Leave (Escape).
@@ -1418,7 +1426,13 @@ def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
     assert seen.pop("inside") == [True] * len(TABS)
     assert seen.pop("quit") == dict.fromkeys(TABS, True)
     assert seen.pop("draft footer") == [("Leave", True)]
-    assert seen == {"narrow": True, "settings focused": True, "t": True, "a": True}
+    assert seen == {
+        "narrow": True,
+        "settings focused": True,
+        "t on the list": True,
+        "t": True,
+        "a": True,
+    }
 
 
 # The tab bar keeps Textual's two spaces between tabs from 80 columns on (#394).
@@ -1437,46 +1451,53 @@ def test_the_tab_spacing_narrows_only_below_80_columns(espanso: FakeRunner) -> N
     assert widths[79] == widths[70] == [n + 1 for n in labels]
 
 
-# The Try tab's four pickers (#394): compact, one row, each value on one line and whole at 80
-# and 70 columns, "Real provider" and "as configured" included.
+# The Try tab's four pickers (#394): compact, one row, one line each, and every built-in value
+# drawn whole at 80 and 70 columns (no ellipsis): each target, provider and tier, "as
+# configured" and the built-in profiles. Measured against the cells the value gets on screen,
+# not the label's text, which keeps the whole value however it is cut. A failure names the
+# width in app.CSS to raise.
+_TRY_PICKERS = {
+    "try-target": (
+        {value: text for text, value in try_pane.TARGETS},
+        "the 1fr of #try-target-option",
+    ),
+    "try-provider": ({n: n for n in PROVIDER_NAMES}, "#try-provider-option"),
+    "try-profile": (
+        {try_pane.CONFIGURED: "as configured", **{n: n for n in PROFILES}},
+        "the 1fr of #try-profile-option",
+    ),
+    "try-tier": ({t: t for t in config.TIERS}, "#try-tier-option"),
+}
+
+
 @pytest.mark.parametrize("width", [80, 70])
-def test_the_try_pickers_never_wrap(width: int, espanso: FakeRunner) -> None:
-    shown: list[tuple[str, int, str]] = []
+def test_the_try_pickers_never_wrap_or_cut(width: int, espanso: FakeRunner) -> None:
+    cut: list[str] = []
+    texts: list[str] = []
     rows: set[int] = set()
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         await pilot.press("7")
         await settle(pilot)
-        for id_, values in (
-            ("try-target", ("real", "stub")),
-            ("try-provider", ("openrouter", "lmstudio")),
-            ("try-profile", ("(configured)", "general")),
-            ("try-tier", ("standard", "pro")),
-        ):
+        for id_, (values, css) in _TRY_PICKERS.items():
             select = app.main.query_one(f"#{id_}", Select)
             rows.add(select.region.y)
-            for value in values:
+            assert select.region.right <= width
+            label = select.query_one("SelectCurrent #label", Static)
+            for value, text in values.items():
                 select.value = value
                 await pilot.pause()
-                label = select.query_one("SelectCurrent #label", Static)
-                shown.append((id_, select.region.height, str(label.render())))
-                assert select.region.right <= width
+                texts.append(str(label.render()))
+                if select.region.height != 1 or label.region.width < cell_len(text):
+                    cut.append(
+                        f"{text!r} needs {cell_len(text)} cells, {label.region.width} drawn "
+                        f"at {width} columns: raise {css} in app.CSS"
+                    )
 
     drive(scenario, size=(width, 24))
     assert len(rows) == 1
-    assert shown == [
-        (id_, 1, text)
-        for id_, text in (
-            ("try-target", "Real provider"),
-            ("try-target", "Dry run"),
-            ("try-provider", "openrouter"),
-            ("try-provider", "lmstudio"),
-            ("try-profile", "as configured"),
-            ("try-profile", "general"),
-            ("try-tier", "standard"),
-            ("try-tier", "pro"),
-        )
-    ]
+    assert texts == [text for values, _ in _TRY_PICKERS.values() for text in values.values()]
+    assert cut == []
 
 
 def test_only_home_is_built_until_a_tab_opens(espanso: FakeRunner) -> None:

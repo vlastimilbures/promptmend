@@ -199,17 +199,27 @@ class TryPane(Pane):
         self.app.push_screen(
             ConfirmModal(
                 f"Send this draft to {provider}?",
-                self._preview(layers, cfg, provider, tier, len(draft)),
+                self._preview(layers, cfg, provider, tier, profile, len(draft)),
                 confirm="Send",
             ),
             done,
         )
 
     def _preview(
-        self, layers: ConfigLayers, cfg: Settings, provider: str, tier: str, length: int
+        self,
+        layers: ConfigLayers,
+        cfg: Settings,
+        provider: str,
+        tier: str,
+        profile: str | None,
+        length: int,
     ) -> str:
+        """What the Send dialog names. The profile whole, since the closed picker cuts a long
+        name; "as configured" with what it resolves to for this call (cfg is for_call()'s:
+        PROMPT_PRO_PROFILE on the pro tier when set, else PROMPT_PROFILE)."""
         model = model_setting(provider, tier)
         url = f"{provider.upper()}_BASE_URL"
+        shown_profile = profile or f"{cfg.profile or 'empty'} (as configured)"
         recorded = (
             "It is recorded in the usage history as -try- (a direct call, no trigger)."
             if cfg.history
@@ -220,6 +230,7 @@ class TryPane(Pane):
                 f"Provider: {provider}",
                 f"Model: {common.shown_value(model, layers.entries[model])}",
                 f"Base URL: {common.shown_value(url, layers.entries[url])}",
+                f"Profile: {shown_profile}",
                 f"Draft: {length} characters, typed here (the clipboard is not read)",
                 "",
                 "It goes through the data-protection gate as a trigger's draft does. A cloud "
