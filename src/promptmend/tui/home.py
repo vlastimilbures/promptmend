@@ -62,7 +62,8 @@ class HomeRow:
     """``status`` is ok, warn, fail, note or checking (WAIT); ``detail`` is the short note on
     the right (key set); ``jump`` the tab id that shows more; ``problem`` the headline's
     sentence when not ok; ``key`` the key this row's trigger is missing; ``redeploy``
-    whether a deploy fixes this row (match files not deployed, out of date or edited)."""
+    whether a deploy fixes this row (match files not deployed, out of date or edited,
+    or a stale deployed -ip-, its key missing or not)."""
 
     status: str
     label: str

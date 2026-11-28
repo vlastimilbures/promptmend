@@ -780,7 +780,7 @@ def test_try_tab_and_setup_wizard_change_the_tab_once() -> None:
         app.open_setup()
         await _settle(app, pilot)
         assert app.screen is not app.main
-        app.pop_screen()  # closed as its Quit button does
+        await pilot.press("q")  # Quit setup (#393): opened from Home, back to Home
         await _settle(app, pilot)
         assert app.screen is app.main
         assert changes == ["try", "home"]
