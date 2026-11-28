@@ -23,7 +23,7 @@ promptmend config validate   # the settings alone, as a trigger reads them
 ```
 
 `doctor` exits 4 when it finds a problem and names it. Its output is safe to paste into an
-issue: it never shows a key, your persona or clipboard text. The interface's Diagnostics tab
+issue: it never shows a key, your persona or clipboard text. The interface's Checks tab
 shows the same checks.
 
 `doctor` also asks pypi.org whether a newer release exists, at most once a day, and keeps the

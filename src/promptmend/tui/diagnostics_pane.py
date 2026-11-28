@@ -1,4 +1,5 @@
-"""The Diagnostics tab: the provider routes, the settings layers and every doctor check."""
+"""The Checks tab (id `diagnostics`): the provider routes, the settings layers and every
+doctor check."""
 
 from __future__ import annotations
 

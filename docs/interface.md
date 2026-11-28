@@ -99,8 +99,11 @@ and on cloud otherwise. `--non-interactive` (or `--plain`) runs without the wiza
 | `3` | Profiles | Built-in and your own profiles; pick the default profile (Set default starts at the highlighted row: a retired name at its target, one of yours only when a trigger would use it, added or replacing a built-in), edit a profile in `$VISUAL` or `$EDITOR` |
 | `4` | Triggers | The match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
 | `5` | History | Usage statistics by trigger, provider, model or day; export, prune, reset |
-| `6` | Diagnostics | Each provider's model, base URL, key and whether the draft leaves this machine; the settings layers and any problem in the settings files; the `doctor` checks |
+| `6` | Checks | Each provider's model, base URL, key and whether the draft leaves this machine; the settings layers and any problem in the settings files; the `doctor` checks |
 | `7` | Try | Rewrite a typed draft with a confirmed provider, or check the wiring with a dry run |
+
+The Checks tab was called Diagnostics in 0.27.0 and earlier. All seven tabs fit a 70-column
+terminal: below 80 columns the tabs have one space between them instead of two.
 
 Every button's tooltip shows the command that does the same in a terminal, and every result
 starts with that command (`$ promptmend config set …`).
@@ -296,6 +299,10 @@ models, never a made-up 0.
 | Up, Down, Enter | Move in [Home's rows](#home) and open the tab a row names |
 | Up, Down, `j`, `k`, Space, Enter, `/` | Move and change in the [Settings list](#settings-tab) |
 
+The footer shows the keys of the tab you are on, Reload and Quit; `a` and `t` work everywhere
+but are left out of it, so Quit fits a 70-column terminal. While you type in the Try tab's
+draft, the footer shows only Escape: letters go into the draft.
+
 ## Accessibility
 
 - `t` switches to a high-contrast theme.
@@ -307,4 +314,4 @@ models, never a made-up 0.
 
 - [Commands](commands.md): the headless commands behind every button
 - [Install](install.md#set-up): `setup` and `setup --non-interactive`
-- [Troubleshooting](troubleshooting.md): what the Diagnostics checks mean
+- [Troubleshooting](troubleshooting.md): what the Checks tab's checks mean

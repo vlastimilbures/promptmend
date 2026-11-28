@@ -31,6 +31,12 @@ All notable changes to this project are documented here. The format follows
   row that could not be checked (`not checked`, no tab to go to); a missing key, known from the
   settings alone, has its button at once. From Home, Tab then Enter reaches it. The
   highlighted row is all in the highlight's colours, its status word too.
+- Interface: every tab and the Quit hint fit a 70-column terminal (#394). The Diagnostics tab
+  is now called Checks (still `6`), and below 80 columns the tabs have one space between them
+  instead of two, so `7 Try` is no longer cut off. The footer leaves out About (`a`) and High
+  contrast (`t`), which still work, so `q Quit` shows on every tab, the Settings list's keys
+  included. The Try tab's four pickers are one line each, without a border, and fit one row
+  at 70 columns without wrapping a value such as `Real provider` or `as configured`.
 - Interface: on the Settings tab a row at its built-in default no longer looks disabled
   (#388). Names and values always have the normal text colour; only the word `default` in
   the source column is muted. The dot means only "set by you": a filled `●`, in the theme's

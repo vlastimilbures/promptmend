@@ -91,7 +91,7 @@ class Recipe:
 
 # Home's empty session log: commands worth knowing, each one the interface also runs.
 RECIPES = (
-    Recipe(("doctor",), "every check, as on Diagnostics"),
+    Recipe(("doctor",), "every check, as on the Checks tab"),
     Recipe(("config", "show"), "each setting and where it comes from"),
     Recipe(("config", "set", "PROMPT_HISTORY", "false"), "switch the usage history off"),
     Recipe(("secrets", "set", "OPENROUTER_API_KEY"), "save a key (typed hidden)"),

@@ -1367,6 +1367,118 @@ def test_digits_switch_tabs_and_t_toggles_contrast(espanso: FakeRunner) -> None:
     assert seen == [True] * 9
 
 
+def _quit_shown(app: ManageApp, width: int) -> bool:
+    """The footer's Quit key is drawn whole inside a ``width``-column screen."""
+    from textual.widgets._footer import FooterKey
+
+    keys = [k for k in app.screen.query(FooterKey) if k.description == "Quit"]
+    return len(keys) == 1 and keys[0].region.width > 0 and keys[0].region.right <= width
+
+
+# At 70 columns (#394), every tab label lies whole inside the screen and the footer still
+# shows Quit on every tab, the Settings list focused (Edit, Toggle, Reset, Filter added)
+# included. About and High contrast are off the footer and still work. Pilot, not a
+# snapshot, so Windows checks it too.
+def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
+    from textual.widgets._footer import FooterKey
+    from textual.widgets._tabbed_content import ContentTab
+
+    width = 70
+    seen: dict[str, Any] = {}
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        tabs = list(app.main.query(ContentTab))
+        seen["labels"] = [str(t.label) for t in tabs]
+        seen["inside"] = [t.region.x >= 0 and t.region.right <= width for t in tabs]
+        seen["narrow"] = app.main.has_class("-narrow")
+        quit_by_tab = {}
+        for n, tab in enumerate(TABS, start=1):
+            await pilot.press(str(n))
+            await settle(pilot)
+            if tab == "settings":
+                focused = app.focused
+                seen["settings focused"] = focused is not None and focused.id == "settings-list"
+            quit_by_tab[tab] = _quit_shown(app, width)
+        seen["quit"] = quit_by_tab
+        # In the draft a letter is typed, not a key: the footer shows only Leave (Escape).
+        app.main.query_one("#try-draft").focus()
+        await settle(pilot)
+        seen["draft footer"] = [
+            (k.description, k.region.right <= width) for k in app.screen.query(FooterKey)
+        ]
+        app.main.set_focus(None)
+        await pilot.press("t")
+        seen["t"] = app.theme == HIGH_CONTRAST.name
+        await pilot.press("a")
+        await pilot.pause()
+        seen["a"] = type(app.screen).__name__ == "AboutScreen"
+
+    drive(scenario, size=(width, 24))
+    assert seen.pop("labels") == [label for label, _ in TABS.values()]
+    assert seen.pop("inside") == [True] * len(TABS)
+    assert seen.pop("quit") == dict.fromkeys(TABS, True)
+    assert seen.pop("draft footer") == [("Leave", True)]
+    assert seen == {"narrow": True, "settings focused": True, "t": True, "a": True}
+
+
+# The tab bar keeps Textual's two spaces between tabs from 80 columns on (#394).
+def test_the_tab_spacing_narrows_only_below_80_columns(espanso: FakeRunner) -> None:
+    from textual.widgets._tabbed_content import ContentTab
+
+    widths: dict[int, list[int]] = {}
+    for width in (80, 79, 70):
+
+        async def scenario(app: ManageApp, pilot: Pilot[int], width: int = width) -> None:
+            widths[width] = [t.region.width for t in app.main.query(ContentTab)]
+
+        drive(scenario, size=(width, 24))
+    labels = [len(label) for label, _ in TABS.values()]
+    assert widths[80] == [n + 2 for n in labels]
+    assert widths[79] == widths[70] == [n + 1 for n in labels]
+
+
+# The Try tab's four pickers (#394): compact, one row, each value on one line and whole at 80
+# and 70 columns, "Real provider" and "as configured" included.
+@pytest.mark.parametrize("width", [80, 70])
+def test_the_try_pickers_never_wrap(width: int, espanso: FakeRunner) -> None:
+    shown: list[tuple[str, int, str]] = []
+    rows: set[int] = set()
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("7")
+        await settle(pilot)
+        for id_, values in (
+            ("try-target", ("real", "stub")),
+            ("try-provider", ("openrouter", "lmstudio")),
+            ("try-profile", ("(configured)", "general")),
+            ("try-tier", ("standard", "pro")),
+        ):
+            select = app.main.query_one(f"#{id_}", Select)
+            rows.add(select.region.y)
+            for value in values:
+                select.value = value
+                await pilot.pause()
+                label = select.query_one("SelectCurrent #label", Static)
+                shown.append((id_, select.region.height, str(label.render())))
+                assert select.region.right <= width
+
+    drive(scenario, size=(width, 24))
+    assert len(rows) == 1
+    assert shown == [
+        (id_, 1, text)
+        for id_, text in (
+            ("try-target", "Real provider"),
+            ("try-target", "Dry run"),
+            ("try-provider", "openrouter"),
+            ("try-provider", "lmstudio"),
+            ("try-profile", "as configured"),
+            ("try-profile", "general"),
+            ("try-tier", "standard"),
+            ("try-tier", "pro"),
+        )
+    ]
+
+
 def test_only_home_is_built_until_a_tab_opens(espanso: FakeRunner) -> None:
     """#316: the other tabs are built the first time they open, by a digit, by the arrows on
     the tab bar or by a click, and each shows the current State at once."""
@@ -1677,7 +1789,7 @@ def test_home_shows_doctor_and_checks_again(espanso: FakeRunner) -> None:
         )
         shown = _rendered(home, "#home-headline") + _rendered(home, "#home-rows")
         assert "Not ready: OPENROUTER_API_KEY is not set, so -i- cannot rewrite." in shown
-        assert "fail  Rewrites" not in shown  # the label is FAIL, as in Diagnostics
+        assert "fail  Rewrites" not in shown  # the label is FAIL, as on the Checks tab
         assert "FAIL  Rewrites" in shown
         assert "-> 2 Settings" in shown
         await press(app, pilot, "#home-reload")
@@ -1690,7 +1802,7 @@ def test_home_shows_doctor_and_checks_again(espanso: FakeRunner) -> None:
     assert {" ".join(c[:2]) for c in espanso.calls} <= {"espanso path", "espanso status"}
 
 
-# A persona matching the gate's patterns is a warning on Home and in Diagnostics, by finding
+# A persona matching the gate's patterns is a warning on Home and on the Checks tab, by finding
 # label only (#29 B).
 def test_home_warns_of_a_persona_matching_the_patterns(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
@@ -3325,7 +3437,7 @@ def test_history_unreadable_store(espanso: FakeRunner, monkeypatch: pytest.Monke
     drive(scenario)
 
 
-# --- Diagnostics --------------------------------------------------------------------------
+# --- Checks (diagnostics_pane) ------------------------------------------------------------
 
 
 def test_diagnostics_store_and_layers(espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch) -> None:

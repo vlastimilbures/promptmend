@@ -97,9 +97,11 @@ class TryPane(Pane):
                 ("try-profile", "Profile", _profiles(list(PROFILES)), CONFIGURED),
                 ("try-tier", "Tier", [(t, t) for t in TIERS], TIERS[0]),
             ):
-                with Vertical(classes="try-option"):
+                with Vertical(classes="try-option", id=f"{id_}-option"):
                     yield Label(label)
-                    yield Select(options, value=value, allow_blank=False, id=id_)
+                    # Compact (borderless, one line): four fit one row at 70 columns with no
+                    # value wrapped (#394; their widths are in app.CSS).
+                    yield Select(options, value=value, allow_blank=False, compact=True, id=id_)
         yield button_row(("try-run", "Run"))
         yield Static("No run yet.", id="try-usage", markup=False)
         yield TextArea("", id="try-result", read_only=True, soft_wrap=True)
