@@ -198,13 +198,14 @@ class SetupScreen(Screen[None]):
 
     @property
     def working(self) -> bool:
-        """An install or the test is running: Back, Next and Quit setup wait for it."""
+        """An install or the test is running: Back, Next and Quit setup are refused until it
+        ends (nothing is queued)."""
         return self._working
 
     @working.setter
     def working(self, value: bool) -> None:
         self._working = value
-        self.refresh_bindings()  # Quit setup greys out while it runs
+        self.refresh_bindings()  # Back and Quit setup grey out while it runs
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Quit setup is hidden while a key field has the focus (the field takes `q`); it and
@@ -692,13 +693,13 @@ class SetupScreen(Screen[None]):
     def _show_done(self, *, focus: bool = True) -> None:
         """The checklist; ``focus`` puts the focus on Quit (Close), off when a refresh comes
         while the person is already somewhere in this step."""
-        state = self.manage.state
-        if state is None:
+        state, rows = self.manage.state, self._rows()
+        if state is None or rows is None:
             return
         summary = Text()
         use = self.answer(state.settings)
         saved = setup_flow.saved_settings(state.settings)
-        for row in self._rows() or []:
+        for row in rows:
             summary.append(f"{row.mark} ", style=_MARK_STYLES[row.mark])
             summary.append(f"{row.label}: ", style="bold")
             summary.append(f"{row.text}\n")

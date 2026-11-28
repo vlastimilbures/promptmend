@@ -642,9 +642,11 @@ def done_rows(
 
 
 def _match_row(plan: deploy.Plan | None, skipped: Sequence[str], reading: bool) -> DoneRow:
-    """The Match files row: skipped by --no-deploy, unknown while the folder is still being
-    read, failed while Espanso's folder cannot be read or a file is left to write (the
-    triggers do not run until it is), else ok."""
+    """The Match files row: skipped by --no-deploy, unknown before the first read of the
+    match folder lands (a later re-read keeps the last result on screen; with no State at
+    all the rail shows every passed step unknown, rail()), failed while Espanso's folder
+    cannot be read or a file is left to write (the triggers do not run until it is), else
+    ok."""
     label = "Match files"
     if "espanso" in skipped:
         return DoneRow(SKIPPED, label, "skipped (--no-deploy)", "espanso")
