@@ -6,7 +6,7 @@ import os
 import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
 import pytest
@@ -405,3 +405,105 @@ def smoke_in_process(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(pipeline, "_clipboard", clipboard)
     monkeypatch.setattr(smoke, "run_cli", run_cli)
     return calls
+
+
+class FakeTimer:
+    """One of FakeClock's timers: ``action`` runs once the clock reaches ``due``, unless the
+    timer was cancelled first. ``interval`` is the wait it was started with, as on a
+    threading.Timer."""
+
+    def __init__(
+        self, clock: FakeClock, interval: float, due: float, action: Callable[[], None]
+    ) -> None:
+        self._clock = clock
+        self.interval, self.due, self.action = interval, due, action
+        self.cancelled = False
+        self.fired = False
+
+    def cancel(self) -> None:
+        if not (self.fired or self.cancelled) and self.due <= self._clock.now:
+            # A threading.Timer would have fired by now (at once, for a wait of 0): a test
+            # that cancels it unfired passes only on a race production would lose.
+            self._clock.problems.append(f"a timer due at {self.due} was cancelled unfired")
+        self.cancelled = True
+
+    def fire_anyway(self) -> None:
+        """Run the action although the timer was cancelled, as a threading.Timer whose wait
+        had already ended does."""
+        self.fired = True
+        self.action()
+
+
+class FakeClock:
+    """trigger.Watchdog's clock and timers in a test (``clock=fake, timers=fake.start``):
+    time moves only in advance(), which runs each timer that falls due, in the order they fall
+    due, on the thread that calls advance(); never inside start(), as a threading.Timer never
+    runs on the thread that starts it. With ``no_thread`` set, start() fails as a process
+    with no thread left does.
+
+    It keeps the tests honest (verify(), run after every test by fake_clocks_are_honest): a
+    wait outside 0..threading.TIMEOUT_MAX, and a timer that fell due (a wait of 0 included)
+    but was cancelled or left unfired, fail the test, since a real timer would have fired. A
+    test that means a timer to be due at once fires it with advance(0)."""
+
+    made: ClassVar[list[FakeClock]] = []
+
+    def __init__(self, now: float = 1000.0) -> None:
+        import threading
+
+        self.now = now
+        self.timers: list[FakeTimer] = []
+        self.problems: list[str] = []
+        self.no_thread = False
+        self._lock = threading.Lock()
+        FakeClock.made.append(self)
+
+    def __call__(self) -> float:
+        return self.now
+
+    def start(self, delay: float, action: Callable[[], None]) -> FakeTimer:
+        import threading
+
+        if not 0.0 <= delay <= threading.TIMEOUT_MAX:
+            # Recorded as well as raised: the watchdog's caller may swallow the error.
+            self.problems.append(f"a timer was started with a wait of {delay}")
+            raise AssertionError(f"timer wait out of range: {delay}")
+        if self.no_thread:
+            raise RuntimeError("can't start new thread")
+        with self._lock:
+            timer = FakeTimer(self, delay, self.now + delay, action)
+            self.timers.append(timer)
+        return timer
+
+    def advance(self, seconds: float) -> None:
+        with self._lock:
+            target = self.now + seconds
+        while True:
+            with self._lock:
+                due = [t for t in self.timers if not (t.cancelled or t.fired) and t.due <= target]
+                if not due:
+                    self.now = max(self.now, target)
+                    return
+                timer = min(due, key=lambda t: t.due)  # the first started of equals
+                timer.fired = True
+                self.now = max(self.now, timer.due)
+            timer.action()
+
+    def verify(self) -> list[str]:
+        """What this clock saw that a real timer would not allow."""
+        left = [
+            f"a timer due at {t.due} never fired"
+            for t in self.timers
+            if not (t.fired or t.cancelled) and t.due <= self.now
+        ]
+        return [*self.problems, *left]
+
+
+@pytest.fixture(autouse=True)
+def fake_clocks_are_honest() -> Iterator[None]:
+    """Fails a test whose FakeClock saw a wait out of range or a due timer left unfired."""
+    FakeClock.made.clear()
+    yield
+    problems = [p for clock in FakeClock.made for p in clock.verify()]
+    FakeClock.made.clear()
+    assert not problems, f"FakeClock: {problems}"
