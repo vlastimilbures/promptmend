@@ -224,6 +224,15 @@ All notable changes to this project are documented here. The format follows
   `improve --output` and `--copy` say which one a script uses: `--output clipboard` to get
   the rewrite on the clipboard, `--output paste --copy` to have it printed and copied
   (`--copy` has no effect with clipboard output). docs/commands.md says the same.
+- Docs: docs/usage.md "While it runs" is down to what a daily user needs (#406); what the
+  time limit covers moved to a new "The time limit" section of docs/commands.md, and how
+  the watchdog keeps it to CONTRIBUTING.md. "What gets sent" now says that the `default`
+  profile asks the model to describe pasted material past about 60 lines, not copy it, and
+  how to undo a rewrite (README's example says the first too). docs/troubleshooting.md has
+  a Windows section of short entries in place of its long table rows; rows that matter only
+  when coming from an old release moved to docs/install.md, "Upgrading from older
+  versions"; the reasoning-text row no longer says to edit the source; and the
+  `history last` advice names the columns it prints.
 
 ### Deprecated
 - `setup --provider` (#390): with `--non-interactive` it still saves `PROMPT_PROVIDER` and

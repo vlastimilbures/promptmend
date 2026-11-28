@@ -9,6 +9,7 @@ does before you run it. Run any command with `--help` for its full option list.
 
 - [improve](#improve)
 - [Scripting contract](#scripting-contract)
+- [The time limit](#the-time-limit)
 - [persona](#persona)
 - [Management commands](#management-commands)
 - [Reading stats](#reading-stats)
@@ -84,6 +85,62 @@ or only those markers, and the rewrite is on the clipboard. A script passes `--o
 passes `--source`, since `PROMPT_OUTPUT` decides otherwise: `--output clipboard` to get the
 rewrite on the clipboard, `--output paste` to read it from stdout (with `--copy` to copy it
 as well).
+
+## The time limit
+
+`improve` has a hard time limit: `--timeout`, else `PROMPT_TIMEOUT_SECONDS`
+(`PROMPT_PRO_TIMEOUT_SECONDS` with `--tier pro`), retry included. Whatever blocks a run
+before its result is printed (a name lookup or proxy discovery that never returns, a
+clipboard that does not answer, a server that sends its reply a byte at a time), it ends no
+later than the limit plus 2 seconds, counted from the moment the `promptmend` command starts
+its own code; Python's start-up before that is not counted. Every marker below is a failure
+marker for `--fail-on-marker`.
+
+- A run that reaches the limit prints `[promptmend: … timed out after …s: try again, …]` and
+  nothing else, apart from the `[promptmend: sent despite: …]` note before it when
+  `--allow-flagged` let the draft through. The marker ends with the next step: try again, or
+  raise the setting that set the limit (`PROMPT_TIMEOUT_SECONDS`, or
+  `PROMPT_PRO_TIMEOUT_SECONDS` on the pro tier), or, when the limit came from `--timeout` (a
+  timeout picked in the [-if- form](usage.md#the--if--form)), try again with a longer one.
+- A run still reading stdin at the limit prints the stdin marker of the
+  [Scripting contract](#scripting-contract) instead, and has sent nothing.
+- If the rewrite came back but copying it to the clipboard (`clipboard` output or `--copy`)
+  stalls, `[promptmend: the clipboard did not answer in time, …; it is pasted instead]` is
+  printed, followed by the rewrite.
+
+Less common:
+
+- Once the run is being ended, no request starts, not even a retry. A request it had already
+  begun (one still waiting for its name lookup, connection or TLS handshake) may still go
+  out in its last moment; its answer is ignored.
+- A run that is printing its own result is never cut off or printed over, even past the limit
+  plus 2 seconds (when Espanso does not read its output, say).
+- A long step that holds Python's lock (a regular expression running over a huge draft, say)
+  can delay the end until that step ends.
+- A run whose output is out but whose usage-history write is still going ends by the limit
+  plus 2 seconds, and that history row is lost.
+
+Loading the settings counts too: it only reads files, but a stalled file system (a redirected
+`%APPDATA%` on a managed Windows laptop, say) can block it. Until the settings have loaded,
+the limit is the call's `--timeout`, or else 30 seconds (the built-in default of
+`PROMPT_TIMEOUT_SECONDS`, since no setting is known yet). A load that has not finished in
+time ends, by that limit plus 2 seconds, with
+`[promptmend: the settings did not load within …s]` and no usage-history row (whether to
+keep one is itself a setting). Once they have loaded, the configured limit takes over, still
+counted from the same start, so a longer `PROMPT_TIMEOUT_SECONDS` or
+`PROMPT_PRO_TIMEOUT_SECONDS` is unaffected.
+
+- If the load itself took a second or more (start-up before it not counted), the timed-out
+  marker says how much of the limit it used
+  (`… timed out after 30.0s, 12.3s of it loading the settings: try again, …`).
+- If start-up and the load used up the whole limit, the run ends right there, before it reads
+  the draft, and sends nothing. The marker says which took the time
+  (`[promptmend: starting up took 31.0s, past the 30.0s time limit; nothing was sent]`, or
+  `the settings took 29.0s to load, 31.0s in all, …`).
+
+`promptmend persona` loads the settings the same way, counted from its own start, and has the
+same bound. How the watchdog that enforces the limit works is in
+[CONTRIBUTING.md, "The trigger's time limit"](../CONTRIBUTING.md#the-triggers-time-limit).
 
 ## persona
 

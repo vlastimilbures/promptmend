@@ -108,10 +108,16 @@ you copied goes instead.
   first.
 - Drafts over 50,000 characters are refused, so an accidental copy of a log or document is
   not sent.
+- Long pasted material is not carried into the rewrite: past about 60 lines, the
+  [`default` profile](profiles.md#default) asks the model to describe it in `INPUTS` and add
+  `[REVIEW: paste the full text here]`, so paste the full text there yourself.
 
 To rewrite text in place, select it, copy it (Cmd+C / Ctrl+C) and type `-i-`. As in any
 editor, the first character you type replaces the selection, and Espanso then replaces the
-trigger with the rewrite.
+trigger with the rewrite. To go back, use the app's own undo (Cmd+Z / Ctrl+Z). With paste
+output, and Espanso's default `preserve_clipboard` (see
+[Output](#output-paste-or-clipboard)), the draft also stays on the clipboard, so you can
+paste it again.
 
 Run from a terminal or a script instead, `promptmend improve` without `--source` rewrites a
 draft piped to it (`echo "draft" | promptmend improve`) and reads the clipboard only when
@@ -122,61 +128,20 @@ ends in a `[promptmend: …]` failure marker; see the
 ## While it runs
 
 A rewrite takes a few seconds on `-i-` and longer on `-ip-` (measured times are in the
-[benchmark](benchmark.md#at-a-glance)), at most the call's time limit
-(`PROMPT_TIMEOUT_SECONDS`, `PROMPT_PRO_TIMEOUT_SECONDS` for the pro tier).
-
-That limit is a hard one. Whatever blocks a run before its result is printed (a name lookup or
-proxy discovery that never returns, a clipboard that does not answer, a server that sends its
-reply a byte at a time), it ends no later than the limit plus 2 seconds, counted from the
-moment the `promptmend` command starts its own code; Python's start-up before that is not
-counted. The result is then the
-`[promptmend: … timed out after …s: try again, …]` marker, exit code 0, and nothing else. It
-ends with the next step: try again, or raise the setting that set the limit
-(`PROMPT_TIMEOUT_SECONDS`, or `PROMPT_PRO_TIMEOUT_SECONDS` on the pro tier), or, when the
-limit came from `--timeout` (a timeout picked in the [-if- form](#the--if--form)), try again
-with a longer one. The provider's own timeout counts from its request, so it prints that
-marker first only when the run reached its request within 1.5 seconds; otherwise, or when
-something that timeout cannot see blocks,
-the watchdog prints it. If the rewrite came back but copying it to the clipboard
-([clipboard output](#output-paste-or-clipboard) or `--copy`) stalls, the marker says the
-clipboard did not answer and the rewrite is pasted instead.
-
-Loading the settings counts too: it only reads files, but a stalled file system (a redirected
-`%APPDATA%` on a managed Windows laptop, say) can block it. Until the settings have loaded,
-the limit is the call's `--timeout`, or else 30 seconds (the built-in default of
-`PROMPT_TIMEOUT_SECONDS`, since no setting is known yet). A load that does not finish within
-that limit plus 2 seconds ends with `[promptmend: the settings did not load within …s]`,
-exit code 0, and no usage-history row (whether to keep one is itself a setting). Once they
-have loaded, the configured limit takes over, still counted from the same start, so a longer
-`PROMPT_TIMEOUT_SECONDS` or `PROMPT_PRO_TIMEOUT_SECONDS` is unaffected. If the load itself
-took a second or more (start-up before it not counted), the timed-out marker says how much of
-the limit it used (`… timed out after 30.0s, 12.3s of it loading the settings: try again, …`). If start-up
-and the load used up the whole limit, the run ends right there, before it reads the draft,
-and sends nothing: the marker says which took the time
-(`[promptmend: starting up took 31.0s, past the 30.0s time limit; nothing was sent]`, or
-`the settings took 29.0s to load, 31.0s in all, …`). `promptmend persona` loads the settings
-the same way, counted from its own start, and has the same bound.
-
-The watchdog is a thread that steps in at the limit plus 1.5 seconds. From then on no request
-is started, not even a retry; it writes the usage history for up to 0.4 seconds, then prints
-its marker and ends the process. A request the run had already begun (one still waiting for
-its name lookup, connection or TLS handshake) may still go out, during that wait or in the few
-milliseconds between the marker and the exit; its answer is ignored. A run whose output is
-already out but whose usage-history write is still going ends at once at the limit plus 1.5
-seconds, or at the limit plus 2 seconds if its output was still being printed then, or as
-soon as its output is flushed, if that is later, and that history row is lost. A run that is still printing its own result is never cut off or
-printed over, even past the limit plus 2 seconds (Espanso not reading its output, say). Being
-a thread, the watchdog can also be delayed by a long step that holds Python's lock (a regular
-expression running over a huge draft, say) until that step ends.
+[benchmark](benchmark.md#at-a-glance)). Whatever stalls it, a run ends by the call's time
+limit plus 2 seconds (`PROMPT_TIMEOUT_SECONDS`, `PROMPT_PRO_TIMEOUT_SECONDS` on the pro tier,
+or the timeout picked in the [-if- form](#the--if--form)), with the rewrite or a marker:
+`[promptmend: … timed out after …s: try again, …]` when it ran out of time. What counts
+towards the limit, and the rare cases past it, are in
+[The time limit](commands.md#the-time-limit).
 
 Do not type or switch windows while it runs. Espanso pastes the result wherever the focus is
-when the answer arrives, and other triggers do not expand until it finishes. Writing the
-[usage history](privacy.md#usage-history) adds up to 0.25 s after the output (1 s once, for
-the write that creates the file).
+when the answer arrives, and other triggers do not expand until it finishes.
 
-[Clipboard output](#output-paste-or-clipboard) removes the misplaced paste: nothing is pasted
-on success, so switching windows during a long wait is safe. Espanso still erases the trigger
-where the focus is, so do not type.
+During a long wait (`-ip-`, say), or on a slow machine, use
+[clipboard output](#output-paste-or-clipboard): nothing is pasted on success, so switching
+windows while it runs is safe. Espanso still erases the trigger where the focus is, so do
+not type.
 
 If the trigger stays and nothing is pasted, see [The trigger stays and nothing
 happens](troubleshooting.md#the-trigger-stays-and-nothing-happens) in Troubleshooting.

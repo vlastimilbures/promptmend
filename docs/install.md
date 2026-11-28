@@ -198,7 +198,7 @@ says so when it replaces an editable install from a checkout. While a `promptmen
 uv's `promptmend.exe` launcher, it stops before uv runs and changes nothing (see
 [Update](#update)). A `PROMPTMEND_CHANNEL` other than `exe` or `uv` is refused. If uv fails with
 `Failed to persist temporary file … Access is denied`, see
-[Troubleshooting, "Triggers and Espanso"](troubleshooting.md#triggers-and-espanso) (`$env:UV_NO_CACHE = "1"`).
+[Troubleshooting](troubleshooting.md#uv-fails-with-access-is-denied-in-its-cache) (`$env:UV_NO_CACHE = "1"`).
 
 ### uv
 
@@ -211,7 +211,7 @@ uv tool update-shell
 Then close every Windows Terminal window and open a new one, so it finds `promptmend` (see
 [Espanso on Windows](#espanso-on-windows)). If uv fails with
 `Failed to persist temporary file … Access is denied`, add `--no-cache` (see
-[Troubleshooting, "Triggers and Espanso"](troubleshooting.md#triggers-and-espanso)).
+[Troubleshooting](troubleshooting.md#uv-fails-with-access-is-denied-in-its-cache)).
 
 `--python ">=3.13"` makes uv use Python 3.13 or later, one it finds or one it downloads (the
 quotes keep PowerShell from reading `>` as a redirection). On Windows with Python 3.12 the
@@ -487,6 +487,23 @@ Leaving a checkout install for a release: run `promptmend espanso deploy` from t
 the triggers call it, and if `promptmend` on `PATH` is still the checkout's (`doctor` warns in
 `path_shadow`), run `deactivate` (its `.venv` is active) or take it off `PATH`.
 
+### From 0.25 or earlier: a linked Espanso folder
+
+A linked Espanso folder (say, `~/.config/espanso` linked from a dotfiles repository) is now
+compared as the folder it points to, as a deploy records it. Through such a link, 0.25.0 and
+earlier called a file you edited after a deploy `foreign` instead of `modified`.
+
+### From before 0.23.0: Windows
+
+- Triggers stopped working after closing the interface or the terminal: releases before
+  0.23.0 restarted Espanso inside the terminal, so closing it stopped Espanso. Start Espanso
+  from the Start menu once; since 0.23.0 a restart from PromptMend runs in a hidden console
+  of its own.
+- Every trigger pastes `[Espanso]: An error occurred during rendering`: match files deployed
+  by 0.20.0 or earlier (#18), or a trigger of your own copied from one, run the CLI through
+  PowerShell, which fails on every trigger. Run `promptmend espanso deploy`, and give your
+  own triggers the `type: script` shape (see [Your own triggers](usage.md#your-own-triggers)).
+
 ### From 0.18 or earlier: the rename
 
 Up to 0.18.0 the package was `espanso-prompt-rewriter` and the command `prompt-workflow`; both
@@ -513,9 +530,17 @@ deploy manifest in `~/.local/share/prompt-workflow/` (`%APPDATA%\prompt-workflow
 `promptmend` on the first management command; this one no longer looks for them, so rename
 them by hand if they are still there.
 
-Coming from a version before 0.9: if Espanso's `match/base.yml` still holds the `-p-`
-template those versions installed there, delete it by hand (deploy no longer does), or `-p-`
-is defined twice.
+### From before 0.9: base.yml
+
+Versions before 0.9 deployed `-p-` as `match/base.yml`, the file Espanso creates for your own
+snippets.
+
+- If Espanso's `match/base.yml` still holds the `-p-` template those versions installed
+  there, delete it by hand (deploy no longer does), or `-p-` is defined twice.
+- A `base.yml.bak-…` file in Espanso's `match` folder is the copy the installer backed up
+  when it replaced it with `prompts-template.yml`. Older installers overwrote `base.yml`
+  without a backup, so snippets you kept there before first installing can only come from
+  your own backups.
 
 ## Install from a checkout
 

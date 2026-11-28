@@ -105,6 +105,9 @@ step 1 is "execute now"; analysing an export first could also justify "plan firs
 audience selected the independent-review step. A quick note to yourself would get a
 self-review checklist instead.
 
+The `default` profile asks the model to describe pasted material past about 60 lines in
+`INPUTS` and add `[REVIEW: paste the full text here]`, for you to paste the full text there.
+
 </details>
 
 More: [docs/profiles.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/profiles.md)
