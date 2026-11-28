@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -515,6 +516,7 @@ def _commands(espanso: Path) -> dict[tuple[str, ...], list[list[str]]]:
         ("secrets", "remove"): [["secrets", "remove", "OPENROUTER_API_KEY", "--yes"]],
         ("profiles", "list"): [["profiles", "list"]],
         ("stats",): [["stats"], ["stats", "--json", "--by", "day"]],
+        ("history", "last"): [["history", "last"], ["history", "last", "-n", "3", "--json"]],
         ("history", "export"): [["history", "export"]],
         ("history", "prune"): [["history", "prune"]],
         ("history", "reset"): [["history", "reset", "--yes"]],
@@ -1015,6 +1017,301 @@ def test_history_export_prune_reset(tmp_path: Path, record_ops: Callable[..., No
     assert _run("history", "prune", "--older-than", "soon").exit_code == 2
 
 
+# --- history last (#400) ----------------------------------------------------------------------
+
+# A fixed local zone, so the times are the same on every runner (Windows has no time.tzset()).
+PLUS_TWO = timezone(timedelta(hours=2))
+
+
+@pytest.fixture
+def plus_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend.commands import usage
+
+    monkeypatch.setattr(usage, "local_zone", lambda: PLUS_TWO)
+
+
+def _seed_run(
+    seed_history: SeedHistory,
+    when: datetime,
+    attempts: Sequence[Mapping[str, Any]] = (),
+    **op: Any,
+) -> None:
+    seed_history(
+        {
+            "id": history.new_operation_id(),
+            "occurred_at_utc": when,
+            "origin": "espanso_managed",
+            "trigger_id": "-i-",
+            "kind": "improve",
+            "profile_id": "default",
+            "outcome": "ok",
+            "latency_ms": 1200.0,
+            **op,
+        },
+        attempts,
+    )
+
+
+def _attempt(**changes: Any) -> dict[str, Any]:
+    return {
+        "provider": "openrouter",
+        "requested_model": "google/gemini-3.5-flash-lite",
+        "endpoint": "remote",
+        "status": 200,
+        "latency_ms": 900.0,
+        **changes,
+    }
+
+
+def test_history_last_shows_a_failed_trigger_in_local_time(
+    plus_two: None, monkeypatch: pytest.MonkeyPatch, fake_http: Any
+) -> None:
+    # The issue's "done when": after a failed trigger, `history last -n 1` shows that run with
+    # its outcome and error kind, in local time.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
+    fake_http.reply({"error": {"message": "bad key"}}, status_code=401)
+    improve = ["improve", "--provider", "openrouter", "--source", "argument", "--text", "draft"]
+    assert _run(*improve, "--trigger-id", "i").stdout.startswith("[promptmend: ")
+    (op,) = json.loads(_run("history", "export").stdout)["operations"]
+    stored = datetime.strptime(op["occurred_at_utc"], "%Y-%m-%dT%H:%M:%S.%fZ")
+    local = (stored + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+    result = _run("history", "last", "-n", "1")
+    assert result.exit_code == 0, result.output
+    header, line = result.stdout.splitlines()
+    columns = ["Local", "time", "Trigger", "Outcome", "Error", "ms", "Provider", "Model"]
+    assert header.split() == columns
+    assert line.startswith(f"{local}  -i-      error_marker  non_2xx  ")
+    model = fake_http.calls[0]["json"]["model"]
+    assert line.split()[-2:] == ["openrouter", model]
+
+
+def test_history_last_lists_the_newest_first(plus_two: None, seed_history: SeedHistory) -> None:
+    start = datetime(2026, 11, 28, 13, 5, 7, tzinfo=UTC)
+    local = _attempt(provider="ollama", requested_model="qwen3:8b", endpoint="loopback")
+    for minutes in (0, 2, 1):
+        _seed_run(seed_history, start + timedelta(minutes=minutes), [local])
+    lines = _run("history", "last").stdout.splitlines()
+    assert [line[:19] for line in lines[1:]] == [
+        "2026-11-28 15:07:07",
+        "2026-11-28 15:06:07",
+        "2026-11-28 15:05:07",
+    ]
+    assert [line[:19] for line in _run("history", "last", "-n", "2").stdout.splitlines()[1:]] == [
+        "2026-11-28 15:07:07",
+        "2026-11-28 15:06:07",
+    ]
+    # A trigger's line fits 80 columns; only a long model id (the last column) goes past.
+    assert all(len(line) <= 80 for line in lines)
+
+
+def test_history_last_shows_runs_without_a_request_and_a_retry_s_last_request(
+    plus_two: None, seed_history: SeedHistory
+) -> None:
+    when = datetime(2026, 11, 28, 22, 30, 0, tzinfo=UTC)
+    # A persona run: no attempt.
+    _seed_run(seed_history, when, trigger_id="-p-", kind="persona", profile_id=None)
+    # A retry: a 503, then an answer from another model, whose run then timed out.
+    _seed_run(
+        seed_history,
+        when + timedelta(seconds=1),
+        [
+            _attempt(status=503, error_kind="non_2xx"),
+            _attempt(requested_model="qwen3:8b", provider="ollama", error_kind="timeout"),
+        ],
+        outcome="error_marker",
+        latency_ms=30012.4,
+    )
+    # A direct call, no trigger.
+    _seed_run(
+        seed_history, when + timedelta(seconds=2), [_attempt()], origin="direct", trigger_id=None
+    )
+    header, direct, retried, persona = _run("history", "last").stdout.splitlines()
+    # Past midnight locally: the local date, not the stored one.
+    assert direct.split("  ")[:2] == ["2026-11-29 00:30:02", "no trigger (direct call)"]
+    assert retried.split() == [
+        "2026-11-29",
+        "00:30:01",
+        "-i-",
+        "error_marker",
+        "timeout",
+        "30012",
+        "ollama",
+        "qwen3:8b",
+    ]
+    assert persona.split() == ["2026-11-29", "00:30:00", "-p-", "ok", "-", "1200", "-", "-"]
+    # Columns line up: each value starts under its header.
+    for line in (direct, retried, persona):
+        assert line.index("ok" if line is not retried else "error_marker") == header.index(
+            "Outcome"
+        )
+    data = json.loads(_run("history", "last", "--json").stdout)
+    assert data["schema_version"] == 1
+    assert data["time_zone"] == "UTC"
+    assert data["history"]["enabled"] is True
+    assert data["history"]["path"] == str(history.history_path())
+    assert [run["occurred_at_utc"] for run in data["runs"]] == [
+        "2026-11-28T22:30:02.000000Z",
+        "2026-11-28T22:30:01.000000Z",
+        "2026-11-28T22:30:00.000000Z",
+    ]
+    assert data["runs"][1] == {
+        "occurred_at_utc": "2026-11-28T22:30:01.000000Z",
+        "origin": "espanso_managed",
+        "trigger_id": "-i-",
+        "kind": "improve",
+        "profile_id": "default",
+        "outcome": "error_marker",
+        "latency_ms": 30012.4,
+        "attempts": 2,
+        "provider": "ollama",
+        "requested_model": "qwen3:8b",
+        "error_kind": "timeout",
+    }
+    assert (data["runs"][2]["attempts"], data["runs"][2]["provider"]) == (0, None)
+
+
+# Fullwidth and Arabic-Indic five are digits to str.isdigit() and \d, not to the option.
+@pytest.mark.parametrize(
+    "value", ["0", "1001", "-1", "ten", "", "1.5", "9" * 20, chr(0xFF15), chr(0x0665)]
+)
+def test_history_last_count_is_bounded(value: str) -> None:
+    result = _run("history", "last", "-n", value)
+    assert result.exit_code == 2
+    assert "from 1 to 1000" in _plain(result.output)
+
+
+def test_history_last_takes_the_upper_bound(record_ops: Callable[..., None]) -> None:
+    record_ops(2)
+    assert len(json.loads(_run("history", "last", "-n", "1000", "--json").stdout)["runs"]) == 2
+    assert len(json.loads(_run("history", "last", "--count", "1", "--json").stdout)["runs"]) == 1
+
+
+def test_history_last_when_empty() -> None:
+    result = _run("history", "last")
+    assert (result.exit_code, result.stdout) == (0, "No usage recorded yet.\n")
+    assert json.loads(_run("history", "last", "--json").stdout)["runs"] == []
+    assert not history.history_path().exists()  # reading never creates the database
+
+
+def test_history_last_when_history_is_off(
+    monkeypatch: pytest.MonkeyPatch, record_ops: Callable[..., None]
+) -> None:
+    monkeypatch.setenv("PROMPT_HISTORY", "false")
+    off = "Usage history is off (PROMPT_HISTORY=false); nothing is recorded."
+    out = _run("history", "last").stdout
+    assert out.startswith(off)
+    assert out.endswith("No usage recorded yet.\n")
+    # What was recorded before it was switched off is still on the device, and listed.
+    record_ops(1)
+    lines = _run("history", "last").stdout.splitlines()
+    assert lines[0].startswith(off)
+    assert lines[1] == "Recorded while it was on:"
+    assert len(lines) == 4
+    assert json.loads(_run("history", "last", "--json").stdout)["history"]["enabled"] is False
+
+
+def test_history_last_on_an_unreadable_database_is_one_error_line() -> None:
+    path = history.history_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"not a database" * 1000)
+    result = _run("history", "last")
+    assert result.exit_code == 1
+    assert result.stderr == "error: history database is corrupt\n"
+
+
+def _odd_rows() -> None:
+    """Four rows no record() writes (a database edited by another tool), newer than the rest:
+    a blob time, a far-future time, a time with a space and no fraction, a text latency."""
+    import sqlite3
+
+    rows = [
+        (b"\x00\xff", 1.0),
+        ("9999-12-31T23:59:59.999999Z", 1.0),
+        ("2027-01-01 00:00:00", 1.0),
+        ("2026-12-01T00:00:00.000000Z", "soon"),
+    ]
+    with sqlite3.connect(history.history_path()) as conn:
+        for when, latency in rows:
+            conn.execute(
+                "INSERT INTO operations VALUES (?, ?, 'direct', '-i-', 'improve', NULL, 'ok', ?,"
+                " '1.0')",
+                (history.new_operation_id(), when, latency),
+            )
+    conn.close()
+
+
+ODD_TIMES = ["?", "'9999-12-31T23:59:59.999999Z'", "'2027-01-01 00:00:00'", "2026-12-01 02:00:00"]
+
+
+def test_history_last_shows_odd_rows_as_stand_ins(
+    plus_two: None, record_ops: Callable[..., None]
+) -> None:
+    record_ops(1)
+    _odd_rows()
+    result = _run("history", "last")
+    assert result.exit_code == 0, result.output
+    _, *lines = result.stdout.splitlines()
+    assert [line.split("  ")[0] for line in lines[:4]] == ODD_TIMES
+    assert lines[3].split()[-3:] == ["'soon'", "-", "-"]
+    # The valid run is still listed, whole.
+    assert lines[4].split()[-2:] == ["openrouter", "google/gemini-3.5-flash-lite"]
+    data = json.loads(_run("history", "last", "--json").stdout)
+    assert len(data["runs"]) == 5
+    assert data["runs"][3]["latency_ms"] == "soon"
+
+
+def test_history_last_never_prints_a_key_a_huge_value_or_latency(
+    plus_two: None, record_ops: Callable[..., None]
+) -> None:
+    """A row another tool edited: an identifier that looks like a key or is longer than any
+    history.py stores, and a latency no run takes, show as stand-ins (bounded, redacted);
+    the real run beside them is printed exactly as before."""
+    import sqlite3
+
+    record_ops(1)
+    with sqlite3.connect(history.history_path()) as conn:
+        conn.execute(
+            "INSERT INTO operations VALUES (?, '2026-12-01T00:00:00.000000Z', 'direct', ?,"
+            " 'improve', NULL, ?, ?, '1.0')",
+            (history.new_operation_id(), KEY, "x" * 1_000_000, 1e300),
+        )
+    conn.close()
+    result = _run("history", "last")
+    assert result.exit_code == 0, result.output
+    assert KEY not in result.stdout
+    assert len(result.stdout) < 1000
+    _, odd, real = result.stdout.splitlines()
+    assert odd.split()[2:5] == ["<redacted,", "73", "chars>"]
+    assert "<redacted, 1000000 chars>" in odd
+    assert odd.split()[-3] == "'1e+300'"  # not 301 digits
+    assert real.split()[2:] == [
+        "-i-",
+        "ok",
+        "-",
+        "1000",
+        "openrouter",
+        "google/gemini-3.5-flash-lite",
+    ]
+    for latency, shown in ((-1.0, "'-1.0'"), (1e9, "1000000000"), (1e9 + 1, "'1000000001.0'")):
+        with sqlite3.connect(history.history_path()) as conn:
+            conn.execute(
+                "UPDATE operations SET latency_ms = ? WHERE trigger_id = ?", (latency, KEY)
+            )
+        conn.close()
+        line = _run("history", "last", "-n", "1").stdout.splitlines()[1]
+        assert shown in line.split(), (latency, line)
+
+
+def test_history_last_shows_the_settings_findings_as_stats_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _break("dotenv", tmp_path, monkeypatch)
+    stats_err = _run("stats").stderr
+    assert "warning: " in stats_err
+    assert _run("history", "last").stderr == stats_err
+    assert _run("history", "last", "--json").stderr == stats_err
+
+
 # --- profiles -----------------------------------------------------------------------------
 
 
@@ -1323,10 +1620,21 @@ def test_smoke_and_setup_add_no_history_row(
         ["config", "set", "PROMPT_PROFILE", "general", KEY],
         ["stats", "--by", KEY],
         ["history", "prune", "--older-than", KEY],
+        ["history", "last", "-n", KEY],
         ["config", KEY],
         ["improve", KEY],
     ],
-    ids=["command", "doctor", "secrets-set", "config-set", "stats", "prune", "group", "improve"],
+    ids=[
+        "command",
+        "doctor",
+        "secrets-set",
+        "config-set",
+        "stats",
+        "prune",
+        "last",
+        "group",
+        "improve",
+    ],
 )
 def test_usage_errors_never_repeat_a_key(argv: list[str]) -> None:
     result = _run(*argv)

@@ -43,6 +43,8 @@ QUICK, FULL = "quick", "full"
 # How long settled() waits for the update check: its own request gives up after
 # update_check.TIMEOUT; the rest is reading and writing its small cache file.
 SETTLE_TIMEOUT = update_check.TIMEOUT + 2.0
+# How many runs the History tab's "Last runs" table shows.
+LAST_RUNS = 5
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,10 @@ class State:
     # The triggers in the match files Espanso has (doctor.deployed_triggers()): what really
     # runs when the file is older or edited. None before the full read, or with none deployed.
     deployed: list[assets.Trigger] | None = None
+    # The History tab's "Last runs" (`history last -n LAST_RUNS`), read after the stats, and
+    # why they could not be read.
+    runs: list[history.LastRun] = field(default_factory=list)
+    runs_error: str | None = None
 
     @property
     def full(self) -> bool:
@@ -203,9 +209,9 @@ def quick(group_by: str = "trigger") -> State:
 
 def gather(group_by: str = "trigger", first: State | None = None) -> State:
     """Everything the screens show. Read-only: doctor without the clipboard, the deploy plan,
-    the profiles, the usage stats and the update check (cached for a day, so a reload asks
-    PyPI no more often; never waited for, see the module), each failure kept to show instead
-    of raised. ``first`` is this reload's quick State: its settings, profiles and
+    the profiles, the usage stats and last runs, and the update check (cached for a day, so a
+    reload asks PyPI no more often; never waited for, see the module), each failure kept to
+    show instead of raised. ``first`` is this reload's quick State: its settings, profiles and
     triggers are reused, so a reload reads them once; without it they are read here."""
     pending = _beside(update_check.check_configured, "promptmend-reload-update-check")
     if first is None or first.full or first.group_by != group_by:
@@ -238,17 +244,26 @@ def gather(group_by: str = "trigger", first: State | None = None) -> State:
         found_triggers, any_deployed = doctor.deployed_triggers(Path(folder))
         deployed = found_triggers if any_deployed else None
     stats: list[history.StatsRow] = []
-    stats_error = None
+    runs: list[history.LastRun] = []
+    stats_error = runs_error = None
+    # Read apart, so stats that cannot be summed (a time another tool stored as a blob is a
+    # TypeError there) still leave the runs on screen, and the other way round.
     try:
         stats = store(settings).stats(group_by)
-    except (history.HistoryError, OSError, ValueError) as exc:
+    except (history.HistoryError, OSError, ValueError, TypeError) as exc:
         stats_error = str(exc) or type(exc).__name__
+    try:
+        runs = store(settings).last(LAST_RUNS, replay=False)  # stats() replayed the spool
+    except (history.HistoryError, OSError, ValueError) as exc:
+        runs_error = str(exc) or type(exc).__name__
     state = replace(
         first,
         report=report,
         plan=plan,
         plan_error=plan_error,
         stats=stats,
+        runs=runs,
+        runs_error=runs_error,
         stats_error=stats_error,
         update=CHECKING,
         pending=pending,

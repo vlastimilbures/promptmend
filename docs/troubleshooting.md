@@ -71,9 +71,9 @@ start-up, with a rewrite or a marker (see [While it runs](usage.md#while-it-runs
 all after that means the process never finished (still starting, say) or Espanso lost the
 paste. To tell the cases apart:
 
-- Find the run in `promptmend history export` (`--format csv` puts each attempt on its
-  operation's row) by its `occurred_at_utc` time, in UTC. `promptmend stats --by trigger
-  --verbose` shows each trigger's last use and its p50/p95 latency, not the last run's.
+- Find the run in `promptmend history last` (the newest runs first, in local time, with the
+  outcome, the error kind and the latency in ms; `-n 30` for more, `--json` for
+  `latency_ms` and `error_kind` by name, times in UTC).
   - Outcome `ok`, or any outcome but a timeout (`gate_blocked`, `validation_failed`,
     `clipboard_failed`, …), with its `latency_ms`: the CLI printed its rewrite or marker and
     Espanso did not paste it.
