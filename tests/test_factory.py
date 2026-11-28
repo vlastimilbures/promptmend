@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from conftest import resolved_settings
 
 from promptmend import factory
 from promptmend.config import Settings
@@ -28,7 +29,7 @@ def _openrouter_inner(provider: Provider) -> OpenAICompatibleProvider:
 
 # make_provider("ollama") passes through the think flag and the temperature.
 def test_make_provider_ollama() -> None:
-    cfg = Settings()
+    cfg = resolved_settings()
     provider = make_provider("ollama", cfg)
     assert isinstance(provider, OllamaProvider)
     assert provider.think == cfg.ollama_think
@@ -41,12 +42,12 @@ def test_make_provider_ollama() -> None:
 
 # make_provider("lmstudio") sends no api key and labels itself "LM Studio".
 def test_make_provider_lmstudio() -> None:
-    provider = make_provider("lmstudio", Settings())
+    provider = make_provider("lmstudio", resolved_settings())
     assert isinstance(provider, OpenAICompatibleProvider)
     assert provider.api_key is None
     assert provider.label == "LM Studio"
     # The title, body and response hook are OpenRouter's alone (bench_models.py passes them).
-    cfg = replace(Settings(), openrouter_provider="x", openrouter_data_collection="deny")
+    cfg = replace(resolved_settings(), openrouter_provider="x", openrouter_data_collection="deny")
     provider = make_provider(
         "lmstudio", cfg, extra_body={"x": 1}, on_response=lambda _: None, title="T"
     )
@@ -58,11 +59,11 @@ def test_make_provider_lmstudio() -> None:
 # make_provider("openrouter") is gated and sets X-Title + max_tokens.
 def test_make_provider_openrouter(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    provider = make_provider("openrouter", Settings())
+    provider = make_provider("openrouter", resolved_settings())
     assert isinstance(provider, GatedProvider)
     assert isinstance(provider._inner, OpenAICompatibleProvider)
     assert provider._inner.extra_headers["X-Title"] == "promptmend"
-    assert provider._inner.max_tokens == Settings().openrouter_max_tokens
+    assert provider._inner.max_tokens == resolved_settings().openrouter_max_tokens
 
 
 # The default pin is sent as a preference: no allow_fallbacks key, so a dead
@@ -71,7 +72,7 @@ def test_make_provider_openrouter_pins_endpoint(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("OPENROUTER_PROVIDER", raising=False)
     monkeypatch.delenv("OPENROUTER_ALLOW_FALLBACKS", raising=False)
-    provider = make_provider("openrouter", Settings())
+    provider = make_provider("openrouter", resolved_settings())
     assert _openrouter_inner(provider).extra_body == {
         "provider": {"order": ["google-ai-studio/flex"]},
         "reasoning": {"effort": "minimal", "exclude": True},
@@ -82,14 +83,14 @@ def test_make_provider_openrouter_pins_endpoint(monkeypatch: pytest.MonkeyPatch)
 def test_make_provider_openrouter_no_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("OPENROUTER_REASONING_EFFORT", "")
-    provider = make_provider("openrouter", Settings())
+    provider = make_provider("openrouter", resolved_settings())
     assert "reasoning" not in _openrouter_inner(provider).extra_body
 
 
 # The pro tier builds the gated OpenRouter provider on the OPENROUTER_PRO_* settings.
 def test_make_provider_pro_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    provider = make_provider("openrouter", Settings().for_tier("pro"))
+    provider = make_provider("openrouter", resolved_settings().for_tier("pro"))
     inner = _openrouter_inner(provider)
     assert inner.model == "openai/gpt-6-luna"
     assert inner.timeout == 45.0
@@ -103,7 +104,7 @@ def test_make_provider_pro_tier(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_make_provider_openrouter_no_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("OPENROUTER_PROVIDER", "")
-    provider = make_provider("openrouter", Settings())
+    provider = make_provider("openrouter", resolved_settings())
     assert isinstance(provider, GatedProvider)
     assert isinstance(provider._inner, OpenAICompatibleProvider)
     assert "provider" not in provider._inner.extra_body
@@ -114,7 +115,7 @@ def test_make_provider_openrouter_hard_pin(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("OPENROUTER_PROVIDER", "deepinfra/fp4")
     monkeypatch.setenv("OPENROUTER_ALLOW_FALLBACKS", "false")
-    provider = make_provider("openrouter", Settings())
+    provider = make_provider("openrouter", resolved_settings())
     assert _openrouter_inner(provider).extra_body["provider"] == {
         "order": ["deepinfra/fp4"],
         "allow_fallbacks": False,
@@ -125,13 +126,13 @@ def test_make_provider_openrouter_hard_pin(monkeypatch: pytest.MonkeyPatch) -> N
 def test_make_provider_openrouter_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(ProviderError, match="OPENROUTER_API_KEY"):
-        make_provider("openrouter", Settings())
+        make_provider("openrouter", resolved_settings())
 
 
 # make_provider("anthropic") is gated.
 def test_make_provider_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    provider = make_provider("anthropic", Settings())
+    provider = make_provider("anthropic", resolved_settings())
     assert isinstance(provider, GatedProvider)
     assert isinstance(provider._inner, AnthropicProvider)
 
@@ -140,7 +141,7 @@ def test_make_provider_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_make_provider_anthropic_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(ProviderError, match="ANTHROPIC_API_KEY"):
-        make_provider("anthropic", Settings())
+        make_provider("anthropic", resolved_settings())
 
 
 # A missing key names where it goes: `secrets set`, or in legacy mode (PROMPTMEND_ENV, the
@@ -155,7 +156,7 @@ def test_key_hint(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # The timeout and cap hints come from the call's settings alone (#398).
 def test_timeout_hint() -> None:
-    cfg = Settings()
+    cfg = resolved_settings()
     assert factory.timeout_hint(cfg) == "try again, or raise PROMPT_TIMEOUT_SECONDS"
     assert factory.timeout_hint(cfg.for_call("pro")) == (
         "try again, or raise PROMPT_PRO_TIMEOUT_SECONDS"
@@ -169,7 +170,7 @@ def test_timeout_hint() -> None:
 
 
 def test_cap_hint() -> None:
-    cfg = Settings()
+    cfg = resolved_settings()
     hint = factory.cap_hint
     assert hint(PROVIDERS["openrouter"], cfg) == "raise OPENROUTER_MAX_TOKENS"
     assert hint(PROVIDERS["openrouter"], cfg.for_call("pro")) == "raise OPENROUTER_PRO_MAX_TOKENS"
@@ -192,7 +193,7 @@ def test_cap_hint() -> None:
 def test_make_provider_passes_the_hints(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
         monkeypatch.setenv(key, "test-key")
-    cfg = Settings().for_call("pro", provider="openrouter", timeout="9")
+    cfg = resolved_settings().for_call("pro", provider="openrouter", timeout="9")
     for name in PROVIDER_NAMES:
         built = make_provider(name, cfg)
         inner = built._inner if isinstance(built, GatedProvider) else built
@@ -207,7 +208,7 @@ def test_make_provider_passes_the_hints(monkeypatch: pytest.MonkeyPatch) -> None
 # make_provider() errors on an unknown provider name.
 def test_make_provider_unknown() -> None:
     with pytest.raises(ProviderError, match="Unknown provider"):
-        make_provider("bogus", Settings())
+        make_provider("bogus", resolved_settings())
 
 
 # Every advertised provider name builds from the default settings and reaches its endpoint
@@ -249,7 +250,7 @@ def test_every_provider_name_builds(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     fake_http.reply(body)
-    assert make_provider(name, Settings()).generate("d", "s") == "ok"
+    assert make_provider(name, resolved_settings()).generate("d", "s") == "ok"
     assert [call["url"] for call in fake_http.calls] == [url]
 
 
@@ -271,7 +272,7 @@ def test_non_ascii_key_is_refused(
     with pytest.raises(
         ProviderError, match=f"^{env_name} contains a non-ASCII or invisible"
     ) as caught:
-        make_provider(name, Settings())
+        make_provider(name, resolved_settings())
     assert "test" not in str(caught.value)
     assert fake_http.requests == []
 
@@ -297,7 +298,7 @@ def test_cloud_providers_are_gated(monkeypatch: pytest.MonkeyPatch, name: str, g
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setenv("OPENAI_API_KEY", "k")
-    assert isinstance(make_provider(name, Settings()), GatedProvider) is gated
+    assert isinstance(make_provider(name, resolved_settings()), GatedProvider) is gated
 
 
 # A local provider pointed at another machine sends the draft off this one, so it is gated.
@@ -319,7 +320,7 @@ def test_remote_local_provider_is_gated(
     monkeypatch: pytest.MonkeyPatch, name: str, var: str, url: str, gated: bool
 ) -> None:
     monkeypatch.setenv(var, url)
-    assert isinstance(make_provider(name, Settings()), GatedProvider) is gated
+    assert isinstance(make_provider(name, resolved_settings()), GatedProvider) is gated
 
 
 # Ollama runs `cloud`-tagged models on ollama.com, even through a local daemon.
@@ -336,7 +337,7 @@ def test_ollama_cloud_model_is_gated(
     monkeypatch: pytest.MonkeyPatch, model: str, gated: bool
 ) -> None:
     monkeypatch.setenv("OLLAMA_MODEL", model)
-    assert isinstance(make_provider("ollama", Settings()), GatedProvider) is gated
+    assert isinstance(make_provider("ollama", resolved_settings()), GatedProvider) is gated
 
 
 # The `cloud` tag is matched case-insensitively and after an `@sha256:` digest is removed;
@@ -364,7 +365,7 @@ def test_ollama_cloud_tag_spellings(
     monkeypatch: pytest.MonkeyPatch, model: str, cloud: bool
 ) -> None:
     monkeypatch.setenv("OLLAMA_MODEL", model)
-    cfg = Settings()
+    cfg = resolved_settings()
     assert factory._is_ollama_cloud(model) is cloud
     # the gate wraps it, and its cost is not_applicable only when it truly runs here
     provider = make_provider("ollama", cfg)
@@ -383,9 +384,9 @@ def test_local_only_refuses_every_cloud_tag_spelling(
 ) -> None:
     monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
     monkeypatch.setenv("OLLAMA_MODEL", model)
-    assert {r.name: r for r in factory.routes(Settings())}["ollama"].refused
+    assert {r.name: r for r in factory.routes(resolved_settings())}["ollama"].refused
     with pytest.raises(ProviderError, match=r"^PROMPT_LOCAL_ONLY=true: ollama would send"):
-        make_provider("ollama", Settings())
+        make_provider("ollama", resolved_settings())
 
 
 @pytest.mark.parametrize("model", LOCAL_SPELLINGS)
@@ -394,7 +395,7 @@ def test_local_only_allows_a_name_containing_cloud(
 ) -> None:
     monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
     monkeypatch.setenv("OLLAMA_MODEL", model)
-    assert not isinstance(make_provider("ollama", Settings()), GatedProvider)
+    assert not isinstance(make_provider("ollama", resolved_settings()), GatedProvider)
 
 
 # PROMPT_LOCAL_ONLY=true refuses every provider that can leave this machine before building
@@ -425,14 +426,14 @@ def test_local_only_refuses_providers_that_leave_the_machine(
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     with pytest.raises(ProviderError, match=f"^PROMPT_LOCAL_ONLY=true: {name} would send"):
-        make_provider(name, Settings())
+        make_provider(name, resolved_settings())
 
 
 # Local providers on this machine still build, ungated, under PROMPT_LOCAL_ONLY=true.
 @pytest.mark.parametrize("name", ["ollama", "lmstudio"])
 def test_local_only_allows_loopback_providers(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
-    assert not isinstance(make_provider(name, Settings()), GatedProvider)
+    assert not isinstance(make_provider(name, resolved_settings()), GatedProvider)
 
 
 # make_provider gates exactly the providers leaves_machine reports, so PROMPT_LOCAL_ONLY
@@ -455,7 +456,7 @@ def test_gated_exactly_when_leaving_the_machine(
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     for key, value in env.items():
         monkeypatch.setenv(key, value)
-    cfg = Settings()
+    cfg = resolved_settings()
     assert isinstance(make_provider(name, cfg), GatedProvider) is factory.leaves_machine(name, cfg)
 
 
@@ -464,7 +465,7 @@ def test_remote_ollama_blocks_sensitive_draft(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp
 ) -> None:
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://192.168.1.5:11434")
-    provider = make_provider("ollama", Settings())
+    provider = make_provider("ollama", resolved_settings())
     with pytest.raises(ProviderError, match="Blocked cloud call"):
         provider.generate("card 4111 1111 1111 1111", "sys")
     assert fake_http.calls == []
@@ -477,7 +478,7 @@ def test_openrouter_extra_body_on_response_and_title(monkeypatch: pytest.MonkeyP
     hook = print
     provider = make_provider(
         "openrouter",
-        Settings(),
+        resolved_settings(),
         extra_body={"usage": {"include": True}},
         on_response=hook,
         title="bench",
@@ -538,13 +539,15 @@ def test_make_provider_openrouter_data_collection(
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("OPENROUTER_PROVIDER", raising=False)
     monkeypatch.setenv("OPENROUTER_DATA_COLLECTION", policy)
-    standard = _openrouter_inner(make_provider("openrouter", Settings())).extra_body["provider"]
-    assert standard == {"order": ["google-ai-studio/flex"], "data_collection": policy}
-    pro = _openrouter_inner(make_provider("openrouter", Settings().for_call("pro"))).extra_body[
+    standard = _openrouter_inner(make_provider("openrouter", resolved_settings())).extra_body[
         "provider"
     ]
+    assert standard == {"order": ["google-ai-studio/flex"], "data_collection": policy}
+    pro = _openrouter_inner(
+        make_provider("openrouter", resolved_settings().for_call("pro"))
+    ).extra_body["provider"]
     assert pro == {"order": ["openai"], "data_collection": policy}
-    auto = Settings().for_call("pro", model="openai/gpt-6-luna@auto")
+    auto = resolved_settings().for_call("pro", model="openai/gpt-6-luna@auto")
     assert _openrouter_inner(make_provider("openrouter", auto)).extra_body["provider"] == {
         "data_collection": policy
     }
@@ -553,12 +556,15 @@ def test_make_provider_openrouter_data_collection(
 def test_make_provider_openrouter_data_collection_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("OPENROUTER_DATA_COLLECTION", raising=False)
-    for cfg in (Settings(), Settings().for_tier("pro")):
+    for cfg in (resolved_settings(), resolved_settings().for_tier("pro")):
         routing = _openrouter_inner(make_provider("openrouter", cfg)).extra_body.get("provider", {})
         assert isinstance(routing, dict)
         assert "data_collection" not in routing
     monkeypatch.setenv("OPENROUTER_PROVIDER", "")
-    assert "provider" not in _openrouter_inner(make_provider("openrouter", Settings())).extra_body
+    assert (
+        "provider"
+        not in _openrouter_inner(make_provider("openrouter", resolved_settings())).extra_body
+    )
 
 
 # Cloud base URLs must be https, so the API key never travels in plaintext.
@@ -579,7 +585,7 @@ def test_cloud_base_url_requires_https(
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     # Settings refuses ftp:// and a bare host (#368); make_provider() refuses them anyway.
     changes: dict[str, Any] = {var.lower(): url}
-    cfg = replace(Settings(), **changes)
+    cfg = replace(resolved_settings(), **changes)
     with pytest.raises(ProviderError, match=f"{var} must be an https:// URL"):
         make_provider(name, cfg)
 
@@ -591,14 +597,14 @@ def test_cloud_base_url_requires_https(
 def test_cloud_base_url_allows_loopback_http(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("OPENROUTER_BASE_URL", url)
-    assert isinstance(make_provider("openrouter", Settings()), GatedProvider)
+    assert isinstance(make_provider("openrouter", resolved_settings()), GatedProvider)
 
 
 # Settings rejects an invalid PROMPT_EXTRA_PATTERNS regex (test_config.py); one that reaches
 # the factory anyway (a Settings built without its parsers) is still reported, never skipped.
 def test_invalid_extra_pattern_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
-    cfg = replace(Settings(), extra_patterns="a[")
+    cfg = replace(resolved_settings(), extra_patterns="a[")
     with pytest.raises(ValueError, match="PROMPT_EXTRA_PATTERNS entry 1"):
         make_provider("openrouter", cfg)
 
@@ -638,7 +644,7 @@ def test_allow_flagged_on_remote_and_local_models(
     remote = make_provider(name, remote_cfg, allow_flagged=True)
     assert isinstance(remote, GatedProvider)
     assert (remote._allow_flagged, remote._name) == (True, name)
-    assert isinstance(make_provider(name, Settings(), allow_flagged=True), local_type)
+    assert isinstance(make_provider(name, resolved_settings(), allow_flagged=True), local_type)
 
 
 # PROMPT_LOCAL_ONLY still wins over --allow-flagged.
@@ -652,7 +658,7 @@ def test_local_only_beats_allow_flagged() -> None:
 @pytest.mark.parametrize("name", ["ollama", "lmstudio"])
 def test_gate_local_wraps_loopback_providers(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     monkeypatch.setenv("PROMPT_GATE_LOCAL", "true")
-    cfg = Settings()
+    cfg = resolved_settings()
     provider = make_provider(name, cfg)
     assert isinstance(provider, GatedProvider)
     # still local: cost not_applicable, routes() says it stays here
@@ -667,7 +673,7 @@ def test_gate_local_blocks_a_sensitive_draft(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, name: str
 ) -> None:
     monkeypatch.setenv("PROMPT_GATE_LOCAL", "true")
-    provider = make_provider(name, Settings())
+    provider = make_provider(name, resolved_settings())
     with pytest.raises(ProviderError, match="Sensitive content detected: a payment card number"):
         provider.generate("card 4111 1111 1111 1111", "sys")
     assert fake_http.calls == []
@@ -678,11 +684,11 @@ def test_gate_local_follows_the_override_rules(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp
 ) -> None:
     monkeypatch.setenv("PROMPT_GATE_LOCAL", "true")
-    flagged = make_provider("ollama", Settings(), allow_flagged=True)
+    flagged = make_provider("ollama", resolved_settings(), allow_flagged=True)
     with pytest.raises(ProviderError, match="a payment card number"):
         flagged.generate("card 4111 1111 1111 1111", "sys")
     monkeypatch.setenv("ALLOW_CLOUD_OVERRIDE", "true")
-    overridden = make_provider("ollama", Settings())
+    overridden = make_provider("ollama", resolved_settings())
     assert isinstance(overridden, GatedProvider)
     assert overridden._allow_override is True
 
@@ -694,13 +700,13 @@ def test_gate_local_with_local_only_keeps_loopback(
 ) -> None:
     monkeypatch.setenv("PROMPT_GATE_LOCAL", "true")
     monkeypatch.setenv("PROMPT_LOCAL_ONLY", "true")
-    assert isinstance(make_provider(name, Settings()), GatedProvider)
-    assert not {r.name: r for r in factory.routes(Settings())}[name].refused
+    assert isinstance(make_provider(name, resolved_settings()), GatedProvider)
+    assert not {r.name: r for r in factory.routes(resolved_settings())}[name].refused
 
 
 # Off (the default), a loopback provider stays unwrapped.
 def test_gate_local_defaults_to_false() -> None:
-    assert Settings().gate_local is False
+    assert resolved_settings().gate_local is False
 
 
 # A loopback server gated by PROMPT_GATE_LOCAL is not a cloud call, and -il-/-ilm- cannot
@@ -711,7 +717,7 @@ def test_gate_local_block_message(
 ) -> None:
     monkeypatch.setenv("PROMPT_GATE_LOCAL", "true")
     with pytest.raises(ProviderError) as exc:
-        make_provider(name, Settings()).generate("write to jane@example.com", "sys")
+        make_provider(name, resolved_settings()).generate("write to jane@example.com", "sys")
     assert str(exc.value) == (
         "Blocked call to the local server (PROMPT_GATE_LOCAL=true gates it). Sensitive content "
         "detected: an email address. Remove it, or set PROMPT_GATE_LOCAL=false if the server "
@@ -739,9 +745,12 @@ def test_make_provider_empty_temperature_and_call_cap(monkeypatch: pytest.Monkey
     monkeypatch.setenv("OPENAI_API_KEY", "-".join(("test", "key")))
     own = ("anthropic", "openai")
     others = [name for name in PROVIDER_NAMES if name not in own]
-    assert _temperatures(Settings()) == {**dict.fromkeys(others, 0.2), **dict.fromkeys(own)}
+    assert _temperatures(resolved_settings()) == {
+        **dict.fromkeys(others, 0.2),
+        **dict.fromkeys(own),
+    }
     monkeypatch.setenv("PROMPT_TEMPERATURE", "")
-    cfg = Settings()
+    cfg = resolved_settings()
     assert _temperatures(cfg) == dict.fromkeys(PROVIDER_NAMES, None)
     uncapped = make_provider("ollama", cfg)
     assert isinstance(uncapped, OllamaProvider)
@@ -761,7 +770,7 @@ def test_gate_local_cloud_block_message(
     monkeypatch.setenv("PROMPT_GATE_LOCAL", "true")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     with pytest.raises(ProviderError) as exc:
-        make_provider("openrouter", Settings()).generate("card 4111 1111 1111 1111", "sys")
+        make_provider("openrouter", resolved_settings()).generate("card 4111 1111 1111 1111", "sys")
     assert str(exc.value) == (
         "Blocked cloud call. Sensitive content detected: a payment card number. Remove it."
     )
@@ -781,7 +790,7 @@ def test_block_message_follows_the_call_tier(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp, tier: str, offer: str
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    cfg = Settings().for_call(tier, provider="openrouter")
+    cfg = resolved_settings().for_call(tier, provider="openrouter")
     assert cfg.call_tier == tier
     with pytest.raises(ProviderError) as exc:
         make_provider("openrouter", cfg).generate("write to jane@example.com", "sys")
@@ -795,7 +804,7 @@ def test_block_message_follows_the_call_tier(
 @pytest.mark.parametrize("name", ["ollama", "lmstudio"])
 def test_force_remote_false_never_ungates(name: str) -> None:
     remote = replace(
-        Settings(),
+        resolved_settings(),
         ollama_base_url="https://ollama.example.com",
         lmstudio_base_url="https://lmstudio.example.com/v1",
     )
@@ -806,7 +815,7 @@ def test_force_remote_false_never_ungates(name: str) -> None:
 
 @pytest.mark.parametrize("name", ["ollama", "lmstudio"])
 def test_force_remote_gates_a_loopback_stand_in(name: str) -> None:
-    local = Settings()
+    local = resolved_settings()
     assert not isinstance(make_provider(name, local), GatedProvider)
     assert isinstance(make_provider(name, local, force_remote=True), GatedProvider)
     with pytest.raises(GateBlocked, match="PROMPT_LOCAL_ONLY"):
@@ -817,20 +826,20 @@ def test_check_base_url_matches_make_provider() -> None:
     cloud = [spec for spec in PROVIDERS.values() if spec.cloud]
     changes: dict[str, Any] = {f"{spec.name}_base_url": "http://relay.example" for spec in cloud}
     changes |= {f"{spec.name}_api_key": "k" for spec in cloud}
-    plain = replace(Settings(), **changes)
+    plain = replace(resolved_settings(), **changes)
     for spec in cloud:
         with pytest.raises(GateBlocked, match=f"{spec.url_setting} must be an https:// URL"):
             factory.check_base_url(spec.name, plain)
         with pytest.raises(GateBlocked, match=f"{spec.url_setting} must be an https:// URL"):
             make_provider(spec.name, plain)
     factory.check_base_url("ollama", replace(plain, ollama_base_url="http://relay.example"))
-    factory.check_base_url("openrouter", Settings())
+    factory.check_base_url("openrouter", resolved_settings())
 
 
 # #368: a malformed URL that bypassed Settings parsing is refused, not a traceback.
 def test_check_base_url_refuses_a_malformed_url() -> None:
     for spec in (s for s in PROVIDERS.values() if s.cloud):
         changes: dict[str, Any] = {f"{spec.name}_base_url": "http://[::1"}
-        bad = replace(Settings(), **changes)
+        bad = replace(resolved_settings(), **changes)
         with pytest.raises(GateBlocked, match=f"{spec.url_setting} must be an https:// URL"):
             factory.check_base_url(spec.name, bad)

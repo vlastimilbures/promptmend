@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from conftest import resolved_settings
 
 from promptmend import (
     config,
@@ -51,12 +52,12 @@ def test_history_off_advice_follows_the_mode(monkeypatch: pytest.MonkeyPatch) ->
     assert setup_guide.history_line(True).endswith(f"Off: {command}.")
     assert setup_guide.history_line(True, legacy=True).endswith(f"Off: {in_file}.")
     # conftest's default is legacy mode: the file PROMPTMEND_ENV names, not its path.
-    legacy = usage.disclosure(config.Settings())[-1]
+    legacy = usage.disclosure(resolved_settings())[-1]
     assert legacy.startswith(f"Switch it off: {in_file}; ")
     assert "config set" not in legacy
     assert str(config.env_file_override()) not in legacy
     monkeypatch.delenv("PROMPTMEND_ENV")
-    saved = usage.disclosure(config.Settings())[-1]
+    saved = usage.disclosure(resolved_settings())[-1]
     assert saved == f"Switch it off: {command}; `promptmend history reset` deletes the records."
     assert ".env" not in saved
 

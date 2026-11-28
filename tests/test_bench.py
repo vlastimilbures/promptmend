@@ -16,8 +16,8 @@ import httpx
 import pytest
 import truststore
 from bench_module import GOOD, bench
+from conftest import resolved_settings
 
-from promptmend.config import Settings
 from promptmend.prompt_builder import PROFILES, TEMPLATE_MARKER, system_prompt
 from promptmend.providers.base import ProviderError
 from promptmend.providers.usage import AttemptUsage
@@ -472,15 +472,15 @@ def test_split_spec() -> None:
 def test_call_sends_reasoning_effort(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     fake_http.reply({"choices": [{"message": {"content": "ok"}}]})
-    bench._call(Settings(), "a/b", "", "draft", "sys", "low")
+    bench._call(resolved_settings(), "a/b", "", "draft", "sys", "low")
     sent = fake_http.calls[0]["json"]
     assert sent["reasoning"] == {"effort": "low", "exclude": True}
     assert sent["max_tokens"] == bench.BENCH_MAX_TOKENS
     fake_http.reply({"choices": [{"message": {"content": "ok"}}]})
-    bench._call(Settings(), "a/b", "", "draft", "sys", max_tokens=2400)
+    bench._call(resolved_settings(), "a/b", "", "draft", "sys", max_tokens=2400)
     assert fake_http.calls[-1]["json"]["max_tokens"] == 2400
     fake_http.reply({"choices": [{"message": {"content": "ok"}}]})
-    bench._call(Settings(), "a/b", "", "draft", "sys")
+    bench._call(resolved_settings(), "a/b", "", "draft", "sys")
     assert "reasoning" not in fake_http.calls[-1]["json"]
 
 
@@ -495,7 +495,9 @@ def test_run_one_flags_truncation(
             "usage": {"completion_tokens_details": {"reasoning_tokens": 42}},
         }
     )
-    result = bench.run_one(Settings(), "a/b@c/d~low", "board", 1, tmp_path, bench.Budget(1.0))
+    result = bench.run_one(
+        resolved_settings(), "a/b@c/d~low", "board", 1, tmp_path, bench.Budget(1.0)
+    )
     assert result.failed == ["struct: truncated"]
     assert (result.effort, result.reasoning_tokens) == ("low", 42)
     assert result.label == "a/b@c/d~low"
@@ -506,7 +508,7 @@ def test_run_one_flags_truncation(
 def test_call_request_shape(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     fake_http.reply({"choices": [{"message": {"content": "ok"}}], "usage": {"cost": 0.01}})
-    text, body = bench._call(Settings(), "a/b", "c/d", "draft", "sys")
+    text, body = bench._call(resolved_settings(), "a/b", "c/d", "draft", "sys")
     assert text == "ok"
     assert body["usage"] == {"cost": 0.01}
     call = fake_http.calls[0]
@@ -524,7 +526,7 @@ def test_call_unpinned_sends_no_routing(
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     fake_http.reply({"choices": [{"message": {"content": "ok"}}]})
-    bench._call(Settings(), "a/b", "", "draft", "sys")
+    bench._call(resolved_settings(), "a/b", "", "draft", "sys")
     assert "provider" not in fake_http.calls[0]["json"]
 
 
@@ -532,7 +534,7 @@ def test_call_unpinned_sends_no_routing(
 def test_call_is_gated(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     with pytest.raises(ProviderError, match="Blocked cloud call"):
-        bench._call(Settings(), "a/b", "", "card 4111 1111 1111 1111", "sys")
+        bench._call(resolved_settings(), "a/b", "", "card 4111 1111 1111 1111", "sys")
     assert fake_http.calls == []
 
 
@@ -548,7 +550,7 @@ def test_run_one_scores_and_records(
         }
     )
     budget = bench.Budget(1.0)
-    result = bench.run_one(Settings(), "a/b@c/d", "board", 1, tmp_path, budget)
+    result = bench.run_one(resolved_settings(), "a/b@c/d", "board", 1, tmp_path, budget)
     assert result.ok, result.failed
     assert (result.in_tokens, result.out_tokens, result.backend) == (10, 20, "Host")
     assert result.label == "a/b@c/d"
@@ -569,9 +571,11 @@ def test_run_one_renders_given_persona(
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("PROMPT_PERSONA", "I am a private person.")
     fake_http.reply({"choices": [{"message": {"content": GOOD}}]})
-    bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
+    bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
     assert f'open with "{bench.EXAMPLE_PERSONA}"' in _system(fake_http)
-    bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0), persona="I test.")
+    bench.run_one(
+        resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0), persona="I test."
+    )
     assert 'open with "I test."' in _system(fake_http)
     assert "I am a private person." not in _system(fake_http, 0) + _system(fake_http)
 
@@ -582,7 +586,7 @@ def test_run_one_renders_given_persona(
 )
 def test_bench_persona_modes(monkeypatch: pytest.MonkeyPatch, mode: str, expected: str) -> None:
     monkeypatch.setenv("PROMPT_PERSONA", "I am a tester.")
-    assert bench.bench_persona(mode, Settings()) == expected
+    assert bench.bench_persona(mode, resolved_settings()) == expected
 
 
 def _sha(text: str) -> str:
@@ -703,7 +707,7 @@ def test_run_one_scores_repaired_text(
     slipped = GOOD.replace("board paper.\n</CONTEXT>", "board paper.\n</GOAL>", 1)
     assert "struct: mismatched closing tag" in bench.check(slipped, True, True)
     fake_http.reply({"choices": [{"message": {"content": slipped}}]})
-    result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
+    result = bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
     assert result.ok, result.failed
     assert result.repaired
     assert (tmp_path / "a_b__board__1.txt").read_text() == GOOD
@@ -720,7 +724,7 @@ def test_run_one_well_formed_is_not_repaired(
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     fake_http.reply({"choices": [{"message": {"content": GOOD}}]})
-    result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
+    result = bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
     assert not result.repaired
     assert not list(tmp_path.glob("*.raw"))
 
@@ -729,7 +733,7 @@ def test_run_one_well_formed_is_not_repaired(
 # resolve to the bench's profile (#61).
 @pytest.mark.parametrize("tier", ["standard", "pro"])
 def test_bench_profile_is_what_each_tier_sends(tier: str) -> None:
-    assert Settings().for_call(tier).profile == bench.PROFILE
+    assert resolved_settings().for_call(tier).profile == bench.PROFILE
 
 
 # cap-thread stays just under the prompt's 60-line copy limit, and its last material probe
@@ -749,7 +753,7 @@ def _run_one_with(
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setattr(time, "sleep", lambda seconds: None)
     fake_http.queue(*replies)
-    return bench.run_one(Settings(), "a/b@c/d", "board", 1, outdir, bench.Budget(1.0))
+    return bench.run_one(resolved_settings(), "a/b@c/d", "board", 1, outdir, bench.Budget(1.0))
 
 
 # The bench repeats a call whose error is transient (a 500 here, which post_json does not
@@ -830,7 +834,7 @@ def test_run_one_times_only_the_answering_attempt(
         return GOOD, {"usage": {"cost": 0.002}}
 
     monkeypatch.setattr(bench, "_call", call)
-    result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
+    result = bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
     assert result.ok, result.failed
     assert result.seconds == pytest.approx(0.9)
     assert result.retries == 2
@@ -852,7 +856,7 @@ def test_run_one_timer_restarts_per_attempt(
         return GOOD, {}
 
     monkeypatch.setattr(bench, "_call", call)
-    result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
+    result = bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
     assert (result.seconds, result.retries) == (2.0, 1)
 
 
@@ -873,7 +877,7 @@ def test_run_one_charges_failed_attempts(
         },
         {"json_data": {"choices": [{"message": {"content": GOOD}}], "usage": {"cost": 0.002}}},
     )
-    result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, budget)
+    result = bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, budget)
     assert result.ok, result.failed
     assert budget.spent == pytest.approx(0.005)
     assert result.cost == pytest.approx(0.005)
@@ -892,7 +896,7 @@ def test_run_one_charges_a_failed_run(
             "usage": {"cost": 0.004},
         }
     )
-    result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, budget)
+    result = bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, budget)
     assert result.error
     assert budget.spent == pytest.approx(0.004)
     assert result.cost == pytest.approx(0.004)
@@ -911,7 +915,7 @@ def test_run_one_unknown_cost(
             "usage": {"cost": None, "prompt_tokens": None, "completion_tokens": None},
         }
     )
-    result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, budget)
+    result = bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, budget)
     assert result.ok, result.error
     assert (result.cost, result.unknown_costs) == (None, 1)
     assert (budget.spent, budget.unknown) == (0.0, 1)
@@ -921,7 +925,7 @@ def test_run_one_unknown_cost(
 # A stubbed body with a null cost does not crash run_one either.
 def test_run_one_null_cost_in_body(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(bench, "_call", lambda *a, **k: (GOOD, {"usage": {"cost": None}}))
-    result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
+    result = bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
     assert result.ok, result.error
     assert result.cost is None
 
@@ -936,7 +940,9 @@ def test_run_one_records_an_unexpected_error(
         raise RuntimeError("scorer bug")
 
     monkeypatch.setattr(bench, "check_draft", broken)
-    result = bench.run_one(Settings(), "a/b@c/d~low", "board", 2, tmp_path, bench.Budget(1.0))
+    result = bench.run_one(
+        resolved_settings(), "a/b@c/d~low", "board", 2, tmp_path, bench.Budget(1.0)
+    )
     assert result.error == "RuntimeError: scorer bug"
     assert (result.label, result.draft, result.run) == ("a/b@c/d~low", "board", 2)
     assert not result.ok
@@ -1106,7 +1112,7 @@ def test_run_one_counts_review_flags(
         "</INPUTS>", "- Data [REVIEW: attach it]\n- Plan [REVIEW: which]\n</INPUTS>"
     )
     fake_http.reply({"choices": [{"message": {"content": flagged}}]})
-    result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
+    result = bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
     assert result.reviews == 2
 
 
@@ -1125,17 +1131,17 @@ def test_run_one_records_scored_kinds(
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     fake_http.reply({"choices": [{"message": {"content": GOOD}}]})
-    labelled = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
+    labelled = bench.run_one(resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0))
     assert labelled.scored == ["struct", "branch", "draft"]
-    persona = bench.run_one(Settings(), "a/b", "persona", 1, tmp_path, bench.Budget(1.0))
+    persona = bench.run_one(resolved_settings(), "a/b", "persona", 1, tmp_path, bench.Budget(1.0))
     assert persona.scored == ["struct", "draft"]
     general = bench.run_one(
-        Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0), PROFILES["general"]
+        resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0), PROFILES["general"]
     )
     assert general.scored == ["struct", "draft"]
     # A garbled reply chose no branch, so it is not a branch pass.
     fake_http.reply({"choices": [{"message": {"content": "Sure, here you go."}}]})
-    garbled = bench.run_one(Settings(), "a/b", "board", 2, tmp_path, bench.Budget(1.0))
+    garbled = bench.run_one(resolved_settings(), "a/b", "board", 2, tmp_path, bench.Budget(1.0))
     assert garbled.scored == ["struct", "draft"]
 
 
@@ -1282,7 +1288,7 @@ def test_run_one_general_profile(
         {"choices": [{"message": {"content": "```\nWrite a haiku about Monday.\n```"}}]}
     )
     result = bench.run_one(
-        Settings(), "a/b", "injection", 1, tmp_path, bench.Budget(1.0), PROFILES["general"]
+        resolved_settings(), "a/b", "injection", 1, tmp_path, bench.Budget(1.0), PROFILES["general"]
     )
     assert result.ok, result.failed
     assert (result.fenced, result.repaired) == (True, False)
@@ -1314,7 +1320,7 @@ def test_run_one_truncated_reply_is_unfenced(
         }
     )
     result = bench.run_one(
-        Settings(), "a/b", "injection", 1, tmp_path, bench.Budget(1.0), PROFILES["general"]
+        resolved_settings(), "a/b", "injection", 1, tmp_path, bench.Budget(1.0), PROFILES["general"]
     )
     assert result.fenced
     assert "struct: truncated" in result.failed
@@ -1327,7 +1333,9 @@ def test_template_candidate_without_marker_is_scored_as_template(
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     fake_http.reply({"choices": [{"message": {"content": "Write a board summary."}}]})
     candidate = PROFILES["default"].replace(TEMPLATE_MARKER, "<format>")
-    result = bench.run_one(Settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0), candidate)
+    result = bench.run_one(
+        resolved_settings(), "a/b", "board", 1, tmp_path, bench.Budget(1.0), candidate
+    )
     assert "struct: no <CONTEXT>" in result.failed
 
 

@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
+from conftest import resolved_settings
 
-from promptmend.config import Settings
 from promptmend.factory import make_provider
 from promptmend.gate import GatedProvider
 from promptmend.providers.anthropic import ANTHROPIC_VERSION, AnthropicProvider
@@ -214,7 +214,7 @@ def test_anthropic_default_request_body(
 ) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     fake_http.reply(_anthropic_body("ok"))
-    make_provider("anthropic", Settings()).generate("draft", "sys")
+    make_provider("anthropic", resolved_settings()).generate("draft", "sys")
     assert fake_http.calls[0]["json"] == {
         "model": "claude-sonnet-5-5",
         "max_tokens": 8000,
@@ -231,7 +231,7 @@ def test_anthropic_empty_effort_omits_output_config(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("ANTHROPIC_EFFORT", "")
     fake_http.reply(_anthropic_body("ok"))
-    make_provider("anthropic", Settings()).generate("draft", "sys")
+    make_provider("anthropic", resolved_settings()).generate("draft", "sys")
     assert "output_config" not in fake_http.calls[0]["json"]
 
 
@@ -239,7 +239,7 @@ def test_anthropic_empty_effort_omits_output_config(
 def test_openrouter_request_shape(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     fake_http.reply(_openai_body("ok"))
-    make_provider("openrouter", Settings()).generate("draft", "sys")
+    make_provider("openrouter", resolved_settings()).generate("draft", "sys")
     call = fake_http.calls[0]
     assert call["url"] == "https://openrouter.ai/api/v1/chat/completions"
     assert call["headers"] == {
@@ -266,7 +266,7 @@ def test_openrouter_request_shape(fake_http: FakeHttp, monkeypatch: pytest.Monke
 def test_openai_request_shape(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     fake_http.reply(_openai_body("ok"))
-    make_provider("openai", Settings()).generate("draft", "sys")
+    make_provider("openai", resolved_settings()).generate("draft", "sys")
     call = fake_http.calls[0]
     assert call["url"] == "https://api.openai.com/v1/chat/completions"
     assert call["headers"] == {
@@ -292,7 +292,7 @@ def test_openai_temperature_and_empty_effort(
     monkeypatch.setenv("OPENAI_TEMPERATURE", "1")
     monkeypatch.setenv("OPENAI_REASONING_EFFORT", "")
     fake_http.reply(_openai_body("ok"))
-    make_provider("openai", Settings()).generate("draft", "sys")
+    make_provider("openai", resolved_settings()).generate("draft", "sys")
     body = fake_http.calls[0]["json"]
     assert {k: v for k, v in body.items() if k != "messages"} == {
         "model": "gpt-6-luna",
@@ -305,7 +305,9 @@ def test_openai_temperature_and_empty_effort(
 # no reasoning_effort, no key.
 def test_lmstudio_request_shape(fake_http: FakeHttp) -> None:
     fake_http.reply(_openai_body("ok"))
-    make_provider("lmstudio", Settings().with_overrides(max_tokens="300")).generate("d", "sys")
+    make_provider("lmstudio", resolved_settings().with_overrides(max_tokens="300")).generate(
+        "d", "sys"
+    )
     call = fake_http.calls[0]
     assert call["url"] == "http://127.0.0.1:1234/v1/chat/completions"
     assert call["headers"] == {"Content-Type": "application/json"}
@@ -800,7 +802,7 @@ def test_loopback_provider_bypasses_proxy(
     with _http_server(body) as (target, target_seen), _http_server(body) as (proxy, proxy_seen):
         _route_through_proxy(monkeypatch, route, proxy)
         monkeypatch.setenv(setting, target + path)
-        assert make_provider(name, Settings()).generate("draft", "sys") == "ok"
+        assert make_provider(name, resolved_settings()).generate("draft", "sys") == "ok"
     assert proxy_seen == []
     assert len(target_seen) == 1
 
@@ -811,7 +813,7 @@ def test_remote_provider_keeps_proxy(monkeypatch: pytest.MonkeyPatch, route: str
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.example.test:11434")
     with _http_server(_ollama_body("ok")) as (proxy, proxy_seen):
         _route_through_proxy(monkeypatch, route, proxy)
-        provider = make_provider("ollama", Settings())
+        provider = make_provider("ollama", resolved_settings())
         assert isinstance(provider, GatedProvider)
         assert provider.generate("draft", "sys") == "ok"
     assert proxy_seen == ["POST http://ollama.example.test:11434/api/chat HTTP/1.1"]

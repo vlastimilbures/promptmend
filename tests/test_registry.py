@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import resolved_settings
 
 from promptmend import assets, setup_guide, smoke
 from promptmend.config import Settings, env_names, secret_names
@@ -90,16 +91,16 @@ def test_cloud_spec_needs_a_key_and_https(spec: ProviderSpec) -> None:
     # The conftest default is legacy mode (PROMPTMEND_ENV set), where `secrets set` refuses.
     legacy = f"{spec.key} is not set: add it to the .env that PROMPTMEND_ENV names"
     with pytest.raises(ProviderError) as caught:
-        make_provider(spec.name, Settings())
+        make_provider(spec.name, resolved_settings())
     assert str(caught.value) == legacy
     with pytest.MonkeyPatch.context() as patch:
         patch.delenv("PROMPTMEND_ENV")
         with pytest.raises(ProviderError) as caught:
-            make_provider(spec.name, Settings())
+            make_provider(spec.name, resolved_settings())
     assert str(caught.value) == (
         f"{spec.key} is not set: run `promptmend secrets set {spec.key}` in a terminal"
     )
-    plain = _url(_keyed(Settings()), spec, "http://relay.example")
+    plain = _url(_keyed(resolved_settings()), spec, "http://relay.example")
     with pytest.raises(GateBlocked, match=f"{spec.url_setting} must be an https:// URL"):
         check_base_url(spec.name, plain)
     with pytest.raises(GateBlocked, match=f"{spec.url_setting} must be an https:// URL"):
@@ -111,7 +112,7 @@ def test_cloud_spec_needs_a_key_and_https(spec: ProviderSpec) -> None:
 @pytest.mark.parametrize("url", ["", "http://127.0.0.1:8080"], ids=["default", "loopback"])
 @pytest.mark.parametrize("spec", CLOUD, ids=_ids(CLOUD))
 def test_cloud_spec_always_leaves_the_machine(spec: ProviderSpec, url: str) -> None:
-    cfg = _keyed(Settings())
+    cfg = _keyed(resolved_settings())
     if url:
         cfg = _url(cfg, spec, url)
     assert leaves_machine(spec.name, cfg)
@@ -127,7 +128,7 @@ def test_local_spec_stays_local_on_loopback(spec: ProviderSpec) -> None:
     assert spec.key is None
     assert spec.cap is None
     assert spec.probe_path
-    cfg = Settings()
+    cfg = resolved_settings()
     assert not leaves_machine(spec.name, cfg)
     assert not isinstance(make_provider(spec.name, cfg), GatedProvider)
     assert not isinstance(make_provider(spec.name, replace(cfg, local_only=True)), GatedProvider)
@@ -153,7 +154,7 @@ def test_only_openrouter_is_a_router() -> None:
 
 # --model, --effort and --max-tokens reach whichever provider runs (--effort those with one).
 def test_overrides_reach_every_provider() -> None:
-    cfg = Settings().with_overrides(model="m", effort="medium", max_tokens="300")
+    cfg = resolved_settings().with_overrides(model="m", effort="medium", max_tokens="300")
     for spec in PROVIDERS.values():
         assert spec.model(cfg) == "m"
         assert spec.max_tokens(cfg) == 300
@@ -165,7 +166,7 @@ def test_overrides_reach_every_provider() -> None:
 
 # Setup's "both" tests one cloud and one local provider, each a trigger's (#390).
 def test_setup_tests_a_cloud_and_a_local_provider() -> None:
-    runs = setup_guide.smoke_runs(setup_guide.BOTH, assets.triggers(), Settings())
+    runs = setup_guide.smoke_runs(setup_guide.BOTH, assets.triggers(), resolved_settings())
     assert [run.provider and PROVIDERS[run.provider].cloud for run in runs] == [True, False]
     assert all(run.trigger for run in runs)
 
@@ -180,7 +181,7 @@ def test_stub_env_forces_paste_output() -> None:
 # The stub runs point every provider at 127.0.0.1 with the placeholder key, never the real one.
 def test_stub_points_every_provider_at_the_stub() -> None:
     env = smoke.stub_env(4242, {"OPENROUTER_API_KEY": "real"})
-    cfg = smoke.stub_settings(_keyed(Settings()), 4242)
+    cfg = smoke.stub_settings(_keyed(resolved_settings()), 4242)
     # Each keeps its default's path, so the stub sees the paths the real API would.
     assert {spec.url_setting: env[spec.url_setting] for spec in PROVIDERS.values()} == {
         "OLLAMA_BASE_URL": "http://127.0.0.1:4242",
@@ -222,7 +223,7 @@ def test_accessors_read_the_settings_they_name(spec: ProviderSpec) -> None:
     assert set(marks) <= SETTINGS_FIELDS
     # The shared fallbacks get values of their own, so a reader that fell back to them by
     # mistake would show it.
-    cfg = replace(Settings(), **marks, call_max_tokens=55, temperature=0.11)
+    cfg = replace(resolved_settings(), **marks, call_max_tokens=55, temperature=0.11)
     assert spec.url(cfg) == "https://marked.example"
     assert spec.model(cfg) == "marked"
     assert (spec.read_key is None) == (spec.key is None) == (spec.key_field is None)
@@ -236,20 +237,22 @@ def test_accessors_read_the_settings_they_name(spec: ProviderSpec) -> None:
     # Every other spec still reads its own defaults from these settings.
     for other in PROVIDERS.values():
         if other is not spec:
-            assert other.url(cfg) == other.url(Settings())
-            assert other.model(cfg) == other.model(Settings())
-            assert other.api_key(cfg) == other.api_key(Settings())
+            assert other.url(cfg) == other.url(resolved_settings())
+            assert other.model(cfg) == other.model(resolved_settings())
+            assert other.api_key(cfg) == other.api_key(resolved_settings())
             if other.cap:
-                assert other.max_tokens(cfg) == other.max_tokens(Settings())
+                assert other.max_tokens(cfg) == other.max_tokens(resolved_settings())
             if other.temperature:
-                assert other.request_temperature(cfg) == other.request_temperature(Settings())
+                assert other.request_temperature(cfg) == other.request_temperature(
+                    resolved_settings()
+                )
             if other.effort:
-                assert other.reasoning_effort(cfg) == other.reasoning_effort(Settings())
+                assert other.reasoning_effort(cfg) == other.reasoning_effort(resolved_settings())
 
 
 @pytest.mark.parametrize("spec", PROVIDERS.values(), ids=list(PROVIDERS))
 def test_accessors_without_overrides_follow_the_fallbacks(spec: ProviderSpec) -> None:
-    cfg = Settings()
+    cfg = resolved_settings()
     assert spec.max_tokens(cfg) == (getattr(cfg, spec.cap) if spec.cap else None)
     assert spec.request_temperature(cfg) == getattr(cfg, spec.temperature or "temperature")
     assert spec.api_key(cfg) == ("" if spec.key else None)
@@ -258,7 +261,7 @@ def test_accessors_without_overrides_follow_the_fallbacks(spec: ProviderSpec) ->
 # The provider a spec builds is named and labelled by that spec, whatever its wire format.
 @pytest.mark.parametrize("spec", PROVIDERS.values(), ids=list(PROVIDERS))
 def test_provider_takes_name_and_label_from_its_spec(spec: ProviderSpec) -> None:
-    built = make_provider(spec.name, _keyed(Settings()))
+    built = make_provider(spec.name, _keyed(resolved_settings()))
     inner: Any = built._inner if isinstance(built, GatedProvider) else built
     assert (inner.name, inner.label) == (spec.name, spec.label)
 
@@ -308,4 +311,4 @@ def test_anthropic_spec_without_a_cap_is_refused(monkeypatch: pytest.MonkeyPatch
     capless = replace(PROVIDERS["anthropic"], cap=None, read_cap=None)
     monkeypatch.setitem(PROVIDERS, "anthropic", capless)
     with pytest.raises(ProviderError, match=r"^Anthropic has no output cap setting$"):
-        make_provider("anthropic", _keyed(Settings()))
+        make_provider("anthropic", _keyed(resolved_settings()))

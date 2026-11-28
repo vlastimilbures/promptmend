@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import faulthandler
 import json
+import os
 import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
@@ -358,6 +359,15 @@ def seed_history(monkeypatch: pytest.MonkeyPatch) -> SeedHistory:
         return store
 
     return seed
+
+
+def resolved_settings() -> Settings:
+    """Settings as the product resolves them (Settings.load(): ConfigLayers.resolve() in
+    strict mode, then .settings()), from os.environ as the test has patched it and the
+    files of this test's temp folders. Strict mode, so a bad value raises the ValueError
+    naming its variable, as a trigger's load does. Bare Settings() is only the built-in
+    defaults (#409)."""
+    return config.ConfigLayers.resolve(dict(os.environ)).settings()
 
 
 def read_env_file(path: Path) -> dict[str, str] | None:

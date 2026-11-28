@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import typer
+from conftest import resolved_settings
 from typer.testing import CliRunner
 
 from promptmend import config, factory, pipeline, recorder, smoke, trigger
@@ -225,7 +226,7 @@ def test_provider_and_watchdog_word_the_same_timeout(
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    cfg = Settings().for_call(tier, provider=provider, timeout=timeout)
+    cfg = resolved_settings().for_call(tier, provider=provider, timeout=timeout)
     fake_http.exc = _read_timeout()
     with pytest.raises(base.ProviderError) as caught:
         factory.make_provider(provider, cfg).generate("a draft", "s")
@@ -270,7 +271,7 @@ def test_cancel_before_arm_is_harmless() -> None:
 
 def test_timed_out_keeps_the_attempt_in_flight() -> None:
     rec = recorder.Recorder("improve", "i")
-    rec.track(Settings())
+    rec.track(resolved_settings())
     observer = rec.observer
     assert observer is not None
     meter = Meter(observer, "openrouter", "some/model", openai_usage)
@@ -300,7 +301,7 @@ def test_timed_out_keeps_the_attempt_in_flight() -> None:
 
 def test_finished_attempt_is_not_pending() -> None:
     rec = recorder.Recorder("improve")
-    rec.track(Settings())
+    rec.track(resolved_settings())
     observer = rec.observer
     assert observer is not None
     meter = Meter(observer, "ollama", "m", openai_usage, local=True)

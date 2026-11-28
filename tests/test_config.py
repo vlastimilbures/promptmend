@@ -3,25 +3,43 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from conftest import read_env_file
+from conftest import read_env_file, resolved_settings
 
 from promptmend import config
 from promptmend.config import ConfigLayers, Finding, Settings, env_names, split_model_spec
 from promptmend.providers.registry import PROVIDERS
 
 
-# Settings() reads env vars at instantiation, not at import time.
+# Settings are resolved (env vars read) when they are loaded, not at import time.
 def test_settings_read_at_instantiation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROMPT_PROVIDER", "lmstudio")
     monkeypatch.setenv("PROMPT_TIMEOUT_SECONDS", "12")
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.provider == "lmstudio"
     assert settings.timeout == 12.0
 
 
+# Bare Settings() is the built-in defaults: it never reads the environment, not even a bad
+# value (#409). Only Settings.load() (ConfigLayers) resolves the settings. The three asserts
+# are the proof (the bad value made the old code raise); the loop only checks that every
+# built-in default parses and is what its field holds.
+def test_bare_settings_ignore_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMPT_PROVIDER", "lmstudio")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-from-env")
+    monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "lots")
+    settings = Settings()
+    assert settings.provider == "openrouter"
+    assert settings.openrouter_api_key == ""
+    assert settings.openrouter_max_tokens == 2400
+    for f in config.setting_fields():
+        assert getattr(settings, f.name) == config.parse_setting(
+            f.metadata["env"], f.metadata["parse"], f.metadata["default"]
+        )
+
+
 # Default values apply when the relevant env vars are unset.
 def test_defaults() -> None:
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.provider == "openrouter"
     assert settings.profile == "default"
     assert settings.timeout == 30.0
@@ -56,7 +74,7 @@ def test_defaults() -> None:
 # a no-op.
 def test_for_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_PRO_MODEL", "x/pro")
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.for_tier("standard") is settings
     pro = settings.for_tier("pro")
     assert (pro.openrouter_model, pro.openrouter_provider) == ("x/pro", "openai")
@@ -64,8 +82,8 @@ def test_for_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     assert pro.persona == settings.persona
     assert pro.profile == settings.profile == "default"  # empty by default: one prompt
     monkeypatch.setenv("PROMPT_PRO_PROFILE", "general")
-    assert Settings().for_tier("pro").profile == "general"
-    assert Settings().for_tier("standard").profile == settings.profile
+    assert resolved_settings().for_tier("pro").profile == "general"
+    assert resolved_settings().for_tier("standard").profile == settings.profile
     with pytest.raises(ValueError, match="Unknown tier"):
         settings.for_tier("ultra")
 
@@ -73,13 +91,13 @@ def test_for_tier(monkeypatch: pytest.MonkeyPatch) -> None:
 # for_call: the tier, then the overrides; a pro call on another model loses the pro profile.
 def test_for_call(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROMPT_PROFILE", "general")
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.for_call("standard") == settings
     assert settings.for_call("pro", model="default") == settings.for_tier("pro")
     assert settings.for_call("standard", model="x/m").profile == "general"
     assert settings.for_call("pro") == settings.for_tier("pro")
     monkeypatch.setenv("PROMPT_PRO_PROFILE", "default")
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.for_call("pro", model=f"{settings.openrouter_pro_model}@auto").profile == (
         "default"
     )
@@ -95,7 +113,7 @@ def test_for_call_pro_tier_not_on_local_providers(
     monkeypatch: pytest.MonkeyPatch, provider: str
 ) -> None:
     monkeypatch.setenv("PROMPT_PRO_PROFILE", "general")
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.for_call("pro", provider=provider) == settings
     assert settings.tier_preset("pro", provider) is None
     assert settings.for_call("pro", provider=provider, timeout="7").timeout == 7
@@ -111,7 +129,7 @@ def test_for_call_pro_tier_not_on_local_providers(
 def test_pro_tier_on_a_direct_provider(monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
     monkeypatch.setenv("PROMPT_PRO_PROFILE", "general")
     monkeypatch.setenv("PROMPT_PRO_TIMEOUT_SECONDS", "50")
-    settings = Settings()
+    settings = resolved_settings()
     spec = PROVIDERS[provider]
     assert settings.tier_preset("pro", provider) == config.Preset(
         "pro", provider, spec.model(settings), None, None, None, 50.0, "general"
@@ -136,7 +154,7 @@ def test_pro_provider_picks_the_unnamed_provider(
 ) -> None:
     monkeypatch.setenv("PROMPT_PROVIDER", "ollama")
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", f" {pro_provider.upper()} ")
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.pro_provider == pro_provider
     assert (settings.provider_for("pro"), settings.provider_for("standard")) == (
         pro_provider,
@@ -157,7 +175,7 @@ def test_pro_provider_picks_the_unnamed_provider(
 @pytest.mark.parametrize("raw", ["", "  "])
 def test_empty_pro_provider_is_openrouter(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", raw)
-    assert Settings().pro_provider == config.DEFAULT_PRO_PROVIDER == "openrouter"
+    assert resolved_settings().pro_provider == config.DEFAULT_PRO_PROVIDER == "openrouter"
     assert ConfigLayers.resolve().settings().provider_for("pro") == "openrouter"
 
 
@@ -167,7 +185,7 @@ def test_pro_provider_rejects_others(monkeypatch: pytest.MonkeyPatch, raw: str) 
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", raw)
     expected = r"^PROMPT_PRO_PROVIDER must be empty or one of openrouter, anthropic, openai, got "
     with pytest.raises(ValueError, match=expected):
-        Settings()
+        resolved_settings()
     with pytest.raises(ValueError, match=expected):
         ConfigLayers.resolve().settings()
     layers = ConfigLayers.resolve(strict=False)
@@ -199,7 +217,7 @@ def test_pro_provider_rejects_others(monkeypatch: pytest.MonkeyPatch, raw: str) 
 def test_openrouter_pro_tier_parity(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
     for name, value in env.items():
         monkeypatch.setenv(name, value)
-    s = Settings()
+    s = resolved_settings()
     before = replace(
         s,
         openrouter_model=s.openrouter_pro_model,
@@ -263,7 +281,7 @@ def test_model_setting() -> None:
 
 # --max-tokens is kept for the local providers too, which have no cap setting of their own.
 def test_with_overrides_call_max_tokens() -> None:
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.call_max_tokens is None
     assert settings.with_overrides(max_tokens="300").call_max_tokens == 300
     assert "call_max_tokens" not in [f.metadata.get("env") for f in config.setting_fields()]
@@ -272,7 +290,7 @@ def test_with_overrides_call_max_tokens() -> None:
 # The tier and the --timeout of one call are kept for the failure markers (#398), and neither
 # is a setting.
 def test_call_tier_and_call_timeout() -> None:
-    settings = Settings()
+    settings = resolved_settings()
     assert (settings.call_tier, settings.call_timeout) == ("standard", None)
     assert settings.for_call("pro").call_tier == "pro"
     assert settings.for_call("pro", provider="anthropic").call_tier == "pro"
@@ -290,13 +308,13 @@ def test_call_tier_and_call_timeout() -> None:
 # tier; set, it caps the pro tier only (#31).
 def test_pro_max_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "1000")
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.openrouter_pro_max_tokens is None
     assert settings.for_tier("pro").openrouter_max_tokens == 1000
     monkeypatch.setenv("OPENROUTER_PRO_MAX_TOKENS", "")
     assert Settings.load().for_tier("pro").openrouter_max_tokens == 1000
     monkeypatch.setenv("OPENROUTER_PRO_MAX_TOKENS", "4000")
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.openrouter_pro_max_tokens == 4000
     assert settings.for_tier("pro").openrouter_max_tokens == 4000
     assert settings.for_tier("standard").openrouter_max_tokens == 1000
@@ -319,17 +337,17 @@ def test_bad_pro_max_tokens(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
         ValueError,
         match=f"^OPENROUTER_PRO_MAX_TOKENS must be empty or a whole number above 0, got '{raw}'$",
     ):
-        Settings()
+        resolved_settings()
 
 
 # OLLAMA_NUM_CTX (#168): unset or empty keeps Ollama's own context size; the tiers and
 # per-call overrides leave it alone.
 def test_ollama_num_ctx(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert Settings().ollama_num_ctx is None
+    assert resolved_settings().ollama_num_ctx is None
     monkeypatch.setenv("OLLAMA_NUM_CTX", "")
-    assert Settings().ollama_num_ctx is None
+    assert resolved_settings().ollama_num_ctx is None
     monkeypatch.setenv("OLLAMA_NUM_CTX", "8192")
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.ollama_num_ctx == 8192
     assert settings.for_tier("pro").ollama_num_ctx == 8192
     assert settings.for_call("pro", provider="ollama").ollama_num_ctx == 8192
@@ -343,45 +361,45 @@ def test_bad_num_ctx(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
         ValueError,
         match=f"^OLLAMA_NUM_CTX must be empty or a whole number above 0, got '{raw}'$",
     ):
-        Settings()
+        resolved_settings()
 
 
 # An empty PROMPT_TEMPERATURE means "send no temperature"; unset keeps the default.
 def test_empty_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert Settings().temperature == 0.2
+    assert resolved_settings().temperature == 0.2
     monkeypatch.setenv("PROMPT_TEMPERATURE", "")
-    assert Settings().temperature is None
+    assert resolved_settings().temperature is None
     assert Settings.load().temperature is None
     monkeypatch.setenv("PROMPT_TEMPERATURE", " ")
     with pytest.raises(ValueError, match="PROMPT_TEMPERATURE must be empty or a number"):
-        Settings()
+        resolved_settings()
 
 
 # ANTHROPIC_TEMPERATURE is empty by default (current Claude models reject a temperature, so
 # none is sent), a set value is taken as is, and PROMPT_TEMPERATURE never sets it (#273).
 def test_anthropic_temperature(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert Settings().anthropic_temperature is None
+    assert resolved_settings().anthropic_temperature is None
     for raw, value in (("1", 1.0), ("0", 0.0), ("0.3", 0.3), ("", None)):
         monkeypatch.setenv("ANTHROPIC_TEMPERATURE", raw)
         assert Settings.load().anthropic_temperature == value
     monkeypatch.delenv("ANTHROPIC_TEMPERATURE")
     monkeypatch.setenv("PROMPT_TEMPERATURE", "0.7")
-    assert Settings().anthropic_temperature is None
+    assert resolved_settings().anthropic_temperature is None
 
 
 # OpenAI's own settings (#274): its reasoning models reject a non-default temperature, so
 # none is sent by default and PROMPT_TEMPERATURE never sets it; effort low, the https API.
 def test_openai_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = Settings()
+    cfg = resolved_settings()
     assert (cfg.openai_base_url, cfg.openai_model) == ("https://api.openai.com/v1", "gpt-6-luna")
     assert (cfg.openai_max_tokens, cfg.openai_reasoning_effort) == (2400, "low")
     assert (cfg.openai_temperature, cfg.openai_api_key) == (None, "")
     monkeypatch.setenv("PROMPT_TEMPERATURE", "0.7")
     monkeypatch.setenv("OPENAI_TEMPERATURE", "0.3")
-    assert (Settings().temperature, Settings().openai_temperature) == (0.7, 0.3)
+    assert (resolved_settings().temperature, resolved_settings().openai_temperature) == (0.7, 0.3)
     monkeypatch.setenv("OPENAI_API_KEY", "  sk-test  ")
-    assert Settings().openai_api_key == "sk-test"
-    assert "sk-test" not in repr(Settings())
+    assert resolved_settings().openai_api_key == "sk-test"
+    assert "sk-test" not in repr(resolved_settings())
 
 
 # split_model_spec: a bare slug has no pin, slug@endpoint pins it, @auto unpins.
@@ -397,7 +415,7 @@ def test_split_model_spec() -> None:
 
 # with_overrides: None and `default` keep the settings; real values replace them.
 def test_with_overrides() -> None:
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.with_overrides() is settings
     assert settings.with_overrides(effort="default", max_tokens="default") is settings
     custom = settings.with_overrides(effort="high", max_tokens="9000", timeout="120")
@@ -411,7 +429,7 @@ def test_with_overrides() -> None:
 # --model sets every provider's model, so it applies to whichever one runs; its @endpoint
 # part pins OpenRouter (@auto: no pin), and a bare slug keeps the configured pin.
 def test_with_overrides_model() -> None:
-    settings = Settings()
+    settings = resolved_settings()
     pinned = settings.with_overrides(model="x/m@auto")
     models = (
         pinned.ollama_model,
@@ -438,7 +456,7 @@ def test_with_overrides_model() -> None:
 )
 def test_with_overrides_rejects_bad_values(kwargs: dict[str, str], message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        Settings().with_overrides(**kwargs)
+        resolved_settings().with_overrides(**kwargs)
 
 
 # A bad numeric env var raises a ValueError naming the setting and what it must be,
@@ -463,23 +481,23 @@ def test_bad_numeric_env_var_raises(
 ) -> None:
     monkeypatch.setenv(env_name, raw)
     with pytest.raises(ValueError, match=f"^{env_name} must be {expected}, got '{raw}'$"):
-        Settings()
+        resolved_settings()
 
 
 # Zero is refused where it makes no sense, and allowed for temperature.
 def test_zero_values(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROMPT_TEMPERATURE", "0")
-    assert Settings().temperature == 0.0
+    assert resolved_settings().temperature == 0.0
     monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "0")
     with pytest.raises(ValueError, match="OPENROUTER_MAX_TOKENS must be a whole number above 0"):
-        Settings()
+        resolved_settings()
 
 
 # API keys never appear in repr(), so a traceback or a failing assertion cannot print them.
 def test_repr_hides_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-secret-value")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-secret-value")
-    text = repr(Settings())
+    text = repr(resolved_settings())
     assert "secret-value" not in text
     assert "openrouter_model=" in text
 
@@ -566,7 +584,7 @@ def test_bool_parsing(monkeypatch: pytest.MonkeyPatch, raw: str, expected: bool)
     monkeypatch.setenv("OPENROUTER_ALLOW_FALLBACKS", raw)
     monkeypatch.setenv("PROMPT_LOCAL_ONLY", raw)
     monkeypatch.setenv("PROMPT_GATE_LOCAL", raw)
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.gate_local is expected
     assert settings.allow_cloud_override is expected
     assert settings.ollama_think is expected
@@ -580,14 +598,14 @@ def test_bool_parsing(monkeypatch: pytest.MonkeyPatch, raw: str, expected: bool)
 )
 def test_data_collection_parsing(monkeypatch: pytest.MonkeyPatch, raw: str, expected: str) -> None:
     monkeypatch.setenv("OPENROUTER_DATA_COLLECTION", raw)
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.openrouter_data_collection == expected
     assert settings.for_tier("pro").openrouter_data_collection == expected
 
 
 def test_data_collection_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENROUTER_DATA_COLLECTION", raising=False)
-    assert Settings().openrouter_data_collection == ""
+    assert resolved_settings().openrouter_data_collection == ""
 
 
 # A typo is reported naming the variable, never silently sent (OpenRouter would 400).
@@ -598,7 +616,7 @@ def test_data_collection_rejects_other_values(monkeypatch: pytest.MonkeyPatch, r
         ValueError,
         match=f"^OPENROUTER_DATA_COLLECTION must be empty or one of allow, deny, got '{raw}'$",
     ):
-        Settings()
+        resolved_settings()
 
 
 # Anything else is an error, not a silent false: OLLAMA_THINK=1 must not mean "off".
@@ -609,7 +627,7 @@ def test_bool_parsing_rejects_other_values(
 ) -> None:
     monkeypatch.setenv(name, raw)
     with pytest.raises(ValueError, match=f"^{name} must be true or false, got '{raw}'$"):
-        Settings()
+        resolved_settings()
 
 
 # Every reasoning-effort setting accepts empty (omit the field) or a known effort, any case.
@@ -626,7 +644,7 @@ def test_effort_parsing(
     monkeypatch: pytest.MonkeyPatch, env_name: str, raw: str, expected: str
 ) -> None:
     monkeypatch.setenv(env_name, raw)
-    assert getattr(Settings(), env_name.lower()) == expected
+    assert getattr(resolved_settings(), env_name.lower()) == expected
 
 
 # A typo is reported at load instead of reaching the API as an opaque HTTP 400.
@@ -637,7 +655,7 @@ def test_effort_typo_is_rejected(monkeypatch: pytest.MonkeyPatch, env_name: str)
         ValueError,
         match=f"^{env_name} must be empty or one of none, minimal, low, medium, high, got 'hihg'$",
     ):
-        Settings()
+        resolved_settings()
 
 
 # ANTHROPIC_EFFORT takes Anthropic's own levels (#277): xhigh and max too, none or minimal
@@ -647,7 +665,7 @@ def test_effort_typo_is_rejected(monkeypatch: pytest.MonkeyPatch, env_name: str)
 )
 def test_anthropic_effort_parsing(monkeypatch: pytest.MonkeyPatch, raw: str, expected: str) -> None:
     monkeypatch.setenv("ANTHROPIC_EFFORT", raw)
-    assert Settings().anthropic_effort == expected
+    assert resolved_settings().anthropic_effort == expected
 
 
 @pytest.mark.parametrize("raw", ["none", "minimal", "hihg"])
@@ -658,7 +676,7 @@ def test_anthropic_effort_rejects_others(monkeypatch: pytest.MonkeyPatch, raw: s
         match="^ANTHROPIC_EFFORT must be empty or one of low, medium, high, xhigh, max, "
         f"got '{raw}'$",
     ):
-        Settings()
+        resolved_settings()
 
 
 FAKE_KEY = "sk-or-v1-" + "cd" * 32
@@ -680,7 +698,7 @@ def test_parse_error_never_echoes_secret_like_values(
 ) -> None:
     monkeypatch.setenv("OPENROUTER_MAX_TOKENS", raw)
     with pytest.raises(ValueError, match=r"^OPENROUTER_MAX_TOKENS must be") as caught:
-        Settings()
+        resolved_settings()
     message = str(caught.value)
     assert "sk-or-v1" not in message
     assert "cdcd" not in message
@@ -691,7 +709,7 @@ def test_parse_error_never_echoes_secret_like_values(
 # Per-call overrides follow the same rule.
 def test_override_error_never_echoes_secret_like_values() -> None:
     with pytest.raises(ValueError, match="redacted") as caught:
-        Settings().with_overrides(max_tokens=FAKE_KEY)
+        resolved_settings().with_overrides(max_tokens=FAKE_KEY)
     assert "cdcd" not in str(caught.value)
 
 
@@ -750,7 +768,7 @@ def test_invalid_extra_pattern_is_rejected(
 ) -> None:
     monkeypatch.setenv("PROMPT_EXTRA_PATTERNS", raw)
     with pytest.raises(ValueError, match=r"^PROMPT_EXTRA_PATTERNS must be") as caught:
-        Settings()
+        resolved_settings()
     message = str(caught.value)
     assert f"entry {entry} (custom_{entry}) is not" in message
     shown = message.replace(f"(custom_{entry})", "")  # the label's own parenthesis
@@ -772,14 +790,14 @@ def test_invalid_extra_pattern_is_a_repair_finding(tmp_path: Path, raw: str) -> 
 def test_api_keys_are_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", f" {FAKE_KEY} ")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "ant-key\t")
-    settings = Settings()
+    settings = resolved_settings()
     assert (settings.openrouter_api_key, settings.anthropic_api_key) == (FAKE_KEY, "ant-key")
 
 
 # An empty key in .env (as in .env.example) counts as unset for the provider check.
 def test_empty_api_key_is_kept_as_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "")
-    assert not Settings().openrouter_api_key
+    assert not resolved_settings().openrouter_api_key
 
 
 # Shell-style `export KEY=value` lines are accepted, since .env files are often sourced too.
@@ -822,9 +840,9 @@ def test_load_dotenv_strips_inline_comments(
 
 # PROMPT_PERSONA is empty unless configured.
 def test_persona_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert Settings().persona == ""
+    assert resolved_settings().persona == ""
     monkeypatch.setenv("PROMPT_PERSONA", "I am a tester.")
-    assert Settings().persona == "I am a tester."
+    assert resolved_settings().persona == "I am a tester."
 
 
 # Loading reads the .env again each time: an edit shows up in the same process, which the
@@ -1052,9 +1070,9 @@ def test_rejected_value_matching_a_user_pattern_is_redacted(
 # the variable.
 @pytest.mark.parametrize(("raw", "expected"), [("paste", "paste"), ("CLIPBOARD", "clipboard")])
 def test_output_parsing(monkeypatch: pytest.MonkeyPatch, raw: str, expected: str) -> None:
-    assert Settings().output == "paste"
+    assert resolved_settings().output == "paste"
     monkeypatch.setenv("PROMPT_OUTPUT", raw)
-    assert Settings().output == expected
+    assert resolved_settings().output == expected
 
 
 @pytest.mark.parametrize("raw", ["", "copy", "both"])
@@ -1063,14 +1081,14 @@ def test_output_parsing_rejects_other_values(monkeypatch: pytest.MonkeyPatch, ra
     with pytest.raises(
         ValueError, match=f"^PROMPT_OUTPUT must be paste or clipboard, got '{raw}'$"
     ):
-        Settings()
+        resolved_settings()
 
 
 # --output beats PROMPT_OUTPUT either way; None and `default` keep it; a bad value is refused.
 def test_output_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert Settings().for_call("standard", output="clipboard").output == "clipboard"
+    assert resolved_settings().for_call("standard", output="clipboard").output == "clipboard"
     monkeypatch.setenv("PROMPT_OUTPUT", "clipboard")
-    settings = Settings()
+    settings = resolved_settings()
     assert settings.for_call("pro", output="paste").output == "paste"
     assert settings.with_overrides(output="default").output == "clipboard"
     assert settings.with_overrides().output == "clipboard"
@@ -1118,7 +1136,7 @@ def test_malformed_base_url_is_rejected(
     with pytest.raises(
         ValueError, match=f"^{name} must be an http:// or https:// URL with a valid host and port$"
     ):
-        Settings()
+        resolved_settings()
 
 
 @pytest.mark.parametrize(
@@ -1128,7 +1146,7 @@ def test_malformed_base_url_is_rejected(
 @pytest.mark.parametrize("name", _URL_SETTINGS)
 def test_base_url_is_accepted(monkeypatch: pytest.MonkeyPatch, name: str, raw: str) -> None:
     monkeypatch.setenv(name, raw)
-    settings = Settings()
+    settings = resolved_settings()
     assert getattr(settings, name.lower()) == raw
 
 
