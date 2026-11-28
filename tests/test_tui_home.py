@@ -9,13 +9,14 @@ import dataclasses
 from collections.abc import Awaitable, Callable
 
 import pytest
+from rich.text import Text
 from test_tui_snapshots import fixed_state, quick_of
 from textual.pilot import Pilot
-from textual.widgets import Button, OptionList, Select, TabbedContent, Tabs
+from textual.widgets import Button, Input, OptionList, Select, TabbedContent, Tabs
 
 from promptmend import deploy, doctor, update_check
 from promptmend.config import OUTPUTS, ConfigLayers
-from promptmend.tui import base, home, triggers_pane
+from promptmend.tui import base, home, home_pane, triggers_pane
 from promptmend.tui.app import ManageApp
 from promptmend.tui.home import READY, HomeRow, headline, home_rows, pill
 from promptmend.tui.home_pane import FIX_BUTTONS, HomePane
@@ -433,9 +434,34 @@ def test_fix_sets_the_missing_key() -> None:
     assert step == home.Fix(home.SET_KEY, "settings", "OPENROUTER_API_KEY")
     assert step is not None
     assert step.label == "Set OPENROUTER_API_KEY…"
-    # The key first, even when the -ip- row also says to redeploy (its pointer is Triggers).
+    # -i- is read first, so its missing key is the headline even beside a stale -ip-.
     stale = _with_env(_older_ip(), PROMPT_PRO_PROVIDER="openai")
     assert home.fix(home_rows(stale)) == home.Fix(home.SET_KEY, "settings", "OPENROUTER_API_KEY")
+
+
+# A stale -ip- whose key is missing points to Triggers: after the redeploy it runs on
+# PROMPT_PRO_PROVIDER (here Anthropic, whose key is set), so the button deploys, as the
+# pointer says, and never asks for the OpenRouter key the redeploy makes unneeded.
+def test_fix_follows_the_pointer_of_a_stale_ip_with_a_missing_key() -> None:
+    base = _older_ip()
+    base = dataclasses.replace(
+        base,
+        triggers=[
+            dataclasses.replace(t, provider="ollama") if t.trigger == "-i-" else t
+            for t in base.triggers
+        ],
+        deployed=[
+            dataclasses.replace(t, provider="ollama") if t.trigger == "-i-" else t
+            for t in base.deployed or []
+        ],
+    )
+    state = _with_env(base, PROMPT_PRO_PROVIDER="anthropic", ANTHROPIC_API_KEY="k")
+    rows = home_rows(state)
+    row = home.headline_row(rows)
+    assert row is not None
+    assert (row.label, row.detail, row.jump) == ("Pro (-ip-)", "key not set", "triggers")
+    assert headline(rows)[1] == "triggers"
+    assert home.fix(rows) == home.Fix(home.DEPLOY, "triggers")
 
 
 def test_fix_redeploys_an_older_ip() -> None:
@@ -595,24 +621,49 @@ def test_enter_on_a_newer_release_shows_about(monkeypatch: pytest.MonkeyPatch) -
     _drive(lambda: _update(ready(), update_check.AVAILABLE), scenario)
 
 
-def test_the_fix_button_opens_the_deploy_preview(monkeypatch: pytest.MonkeyPatch) -> None:
+def _tab_changes(app: ManageApp) -> list[str]:
+    """Every value TabbedContent.active takes from now on."""
+    changes: list[str] = []
+
+    def changed(tab: str) -> None:
+        changes.append(tab)
+
+    app.main.watch(app.main.query_one(TabbedContent), "active", changed, init=False)
+    return changes
+
+
+async def _press_fix(app: ManageApp, pilot: Pilot[int], button: str, how: str) -> None:
+    """Press Home's fix button the way a person does: Tab from the list, then Enter (the
+    button has the focus as Home is left), or a click."""
+    if how == "keyboard":
+        await pilot.press("tab")
+        assert app.focused is _home(app).query_one(f"#{button}", Button)
+        await pilot.press("enter")
+    else:
+        await pilot.click(f"#{button}")
+    await _settle(app, pilot)
+
+
+# The fix button leaves Home with the focus on it (#395 review): the tab changes once, the
+# dialog opens over the right tab, and closing it leaves the person there.
+@pytest.mark.parametrize("how", ["keyboard", "click"])
+def test_the_fix_button_opens_the_deploy_preview(monkeypatch: pytest.MonkeyPatch, how: str) -> None:
     plan = fixed_state().plan
     monkeypatch.setattr(triggers_pane, "current_plan", lambda: plan)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         assert _fix_buttons(app) == {"home-deploy": "Deploy or repair…"}
-        # From the list, Tab reaches the button: two presses to the dialog.
-        await pilot.press("tab")
-        assert app.focused is _home(app).query_one("#home-deploy", Button)
-        await pilot.press("enter")
-        await _settle(app, pilot)
-        assert _active(app) == "triggers"
+        changes = _tab_changes(app)
+        await _press_fix(app, pilot, "home-deploy", how)
+        assert changes == ["triggers"]
         dialog = app.screen
         assert isinstance(dialog, FormModal)
         assert app.focused is dialog.query_one("#cancel", Button)
         await pilot.press("enter")  # Cancel: nothing is deployed
         await _settle(app, pilot)
         assert not isinstance(app.screen, FormModal)
+        assert changes == ["triggers"]
+        assert isinstance(app.focused, Tabs)
         assert not app.main.query_one("#triggers-pane", triggers_pane.TriggersPane).busy
 
     _drive(fixed_state, scenario)
@@ -641,33 +692,135 @@ def test_the_deploy_fix_only_reports_while_the_quick_state_is_in(
     _drive(fixed_state, scenario)
 
 
-def test_the_fix_button_opens_set_key_for_the_missing_key() -> None:
+@pytest.mark.parametrize("how", ["keyboard", "click"])
+def test_the_fix_button_opens_set_key_for_the_missing_key(how: str) -> None:
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         assert _fix_buttons(app) == {"home-set-key": "Set OPENROUTER_API_KEY…"}
-        _home(app).query_one("#home-set-key", Button).press()
-        await _settle(app, pilot)
-        assert _active(app) == "settings"
+        changes = _tab_changes(app)
+        await _press_fix(app, pilot, "home-set-key", how)
+        assert changes == ["settings"]
         dialog = app.screen
         assert isinstance(dialog, FormModal)
         assert dialog.query_one("#key-name", Select).value == "OPENROUTER_API_KEY"
-        assert app.focused is dialog.query_one("#cancel", Button)
+        # The Set key dialog opens in its hidden value field (#392).
+        assert app.focused is dialog.query_one("#key-value", Input)
+        settings = app.main.query_one("#settings-pane")
+        main_focus = app.main.focused
+        assert main_focus is not None
+        assert settings in main_focus.ancestors
         await pilot.press("escape")
         await _settle(app, pilot)
+        assert changes == ["settings"]
+        assert _active(app) == "settings"
+        assert app.focused is settings.query_one("#settings-list")
 
     _drive(lambda: _with_env(ready()), scenario)
 
 
-def test_the_fix_button_opens_the_tab_otherwise() -> None:
+@pytest.mark.parametrize("how", ["keyboard", "click"])
+def test_the_fix_button_opens_the_tab_otherwise(how: str) -> None:
     state = ready()
     failing = dataclasses.replace(state, report=_report(state, keys=doctor.FAIL))
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         assert _fix_buttons(app) == {"home-open": f"Open {home.TAB_LABELS['diagnostics']}"}
-        _home(app).query_one("#home-open", Button).press()
-        await _settle(app, pilot)
-        assert _active(app) == "diagnostics"
+        changes = _tab_changes(app)
+        await _press_fix(app, pilot, "home-open", how)
+        assert changes == ["diagnostics"]
+        assert isinstance(app.focused, Tabs)
 
     _drive(lambda: failing, scenario)
+
+
+# Leaving Home by a digit or Enter on a row, wherever Home's focus is: one tab change, and no
+# hidden Home widget keeps the focus or pulls Home back.
+@pytest.mark.parametrize("focus", ["home-rows", "home-reload", "home-set-key"])
+def test_leaving_home_changes_the_tab_once(focus: str) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        await pilot.press("2", "1")  # the Settings pane built, as after a visit
+        await _settle(app, pilot)
+        _home(app).query_one(f"#{focus}").focus()
+        await _settle(app, pilot)
+        changes = _tab_changes(app)
+        await pilot.press("2")
+        await _settle(app, pilot)
+        assert changes == ["settings"]
+        assert app.focused is app.main.query_one("#settings-list")
+        changes.clear()
+        await pilot.press("1")
+        await _settle(app, pilot)
+        assert changes == ["home"]
+        assert app.focused is _listing(app)
+        changes.clear()
+        _on_row(app, "Output")
+        await pilot.press("enter")
+        await _settle(app, pilot)
+        assert changes == ["settings"]
+        assert app.focused is app.main.query_one("#settings-list")
+        changes.clear()
+        await pilot.click("#--content-tab-home")
+        await _settle(app, pilot)
+        assert changes == ["home"]
+        assert app.focused is _listing(app)
+
+    _drive(lambda: _with_env(ready()), scenario)
+
+
+# The Try tab (its draft) and the setup wizard over Home: still one tab change each way.
+def test_try_tab_and_setup_wizard_change_the_tab_once() -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        changes = _tab_changes(app)
+        await pilot.press("7")
+        await _settle(app, pilot)
+        assert changes == ["try"]
+        await pilot.press("escape", "1")
+        await _settle(app, pilot)
+        assert changes == ["try", "home"]
+        assert app.focused is _listing(app)
+        app.open_setup()
+        await _settle(app, pilot)
+        assert app.screen is not app.main
+        app.pop_screen()  # closed as its Quit button does
+        await _settle(app, pilot)
+        assert app.screen is app.main
+        assert changes == ["try", "home"]
+        assert app.main.focused is _listing(app)
+
+    _drive(fixed_state, scenario)
+
+
+# A hidden fix button whose fix is not the current one does nothing when called anyway.
+def test_a_hidden_fix_button_does_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    def never() -> deploy.Plan:
+        raise AssertionError("the plan was read")
+
+    monkeypatch.setattr(triggers_pane, "current_plan", never)
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        assert _fix_buttons(app) == {}
+        changes = _tab_changes(app)
+        # Called directly: Button.press() itself skips a hidden button.
+        pane = _home(app)
+        for handler in (pane._fix_deploy, pane._fix_key, pane._fix_open):
+            await handler()
+            await _settle(app, pilot)
+        assert changes == []
+        assert app.screen is app.main
+
+    _drive(ready, scenario)
+
+
+# The highlighted row is all in the highlight's colour (#388's rule): its status word too.
+def test_the_highlighted_rows_status_word_takes_the_highlights_colour() -> None:
+    rows = home_rows(fixed_state())
+    lines = home_pane.home_lines(rows, cursor="Triggers")
+    styles = {}
+    for row, line in zip(rows, lines, strict=True):
+        word = next(iter(line.columns[0].cells))
+        assert isinstance(word, Text)
+        styles[row.label] = word.style
+    assert styles["Triggers"] == ""
+    assert styles["Checks"] != ""
 
 
 def test_no_fix_button_when_ready_or_checking() -> None:

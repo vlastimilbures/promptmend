@@ -24,8 +24,11 @@ All notable changes to this project are documented here. The format follows
   new first button opens the headline's fix: `Deploy or repair…` opens the Triggers tab's
   deploy preview (nothing is written until you press Deploy there), `Set <KEY>…` the
   Settings tab's Set key dialog for the missing key, and `Open` the tab the problem points
-  to otherwise; there is none when you are ready or the checks still run. From Home, Tab
-  then Enter reaches it.
+  to otherwise, always the tab the headline's pointer names (an older `-ip-` that needs a
+  redeploy gets the deploy preview, even with its key missing). There is none while no row
+  is a problem (ready, or only rows still being checked); a missing key, known from the
+  settings alone, has its button at once. From Home, Tab then Enter reaches it. The
+  highlighted row is all in the highlight's colours, its status word too.
 - Interface: on the Settings tab a row at its built-in default no longer looks disabled
   (#388). Names and values always have the normal text colour; only the word `default` in
   the source column is muted. The dot means only "set by you": a filled `●`, in the theme's

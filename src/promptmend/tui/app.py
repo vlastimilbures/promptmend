@@ -255,6 +255,10 @@ class MainScreen(Screen[None]):
         """After the refresh, once the Settings pane is mounted and filled (looked up then, so
         a tab activated while it is still mounting never queries a list not there yet)."""
         settings = self.built("settings")
+        # Only while Settings is still the active tab: focus in a hidden pane would make its
+        # tab active again (#395 review).
+        if self.query_one(TabbedContent).active != "settings":
+            return
         if settings is not None and settings.ready:
             settings.query_one("#settings-list").focus()
 

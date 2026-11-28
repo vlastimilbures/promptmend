@@ -138,7 +138,8 @@ def trigger_row(state: State, label: str, name: str) -> HomeRow:
         )
     if route.key and not entries[route.key].value:
         problem = f"{route.key} is not set, so {name} cannot rewrite"
-        # The key first: without it the trigger fails, deployed again or not.
+        # A stale -ip- points to Triggers: once redeployed it runs on PROMPT_PRO_PROVIDER,
+        # which may need another key or none, so the redeploy comes first (fix()).
         return HomeRow(
             FAIL,
             label,
@@ -147,6 +148,7 @@ def trigger_row(state: State, label: str, name: str) -> HomeRow:
             jump,
             "; ".join(filter(None, (problem, redeploy))),
             key=route.key,
+            redeploy=bool(stale),
         )
     detail = "key set" if route.key else ("no key needed" if route.remote else "stays local")
     if stale:
@@ -254,7 +256,7 @@ def home_rows(state: State) -> list[HomeRow]:
 
 def headline_row(rows: list[HomeRow]) -> HomeRow | None:
     """The row the headline names: the first of the worst ones, so the reading order
-    decides; None when every row is ok (or still checking)."""
+    decides; None when every row is ok (a row still checking counts as ok)."""
     status = worst(*(r.status for r in rows))
     if status == OK:
         return None
@@ -306,17 +308,19 @@ class Fix:
 
 
 def fix(rows: list[HomeRow]) -> Fix | None:
-    """What opens the fix of the row the headline names (headline_row()): Set key for a
-    missing key, the deploy preview when a deploy fixes it, else the tab it points to. None
-    when Home is ready or still checking, and for a row no tab fixes (`not checked`, which
-    Check again reads again)."""
+    """What opens the fix of the row the headline names (headline_row()), always on the tab
+    its `->` pointer names: the deploy preview when the row points to Triggers and a deploy
+    fixes it, Set key when it points to Settings for a missing key, else that tab. None when
+    no row is a problem (ready, or only checking rows, which the full State fills in) and
+    for a row no tab fixes (`not checked`, which Check again reads again). On the quick
+    State a problem it already knows (a missing key) has its fix at once."""
     row = headline_row(rows)
     if row is None:
         return None
-    if row.key:
-        return Fix(SET_KEY, "settings", row.key)
-    if row.redeploy:
+    if row.redeploy and row.jump == "triggers":
         return Fix(DEPLOY, "triggers")
+    if row.key and row.jump == "settings":
+        return Fix(SET_KEY, "settings", row.key)
     if row.jump:
         return Fix(OPEN, row.jump)
     return None
