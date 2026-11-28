@@ -167,17 +167,17 @@ def test_cli_matches_pass_their_own_trigger_id() -> None:
     assert seen == set(TRIGGER_IDS)
 
 
-# Every improve call, commented out or not, names its draft's source with one literal
-# --source: without one, improve reads stdin whenever it is not a terminal (#407), and
-# Espanso starts the CLI without one, so the draft would depend on what Espanso's stdin holds.
-def test_improve_matches_pass_a_literal_source() -> None:
+# Every improve call, commented out or not, passes one literal `--source clipboard`, the only
+# source that works under Espanso: without --source, improve reads stdin whenever it is not a
+# terminal (#407), and Espanso does not start the CLI on one, so the draft would depend on
+# what Espanso's stdin holds.
+def test_improve_matches_pass_source_clipboard() -> None:
     calls = [(trigger, args) for trigger, args in _script_args() if args[1] == "improve"]
     assert calls
     for trigger, args in calls:
         assert not [a for a in args if a.startswith("--source=")], trigger
         sources = [args[i + 1] for i, arg in enumerate(args) if arg == "--source"]
-        assert len(sources) == 1, f"{trigger} must pass --source once"
-        assert sources[0] in ("clipboard", "stdin", "argument"), f"{trigger}: {sources[0]!r}"
+        assert sources == ["clipboard"], f"{trigger} must pass --source clipboard once"
 
 
 # --fail-on-marker exits 1 on a failure marker (#407), and Espanso fails the expansion on a

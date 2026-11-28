@@ -28,6 +28,13 @@ All notable changes to this project are documented here. The format follows
   rewrite still exits 0, a `sent despite` note in front of it included. Without the flag,
   `improve` exits 0 as before; no Espanso match passes it, since Espanso fails the expansion
   on a nonzero exit.
+- `promptmend improve --fail-on-marker`, for scripts (#407): the run exits 1 whenever it
+  prints a failure marker (a bad setting, a blocked or failed call, an empty or concealed
+  draft, the time limit), and also when a copy failed or stalled (`--copy`, or `clipboard`
+  output), though the rewrite is then printed after the marker. Stdout and stderr are the
+  same as without it, and a rewrite with only a `sent despite` note or the output-limit note
+  still exits 0. Without the flag, `improve` exits 0 as before; no Espanso match passes it,
+  since Espanso fails the expansion on a nonzero exit.
 
 ### Changed
 - Windows one-command install: the closing check prints only `doctor`'s verdict line, read
@@ -39,13 +46,17 @@ All notable changes to this project are documented here. The format follows
   credits (a new account's first `-i-` fails without them), with a link to the benchmark
   page for what a rewrite costs (#402).
 - `promptmend improve` without `--source` now reads stdin when stdin is not a terminal, and
-  the clipboard only from a terminal (#407): `echo "draft" | promptmend improve` rewrites the
-  piped draft instead of sending the clipboard. `--text` without `--source` is now the draft
-  (it was ignored and the clipboard read). The managed Espanso matches all pass
+  the clipboard otherwise (#407): `echo "draft" | promptmend improve` rewrites the piped
+  draft instead of sending the clipboard. `--text` without `--source` is now the draft (it
+  was ignored and the clipboard read). The managed Espanso matches all pass
   `--source clipboard` and are not affected. A match you wrote yourself, a launcher or a
   script that runs `improve` with no `--source` and no terminal now gets
-  `[promptmend: Input is empty]` (or waits for whatever its stdin delivers) instead of
-  rewriting the clipboard: add `--source clipboard` to it.
+  `[promptmend: Input is empty]` instead of rewriting the clipboard, and one whose stdin
+  stays open gets, at the time limit, `[promptmend: no draft arrived on stdin within …s (it
+  stayed open), so nothing was sent: close stdin after the draft, or pass --source
+  clipboard]` (the same with `--source stdin`). On Windows a null stdin (`< NUL`, likely
+  Espanso's) counts as a terminal, so such a call still reads the clipboard there. The safe
+  form everywhere is an explicit `--source`: add `--source clipboard`.
 - Setup: the wizard's rail marks each step as the Done checklist does (#393): `✓` done,
   `–` skipped or not run, `✗` failed or still to do, worked out once for both, so the rail
   no longer ticks a step whose checklist line says the match files were not found or the

@@ -72,9 +72,11 @@ CLIPBOARD_STALLED = (
 # never end pytest.
 _hard_exit: Callable[[int], object] = os._exit
 
-# The watchdog's states. The main thread moves idle -> (delivering ->) claimed -> flushed;
-# the watchdog moves any state but claimed to fired.
+# The watchdog's states. The main thread moves idle -> (reading stdin -> idle ->)
+# (delivering ->) claimed -> flushed; the watchdog moves any state but claimed to fired.
 _IDLE = "idle"
+# The draft is being read from stdin (--source stdin, or a pipe without --source, #407).
+_READING_STDIN = "reading stdin"
 # A finished rewrite is being copied to the clipboard (clipboard output or --copy).
 _DELIVERING = "delivering"
 # emit() is printing the run's own output; the watchdog leaves it alone.
@@ -121,6 +123,9 @@ class Watchdog:
     fires anyway does nothing. persona arms only the provisional timer. When the real timer
     fires, by state:
 
+    - reading stdin (the draft has not arrived: a pipe left open): the same as idle, with
+      stdin_marker() in place of the timed-out marker, since nothing was called and a longer
+      limit would only wait longer (#407).
     - idle (the run is still reading its input or calling the provider): it writes the
       timed-out marker, the sent-despite note first, cleaned, UTF-8 (a lone surrogate
       replaced, as sys.stdout does), with this platform's newlines as sys.stdout writes them,
@@ -144,11 +149,10 @@ class Watchdog:
     The timer fires _WATCHDOG_HISTORY seconds before the deadline. It first closes the run's
     usage observer, then gives the history at most _WATCHDOG_HISTORY - _WATCHDOG_HEADROOM
     seconds in a thread of its own, and only then writes its marker and ends the process with
-    exit code 0 (1 with --fail-on-marker, except a stalled copy's, which still prints the
-    rewrite; a flushed run keeps the code its own output had), so the marker is out by the
-    deadline. That history wait is less than the very first write may take (history._BUDGET
-    plus its _CREATE_EXTRA, for the file it creates), so such a run's row can be lost; a
-    later write is not affected.
+    exit code 0 (1 with --fail-on-marker, whose stalled-copy marker counts too; a flushed run
+    keeps the code its own output had), so the marker is out by the deadline. That history
+    wait is less than the very first write may take (history._BUDGET plus its _CREATE_EXTRA,
+    for the file it creates), so such a run's row can be lost; a later write is not affected.
 
     No request is started after the watchdog steps in: a closed observer makes every later
     attempt, a retry included, raise providers.usage.RunEnded before its request
@@ -179,6 +183,8 @@ class Watchdog:
         self._final: threading.Timer | None = None
         self._deadline = 0.0
         self._marker = ""
+        # The call's limit, for stdin_marker(); the provisional one until arm().
+        self._limit = 0.0
         self._delivered = ("", "")
         # The final timer fired while the run was still printing (see flushed()).
         self._final_missed = False
@@ -193,7 +199,7 @@ class Watchdog:
     def arm_loading(self, timeout: str | None) -> None:
         """Before Settings.load(): the provisional limit, from the call's ``timeout`` option
         or the built-in default; nothing about the settings is known yet."""
-        limit = loading_limit(timeout)
+        limit = self._limit = loading_limit(timeout)
         now = self._load_started = time.monotonic()
         self._loading = True
         self._deadline = self._started + limit + WATCHDOG_MARGIN
@@ -239,6 +245,7 @@ class Watchdog:
             self._retired = self._timer
             self._loading = False
             self._marker = f"[promptmend: {text}]"
+            self._limit = cfg.timeout
             self._deadline = self._started + cfg.timeout + WATCHDOG_MARGIN
             if expired:
                 # The run ends at once with its marker: give its history row the same margin
@@ -271,6 +278,20 @@ class Watchdog:
         if fired:
             self._done.wait()  # returns only where _hard_exit does not end the process
             raise typer.Exit(self.exit_code())
+
+    def reading(self, source: str) -> None:
+        """Before read_input(): a stdin ``source`` words the watchdog's marker as a draft that
+        never arrived (stdin_marker()) until the next step (proceed(), or the marker's
+        claim()) moves the state on."""
+        if source == "stdin":
+            self._move(_READING_STDIN)
+
+    def stdin_marker(self) -> str:
+        """The watchdog's marker for a run still reading stdin: nothing was sent."""
+        return (
+            f"[promptmend: no draft arrived on stdin within {self._limit}s (it stayed open), "
+            "so nothing was sent: close stdin after the draft, or pass --source clipboard]"
+        )
 
     def proceed(self) -> None:
         """Before the provider call: a run the watchdog has ended sends nothing."""
@@ -312,10 +333,12 @@ class Watchdog:
             # the marker still wins, and that rewrite is dropped (an accepted race).
             self._state = _FIRED
             loading, text = self._loading, self._marker
+            if was == _READING_STDIN:
+                text = self.stdin_marker()
             if was != _FLUSHED:
-                # Its marker replaces the rewrite, except a stalled copy's, which still
-                # prints it; a flushed run keeps what it printed.
-                self._failed = was != _DELIVERING
+                # Every marker of its own is a failure (a stalled copy's too, #407); a
+                # flushed run keeps what it printed.
+                self._failed = True
         # Nothing raised here may stop the exit below.
         try:
             if was != _FLUSHED:
@@ -414,6 +437,7 @@ def run_improve(
             if provider in PROVIDER_NAMES:
                 check_provider_options(provider, tier, effort)
             source = pipeline.choose_source(source, text)
+            watch.reading(source)
             raw = pipeline.read_input(source, text)
             watch.proceed()
             # The rewrite comes back cleaned, which matters here too: --copy and clipboard
@@ -462,16 +486,21 @@ def run_improve(
         # the call timed out.
         watch.delivering(note, result)
     if cfg.output == CLIPBOARD:
-        emit(pipeline.deliver(result, note, rec), watch)
+        printed = pipeline.deliver(result, note, rec)
     else:
         # Like clipboard output, the stop note is printed but not copied.
         printed = (
             note + (pipeline.copy_failed(split_stop_note(result)[0], rec) if copy else "") + result
         )
-        emit(printed, watch)
+    if rec.outcome == recorder.CLIPBOARD_FAILED:
+        # The copy failed: its marker is a failure for --fail-on-marker, rewrite pasted or not.
+        watch.failed()
+    emit(printed, watch)
     rec.emitted()
     flush_output(watch)
     rec.finish()
+    if watch.exit_code():
+        raise typer.Exit(watch.exit_code())
 
 
 def flush_output(watch: Watchdog) -> None:

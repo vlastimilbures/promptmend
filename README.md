@@ -232,7 +232,7 @@ More: [docs/usage.md](https://github.com/vlastimilbures/promptmend/blob/main/doc
 | `promptmend espanso status` | Shows whether the deployed match files are up to date |
 | `promptmend espanso deploy` | Writes or updates the match files, after a preview |
 | `promptmend stats` | Calls, latency, tokens and costs from the local usage history |
-| `promptmend improve --source stdin` | Rewrites a draft piped in, in a terminal |
+| `echo "draft" \| promptmend improve` | Rewrites a draft piped in, in a terminal |
 | `promptmend --version` | Prints the installed version |
 
 More: [docs/commands.md](https://github.com/vlastimilbures/promptmend/blob/main/docs/commands.md)

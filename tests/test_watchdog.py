@@ -411,7 +411,9 @@ def test_no_provider_call_after_the_marker(
     fake = Exits(then=release)
     monkeypatch.setattr(trigger, "_hard_exit", fake)
     monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
-    result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "0.05"])
+    result = runner.invoke(
+        app, ["improve", "--provider", "ollama", "--source", "clipboard", "--timeout", "0.05"]
+    )
     assert (result.exit_code, result.stdout) == (0, "")
     assert capfd.readouterr().out == f"[promptmend: Ollama timed out after 0.05s: {FLAG_HINT}]"
     assert stub_provider.calls == []
@@ -587,13 +589,109 @@ def test_settings_load_marker_exits_1(exits: Exits, capfd: pytest.CaptureFixture
     assert capfd.readouterr().out == "[promptmend: the settings did not load within 30.0s]"
 
 
-# A stalled copy still prints the rewrite: exit 0 with the flag.
-def test_stalled_copy_exits_0(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
-    watch, _ = _flagged()
+# A stalled copy prints its marker before the rewrite: exit 1 with the flag, 0 without.
+@pytest.mark.parametrize("flag", [True, False])
+def test_stalled_copy_exit_code(
+    exits: Exits, capfd: pytest.CaptureFixture[str], flag: bool
+) -> None:
+    watch, _ = _flagged() if flag else _watchdog()
     watch.delivering("", "the rewrite")
     watch._fire()
-    assert exits.codes == [0]
-    assert capfd.readouterr().out.endswith("the rewrite")
+    assert exits.codes == [1 if flag else 0]
+    assert capfd.readouterr().out == trigger.CLIPBOARD_STALLED + "the rewrite"
+
+
+# The final timer ends a flushed run with the code its output had: 1 after a failure marker.
+@pytest.mark.parametrize("failed", [True, False])
+def test_final_exit_keeps_the_code(
+    exits: Exits, capfd: pytest.CaptureFixture[str], failed: bool
+) -> None:
+    watch, _ = _flagged()
+    if failed:
+        watch.failed()
+    trigger.emit("output", watch)
+    watch.flushed()
+    watch._final_exit()
+    assert exits.codes == [1 if failed else 0]
+    assert capfd.readouterr().out == "output"
+
+
+# --- A stdin that never delivers its draft (#407) --------------------------------------------
+
+STDIN_MARKER = (
+    "[promptmend: no draft arrived on stdin within {}s (it stayed open), so nothing was sent: "
+    "close stdin after the draft, or pass --source clipboard]"
+)
+
+
+class _OpenPipe:
+    """A stdin that is a pipe and whose read() blocks until ``release`` is set, as a pipe a
+    launcher leaves open blocks."""
+
+    def __init__(self, release: threading.Event) -> None:
+        self._release = release
+
+    def isatty(self) -> bool:
+        return False
+
+    def read(self, size: int = -1) -> str:
+        self._release.wait(30)
+        return "too late"
+
+
+# A run still reading stdin when the watchdog fires gets the stdin marker, not one blaming the
+# provider; nothing is built or sent, the history says error_marker, and with
+# --fail-on-marker the exit code is 1. Without --source (a pipe) and with --source stdin.
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [([], 0), (["--source", "stdin"], 0), (["--fail-on-marker"], 1)],
+    ids=["default", "explicit", "fail-on-marker"],
+)
+def test_open_stdin_gets_the_stdin_marker(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_http: FakeHttp,
+    capfd: pytest.CaptureFixture[str],
+    history_rows: HistoryRows,
+    args: list[str],
+    code: int,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
+    release = threading.Event()
+    exits = Exits(then=release)
+    monkeypatch.setattr(trigger, "_hard_exit", exits)
+    monkeypatch.setattr(trigger, "WATCHDOG_MARGIN", 0.6)
+    built: list[str] = []
+    monkeypatch.setattr(pipeline, "make_provider", lambda name, *a, **k: built.append(name))
+    # CliRunner puts its own stdin in place for the run, and its own back after it: the open
+    # pipe replaces CliRunner's where the draft is read, so CliRunner's restore undoes it.
+    choose = pipeline.choose_source
+
+    def with_open_pipe(source: str | None, text: str | None) -> str:
+        sys.stdin = _OpenPipe(release)
+        return choose(source, text)
+
+    monkeypatch.setattr(pipeline, "choose_source", with_open_pipe)
+    argv = ["improve", "--provider", "openrouter", "--timeout", "0.05", *args]
+    result = runner.invoke(app, argv)
+    assert (result.exit_code, result.stdout) == (code, "")
+    assert capfd.readouterr().out == STDIN_MARKER.format(0.05)
+    assert exits.codes == [code]
+    assert (built, fake_http.requests) == ([], [])
+    (op,) = history_rows("operations")
+    assert op["outcome"] == "error_marker"
+
+
+# A stdin read that returns in time moves on: the watchdog's marker is the provider's again.
+def test_stdin_marker_only_while_reading(exits: Exits, capfd: pytest.CaptureFixture[str]) -> None:
+    watch, _ = _watchdog()
+    watch.reading("stdin")
+    watch.proceed()
+    watch._fire()
+    assert capfd.readouterr().out == MARKER
+    watch, _ = _watchdog()
+    watch.reading("clipboard")
+    watch._fire()
+    assert capfd.readouterr().out == MARKER
 
 
 # A flushed run that the deadline ends silently keeps the code its own output had: 1 after a
@@ -784,7 +882,9 @@ def test_proceed_exit_is_not_a_failure(
         return ""
 
     monkeypatch.setattr(pipeline, "marker", failed)
-    result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "0.05"])
+    result = runner.invoke(
+        app, ["improve", "--provider", "ollama", "--source", "clipboard", "--timeout", "0.05"]
+    )
     assert (result.exit_code, result.stdout) == (0, "")
     assert failures == []
     assert stub_provider.calls == []
@@ -996,7 +1096,9 @@ def test_slow_load_then_stall_in_process(
     monkeypatch.setattr(trigger, "_SLOW_LOAD", 0.0)  # every load counts as slow
     monkeypatch.setattr(pipeline, "_clipboard", stalled)
     monkeypatch.setattr(trigger, "_hard_exit", Exits())
-    result = runner.invoke(app, ["improve", "--provider", "ollama", "--timeout", "30"])
+    result = runner.invoke(
+        app, ["improve", "--provider", "ollama", "--source", "clipboard", "--timeout", "30"]
+    )
     assert (result.exit_code, result.stdout) == (0, "")
     out = capfd.readouterr().out
     pattern = (
@@ -1087,6 +1189,7 @@ def test_used_up_limit_still_records(
     assert exits.codes == []
     (op,) = history_rows("operations")
     assert op["outcome"] == "error_marker"
+    assert stub_provider.calls == []
 
 
 # A run whose start-up used up its limit ends in its own marker: exit 1 with
@@ -1105,7 +1208,6 @@ def test_used_up_limit_fails_on_marker(
     assert result.exit_code == 1
     assert result.stdout.startswith("[promptmend: starting up took 5")
     assert (exits.codes, stub_provider.calls) == ([], [])
-    assert stub_provider.calls == []
 
 
 # A timer that cannot start costs neither improve nor persona its output.
@@ -1260,7 +1362,7 @@ def test_settings_load_that_never_returns(args: list[str]) -> None:
     assert seconds <= LIMIT + trigger.WATCHDOG_MARGIN + SLACK
 
 
-# A reply that lands before the limit prints only the rewrite.
+# The same stalled load with --fail-on-marker (#407): the same marker, exit code 1.
 def test_settings_load_that_never_returns_fails_on_marker() -> None:
     args = ["option", "improve", "--timeout", "1", "--fail-on-marker"]
     proc, _ = _run([sys.executable, "-c", _BLOCKED_LOAD, *args], smoke.stub_env(9, os.environ))
@@ -1279,6 +1381,48 @@ def test_trickling_server_fails_on_marker() -> None:
     assert seconds <= LIMIT + trigger.WATCHDOG_MARGIN + SLACK
 
 
+# A launcher that leaves stdin an open pipe, never written or closed: improve with no
+# --source (or --source stdin) waits for its draft until the watchdog, which prints the stdin
+# marker and sends nothing; exit 0, or 1 with --fail-on-marker. A pipe is never a terminal,
+# so no OS reads the clipboard here.
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [([], 0), (["--source", "stdin", "--fail-on-marker"], 1)],
+    ids=["default", "explicit-fail-on-marker"],
+)
+def test_open_stdin_pipe_as_a_process(args: list[str], code: int) -> None:
+    argv = [*_ENTRY, "improve", "--provider", "openrouter", "--timeout", str(LIMIT), *args]
+    with smoke.stub_server() as stub:
+        env = {**smoke.stub_env(stub.port, os.environ), **_LOUD}
+        started = time.monotonic()
+        proc = subprocess.Popen(
+            argv, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        try:
+            out, err = _wait_open(proc)
+        finally:
+            proc.kill()
+            assert proc.stdin is not None
+            proc.stdin.close()
+        seconds = time.monotonic() - started
+        assert stub.requests == 0
+    assert (proc.returncode, err) == (code, b"")
+    assert out.decode("utf-8") == STDIN_MARKER.format(LIMIT)
+    assert seconds <= LIMIT + trigger.WATCHDOG_MARGIN + SLACK
+
+
+def _wait_open(proc: subprocess.Popen[bytes]) -> tuple[bytes, bytes]:
+    """The child's stdout and stderr once it exits, its stdin left open (communicate() would
+    close it)."""
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+    out = proc.stdout.read()
+    err = proc.stderr.read()
+    proc.wait(60)
+    return out, err
+
+
+# A reply that lands before the limit prints only the rewrite.
 def test_reply_just_under_the_limit() -> None:
     with smoke.stub_server(0.3) as stub:
         proc, _ = _run([*_ENTRY, *_ARGS], smoke.stub_env(stub.port, os.environ))

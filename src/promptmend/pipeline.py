@@ -70,13 +70,12 @@ def _clipboard(op: str, *args: str) -> object:
 
 def _stdin_is_piped() -> bool:
     """Whether stdin is a pipe or a file rather than a terminal. A missing stdin (None, as
-    under pythonw) or one whose isatty() fails (closed) is not a pipe: nothing can be read."""
-    stream = sys.stdin
-    if stream is None:
-        return False
+    under pythonw), one without isatty() or one whose isatty() fails (closed) is not a pipe:
+    nothing can be read. On Windows a character device counts as a terminal, the null device
+    (NUL) included, so `improve < NUL` reads the clipboard there (tests/test_cli.py pins it)."""
     try:
-        return not stream.isatty()
-    except (OSError, ValueError):
+        return not sys.stdin.isatty()
+    except (AttributeError, OSError, ValueError):
         return False
 
 

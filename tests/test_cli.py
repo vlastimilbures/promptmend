@@ -1529,8 +1529,7 @@ def _print_warning(
 
 # --- The default source and --fail-on-marker (#407) -----------------------------------------
 
-# The real check conftest replaces (an in-process run without --source starts as from a
-# terminal); the tests below put it back or call it directly.
+# The real check, kept before any test patches it.
 REAL_STDIN_IS_PIPED = pipeline._stdin_is_piped
 
 
@@ -1561,18 +1560,40 @@ def _clipboard_reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return reads
 
 
-# A pipe or a file on stdin is read; a terminal, a missing stdin (pythonw: None) or a closed
-# one (isatty() raises) is not, and the clipboard is read instead.
+# A pipe or a file on stdin is read; a terminal, a missing stdin (pythonw: None), a closed
+# one (isatty() raises) or one without isatty() is not, and the clipboard is read instead.
 @pytest.mark.parametrize(
     ("stdin", "piped"),
-    [(_Stdin(False), True), (_Stdin(True), False), (None, False), (_Stdin(None), False)],
-    ids=["pipe", "terminal", "missing", "closed"],
+    [
+        (_Stdin(False), True),
+        (_Stdin(True), False),
+        (None, False),
+        (_Stdin(None), False),
+        (object(), False),
+    ],
+    ids=["pipe", "terminal", "missing", "closed", "no-isatty"],
 )
 def test_stdin_is_piped(monkeypatch: pytest.MonkeyPatch, stdin: object, piped: bool) -> None:
     monkeypatch.setattr(sys, "stdin", stdin)
     assert REAL_STDIN_IS_PIPED() is piped
-    monkeypatch.setattr(pipeline, "_stdin_is_piped", REAL_STDIN_IS_PIPED)
     assert pipeline.choose_source(None, None) == ("stdin" if piped else "clipboard")
+
+
+# What the default source depends on for a null stdin (Espanso's child, `improve < NUL` or
+# `< /dev/null`): Windows reports a character device, the null device included, as a
+# terminal, so such a call reads the clipboard there, while macOS and Linux read the empty
+# stdin and print the empty-draft marker. docs/usage.md, CHANGELOG and CLAUDE.md say so; if
+# this fails, fix them. Plain Python, not improve, so no clipboard is touched.
+def test_null_stdin_is_a_terminal_only_on_windows() -> None:
+    proc = subprocess.run(
+        [sys.executable, "-c", "import sys; print(sys.stdin.isatty())"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    assert proc.stdout.strip() == str(sys.platform == "win32")
 
 
 # An explicit --source is kept whatever stdin is; --text alone names its own draft.
@@ -1590,7 +1611,6 @@ def test_choose_source_explicit_and_text(monkeypatch: pytest.MonkeyPatch, piped:
 def test_piped_draft_without_source_is_rewritten(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
 ) -> None:
-    monkeypatch.setattr(pipeline, "_stdin_is_piped", REAL_STDIN_IS_PIPED)
     reads = _clipboard_reads(monkeypatch)
     result = improve("--provider", "ollama", input="the piped draft\n")
     assert (result.exit_code, result.stdout) == (0, "improved")
@@ -1626,7 +1646,6 @@ def test_terminal_without_source_reads_the_clipboard(
 def test_empty_pipe_without_source_sends_nothing(
     monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp
 ) -> None:
-    monkeypatch.setattr(pipeline, "_stdin_is_piped", REAL_STDIN_IS_PIPED)
     monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
     built: list[str] = []
     monkeypatch.setattr(pipeline, "make_provider", lambda name, *a, **k: built.append(name))
@@ -1655,7 +1674,6 @@ def test_text_without_source_is_the_draft(
 def test_explicit_clipboard_ignores_the_pipe(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
 ) -> None:
-    monkeypatch.setattr(pipeline, "_stdin_is_piped", REAL_STDIN_IS_PIPED)
     reads = _clipboard_reads(monkeypatch)
     result = improve("--provider", "ollama", "--source", "clipboard", input="piped")
     assert (result.exit_code, result.stdout) == (0, "improved")
@@ -1690,17 +1708,35 @@ def _failure(kind: str, monkeypatch: pytest.MonkeyPatch, stub: StubProvider) -> 
         return ["--provider", "ollama", "--source", "clipboard"]
     elif kind == "options":
         return ["--provider", "ollama", "--tier", "pro", *_ARGUMENT]
+    elif kind == "copy":  # the rewrite is printed after the copy's marker
+        monkeypatch.setattr(pyperclip, "copy", _no_clipboard)
+        return ["--provider", "ollama", *_ARGUMENT, "--copy"]
+    elif kind == "clipboard-output":  # the deliverable is the clipboard: nothing was copied
+        monkeypatch.setattr(pyperclip, "copy", _no_clipboard)
+        return ["--provider", "ollama", *_ARGUMENT, "--output", "clipboard"]
     return ["--provider", "ollama", *_ARGUMENT]
 
 
-# Each failure marker exits 1 with --fail-on-marker; stdout is byte for byte the run's
-# without the flag (which exits 0, as Espanso needs), and stderr stays empty.
+# Each failure marker exits 1 with --fail-on-marker, a failed copy's included (#407);
+# stdout is byte for byte the run's without the flag (which exits 0, as Espanso needs), and
+# stderr stays empty. Nothing reaches the network (the gate case builds a real provider).
 @pytest.mark.parametrize(
     "kind",
-    ["settings", "gate", "provider", "unexpected", "empty", "concealed", "clipboard", "options"],
+    [
+        "settings",
+        "gate",
+        "provider",
+        "unexpected",
+        "empty",
+        "concealed",
+        "clipboard",
+        "options",
+        "copy",
+        "clipboard-output",
+    ],
 )
 def test_fail_on_marker_exits_1_on_each_failure(
-    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, kind: str
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, fake_http: FakeHttp, kind: str
 ) -> None:
     args = _failure(kind, monkeypatch, stub_provider)
     plain = improve(*args)
@@ -1709,6 +1745,7 @@ def test_fail_on_marker_exits_1_on_each_failure(
     assert plain.stdout.startswith("[promptmend: ")
     assert flagged.stdout_bytes == plain.stdout_bytes
     assert (plain.stderr, flagged.stderr) == ("", "")
+    assert fake_http.requests == []
 
 
 # The history records the same outcome with and without the flag.
@@ -1721,8 +1758,8 @@ def test_fail_on_marker_keeps_the_history_outcome(
     assert [row["outcome"] for row in history_rows("operations")] == ["error_marker"] * 2
 
 
-# A rewrite exits 0 with the flag: a stop note after it, a failed --copy before it (the
-# rewrite is still printed), and a sent-despite note in front of it.
+# A rewrite exits 0 with the flag: a stop note after it, a copy that worked (--copy, and
+# clipboard output, which prints nothing), and a sent-despite note in front of it.
 def test_fail_on_marker_exits_0_on_a_rewrite(
     monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider, fake_http: FakeHttp
 ) -> None:
@@ -1732,11 +1769,15 @@ def test_fail_on_marker_exits_0_on_a_rewrite(
     result = improve("--provider", "ollama", *_ARGUMENT, "--fail-on-marker")
     assert (result.exit_code, result.stdout) == (0, f"cut\n\n{TRUNCATED_NOTE}")
     stub_provider.result = "improved"
-    monkeypatch.setattr(pyperclip, "copy", _no_clipboard)
+    copied: list[str] = []
+    monkeypatch.setattr(pyperclip, "copy", copied.append)
     result = improve("--provider", "ollama", *_ARGUMENT, "--copy", "--fail-on-marker")
-    assert result.exit_code == 0
-    assert result.stdout.startswith("[promptmend: Clipboard unavailable")
-    assert result.stdout.endswith("improved")
+    assert (result.exit_code, result.stdout) == (0, "improved")
+    result = improve(
+        "--provider", "ollama", *_ARGUMENT, "--output", "clipboard", "--fail-on-marker"
+    )
+    assert (result.exit_code, result.stdout) == (0, "")
+    assert copied == ["improved", "improved"]
     monkeypatch.setattr(pipeline, "make_provider", factory.make_provider)
     monkeypatch.setenv("OPENROUTER_API_KEY", "-".join(("test", "key")))
     fake_http.reply({"choices": [{"message": {"content": "rewrite"}}]})

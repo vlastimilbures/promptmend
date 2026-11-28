@@ -57,20 +57,27 @@ Espanso something to paste:
 - Every failure is printed as one `[promptmend: …]` marker, with exit code 0 (1 with
   `--fail-on-marker`).
 - Without `--source`, a draft piped or redirected to stdin is read; from a terminal, the
-  clipboard. An empty pipe gives `[promptmend: Input is empty]` and sends nothing.
+  clipboard. An empty pipe gives `[promptmend: Input is empty]` and sends nothing; one left
+  open ends at the time limit with `[promptmend: no draft arrived on stdin …]`. On Windows a
+  null stdin (`< NUL`) counts as a terminal and reads the clipboard. A script should pass
+  `--source` explicitly.
 - Drafts over 50,000 characters are refused.
 - If the model stops at its output limit, the partial rewrite is printed with
   `[promptmend: the reply hit the model's output limit and is cut off]` at the end.
 
 For scripts, the exit code says nothing by default: `improve` exits 0 whether or not it
-rewrote. Pass `--fail-on-marker` to exit 1 when the run failed (a bad setting, a blocked or
-failed call, an empty draft, a timeout); stdout and stderr stay exactly as without it. A
-rewrite still exits 0, also with a `sent despite` note in front of it or after a failed
-`--copy` (the rewrite is then printed after that marker). No Espanso match passes
-it, since Espanso fails the expansion on a nonzero exit. Without the flag, a run
-failed when its whole output is one `[promptmend: …]` marker. A rewrite starts with a marker
-only after `--allow-flagged` (`[promptmend: sent despite: …]`) and ends with one only when it
-is cut off. This prefix is stable. With `clipboard` output, a successful run prints nothing,
+rewrote. Pass `--fail-on-marker` to exit 1 whenever a failure marker is printed: a bad
+setting, a blocked or failed call, an empty draft, a timeout, and also a copy that failed or
+stalled (`--copy`, or `clipboard` output, whose deliverable is the clipboard), even though
+the rewrite is then printed after that marker. Only the `sent despite` note and the
+output-limit note are not failures: a rewrite with them still exits 0. Stdout and stderr stay
+exactly as without the flag. No Espanso match passes it, since Espanso fails the expansion on
+a nonzero exit.
+
+Without the flag, a run failed when its whole output is one `[promptmend: …]` marker. A
+rewrite starts with a marker only after `--allow-flagged` (`[promptmend: sent despite: …]`)
+or a failed `--copy` (`[promptmend: Clipboard unavailable: …; the rewrite is pasted
+instead]`), and ends with one only when it is cut off. This prefix is stable. With `clipboard` output, a successful run prints nothing,
 or only those markers, and the rewrite is on the clipboard.
 
 ## persona
@@ -178,7 +185,9 @@ ordinary exit codes.
 | 4 | `doctor` or `config validate` found a problem |
 
 `improve` and `persona` exit 0 (see [Scripting contract](#scripting-contract)); only
-`improve --fail-on-marker` exits 1, when the run ended in a failure marker.
+`improve --fail-on-marker` exits 1, when the run printed a failure marker. A usage error (an
+unknown option, or a value given to a flag, such as `--fail-on-marker=1`) exits 2 with
+nothing on stdout and stderr.
 
 ## See also
 

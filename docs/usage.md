@@ -115,7 +115,7 @@ trigger with the rewrite.
 
 Run from a terminal or a script instead, `promptmend improve` without `--source` rewrites a
 draft piped to it (`echo "draft" | promptmend improve`) and reads the clipboard only when
-stdin is a terminal. A script can pass `--fail-on-marker` to get exit code 1 when the run
+stdin is a terminal (on Windows a null stdin, `< NUL`, counts as one). A script can pass `--fail-on-marker` to get exit code 1 when the run
 ends in a `[promptmend: …]` failure marker; see the
 [scripting contract](commands.md#scripting-contract).
 
@@ -283,10 +283,13 @@ such as `my-prompts.yml`:
    path followed by arguments, so the trigger pastes `[Espanso]: An error occurred during
    rendering`. A trigger you copied from a file deployed by 0.20.0 or earlier (#18) has that shell
    shape; rewrite it this way.
-5. Keep `"--source", "clipboard"` in an `improve` call: without `--source`, `improve` reads
-   stdin whenever it is not a terminal, and Espanso never starts it on one, so the trigger
-   would not read the clipboard (it pastes `[promptmend: Input is empty]` instead). Never add `--fail-on-marker`: its exit code 1
-   makes Espanso fail the expansion instead of pasting the marker.
+5. Keep `"--source", "clipboard"` in an `improve` call, the safe form on every system.
+   Without `--source`, `improve` reads stdin whenever it is not a terminal. On macOS and
+   Linux, Espanso's empty stdin is not a terminal, so the trigger pastes
+   `[promptmend: Input is empty]` instead of rewriting the clipboard. On Windows a null stdin
+   counts as a terminal, so such a trigger still reads the clipboard, as before. Never add
+   `--fail-on-marker`: its exit code 1 makes Espanso fail the expansion instead of pasting
+   the marker.
 
 `promptmend espanso deploy` and `detach` handle only the files they deployed
 (`prompts-core.yml`, `prompts-llm.yml`, `prompts-template.yml`), so they never change yours;

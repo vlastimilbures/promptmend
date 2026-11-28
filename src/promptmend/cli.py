@@ -181,7 +181,9 @@ def improve(
         help="clipboard, stdin, or argument; default: argument with --text, else stdin when "
         "it is piped, else clipboard",
     ),
-    text: str | None = typer.Option(None, help="Input when source is argument"),
+    text: str | None = typer.Option(
+        None, help="The draft: with --source argument, or alone (then --source is argument)"
+    ),
     output: str | None = typer.Option(
         None,
         "--output",
@@ -202,7 +204,7 @@ def improve(
     fail_on_marker: bool = typer.Option(
         False,
         "--fail-on-marker",
-        help="For scripts: exit 1 when the output is a failure marker instead of a rewrite "
+        help="For scripts: exit 1 when a failure marker is printed, a failed copy's included "
         "(stdout unchanged); never in an Espanso match",
     ),
     trigger_id: str | None = _TRIGGER_ID,
