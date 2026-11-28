@@ -1028,7 +1028,8 @@ def test_history_export_file_and_the_hidden_output(
     tmp_path: Path, record_ops: Callable[..., None]
 ) -> None:
     record_ops()
-    help_text = _run("history", "export", "--help").stdout
+    # _plain(): under GitHub Actions Typer colours an option's name in pieces.
+    help_text = _plain(_run("history", "export", "--help").stdout)
     assert "--file" in help_text
     assert "--output" not in help_text
     first, second, third = (tmp_path / f"{n}.json" for n in ("a", "b", "c"))
@@ -1038,7 +1039,7 @@ def test_history_export_file_and_the_hidden_output(
     assert _run("history", "export", "--file", str(third), "--output", str(third)).exit_code == 0
     both = _run("history", "export", "--file", str(tmp_path / "d"), "--output", str(first))
     assert both.exit_code == 2
-    assert "--file" in both.stderr
+    assert "--file" in _plain(both.stderr)
     assert not (tmp_path / "d").exists()
 
 
@@ -1557,7 +1558,7 @@ def test_setup_names_an_unread_dotenv(
 
 # --plain is hidden since #405 and still accepted: the same run as --non-interactive.
 def test_setup_plain_is_hidden_and_still_works(espanso: Path, fake_run: FakeRunner) -> None:
-    assert "--plain" not in _run("setup", "--help").stdout
+    assert "--plain" not in _plain(_run("setup", "--help").stdout)
     plain = _setup(espanso, "--plain", "--no-smoke-test")
     assert plain.exit_code == 0, plain.output
     same = _setup(espanso, "--non-interactive", "--no-smoke-test")
