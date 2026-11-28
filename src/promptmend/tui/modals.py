@@ -5,10 +5,11 @@ offer a Use default button, which returns USE_DEFAULT: the caller resets the set
 A destructive action always goes through one of them: nothing is deleted, overwritten or
 deployed until its button is pressed, and Cancel (or Escape, or n) is the focused default.
 The confirmation always opens on Cancel. A form does too, unless its caller names a field to
-focus (``focus=``), which only a form that deletes nothing does: Set key, Test call, Export,
-the default profile, and the days to prune (a confirmation on Cancel follows it). The pick
-list and the edit dialog, which change nothing until a value is picked or saved, focus their
-list or field.
+focus (``focus=``), which only a form whose first Enter destroys nothing does: Test call,
+Export, the default profile, the days to prune (a confirmation on Cancel follows it), and
+Set key, where Enter on the empty value changes nothing and a saved key is replaced only by
+a value typed there, as `secrets set` does. The pick list and the edit dialog, which change
+nothing until a value is picked or saved, focus their list or field.
 """
 
 from __future__ import annotations
@@ -241,8 +242,8 @@ class FormModal(_Dialog[dict[str, str] | None]):
     prune and remove-key, which ask once more.
 
     Cancel has the focus when it opens, so Enter right after opening changes nothing. A
-    caller whose submit deletes nothing passes ``focus``, a field id, to open in that field
-    instead: Enter in a text field submits the form, and on a choice opens its list."""
+    caller whose first Enter destroys nothing passes ``focus``, a field id, to open in that
+    field instead: Enter in a text field submits the form, and on a choice opens its list."""
 
     def __init__(
         self,

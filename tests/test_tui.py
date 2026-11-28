@@ -1579,27 +1579,47 @@ def test_a_destructive_dialog_still_opens_on_cancel(saved: Path, espanso: FakeRu
 @pytest.mark.parametrize(
     ("row", "picked"),
     [
-        ("default", "default"),  # built in
-        ("user:mine", "mine"),  # one of yours, added
+        ("general", "general"),  # built in, not the list's first choice
         ("default-pro", "default"),  # a retired name means its target
-        ("user:default", "general"),  # yours but shadowed: the current default
+        ("user:other", "other"),  # one of yours, added
+        ("user:general", "general"),  # yours, replacing a built-in (overrides)
+        ("user:default-pro", "mine"),  # shadowed (named like an alias): the current default
+        ("user:Bad", "mine"),  # an invalid name: the current default
+        ("user:default", "mine"),  # an override without its file (missing): the same
     ],
 )
 def test_set_default_opens_on_the_highlighted_profile(
     espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch, row: str, picked: str
 ) -> None:
-    """#392: Set default starts at the highlighted row, not at the current profile."""
-    monkeypatch.setenv("PROMPT_PROFILE", "general")
-    _user_profile("mine")
-    _user_profile("default")
+    """#392: Set default starts at the highlighted row, not at the current profile. The
+    current one (`mine`) is not the list's first choice, so a value the list does not offer
+    (which falls back to that first choice) cannot pass for the fallback."""
+    from promptmend.prompt_builder import ADDED, INVALID_NAME, MISSING, OVERRIDES, SHADOWED
+
+    monkeypatch.setenv("PROMPT_PROFILE", "mine")
+    monkeypatch.setenv("PROMPT_PROFILE_OVERRIDES", "general,default")
+    for name in ("mine", "other", "general", "default-pro", "Bad"):
+        _user_profile(name)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
         from textual.widgets import DataTable
 
         await pilot.press("3")
         await settle(pilot)
-        table = pane(app, "profiles").query_one("#profiles", DataTable)
+        statuses = {p.name: p.status for p in _state(app).profiles}
+        assert statuses == {
+            "mine": ADDED,
+            "other": ADDED,
+            "general": OVERRIDES,
+            "default-pro": SHADOWED,
+            "Bad": INVALID_NAME,
+            "default": MISSING,
+        }
+        profiles = pane(app, "profiles")
+        assert isinstance(profiles, profiles_pane.ProfilesPane)
+        table = profiles.query_one("#profiles", DataTable)
         table.move_cursor(row=table.get_row_index(row))
+        assert profiles.highlighted(_state(app)) == picked
         await press(app, pilot, "#set-profile")
         assert isinstance(app.screen, FormModal)
         assert app.screen.query_one("#profile", Select).value == picked

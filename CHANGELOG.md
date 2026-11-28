@@ -36,13 +36,15 @@ All notable changes to this project are documented here. The format follows
   the wiring, no rewrite)`, its report says `Done: dry run, the stub answered (no rewrite).`
   and its cost `not applicable (dry run)`, so the stub's fixed reply is not taken for a
   rewrite. Pressing Run twice opens one confirm dialog, so one Send is one call.
-- Interface: a dialog that deletes nothing opens in its field instead of on Cancel (#392).
-  Set key opens in the hidden value when the key is already picked (Enter there saves it),
-  else on the key picker; Test call on its provider, Export on its format, Default profile on
-  its picker, and Prune on its days (Enter there opens the confirmation, still on Cancel).
-  Deploy, Detach, Remove a key and every confirmation keep Cancel focused. The Profiles tab's
-  Set default starts at the highlighted profile: a built-in one, one of yours that is added,
-  or a retired name's target; any other row starts at the current default.
+- Interface: a dialog whose first Enter changes nothing opens in its field instead of on
+  Cancel (#392). Set key opens in the hidden value field (Enter on it empty changes nothing;
+  a saved key is replaced only by what you type); Test call on its provider, Export on its
+  format, Default profile on its picker, and Prune on its days (Enter there opens the
+  confirmation, still on Cancel). Deploy, Detach, Remove a key and every confirmation keep
+  Cancel focused. The Profiles tab's Set default starts at the highlighted profile: a
+  built-in one, a retired name's target, or one of yours that a trigger would use (added, or
+  replacing a built-in through `PROMPT_PROFILE_OVERRIDES`); any other row (shadowed, an
+  invalid name, an override without its file) starts at the current default.
 - The five failure markers a new user meets most often name the next step (#398), and none
   names a flag the call did not pass. A missing key says `is not set` and to run
   `promptmend secrets set OPENROUTER_API_KEY` in a terminal (with `PROMPTMEND_ENV` set: to add

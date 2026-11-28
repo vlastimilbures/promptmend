@@ -14,7 +14,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Static
 
-from ..prompt_builder import ADDED, ALIASES, PROFILES, user_profiles_dir
+from ..prompt_builder import ADDED, ALIASES, OVERRIDES, PROFILES, user_profiles_dir
 from .base import Pane, add_row, button_row
 from .modals import Field, FormModal
 from .state import State
@@ -90,15 +90,18 @@ class ProfilesPane(Pane):
         if self.state is None:
             return
         own = [p.name for p in self.state.profiles if p.status == ADDED]
-        value = self.highlighted(self.state, own)
+        value = self.highlighted(self.state)
         fields = [Field("profile", "PROMPT_PROFILE", [*PROFILES, *own], value=value)]
         self.app.push_screen(
             FormModal("Default profile", fields, focus="profile"), self._save_profile
         )
 
-    def highlighted(self, state: State, own: list[str]) -> str:
+    def highlighted(self, state: State) -> str:
         """The profile the highlighted row names: a built-in one, a retired name's target, or
-        one of ``own`` (yours that are added); on any other row, the current default."""
+        one of yours that a trigger uses when it is picked (added, or replacing a built-in
+        through PROMPT_PROFILE_OVERRIDES). A file of yours that is not used (shadowed, an
+        invalid name, an override without its file) names nothing to pick, so it, like an
+        empty table, gives the current default."""
         table = self.query_one("#profiles", DataTable)
         key = (
             table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value or ""
@@ -109,8 +112,9 @@ class ProfilesPane(Pane):
             return key
         if key in ALIASES:
             return ALIASES[key]
+        used = {p.name for p in state.profiles if p.status in (ADDED, OVERRIDES)}
         name = key.removeprefix("user:")
-        return name if key.startswith("user:") and name in own else state.settings.profile
+        return name if key.startswith("user:") and name in used else state.settings.profile
 
     def _save_profile(self, values: dict[str, str] | None) -> None:
         if values is not None:

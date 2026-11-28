@@ -28,9 +28,10 @@ comes up without loading them.
 
 The interface does what the management commands do, through the same code. Keys are shown
 only as set or not set. Removing a key, deploying, detaching or deleting history
-asks first, in a dialog whose Cancel has the focus. A dialog that deletes nothing opens in its
-field instead: Set key in the hidden value (or on the key, when none is picked yet), Test call,
-Export, the default profile and Prune's days (whose Next still asks, on Cancel). No provider
+asks first, in a dialog whose Cancel has the focus. A dialog whose first Enter changes nothing
+opens in its field instead: Set key in the hidden value (Enter on it empty changes nothing; a
+saved key is replaced only by what you type), Test call, Export, the default profile and
+Prune's days (whose Next still asks, on Cancel). No provider
 is called except by the Test call button, which runs `improve` against a stub on `127.0.0.1`
 with a placeholder key, and by a Try tab run you confirm.
 
@@ -83,7 +84,7 @@ and on cloud otherwise. `--non-interactive` (or `--plain`) runs without the wiza
 |-----|-----|------------------------|
 | `1` | Home | Whether you are ready, the most urgent problem and the session log |
 | `2` | Settings | What the triggers run, then every setting and key in one list, the rarely changed ones behind an Advanced fold: switch, pick, edit or reset a setting, set or remove a key, run the Test call (see [Settings tab](#settings-tab)) |
-| `3` | Profiles | Built-in and your own profiles; pick the default profile (Set default starts at the highlighted row; a retired name at its target), edit a profile in `$VISUAL` or `$EDITOR` |
+| `3` | Profiles | Built-in and your own profiles; pick the default profile (Set default starts at the highlighted row: a retired name at its target, one of yours only when a trigger would use it, added or replacing a built-in), edit a profile in `$VISUAL` or `$EDITOR` |
 | `4` | Triggers | The match files and their states (refreshed as soon as a deploy or detach has written the files; `needs Ollama` or `needs LM Studio` when a local trigger's server does not answer), the diff, deploy and detach |
 | `5` | History | Usage statistics by trigger, provider, model or day; export, prune, reset |
 | `6` | Diagnostics | Each provider's model, base URL, key and whether the draft leaves this machine; the settings layers and any problem in the settings files; the `doctor` checks |
