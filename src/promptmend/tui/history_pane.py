@@ -118,7 +118,9 @@ class HistoryPane(Pane):
         ]
         preview = "Metadata only: no draft, rewrite, persona or key is ever recorded."
         self.app.push_screen(
-            FormModal("Export the usage history", fields, submit="Export", preview=preview),
+            FormModal(
+                "Export the usage history", fields, submit="Export", preview=preview, focus="format"
+            ),
             self._write_export,
         )
 
@@ -153,8 +155,10 @@ class HistoryPane(Pane):
             return
         days = str(self.state.settings.history_retention_days) if self.state else ""
         fields = [Field("days", "Delete the records older than this many days", value=days)]
+        # The form deletes nothing: its Next opens a confirmation, which opens on Cancel.
         self.app.push_screen(
-            FormModal("Prune the usage history", fields, submit="Next…"), self._ask_prune
+            FormModal("Prune the usage history", fields, submit="Next…", focus="days"),
+            self._ask_prune,
         )
 
     def _ask_prune(self, values: dict[str, str] | None) -> None:
