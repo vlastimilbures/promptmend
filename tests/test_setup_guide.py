@@ -486,3 +486,34 @@ def test_rail_on_done_says_what_the_checklist_says(tmp_path: Path) -> None:
         ("Match files", "✗"),
         ("Test", "\u2013"),
     ]
+
+
+def test_a_fact_not_known_yet_is_neither_ok_nor_failed() -> None:
+    """The match folder still being read is not "not found" (#393), and with no State at all
+    a passed step is not ✓; the rail and the checklist use the same mark."""
+    rows = setup_guide.done_rows(_settings(), "cloud", [], None, None, reading=True)
+    match = rows[3]
+    assert (match.status, match.mark, match.text) == (
+        setup_guide.UNKNOWN,
+        "\u2026",
+        "the match folder is being read",
+    )
+    assert dict(setup_guide.rail("done", list(setup_guide.STEPS), rows))["espanso"] == "\u2026"
+    # FAILED still outranks it, and it outranks SKIPPED.
+    mixed = [_row(setup_guide.UNKNOWN, "keys"), _row(setup_guide.SKIPPED, "keys")]
+    assert setup_guide.step_status("keys", mixed) == setup_guide.UNKNOWN
+    mixed.append(_row(setup_guide.FAILED, "keys"))
+    assert setup_guide.step_status("keys", mixed) == setup_guide.FAILED
+    # Read and not found: failed, as before.
+    assert setup_guide.done_rows(_settings(), "cloud", [], None, None)[3].mark == "✗"
+    order = [s for s in setup_guide.STEPS if s != "espanso"]
+    assert setup_guide.rail("output", order, None) == [
+        ("welcome", "✓"),  # nothing to know
+        ("use", "\u2026"),
+        ("keys", "\u2026"),
+        ("profile", "\u2026"),
+        ("output", "▶"),
+        ("espanso", "\u2013"),  # left out by the option: known without a State
+        ("test", ""),
+        ("done", ""),
+    ]

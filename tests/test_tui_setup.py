@@ -114,6 +114,7 @@ def _agrees(app: ManageApp) -> list[setup_guide.DoneRow]:
     wizard = _wizard(app)
     assert wizard.at == "done"
     rows = wizard._rows()
+    assert rows is not None
     summary = _text(app, "#setup-summary").splitlines()
     rail = _rail(app)
     assert rail["Done"] == "▶"
@@ -1100,3 +1101,71 @@ def test_wizard_quit_from_home_returns_to_it(saved: Path, espanso: FakeRunner) -
 
     app = drive(scenario)
     assert app.return_code is None
+
+
+def test_wizard_done_follows_a_plan_read_that_fails_while_it_is_open(
+    saved: Path, espanso: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full State landing on Done reads the plan again; when that read fails, the
+    checklist changes with the rail, not the rail alone."""
+    from promptmend import setup_flow
+
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        config_store.save_secret("OPENROUTER_API_KEY", KEY)
+        wizard.go("espanso")
+        await settle(pilot)
+        await press(app, pilot, "#setup-deploy")
+        wizard.go("done")
+        await settle(pilot)
+        assert "✓ Match files: installed in " in _text(app, "#setup-summary")
+        assert _rail(app)["Espanso"] == "✓"
+        _agrees(app)
+
+        def gone(*_: object) -> None:
+            raise deploy.DeployError("espanso went away")
+
+        monkeypatch.setattr(setup_flow, "read_plan", gone)
+        app.reload()
+        await settle(pilot)
+        assert wizard.plan is None
+        assert "✗ Match files: Espanso's folder was not found" in _text(app, "#setup-summary")
+        assert _rail(app)["Espanso"] == "✗"
+        _agrees(app)
+
+    drive(scenario, setup=_options(espanso))
+
+
+def test_wizard_says_the_match_folder_is_being_read(saved: Path, espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        wizard.go("done")
+        await settle(pilot)
+        # As before the first read lands: no plan and no error yet.
+        wizard.plan, wizard.plan_error = None, None
+        wizard._repaint()
+        await settle(pilot)
+        summary = _text(app, "#setup-summary")
+        assert "\u2026 Match files: the match folder is being read" in summary
+        assert "not found" not in summary
+        assert _rail(app)["Espanso"] == "\u2026"
+        _agrees(app)
+
+    drive(scenario, setup=_options(espanso))
+
+
+def test_wizard_greys_out_back_while_working(saved: Path, espanso: FakeRunner) -> None:
+    async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
+        wizard = _wizard(app)
+        wizard.go("profile")
+        await settle(pilot)
+        assert app.screen.active_bindings["escape"].enabled
+        wizard.working = True
+        await settle(pilot)
+        assert not app.screen.active_bindings["escape"].enabled
+        await pilot.press("escape")
+        await settle(pilot)
+        assert wizard.at == "profile"
+        wizard.working = False
+
+    drive(scenario, setup=_options(espanso))

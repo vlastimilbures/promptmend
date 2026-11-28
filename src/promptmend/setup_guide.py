@@ -176,9 +176,10 @@ class KeyRow:
 # and the rail (rail()), so the two never disagree (#393): ok, skipped or not run (a step
 # `setup --no-deploy`/`--no-smoke-test` leaves out, a test not run), or failed (what leaves a
 # trigger not working: an answer PROMPT_LOCAL_ONLY contradicts, a needed key not set, the
-# match files not found or not installed, a test that failed).
-OK, SKIPPED, FAILED = "ok", "skipped", "failed"
-MARKS = {OK: "✓", SKIPPED: "\u2013", FAILED: "✗"}
+# match files not found or not installed, a test that failed). A fact not known yet (the
+# match folder still being read, or no State at all) is UNKNOWN: neither ✓ nor ✗.
+OK, SKIPPED, FAILED, UNKNOWN = "ok", "skipped", "failed", "unknown"
+MARKS = {OK: "✓", SKIPPED: "\u2013", FAILED: "✗", UNKNOWN: "\u2026"}
 CURRENT = "▶"
 
 
@@ -600,6 +601,7 @@ def done_rows(
     from_env: bool = False,
     saved: Settings | None = None,
     overrides: Mapping[str, str] | None = None,
+    reading: bool = False,
 ) -> list[DoneRow]:
     """What is set and what is left; ``use`` is the Cloud or local step's answer and
     ``legacy`` the .env PROMPTMEND_ENV names, where a missing setting or key then goes. A step
@@ -608,7 +610,8 @@ def done_rows(
     from an environment variable (use_problem()). The answer is checked against the effective
     ``settings``; the profile and output shown are ``saved`` (setup_flow.saved_settings()),
     with ``overrides`` naming an environment variable that changes them. Each row names its
-    step (DoneRow), so the rail's marks come from these rows (rail())."""
+    step (DoneRow), so the rail's marks come from these rows (rail()). ``reading``: the match
+    folder is still being read (no ``plan`` yet, and no error), so Match files is UNKNOWN."""
     shown = saved or settings
     over = overrides or {}
     rows = [
@@ -626,7 +629,7 @@ def done_rows(
                 f"add {key.name}= to {legacy}" if legacy else f"`promptmend secrets set {key.name}`"
             )
             rows.append(DoneRow(FAILED, key.name, f"not set: {fix}", "keys"))
-    rows.append(_match_row(plan, skipped))
+    rows.append(_match_row(plan, skipped, reading))
     if "test" in skipped:
         rows.append(DoneRow(SKIPPED, "Test", "skipped (--no-smoke-test)", "test"))
     elif test is None:
@@ -638,12 +641,15 @@ def done_rows(
     return rows
 
 
-def _match_row(plan: deploy.Plan | None, skipped: Sequence[str]) -> DoneRow:
-    """The Match files row: skipped by --no-deploy, failed while Espanso's folder cannot be
-    read or a file is left to write (the triggers do not run until it is), else ok."""
+def _match_row(plan: deploy.Plan | None, skipped: Sequence[str], reading: bool) -> DoneRow:
+    """The Match files row: skipped by --no-deploy, unknown while the folder is still being
+    read, failed while Espanso's folder cannot be read or a file is left to write (the
+    triggers do not run until it is), else ok."""
     label = "Match files"
     if "espanso" in skipped:
         return DoneRow(SKIPPED, label, "skipped (--no-deploy)", "espanso")
+    if plan is None and reading:
+        return DoneRow(UNKNOWN, label, "the match folder is being read", "espanso")
     if plan is None:
         return DoneRow(FAILED, label, "Espanso's folder was not found", "espanso")
     if _writes(plan):
@@ -655,29 +661,34 @@ def _match_row(plan: deploy.Plan | None, skipped: Sequence[str]) -> DoneRow:
 
 
 def step_status(step: str, rows: Sequence[DoneRow]) -> str:
-    """A step's status from its rows (DoneRow.step): FAILED when any failed, else SKIPPED
-    when any was skipped or not run, else OK. Welcome has no row, nor the keys step when no
-    key is needed: there is nothing to fail, so passed it is OK."""
+    """A step's status from its rows (DoneRow.step): FAILED when any failed, else UNKNOWN
+    when any is not known yet, else SKIPPED when any was skipped or not run, else OK.
+    Welcome has no row, nor the keys step when no key is needed: there is nothing to fail,
+    so passed it is OK."""
     statuses = {row.status for row in rows if row.step == step}
-    for status in (FAILED, SKIPPED):
+    for status in (FAILED, UNKNOWN, SKIPPED):
         if status in statuses:
             return status
     return OK
 
 
-def rail(at: str, order: Sequence[str], rows: Sequence[DoneRow]) -> list[tuple[str, str]]:
+def rail(at: str, order: Sequence[str], rows: Sequence[DoneRow] | None) -> list[tuple[str, str]]:
     """The left rail: every step in STEPS with its mark. ``at`` is the current step (▶),
     ``order`` the steps the wizard visits (setup --no-deploy/--no-smoke-test leave one out:
-    it is listed still, marked from its row, SKIPPED, as Done lists it); a step before ``at``
-    is marked by step_status(), so on Done the rail and the checklist say the same; a step
-    not reached yet has no mark ("")."""
+    it is listed still, marked SKIPPED, as Done lists it); a step before ``at`` is marked by
+    step_status(), so on Done the rail and the checklist say the same; a step not reached yet
+    has no mark (""). ``rows`` None: nothing is known yet (no State), so a passed step other
+    than Welcome is UNKNOWN, never ✓."""
     passed = order[: order.index(at)] if at in order else []
     marks = []
     for step in STEPS:
         if step == at:
             mark = CURRENT
-        elif step in passed or step not in order:
-            mark = MARKS[step_status(step, rows)]
+        elif step not in order:
+            mark = MARKS[SKIPPED]
+        elif step in passed:
+            known = rows is not None or step == "welcome"
+            mark = MARKS[step_status(step, rows or []) if known else UNKNOWN]
         else:
             mark = ""
         marks.append((step, mark))

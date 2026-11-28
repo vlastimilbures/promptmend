@@ -7,13 +7,15 @@ setup_guide.py, and what it decides and writes from setup_flow.py, shared with `
 --non-interactive` (neither imports Textual).
 
 The rail marks each step from the Done checklist's rows (setup_guide.rail()), repainted
-whenever they change, so the two never disagree (#393). Quit setup is `q` on every step,
-shown in the footer except while a key field has the focus (the field takes the letter, so
-check_action() hides it there rather than advertise a key that types instead); Escape on
-Welcome leaves too. Both are refused while an install or the test runs, as Back and Next
-are. Leaving is the Done step's Quit (Close): opened by `setup` the interface exits 0, from
-Home it closes back to Home. Textual's own ctrl+q (a priority binding of the app) still
-quits the whole interface."""
+whenever they change (_repaint() paints it and Done together), so the two never disagree
+(#393); a fact not known yet (the match folder still being read, no State) is neither ✓ nor
+✗. Quit setup is `q` on every step, shown in the footer except while a key field has the
+focus (the field takes the letter, so check_action() hides it there rather than advertise a
+key that types instead); Escape on Welcome leaves too. Both are refused, greyed out in the
+footer, while an install or the test runs, as Back and Next are. Leaving is the Done step's
+Quit (Close): opened by `setup` the interface exits 0, from Home it closes back to Home,
+where MainScreen's own `q` quits the interface. Textual's own ctrl+q (a priority binding of
+the app) still quits the whole interface."""
 
 from __future__ import annotations
 
@@ -80,6 +82,7 @@ _MARK_STYLES = {
     setup_guide.MARKS[setup_guide.OK]: "green",
     setup_guide.MARKS[setup_guide.SKIPPED]: "dim",
     setup_guide.MARKS[setup_guide.FAILED]: "yellow",
+    setup_guide.MARKS[setup_guide.UNKNOWN]: "dim",
     setup_guide.CURRENT: "bold",
 }
 
@@ -204,8 +207,10 @@ class SetupScreen(Screen[None]):
         self.refresh_bindings()  # Quit setup greys out while it runs
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Quit setup is hidden while a key field has the focus (the field takes `q`), and
-        shown greyed out while an install or the test runs."""
+        """Quit setup is hidden while a key field has the focus (the field takes `q`); it and
+        Back are shown greyed out (refused) while an install or the test runs."""
+        if action == "back" and self.working:
+            return None
         if action == "quit_setup":
             if isinstance(self.focused, Input):
                 return False
@@ -379,12 +384,12 @@ class SetupScreen(Screen[None]):
         else:
             self.call_after_refresh(self.query_one("#setup-next-step").focus)
 
-    def _rows(self) -> list[setup_guide.DoneRow]:
-        """The Done checklist's rows for what is known now (none before the first State):
+    def _rows(self) -> list[setup_guide.DoneRow] | None:
+        """The Done checklist's rows for what is known now (None before the first State):
         the Done step lists them and the rail marks its steps from them."""
         state = self.manage.state
         if state is None:
-            return []
+            return None
         saved = setup_flow.saved_settings(state.settings)
         return setup_guide.done_rows(
             state.settings,
@@ -397,7 +402,15 @@ class SetupScreen(Screen[None]):
             from_env=setup_flow.local_only_from_env(state.layers),
             saved=saved,
             overrides=setup_flow.env_overrides(state.layers, saved),
+            reading=self.plan is None and self.plan_error is None,
         )
+
+    def _repaint(self) -> None:
+        """After a fact changed off a move (a plan read, a test run): the rail, and the Done
+        checklist when it is on screen, together, so the two never disagree."""
+        self._paint_rail()
+        if self.at == "done":
+            self._show_done(focus=not self._focus_in_step())
 
     def _paint_rail(self) -> None:
         """The rail, marked from the same rows as Done (setup_guide.rail())."""
@@ -582,7 +595,7 @@ class SetupScreen(Screen[None]):
                 "docs/install.md; then `promptmend espanso deploy`."
             )
             button.disabled = True
-            self._paint_rail()
+            self._repaint()
             return
         lines = [f"Match folder: {plan.espanso_dir / 'match'}"]
         if fallback:
@@ -593,9 +606,7 @@ class SetupScreen(Screen[None]):
         lines += ["", setup_guide.deploy_summary(plan)]
         self.query_one("#setup-files", Static).update("\n".join(lines))
         button.disabled = setup_flow.in_sync(plan)
-        self._paint_rail()
-        if self.at == "done":
-            self._show_done(focus=not self._focus_in_step())
+        self._repaint()
 
     @on(Button.Pressed, "#setup-deploy")
     def _deploy(self) -> None:
@@ -674,7 +685,7 @@ class SetupScreen(Screen[None]):
         ok = all(passed for passed, _ in results)
         self.tested = ok
         self.report("\n".join(line for _, line in results), error=not ok)
-        self._paint_rail()
+        self._repaint()
 
     # The last step.
 
@@ -687,7 +698,7 @@ class SetupScreen(Screen[None]):
         summary = Text()
         use = self.answer(state.settings)
         saved = setup_flow.saved_settings(state.settings)
-        for row in self._rows():
+        for row in self._rows() or []:
             summary.append(f"{row.mark} ", style=_MARK_STYLES[row.mark])
             summary.append(f"{row.label}: ", style="bold")
             summary.append(f"{row.text}\n")

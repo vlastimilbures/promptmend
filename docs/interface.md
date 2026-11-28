@@ -42,7 +42,8 @@ the steps listed on the left: `▶` marks where you are, and each step you have 
 marked as Done lists it: `✓` done, `–` skipped or not run (a test you did not run, a step
 `--no-deploy` or `--no-smoke-test` leaves out), `✗` failed or still to do (a key the
 triggers need is not set, the match files are not installed or Espanso's folder was not
-found, the test failed). A step not reached yet has no mark. The first time you open `promptmend` with nothing set up yet (no
+found, the test failed), `…` not known yet (the match folder is still being read). A step
+not reached yet has no mark. The first time you open `promptmend` with nothing set up yet (no
 `config.toml`, no key, no match file), it opens by itself, once; Home's "Setup…" opens it any
 time.
 
@@ -64,8 +65,10 @@ cloud and both are not stored, so neither is marked.
 Next and Back (or Escape) move between the steps; Enter on a list picks and moves on. `q`
 (Quit setup, in the footer on every step) leaves setup, and so does Escape on Welcome:
 opened by `promptmend setup` it exits (code 0, as Done's Quit), opened from Home it goes back
-to Home. While a key field has the focus `q` types into it, so the footer leaves it out
-there; while the match files install or the test runs, leaving waits, as Back and Next do. Each
+to Home, where a second `q` quits the interface. While a key field has the focus `q` types
+into it, so the footer leaves it out there. While the match files install or the test runs,
+`q`, Escape, Back and Next are refused (greyed out in the footer), not queued: press again
+once it has finished. Each
 change is made through the same code as its command and shows that command. With
 `PROMPTMEND_ENV` set, settings and keys stay in that file: Next moves on without saving a
 choice and says so, the API keys step only says to add each key to that file, and Done names
