@@ -964,6 +964,107 @@ def test_every_data_key_is_in_the_json_schema(espanso: Path, no_clipboard: None)
         assert set(check.data) <= set(doctor.DATA_KEYS[check.id]), check.id
 
 
+# --- the verdict (#402) -------------------------------------------------------------------
+
+
+def _verdict(*checks: tuple[str, str, str], **data: dict[str, Any]) -> doctor.Verdict:
+    """The verdict of a report of ``checks`` (id, status, message), each check's data from
+    ``data`` by id: saved settings and deployed match files unless given."""
+    data = {"config": {"mode": "saved"}, "pro_provider": {"deployed": True}, **data}
+    ids = [c[0] for c in checks]
+    rows = [doctor.Check(i, s, m, data.get(i, {})) for i, s, m in checks]
+    rows += [doctor.Check(i, doctor.OK, "fine", d) for i, d in data.items() if i not in ids]
+    return doctor.verdict(doctor.Report(tuple(rows)))
+
+
+def test_a_never_set_up_machine_is_told_to_run_setup(
+    espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The issue's "done when": no config.toml, nothing deployed, so the report ends with one
+    line that names `promptmend setup`."""
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    report = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner())
+    assert report.status == doctor.FAIL  # the match files are missing
+    found = doctor.verdict(report)
+    assert (found.setup, found.first) == (True, None)
+    assert found.problems == sum(c.status == doctor.FAIL for c in report.checks) > 0
+    assert found.warnings == sum(c.status == doctor.WARN for c in report.checks)
+    assert found.line.endswith(": nothing is set up yet. Next: `promptmend setup`")
+    assert found.line.startswith(f"{found.problems} problem")
+    assert "\n" not in found.line
+    assert report.to_json()["verdict"] == found.to_json()
+
+
+@pytest.mark.parametrize(
+    ("data", "words"),
+    [
+        ({"config": {"mode": "defaults"}}, "no settings are saved yet"),
+        ({"pro_provider": {"deployed": False}}, "no match files are deployed yet"),
+    ],
+)
+def test_setup_is_next_when_either_part_is_missing(data: dict[str, Any], words: str) -> None:
+    found = _verdict(("keys", doctor.WARN, "-i- will use OpenRouter once deployed"), **data)
+    assert found.line == f"1 warning: {words}. Next: `promptmend setup`"
+    assert (found.problems, found.warnings, found.setup) == (0, 1, True)
+
+
+def test_one_failure_is_fixed_first() -> None:
+    found = _verdict(
+        ("espanso", doctor.WARN, "Espanso is not running"),
+        ("launcher", doctor.FAIL, "the deployed matches call /x/promptmend, which is gone"),
+    )
+    assert found.line == (
+        "1 problem, 1 warning. Fix first: launcher: the deployed matches call /x/promptmend, "
+        "which is gone"
+    )
+    assert (found.problems, found.warnings, found.first, found.setup) == (1, 1, "launcher", False)
+
+
+def test_the_first_failure_in_report_order_comes_first() -> None:
+    found = _verdict(
+        ("config", doctor.FAIL, "improve would stop with: PROMPT_LOCAL_ONLY must be true"),
+        ("match_files", doctor.FAIL, "prompts.yml: missing; run `promptmend espanso deploy`"),
+        config={"mode": "defaults"},
+        pro_provider={"deployed": False},
+    )
+    # The settings fail: a trigger stops on them first, so they beat setup too.
+    assert found.line.startswith("2 problems. Fix first: config: improve would stop with")
+    assert (found.first, found.setup) == ("config", False)
+
+
+def test_warnings_only_point_at_the_first() -> None:
+    found = _verdict(
+        ("espanso", doctor.WARN, "Espanso is not running"),
+        ("clipboard", doctor.WARN, "cannot be read (PyperclipException)"),
+    )
+    assert found.line == "No problems, 2 warnings. Check first: espanso: Espanso is not running"
+    assert (found.problems, found.warnings, found.first) == (0, 2, "espanso")
+
+
+def test_setup_is_not_named_for_what_it_does_not_fix() -> None:
+    """Saved in the environment only (no config.toml), deployed, and the one warning is the
+    clipboard: setup would not change it."""
+    found = _verdict(
+        ("clipboard", doctor.WARN, "cannot be read (PyperclipException)"),
+        config={"mode": "defaults"},
+    )
+    assert not found.setup
+    assert found.first == "clipboard"
+
+
+def test_a_clean_report_says_so() -> None:
+    found = _verdict(("version", doctor.INFO, "promptmend 1.0.0"))
+    assert found == doctor.Verdict(0, 0, None, False, "No problems found.")
+    assert doctor.verdict(doctor.Report(())).line == "No problems found."
+
+
+def test_the_verdict_json_key_keeps_schema_version_1(espanso: Path, no_clipboard: None) -> None:
+    data = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner()).to_json()
+    assert data["schema_version"] == doctor.SCHEMA_VERSION == 1
+    assert list(data) == ["schema_version", "version", "status", "checks", "verdict"]
+    assert set(data["verdict"]) == {"problems", "warnings", "first", "setup", "line"}
+
+
 # --- history and SQLite -------------------------------------------------------------------
 
 
@@ -1201,7 +1302,7 @@ def test_run_measures_each_check_only_into_the_given_dict(
     assert set(durations) == set(doctor.CHECK_IDS) - {"sqlite"}
     assert all(seconds >= 0 for seconds in durations.values())
     plain = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner())
-    keys = {"schema_version", "version", "status", "checks"}
+    keys = {"schema_version", "version", "status", "checks", "verdict"}
     assert set(report.to_json()) == set(plain.to_json()) == keys
 
 

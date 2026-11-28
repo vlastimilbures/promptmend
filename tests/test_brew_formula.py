@@ -128,6 +128,17 @@ def test_formula_text() -> None:
     assert f'  homepage "{brew.REPO_URL}"' in text
     assert brew.REPO_URL == "https://github.com/vlastimilbures/promptmend"
     assert 'shell_output("#{bin}/promptmend --version")' in text
+    # #402: the caveats come between install and test (Homebrew's component order), name
+    # Espanso first and setup next, and interpolate nothing.
+    caveats = text[text.index("  def caveats\n") : text.index("  test do\n")]
+    assert text.index("  def install\n") < text.index("  def caveats\n")
+    assert caveats.startswith("  def caveats\n    <<~EOS\n")
+    assert caveats.endswith("    EOS\n  end\n\n")
+    assert caveats.index("espanso start") < caveats.index("`promptmend setup`")
+    assert "#{" not in caveats
+    body = caveats.splitlines()[2:-3]
+    assert body == [f"      {line}" for line in brew.CAVEATS]
+    assert all(len(line) <= 100 for line in body)
     assert _resources(text) == [
         "anyio", "httpx", "idna", "rich", "socksio", "typer",  # both platforms, sorted
         "macos-only",  # on_macos

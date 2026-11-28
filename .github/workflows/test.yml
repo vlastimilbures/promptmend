@@ -209,6 +209,11 @@ jobs:
           if (-not (Select-String -Path $log -SimpleMatch 'uv was not found: installing it' -Quiet)) {
             throw "install.ps1 found a uv on PATH; the install-uv branch did not run"
           }
+          # #402: its closing doctor shows only the verdict, which names setup here.
+          if (-not (Select-String -Path $log -SimpleMatch 'Next: `promptmend setup`' -Quiet)) {
+            throw "install.ps1 did not end with doctor's verdict naming setup"
+          }
+          if (Select-String -Path $log -SimpleMatch '[FAIL]' -Quiet) { throw "install.ps1 printed doctor's rows" }
           exit 0
       - name: Run install.ps1 again with uv and check the installed CLI
         working-directory: ${{ runner.temp }}

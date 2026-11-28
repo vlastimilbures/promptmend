@@ -1,5 +1,6 @@
 """`doctor [--json] [--timing [--runs N]]`: the doctor service's report, as text or stable
-JSON; --timing adds start-up times measured against the smoke test's stub."""
+JSON; --timing adds start-up times measured against the smoke test's stub. The text ends with
+the service's verdict line (doctor.verdict()), which --json carries as `verdict`."""
 
 from __future__ import annotations
 
@@ -51,7 +52,8 @@ def doctor(
     ),
 ) -> None:
     """Check the install, settings, keys (set or not, never the value), Espanso, the deployed
-    match files, the launcher, the usage history and the clipboard. Exit 4 when a check fails.
+    match files, the launcher, the usage history and the clipboard. The last line counts the
+    problems and says what to do first. Exit 4 when a check fails.
     Safe to paste into a bug report: no key, persona or clipboard text is shown."""
     common.no_key(espanso_dir, "--espanso-dir")
     common.no_key(launcher, "--launcher")
@@ -85,6 +87,9 @@ def doctor(
             # The checks are on screen first; the children take a few seconds.
             typer.echo("timing...", err=True)
             _print_timing(service.timing(report, durations or {}, warm))
+        # The last line: how many problems, and what to do first (#402).
+        typer.echo("")
+        typer.echo(service.verdict(report).line)
     if report.status == service.FAIL:
         raise typer.Exit(common.PROBLEMS)
 

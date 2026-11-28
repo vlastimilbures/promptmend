@@ -6,7 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Added
+- `doctor` ends with a verdict (#402): one last line that counts the problems (the failed
+  checks, which make it exit 4) and warnings and names the first to fix, as
+  `N problems, M warnings. Fix first: <check>: <its message>` (with warnings only,
+  `No problems, M warnings. Check first: …`; with nothing wrong, `No problems found.`). On a
+  machine with no saved settings or no match files deployed, where a key, the match files or
+  the launcher is still wrong, it names the next step instead: `…: nothing is set up yet.
+  Next:` and `promptmend setup`. `doctor --json` carries it as the new key `verdict`
+  (`problems`, `warnings`, `first`, `setup`, `line`); `schema_version` stays 1 and the exit
+  codes are unchanged.
+- Homebrew: `brew install` ends with the formula's caveats (#402): start Espanso, then run
+  `promptmend setup`.
+
 ### Changed
+- Windows one-command install: the closing check prints only `doctor`'s verdict line, read
+  from `doctor --no-clipboard --json` (#402), instead of every check row and
+  `doctor found something to do (expected before the first setup)`, so a new install no
+  longer shows `FAIL` rows for what setup has not done yet. It names `promptmend setup`
+  there.
+- Docs: README's Requirements and docs/install.md say that OpenRouter needs an account with
+  credits (a new account's first `-i-` fails without them), with a link to the benchmark
+  page for what a rewrite costs (#402).
 - Setup: the wizard's rail marks each step as the Done checklist does (#393): `✓` done,
   `–` skipped or not run, `✗` failed or still to do, worked out once for both, so the rail
   no longer ticks a step whose checklist line says the match files were not found or the

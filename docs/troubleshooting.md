@@ -22,7 +22,8 @@ promptmend doctor            # install, settings, keys, Espanso, match files, hi
 promptmend config validate   # the settings alone, as a trigger reads them
 ```
 
-`doctor` exits 4 when it finds a problem and names it. Its output is safe to paste into an
+`doctor` exits 4 when it finds a problem and names it; its last line counts the problems and
+says which to fix first, or that `promptmend setup` is next. Its output is safe to paste into an
 issue: it never shows a key, your persona or clipboard text. The interface's Checks tab
 shows the same checks.
 

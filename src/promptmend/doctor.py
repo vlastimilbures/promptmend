@@ -9,7 +9,8 @@ certificate is checked against (tls), reads the deployed match files, and reads 
 only to report its length. The report never holds a key, the persona or clipboard text,
 since people paste it into bug reports. Its JSON shape is stable (SCHEMA_VERSION): ids and
 keys are only ever added (the one exception: the previous_install check, removed by owner
-decision, #246; its PATH warning lives on as path_shadow).
+decision, #246; its PATH warning lives on as path_shadow). verdict() sums the report up in
+the one line doctor's text ends with (#402), which the JSON carries as ``verdict``.
 """
 
 from __future__ import annotations
@@ -149,7 +150,94 @@ class Report:
                 }
                 for c in self.checks
             },
+            # Added in #402, so schema_version stays 1.
+            "verdict": verdict(self).to_json(),
         }
+
+
+SETUP_COMMAND = "promptmend setup"
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """The report in one line (#402): how many problems (failed checks) and warnings, and
+    what to do first. ``first`` is the check the line points at; ``setup`` is True when it
+    points at `promptmend setup` instead. The line quotes only check ids and messages, which
+    are safe to paste already."""
+
+    problems: int
+    warnings: int
+    first: str | None
+    setup: bool
+    line: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "problems": self.problems,
+            "warnings": self.warnings,
+            "first": self.first,
+            "setup": self.setup,
+            "line": self.line,
+        }
+
+
+# The checks whose fail or warning `promptmend setup` deals with: it saves the settings and
+# the key and deploys the match files (which the launcher and pro_provider checks read).
+SETUP_CHECKS = ("keys", "pro_provider", "match_files", "launcher")
+
+
+def _count(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _not_set_up(report: Report) -> str | None:
+    """What is not set up yet, or None: no saved settings (config mode ``defaults``: no
+    config.toml and no PROMPTMEND_ENV), no managed match file in Espanso's folder
+    (deployed_triggers(), as pro_provider reports it), or both. A check that could not run
+    says neither."""
+    data = {c.id: c.data for c in report.checks}
+    unsaved = data.get("config", {}).get("mode") == "defaults"
+    undeployed = data.get("pro_provider", {}).get("deployed") is False
+    if unsaved and undeployed:
+        return "nothing is set up yet"
+    if unsaved:
+        return "no settings are saved yet"
+    if undeployed:
+        return "no match files are deployed yet"
+    return None
+
+
+def verdict(report: Report) -> Verdict:
+    """What doctor's text output ends with, and doctor --json's ``verdict``.
+
+    Problems are the failed checks, the ones that make doctor exit 4; warnings are counted
+    beside them and point the line only when nothing failed. "First" is the first such check
+    in report order (CHECK_IDS), which already runs install, settings, keys, Espanso, match
+    files, launcher. On a machine that is not set up (_not_set_up()) where a check setup deals
+    with (SETUP_CHECKS) is wrong, the line names `promptmend setup` instead, unless the
+    settings fail: a trigger stops on them before anything else, so they come first."""
+    fails = [c for c in report.checks if c.status == FAIL]
+    warns = [c for c in report.checks if c.status == WARN]
+    if not fails and not warns:
+        return Verdict(0, 0, None, False, "No problems found.")
+    parts = []
+    if fails:
+        parts.append(_count(len(fails), "problem"))
+    if warns:
+        parts.append(_count(len(warns), "warning"))
+    counts = ", ".join(parts)
+    missing = _not_set_up(report)
+    wrong = {c.id for c in fails + warns}
+    if missing and wrong & set(SETUP_CHECKS) and "config" not in {c.id for c in fails}:
+        line = f"{counts}: {missing}. Next: `{SETUP_COMMAND}`"
+        return Verdict(len(fails), len(warns), None, True, line)
+    if fails:
+        first = fails[0]
+        line = f"{counts}. Fix first: {first.id}: {first.message}"
+    else:
+        first = warns[0]
+        line = f"No problems, {counts}. Check first: {first.id}: {first.message}"
+    return Verdict(len(fails), len(warns), first.id, False, line)
 
 
 # uv's `tool install --force` removes the old tool before it deletes its folder, so on

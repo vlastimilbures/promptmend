@@ -13,15 +13,17 @@
 # into a fresh folder next to %LOCALAPPDATA%\Programs\promptmend, which is then swapped in
 # (the old folder renamed away first and renamed back if the swap fails, deleted once it
 # worked); a promptmend.exe still running from that folder stops it before any change. The
-# folder goes on the user PATH, then `promptmend.exe doctor --no-clipboard` runs. With a uv
-# install of promptmend still there, it warns that the triggers still call that one and names
-# the switch steps by the exe's full path (PROMPTMEND_CHANNEL=uv keeps updating uv instead).
+# folder goes on the user PATH, then `promptmend.exe doctor --no-clipboard --json` runs, of
+# which only the verdict line is printed (#402: before setup, the rows list what setup
+# does). With a uv install of promptmend still there, it warns that the triggers still call
+# that one and names the switch steps by the exe's full path (PROMPTMEND_CHANNEL=uv keeps
+# updating uv instead).
 #
 # uv: uv if missing (winget, else uv's official installer), then the wheel attached to that
 # same Release (attested, never a PyPI upload that may come later):
 # `uv tool install --force --compile-bytecode --python >=3.13 <Release>/promptmend-<version>-py3-none-any.whl
 # -c <Release>/constraints.txt` (Python 3.13 or later, #348),
-# then `uv tool update-shell` and `promptmend doctor --no-clipboard` (the launcher stays in
+# then `uv tool update-shell` and `promptmend doctor` the same way (the launcher stays in
 # uv's tool bin folder). A promptmend still running from uv's tool folder, or its launcher
 # there, stops it before uv runs (#356).
 #
@@ -92,6 +94,44 @@ function Invoke-PromptMendInstall {
             throw "'$Exe $($Arguments -join ' ')' failed with exit code $LASTEXITCODE."
         }
         return (($out | ForEach-Object { "$_" }) -join "`n").Trim()
+    }
+
+    # Runs `doctor --no-clipboard --json` and prints only its verdict line (#402): before the
+    # first setup, its rows list what setup has still to do. Read from the JSON, never from
+    # the rows' text; a report without the line (another release, output that is not JSON)
+    # gets a pointer to doctor instead. Any exit code but 0 and 4 (doctor found something)
+    # throws.
+    function Show-Verdict([string]$Exe) {
+        $Arguments = @('doctor', '--no-clipboard', '--json')
+        Write-Command $Exe $Arguments
+        $ErrorActionPreference = 'Continue'
+        # Set by this call only: a stale exit code of an earlier command cannot pass.
+        $global:LASTEXITCODE = -1
+        $out = & $Exe @Arguments
+        $code = $LASTEXITCODE
+        if ($code -ne 0 -and $code -ne 4) {
+            throw "promptmend doctor failed with exit code $code."
+        }
+        $line = $null
+        try {
+            $report = ($out | Out-String) | ConvertFrom-Json -ErrorAction Stop
+            if ($null -ne $report) {
+                $verdict = $report.PSObject.Properties['verdict']
+                if ($null -ne $verdict -and $null -ne $verdict.Value) {
+                    $text = $verdict.Value.PSObject.Properties['line']
+                    if ($null -ne $text -and $text.Value) { $line = [string]$text.Value }
+                }
+            }
+        } catch {
+            $line = $null
+        }
+        if ($line) {
+            Write-Host $line
+        } elseif ($code -eq 4) {
+            Write-Host "doctor found something to do: run 'promptmend doctor' to see what."
+        } else {
+            Write-Host 'doctor found nothing to fix.'
+        }
     }
 
     function Get-PathKey([string]$Path) {
@@ -331,7 +371,7 @@ function Invoke-PromptMendInstall {
             Write-Host 'Dry run (PROMPTMEND_DRY_RUN=1): would'
             if ($Url) { Write-Command 'Invoke-WebRequest' @('-UseBasicParsing', '-Uri', $Url, '-OutFile', "<temp>\$ZipName") }
             Write-Host "  check its SHA-256, unpack it next to $Dest, swap it in and add $Dest to your PATH"
-            Write-Command $Exe @('doctor', '--no-clipboard')
+            Write-Command $Exe @('doctor', '--no-clipboard', '--json')
             return
         }
 
@@ -466,12 +506,7 @@ function Invoke-PromptMendInstall {
         Update-SessionPath @($Dest)
 
         Write-Step 'Checking the install'
-        $code = Invoke-Native $Exe @('doctor', '--no-clipboard')
-        if ($code -eq 4) {
-            Write-Host 'doctor found something to do (expected before the first setup).'
-        } elseif ($code -ne 0) {
-            throw "promptmend doctor failed with exit code $code."
-        }
+        Show-Verdict $Exe
 
         # With a uv install still there, a bare `promptmend` may well be the uv one (uv's bin
         # folder usually comes first on PATH), so every step names the exe by its full path.
@@ -587,12 +622,7 @@ function Invoke-PromptMendInstall {
 
         Write-Step 'Checking the install'
         Assert-Native $cli @('--version')
-        $code = Invoke-Native $cli @('doctor', '--no-clipboard')
-        if ($code -eq 4) {
-            Write-Host 'doctor found something to do (expected before the first setup).'
-        } elseif ($code -ne 0) {
-            throw "promptmend doctor failed with exit code $code."
-        }
+        Show-Verdict $cli
 
         Write-Step 'Installed. Next steps (this script runs neither):'
         Write-Host '  promptmend                   # the interface: settings, key, test call, deploy'
