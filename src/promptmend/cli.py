@@ -193,7 +193,7 @@ def improve(
     ),
     copy: bool = typer.Option(
         False,
-        help="With paste output, also copy the printed rewrite (overwrites --source "
+        help="With paste output, also copy the rewrite, not its notes (overwrites --source "
         "clipboard's draft); no effect with clipboard output. Printed and copied: "
         "--output paste --copy",
     ),

@@ -40,7 +40,7 @@ promptmend improve --tier pro --source clipboard   # the reasoning model behind 
 | `--source` | `argument` with `--text`; else `stdin` when stdin is a pipe or a file; else `clipboard` | `clipboard`, `stdin` or `argument` |
 | `--text` | — | The draft, with `--source argument` (or no `--source`) |
 | `--output` | `PROMPT_OUTPUT` (`paste`) | `paste` prints the rewrite; `clipboard` copies it and prints only markers (see [clipboard output](usage.md#output-paste-or-clipboard)). It overrides `PROMPT_OUTPUT` for this call, so a script that wants the rewrite on the clipboard passes `--output clipboard` |
-| `--copy` | off | With `paste` output, also copy the printed rewrite to the clipboard; what is printed does not change. With `clipboard` output (`--output clipboard` or `PROMPT_OUTPUT=clipboard`) it has no effect, so a script that wants the rewrite both printed and copied passes `--output paste --copy`. If the copy fails, the rewrite is still printed after the error marker |
+| `--copy` | off | With `paste` output, also copy the rewrite to the clipboard, without its notes (`sent despite`, the output limit); on success, what is printed does not change. With `clipboard` output (`--output clipboard` or `PROMPT_OUTPUT=clipboard`) it has no effect, so a script that wants the rewrite both printed and copied passes `--output paste --copy`. If the copy fails, the rewrite is still printed after the error marker |
 | `--allow-flagged` | off | Send this one draft despite soft findings of the gate (what `-iok-` passes; see [overriding a block](privacy.md#overriding-a-block)) |
 | `--fail-on-marker` | off | For scripts: exit 1 when the run ends in a failure marker instead of a rewrite; the output is the same (see [Scripting contract](#scripting-contract)) |
 

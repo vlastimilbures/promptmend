@@ -1358,7 +1358,7 @@ def test_cli_detach_dry_run_lists_what_detach_removes(
     assert "Detach?" not in dry.output
     assert (_tree(espanso), manifest.read_bytes(), fake_run.calls) == (before, record, [])
     would = {line.split()[-1] for line in dry.stdout.splitlines() if "would remove" in line}
-    assert "kept" in dry.stdout  # the edited file
+    assert "prompts-template.yml: edited since promptmend deployed it" in dry.stdout
 
     real = _cli("detach", "--yes", "--no-restart", *where)
     removed = {line.split()[-1] for line in real.stdout.splitlines() if line.startswith("removed")}
@@ -1366,6 +1366,64 @@ def test_cli_detach_dry_run_lists_what_detach_removes(
     gone = {Path(name).name for name in set(before) - set(_tree(espanso))}
     assert {Path(path).name for path in removed} == gone
     assert removed  # the CLI-calling files at least
+
+
+def _detach_lines(stdout: str, *, dry: bool) -> list[str]:
+    """detach's outcome lines: indented between the header and the dry-run line in a dry
+    run, unindented after the record list in a real one; would remove/forget made real."""
+    lines = stdout.splitlines()
+    if dry:
+        body = lines[1 : lines.index("Dry run: nothing was removed.")]
+        return [
+            line.removeprefix("  ")
+            .replace("would remove ", "removed ", 1)
+            .replace("would forget ", "forgot ", 1)
+            for line in body
+        ]
+    return [line for line in lines[1:] if not line.startswith((" ", "Espanso was not"))]
+
+
+# A file already gone, a link, and an entry in another folder (#405 review): the dry run says
+# what the real detach then does, and changes nothing.
+@pytest.mark.parametrize("mode", [[], ["--remove-all"]])
+@pytest.mark.parametrize("case", ["gone", "link", "elsewhere"])
+def test_cli_detach_dry_run_odd_entries(
+    tmp_path: Path, espanso: Path, fake_run: FakeRunner, case: str, mode: list[str]
+) -> None:
+    where = ["--espanso-dir", str(espanso), *mode]
+    assert _cli("deploy", "--yes", *_where(espanso)).exit_code == 0
+    llm = espanso / "match" / "prompts-llm.yml"
+    other = tmp_path / "other" / "match" / "prompts-llm.yml"
+    if case == "gone":
+        llm.unlink()
+    elif case == "link":
+        real = tmp_path / "real.yml"
+        real.write_bytes(llm.read_bytes())  # same digest as ours
+        llm.unlink()
+        _symlink(llm, real)
+    else:
+        other.parent.mkdir(parents=True)
+        other.write_text("keep me", "utf-8")
+        manifest = deploy.Manifest.load()
+        manifest.entries[str(other)] = deploy.Entry(
+            str(other), VERSION, deploy._digest("keep me"), LAUNCHER, True
+        )
+        manifest.save()
+    record = user_data_dir() / deploy.MANIFEST_NAME
+    before, recorded = (_tree(espanso), _tree(other.parent)), record.read_bytes()
+    fake_run.calls.clear()
+
+    dry = _cli("detach", "--dry-run", *where)
+    assert dry.exit_code == 0, dry.output
+    assert ((_tree(espanso), _tree(other.parent)), record.read_bytes()) == (before, recorded)
+    assert fake_run.calls == []
+
+    real_run = _cli("detach", "--yes", "--no-restart", *where)
+    assert real_run.exit_code == 0, real_run.output
+    planned = _detach_lines(dry.stdout, dry=True)
+    assert planned == _detach_lines(real_run.stdout, dry=False)
+    expected = {"gone": "forgot ", "link": "it is a link", "elsewhere": "alone: not one of ours"}
+    assert any(expected[case] in line for line in planned)
 
 
 def test_cli_detach_bad_manifest(fake_run: FakeRunner) -> None:
