@@ -362,7 +362,7 @@ Re-measure with:
 ```bash
 uv run python -X importtime -c "import promptmend.cli" 2>&1 | sort -t'|' -k2 -n | tail
 uv run python -c "import subprocess, sys, time; t = time.perf_counter(); \
-  subprocess.run([sys.executable, '-m', 'promptmend.cli', 'persona'], check=True); \
+  subprocess.run([sys.executable, '-m', 'promptmend.entry', 'persona'], check=True); \
   print(f'\n{(time.perf_counter() - t) * 1000:.0f} ms')"
 ```
 

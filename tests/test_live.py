@@ -53,7 +53,7 @@ def _improve(draft: str, command: list[str] = IMPROVE) -> subprocess.CompletedPr
     if (REPO / ".env").is_file():
         env[ENV_FILE_VAR] = str(REPO / ".env")
     return subprocess.run(
-        [sys.executable, "-m", "promptmend.cli", *command],
+        [sys.executable, "-m", "promptmend.entry", *command],
         input=draft,
         capture_output=True,
         text=True,

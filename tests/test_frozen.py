@@ -44,7 +44,72 @@ def frozen(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_self_command_runs_the_module_with_this_interpreter() -> None:
     assert not getattr(sys, "frozen", False)
-    assert self_command() == [sys.executable, "-P", "-m", "promptmend.cli"]
+    assert self_command() == [sys.executable, "-P", "-m", "promptmend.entry"]
+
+
+# Imported by the child's site (on PYTHONPATH, as sitecustomize): it records what the
+# watchdog's take_start() returns. That is None unless entry.main() ran in promptmend.entry
+# itself, the module the watchdog reads: `-m promptmend.cli` never runs main(), and main() run
+# in `-m promptmend.entry`'s __main__ copy sets the copy's start time instead.
+_RECORD_START = """
+import os
+
+import promptmend.trigger as trigger
+
+init = trigger.Watchdog.__init__
+
+
+def record(self, *args, **kwargs):
+    from promptmend import entry
+
+    take = entry.take_start
+
+    def taken():
+        started = take()
+        with open(os.environ["START_RECORD"], "w", encoding="utf-8") as file:
+            file.write(repr(started))
+        return started
+
+    entry.take_start = taken
+    try:
+        init(self, *args, **kwargs)
+    finally:
+        entry.take_start = take
+
+
+trigger.Watchdog.__init__ = record
+"""
+
+
+# A child started through self_command() runs entry.main(), and the watchdog counts from the
+# start time taken there, as with the console script Espanso runs; stderr stays empty (no
+# runpy warning either).
+def test_self_command_starts_through_entry_main(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text(_RECORD_START, encoding="utf-8")
+    record = tmp_path / "start.txt"
+    paths = [str(site), *filter(None, [os.environ.get("PYTHONPATH")])]
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(paths),
+        "START_RECORD": str(record),
+        "PROMPT_PERSONA": "persona text",
+        "PROMPT_HISTORY": "false",
+    }
+    proc = subprocess.run(
+        [*self_command(), "persona"],
+        capture_output=True,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        timeout=60,
+        check=False,
+    )
+    assert (proc.returncode, proc.stderr) == (0, b"")
+    assert proc.stdout.decode("utf-8") == "persona text"
+    started = record.read_text("utf-8")
+    assert started != "None"
+    float(started)  # a time.monotonic() value
 
 
 @pytest.mark.usefixtures("frozen")

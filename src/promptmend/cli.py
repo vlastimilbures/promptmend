@@ -5,7 +5,8 @@ the watchdog, run_improve()); the rewrite's domain steps are in pipeline.py, the
 sanitize.py. persona's placeholder and _persona_alone() stay here with the command:
 they are persona's whole logic, and doctor and scripts/check_wheel.py read the placeholder.
 
-`python -m promptmend.cli` runs the app (entry.self_command(), the smoke test)."""
+entry.main() runs the app (the console script, and `python -m promptmend.entry`, which
+entry.self_command() starts); this module is not a `-m` entry."""
 
 from __future__ import annotations
 
@@ -270,12 +271,3 @@ def persona(trigger_id: str | None = _TRIGGER_ID) -> None:
         rec.finish()
     finally:
         watch.cancel()
-
-
-if __name__ == "__main__":
-    # `python -m promptmend.cli` (the smoke test): the console
-    # script's entry.main() silences a trigger's warnings before this module's imports.
-    from .entry import quiet_trigger
-
-    quiet_trigger(sys.argv[1:])  # late here: this module's imports have already run
-    app()
