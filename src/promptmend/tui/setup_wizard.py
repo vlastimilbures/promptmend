@@ -12,7 +12,7 @@ whenever they change (_repaint() paints it and Done together), so the two never 
 ✗. Quit setup is `q` on every step, shown in the footer except while a key field has the
 focus (the field takes the letter, so check_action() hides it there rather than advertise a
 key that types instead); Escape on Welcome leaves too. Both are refused, greyed out in the
-footer, while an install or the test runs, as Back and Next are. Leaving is the Done step's
+footer, while a deploy or the test runs, as Back and Next are. Leaving is the Done step's
 Quit (Close): opened by `setup` the interface exits 0, from Home it closes back to Home,
 where MainScreen's own `q` quits the interface. Textual's own ctrl+q (a priority binding of
 the app) still quits the whole interface."""
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 class SetupOptions:
     """`setup`'s options the wizard honours; ``standalone`` when `setup` opened it (Done then
     quits), else it was opened from Home and closes back to it. ``use``, ``profile`` and
-    ``output`` preselect a choice, ``deploy`` True puts the focus on Install (still a press)
+    ``output`` preselect a choice, ``deploy`` True puts the focus on Deploy (still a press)
     and False skips that step, as ``smoke_test`` False skips the test. ``provider`` is the
     deprecated `setup --provider`: never saved here (no step sets it), only named on
     Welcome."""
@@ -153,7 +153,7 @@ class SetupScreen(Screen[None]):
                         yield Static(setup_guide.ESPANSO_INTRO, classes="note", markup=False)
                         yield Static("Reading the match folder…", id="setup-files", markup=False)
                         yield Horizontal(
-                            self._button("setup-deploy", "Install the match files"),
+                            self._button("setup-deploy", "Deploy the match files"),
                             classes="buttons",
                         )
                     with VerticalScroll(id="setup-test"):
@@ -198,7 +198,7 @@ class SetupScreen(Screen[None]):
 
     @property
     def working(self) -> bool:
-        """An install or the test is running: Back, Next and Quit setup are refused until it
+        """A deploy or the test is running: Back, Next and Quit setup are refused until it
         ends (nothing is queued)."""
         return self._working
 
@@ -209,7 +209,7 @@ class SetupScreen(Screen[None]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Quit setup is hidden while a key field has the focus (the field takes `q`); it and
-        Back are shown greyed out (refused) while an install or the test runs."""
+        Back are shown greyed out (refused) while a deploy or the test runs."""
         if action == "back" and self.working:
             return None
         if action == "quit_setup":
@@ -248,7 +248,7 @@ class SetupScreen(Screen[None]):
             notes.append(where.unread)
         if self.options.provider:
             notes.append(setup_guide.provider_not_saved(self.options.provider))
-        notes.append(setup_guide.history_line(state.settings.history))
+        notes.append(setup_guide.history_line(state.settings.history, legacy=bool(where.legacy)))
         self.query_one("#setup-welcome-notes", Static).update("\n".join(notes))
         # What setup shows as current is what config.toml holds (saved_settings()), so a plain
         # Next on every step writes nothing, whatever the shell says. In legacy mode Next saves
@@ -614,7 +614,7 @@ class SetupScreen(Screen[None]):
         if self.plan is None or self.working:
             return
         self.working = True
-        self.report("Installing the match files…")
+        self.report("Deploying the match files…")
         self._apply(self.plan, self.options)
 
     @work(thread=True, group="setup-action", exit_on_error=False)
@@ -624,7 +624,7 @@ class SetupScreen(Screen[None]):
             if plan_digest(plan) != plan_digest(shown):
                 raise deploy.DeployError(
                     "the match files changed since they were read; nothing was written. "
-                    "Look at the new list and install again"
+                    "Look at the new list and deploy again"
                 )
             outcome = setup_flow.install(plan)  # an edited file is kept, never overwritten
             lines = list(outcome.lines)

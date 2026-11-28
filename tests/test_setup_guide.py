@@ -338,9 +338,9 @@ def _plan(tmp_path: Path) -> deploy.Plan:
 def test_deploy_summary_and_done_rows(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     assert setup_guide.deploy_summary(plan) == (
-        "Install writes 3 file(s) and then restarts Espanso."
+        "Deploy writes 3 file(s) and then restarts Espanso."
     )
-    assert all(words.startswith("not installed") for _, words in setup_guide.file_rows(plan))
+    assert all(words.startswith("not deployed") for _, words in setup_guide.file_rows(plan))
     key = setup_guide.KeyRow("OPENROUTER_API_KEY", False, None, ("-i-",), True)
     unused = setup_guide.KeyRow("ANTHROPIC_API_KEY", False, None, (), False)
     rows = setup_guide.done_rows(_settings(), "cloud", [key, unused], plan, None)
@@ -402,7 +402,7 @@ def test_done_rows_count_a_kept_edited_file_as_installed(tmp_path: Path) -> None
     match = setup_guide.done_rows(_settings(), "cloud", [], plan, None)[3]
     assert (match.ok, match.text) == (
         True,
-        f"installed in {tmp_path / 'match'}; 3 file(s) you changed were kept",
+        f"deployed to {tmp_path / 'match'}; 3 file(s) you changed were kept",
     )
 
 
@@ -469,7 +469,7 @@ def test_rail_on_done_says_what_the_checklist_says(tmp_path: Path) -> None:
     )
     cases = [
         ([missing], None, None),  # key missing, Espanso's folder not found, test not run
-        ([present], plan, False),  # match files not installed, test failed
+        ([present], plan, False),  # match files not deployed, test failed
         ([present], installed, True),  # everything done, test passed
     ]
     for keys, shown, test in cases:

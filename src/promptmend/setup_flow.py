@@ -322,7 +322,7 @@ def read_plan(espanso_dir: str | None, launcher: str | None) -> tuple[deploy.Pla
 
 
 def in_sync(plan: deploy.Plan) -> bool:
-    """Whether there is nothing to install: every file is up to date, or only gone manifest
+    """Whether there is nothing to deploy: every file is up to date, or only gone manifest
     entries are left (forget() drops those without writing a file)."""
     return plan.is_noop or plan.only_forgets
 

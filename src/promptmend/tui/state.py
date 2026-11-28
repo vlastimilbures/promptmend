@@ -260,7 +260,7 @@ def gather(group_by: str = "trigger", first: State | None = None) -> State:
 
 
 def needs_setup(state: State) -> bool:
-    """Nothing is set up yet: no config.toml, no key, and no match file installed. A bare
+    """Nothing is set up yet: no config.toml, no key, and no match file deployed. A bare
     `promptmend` then opens the wizard by itself, once; never of a quick State, which has no
     plan. Here, not in setup_wizard.py, so the app asks without importing the wizard."""
     if settings_service.legacy_env() or not state.full or state.plan is None:

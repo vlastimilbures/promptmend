@@ -122,6 +122,9 @@ Pane { padding: 0 1; }
 MainScreen.-narrow ContentTab { padding: 0 0 0 1; }
 .note { color: $text-muted; margin-bottom: 1; }
 DataTable { height: auto; max-height: 14; margin-bottom: 1; }
+/* A Provider or Profile cell a setting supplies is two lines (#396): every trigger still
+   fits, the pane scrolls instead. */
+#triggers { max-height: 24; }
 #policy, #deploy-target, #disclosure, #layers, #findings, #all-checks, #profile-settings {
     margin-bottom: 1;
 }
@@ -147,9 +150,6 @@ DataTable { height: auto; max-height: 14; margin-bottom: 1; }
    options: in the normal text colour, not dimmed (#389). */
 #settings-list > .option-list--option-disabled { color: $text; }
 #settings-help { height: 2; }
-#settings-pane .buttons { margin-top: 0; }
-#settings-pane .buttons { height: 1; }
-#settings-pane .buttons Button { min-width: 0; height: 1; border: none; }
 #settings-pane .result { margin-top: 0; height: auto; max-height: 3; }
 #try-draft { height: 6; }
 #try-options { height: auto; margin-top: 1; }

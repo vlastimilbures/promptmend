@@ -15,7 +15,7 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, TabbedContent, Tabs
 
 from promptmend import deploy, doctor, update_check
-from promptmend.config import OUTPUTS, ConfigLayers
+from promptmend.config import OUTPUTS, ConfigLayers, Settings
 from promptmend.tui import base, home, home_pane, triggers_pane
 from promptmend.tui.app import ManageApp
 from promptmend.tui.home import READY, HomeRow, headline, home_rows, pill
@@ -417,7 +417,7 @@ def test_fix_deploys_match_files_not_deployed_out_of_date_or_edited(
     step = home.fix(home_rows(dataclasses.replace(state, plan=_plan(state, **states))))
     assert step == home.Fix(home.DEPLOY, "triggers")
     assert step is not None
-    assert step.label == "Deploy or repair…"
+    assert step.label == "Deploy…"
 
 
 def _older_ip() -> State:
@@ -652,7 +652,7 @@ def test_the_fix_button_opens_the_deploy_preview(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(triggers_pane, "current_plan", lambda: plan)
 
     async def scenario(app: ManageApp, pilot: Pilot[int]) -> None:
-        assert _fix_buttons(app) == {"home-deploy": "Deploy or repair…"}
+        assert _fix_buttons(app) == {"home-deploy": "Deploy…"}
         changes = _tab_changes(app)
         await _press_fix(app, pilot, "home-deploy", how)
         assert changes == ["triggers"]
@@ -843,6 +843,92 @@ def test_the_highlighted_row_and_the_focus_survive_a_reload() -> None:
         await _settle(app, pilot)
         assert _highlighted(app) == "Output"
         assert app.focused is _listing(app)
-        assert _fix_buttons(app) == {"home-deploy": "Deploy or repair…"}
+        assert _fix_buttons(app) == {"home-deploy": "Deploy…"}
 
     _drive(fixed_state, scenario)
+
+
+# --- What a trigger runs, as the Triggers table shows it (#396) ----------------------------
+
+
+def _cfg(**env: str) -> Settings:
+    return ConfigLayers.resolve(environ=env).settings()
+
+
+@pytest.mark.parametrize(
+    ("env", "tier", "named", "want"),
+    [
+        ({}, "standard", None, home.Resolved("openrouter", "PROMPT_PROVIDER")),
+        ({}, "pro", None, home.Resolved("openrouter", "PROMPT_PRO_PROVIDER")),
+        (
+            {"PROMPT_PRO_PROVIDER": "anthropic"},
+            "pro",
+            None,
+            home.Resolved("anthropic", "PROMPT_PRO_PROVIDER"),
+        ),
+        (
+            {"PROMPT_PROVIDER": "ollama"},
+            "standard",
+            None,
+            home.Resolved("ollama", "PROMPT_PROVIDER"),
+        ),
+        ({"PROMPT_PROVIDER": "ollama"}, "standard", "openrouter", home.Resolved("openrouter")),
+        ({"PROMPT_PRO_PROVIDER": "openai"}, "pro", "openrouter", home.Resolved("openrouter")),
+    ],
+)
+def test_trigger_provider(
+    env: dict[str, str], tier: str, named: str | None, want: home.Resolved
+) -> None:
+    assert home.trigger_provider(_cfg(**env), tier, named) == want
+
+
+PRO_PROFILE = {"PROMPT_PRO_PROFILE": "general"}
+
+
+@pytest.mark.parametrize(
+    ("env", "tier", "provider", "named", "want"),
+    [
+        # PROMPT_PRO_PROFILE empty: PROMPT_PROFILE on every tier.
+        ({}, "standard", "openrouter", None, home.Resolved("default", "PROMPT_PROFILE")),
+        ({}, "pro", "openrouter", None, home.Resolved("default", "PROMPT_PROFILE")),
+        # Set: the pro tier of a provider that has one takes it; the standard tier does not.
+        (PRO_PROFILE, "pro", "openrouter", None, home.Resolved("general", "PROMPT_PRO_PROFILE")),
+        (PRO_PROFILE, "pro", "anthropic", None, home.Resolved("general", "PROMPT_PRO_PROFILE")),
+        (PRO_PROFILE, "standard", "openrouter", None, home.Resolved("default", "PROMPT_PROFILE")),
+        # Ollama has no pro tier: PROMPT_PROFILE, as Settings.for_call() applies.
+        (PRO_PROFILE, "pro", "ollama", None, home.Resolved("default", "PROMPT_PROFILE")),
+        # Named in the command line: that profile, no setting.
+        (PRO_PROFILE, "pro", "openrouter", "default", home.Resolved("default")),
+    ],
+)
+def test_trigger_profile_is_what_a_call_applies(
+    env: dict[str, str], tier: str, provider: str, named: str | None, want: home.Resolved
+) -> None:
+    cfg = _cfg(**env)
+    got = home.trigger_profile(cfg, tier, provider, named)
+    assert got == want
+    if named is None:
+        assert got.value == cfg.for_call(tier, provider=provider).profile
+
+
+# A hinted cell draws a setting's value through common.shown_value(): a key-like or
+# control-character value is never drawn raw; a value the command line names stands alone.
+def test_triggers_cell_hint_and_shown_value() -> None:
+    from promptmend.config import Entry
+
+    resolved = home.Resolved("openrouter", "PROMPT_PRO_PROVIDER")
+    cell = triggers_pane.hinted(resolved, {"PROMPT_PRO_PROVIDER": Entry("openrouter", "default")})
+    assert cell.plain == "openrouter\nPROMPT_PRO_PROVIDER"
+    assert [str(span.style) for span in cell.spans] == ["dim"]
+    key = "sk-or-v1-" + "ab12" * 16
+    shown = triggers_pane.hinted(
+        home.Resolved(key, "PROMPT_PROFILE"), {"PROMPT_PROFILE": Entry(key, "environment")}
+    )
+    assert key not in shown.plain
+    assert shown.plain == "<set>\nPROMPT_PROFILE"
+    odd = "a\x1bb"
+    drawn = triggers_pane.hinted(
+        home.Resolved(odd, "PROMPT_PROFILE"), {"PROMPT_PROFILE": Entry(odd, "environment")}
+    )
+    assert "\x1b" not in drawn.plain
+    assert triggers_pane.hinted(home.Resolved("general"), {}).plain == "general"

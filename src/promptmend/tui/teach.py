@@ -1,8 +1,9 @@
 """What each action of the interface is in a terminal: every button's tooltip
 names its headless command, every result shows the command it was (`$ promptmend …`),
-and Home keeps this session's commands, or a few recipes before there are any. No Textual
-here: `tests/test_tui_teach.py` parses every command below against the CLI, so a renamed
-command or option cannot leave them behind."""
+and Home keeps this session's commands. A button with no command that does the same is in
+NO_COMMAND, its tooltip saying what it does instead. No Textual here:
+`tests/test_tui_teach.py` parses every command below against the CLI, so a renamed command or
+option cannot leave them behind."""
 
 from __future__ import annotations
 
@@ -17,7 +18,6 @@ WITHHELD = "<value withheld>"
 
 # Button id -> the commands it runs, in order.
 BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
-    "home-reload": (("doctor",),),
     "home-setup": (("setup",),),
     # Home's button for the headline's problem: one of these three shows at a time.
     "home-deploy": (("espanso", "deploy"),),
@@ -25,9 +25,7 @@ BUTTONS: dict[str, tuple[tuple[str, ...], ...]] = {
     "setup-save-keys": (("secrets", "set", "<NAME>"),),
     "setup-deploy": (("espanso", "deploy"),),
     "setup-run-test": (("setup",),),
-    "smoke": (("setup",),),
     "set-profile": (("config", "set", "PROMPT_PROFILE", "<NAME>"),),
-    "edit-profile": (("profiles", "list"),),
     "show-diff": (("espanso", "status", "--diff"),),
     "deploy": (("espanso", "deploy"),),
     "detach": (("espanso", "detach"),),
@@ -60,18 +58,23 @@ SETTING_ACTIONS: dict[str, tuple[str, ...]] = {
 }
 # What a button's command does not cover, said in its tooltip.
 NOTES = {
-    "smoke": "Its last step, the smoke test against a stub on 127.0.0.1.",
     "setup-run-test": "Its last step, the smoke test against a stub on 127.0.0.1.",
     "home-setup": "On a terminal it opens this same setup; --non-interactive asks nothing.",
     "home-deploy": "Opens the deploy preview first: nothing is written until you press Deploy.",
     "home-set-key": "Opens the Set key dialog for the key the headline names, typed hidden.",
-    "edit-profile": "Shows where each profile is; open the file in your editor.",
     "export": "Or --format csv.",
     "try-run": "Dry run sends it to a stub on 127.0.0.1 instead: no provider is called and "
     "nothing is rewritten.",
 }
-# Buttons with no command of their own: they move around the interface or measure it.
+# Buttons with no command that does the same: they move around the interface, or do what no
+# single command does (each tooltip may name the command closest to it).
 NO_COMMAND = {
+    "home-reload": "Read the settings and run every check again, as r does;\n"
+    "`promptmend doctor` prints the same checks.",
+    "smoke": "Run improve against a stub on 127.0.0.1 with a placeholder key: no provider is\n"
+    "called and nothing is saved. Setup's Test step runs it on your triggers' path.",
+    "edit-profile": "Open the highlighted profile's file in $VISUAL or $EDITOR;\n"
+    "`promptmend profiles list` shows where each profile is.",
     "home-copy": "Copy the latest command of this session, as Home's log shows it, to the\n"
     "terminal clipboard (OSC 52); the clipboard is never read.",
     "home-open": "Open the tab the headline names, as its digit does.",
@@ -81,23 +84,6 @@ NO_COMMAND = {
     "setup-quit": "",
     "about-close": "",
 }
-
-
-@dataclass(frozen=True)
-class Recipe:
-    argv: tuple[str, ...]
-    what: str
-
-
-# Home's empty session log: commands worth knowing, each one the interface also runs.
-RECIPES = (
-    Recipe(("doctor",), "every check, as on 6 Checks"),
-    Recipe(("config", "show"), "each setting and where it comes from"),
-    Recipe(("config", "set", "PROMPT_HISTORY", "false"), "switch the usage history off"),
-    Recipe(("secrets", "set", "OPENROUTER_API_KEY"), "save a key (typed hidden)"),
-    Recipe(("espanso", "status", "--diff"), "what a deploy would change"),
-    Recipe(("stats", "--by", "model"), "usage by model"),
-)
 
 
 def equivalent(*argv: str) -> str:

@@ -1,18 +1,29 @@
 """The Triggers tab: every trigger with its provider and state, and the deploy, diff and
-detach dialogs (`espanso deploy|detach`)."""
+detach dialogs (`espanso deploy|detach`).
+
+The Provider and Profile cells show the value a trigger call runs with (#396), resolved as
+Home's rows resolve it (home.trigger_provider(), home.trigger_profile()); a value a setting
+supplies has that setting's name under it, muted, and is drawn through common.shown_value().
+Two lines rather than `value (SETTING)` on one, so the State column stays on screen at 80
+columns."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Static
 
 from .. import deploy, doctor
+from ..commands import common
+from ..config import Entry
 from ..factory import PROVIDER_LABELS
 from . import teach
-from .base import Pane, add_row, button_row, manifest_digest, plan_digest
+from .base import Pane, button_row, manifest_digest, plan_digest
+from .home import Resolved, trigger_profile, trigger_provider
 from .modals import Field, FormModal, TextModal
 from .state import State, current_plan
 
@@ -27,16 +38,27 @@ def _servers_down(state: State) -> set[str]:
     return set()
 
 
+def hinted(resolved: Resolved, entries: Mapping[str, Entry]) -> Text:
+    """A Provider or Profile cell: the value a call runs with and, under it (muted), the
+    setting that supplied it, its value drawn through common.shown_value() (a key-like or
+    control-character value is never drawn raw). A value the trigger's command line names
+    stands alone."""
+    if resolved.setting is None:
+        return Text(resolved.value)
+    cell = Text(common.shown_value(resolved.setting, entries[resolved.setting]))
+    cell.append(f"\n{resolved.setting}", style="dim")
+    return cell
+
+
 class TriggersPane(Pane):
     # Each shows or changes what the plan compares: they wait for the full State.
     FULL_ONLY = ("show-diff", "deploy", "detach")
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "Each trigger names its provider in its command line, so PROMPT_PROVIDER does not "
-            "change these; -ip- runs on PROMPT_PRO_PROVIDER. An empty PROMPT_PRO_PROFILE means "
-            "PROMPT_PROFILE. A local trigger stays deployed while its server is down: State "
-            "says what it needs.",
+            "A name under a value is the setting it comes from; a value alone is fixed in the "
+            "trigger's command line, whatever PROMPT_PROVIDER says. A local trigger stays "
+            "deployed while its server is down: State says what it needs.",
             classes="note",
             markup=False,
         )
@@ -44,7 +66,7 @@ class TriggersPane(Pane):
         yield Static("", markup=False, id="deploy-target")
         yield button_row(
             ("show-diff", "Show diff"),
-            ("deploy", "Deploy or repair"),
+            ("deploy", "Deploy"),
             ("detach", "Detach"),
         )
         yield self.result()
@@ -61,28 +83,32 @@ class TriggersPane(Pane):
         unknown = "unknown" if state.full else unread
         down = _servers_down(state)
         stale = doctor.stale_pro_pins(state.deployed or [], state.settings)
+        cfg, entries = state.settings, state.layers.entries
         table = self.query_one("#triggers", DataTable)
         table.clear()
         for t in state.triggers:
+            provider: Text
+            profile: Text
             if t.command == "improve":
-                provider = t.provider or (
-                    "PROMPT_PRO_PROVIDER" if t.tier == "pro" else "PROMPT_PROVIDER"
-                )
-                if t.trigger in stale:  # an older deployed -ip-: what Espanso runs for now
-                    provider = f"{stale[t.trigger]} until redeployed"
-                profile = t.profile or (
-                    "PROMPT_PRO_PROFILE" if t.tier == "pro" else "PROMPT_PROFILE"
-                )
                 tier = t.tier or "standard"
+                chosen = trigger_provider(cfg, tier, t.provider)
+                runs = chosen.value
+                provider = hinted(chosen, entries)
+                if t.trigger in stale:  # an older deployed -ip-: what Espanso runs for now
+                    runs = stale[t.trigger]
+                    provider = Text(f"{runs} until redeployed")
+                profile = hinted(trigger_profile(cfg, tier, runs, t.profile), entries)
             else:
-                provider = "prints PROMPT_PERSONA" if t.command == "persona" else "static snippet"
-                profile = tier = "-"
+                words = "prints PROMPT_PERSONA" if t.command == "persona" else "static snippet"
+                provider, profile, tier = Text(words), Text("-"), "-"
             where = states.get(t.file, unknown) if t.active else "commented out"
             # Once its file is there, what typing it needs beats the file's state.
             deployed = where not in (deploy.MISSING, unknown)
             if deployed and t.active and t.command == "improve" and t.provider in down:
                 where = f"needs {PROVIDER_LABELS[t.provider]}"
-            add_row(table, t.trigger, provider, tier, profile, where, t.file)
+            # A hinted cell is two lines: the row grows to fit it (height None).
+            cells = (Text(t.trigger), provider, Text(tier), profile, Text(where), Text(t.file))
+            table.add_row(*cells, height=None)
         target = self.query_one("#deploy-target", Static)
         if not state.full:
             target.update(
@@ -124,7 +150,7 @@ class TriggersPane(Pane):
         self.preview_deploy()
 
     def preview_deploy(self) -> None:
-        """Read the plan in a worker, then preview it in a dialog (Deploy or repair, and
+        """Read the plan in a worker, then preview it in a dialog (Deploy, and
         Home's button for a deploy)."""
         if self.claim():
             self.report("Reading the match files…")

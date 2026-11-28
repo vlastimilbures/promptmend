@@ -38,6 +38,29 @@ def test_history_line() -> None:
     assert setup_guide.history_line(True).startswith("Usage history is on: metadata only")
 
 
+# The advice to switch the history off is true in both modes (#396): `config set` normally;
+# with PROMPTMEND_ENV set, where `config set` refuses, the line to add to that file (never its
+# path, never "your .env" outside legacy mode). One source for stats, setup and the screens.
+def test_history_off_advice_follows_the_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    from promptmend.commands import usage
+
+    command = "`promptmend config set PROMPT_HISTORY false`"
+    in_file = "add PROMPT_HISTORY=false to the .env that PROMPTMEND_ENV names"
+    assert settings_service.history_off(legacy=False) == command
+    assert settings_service.history_off(legacy=True) == in_file
+    assert setup_guide.history_line(True).endswith(f"Off: {command}.")
+    assert setup_guide.history_line(True, legacy=True).endswith(f"Off: {in_file}.")
+    # conftest's default is legacy mode: the file PROMPTMEND_ENV names, not its path.
+    legacy = usage.disclosure(config.Settings())[-1]
+    assert legacy.startswith(f"Switch it off: {in_file}; ")
+    assert "config set" not in legacy
+    assert str(config.env_file_override()) not in legacy
+    monkeypatch.delenv("PROMPTMEND_ENV")
+    saved = usage.disclosure(config.Settings())[-1]
+    assert saved == f"Switch it off: {command}; `promptmend history reset` deletes the records."
+    assert ".env" not in saved
+
+
 def test_storage_in_legacy_mode() -> None:
     where = setup_flow.storage()
     assert where.legacy is not None

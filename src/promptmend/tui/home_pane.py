@@ -104,20 +104,16 @@ def home_headline(rows: Sequence[HomeRow]) -> Table:
 
 # The session log shows this many of the latest actions.
 SESSION_LINES = 6
+# The session log before any action: one line, whole at 70 columns.
+SESSION_EMPTY = "Each action's command shows here, and in its button's tooltip."
 
 
 def session_text(entries: Sequence[teach.Entry]) -> Text:
     """Home's read-only session log: what each action of this session was in a
-    terminal, newest last, with the first line of its result. Before any, a few recipes."""
+    terminal, newest last, with the first line of its result. Before any, one muted line
+    saying where the commands show."""
     if not entries:
-        text = Text(no_wrap=True, overflow="ellipsis")
-        text.append("In a terminal, try:\n", style="bold")
-        width = max(len(teach.equivalent(*r.argv)) for r in teach.RECIPES)
-        for recipe in teach.RECIPES:
-            text.append(f"  $ {teach.equivalent(*recipe.argv):<{width}}", style="dim")
-            text.append(f"  {recipe.what}\n")
-        text.append("Each button's tooltip shows its command too.", style="dim")
-        return text
+        return Text(SESSION_EMPTY, style="dim", no_wrap=True, overflow="ellipsis")
     text = Text(no_wrap=True, overflow="ellipsis")
     text.append("This session, as commands:\n", style="bold")
     for entry in entries[-SESSION_LINES:]:
@@ -137,7 +133,7 @@ class HomePane(Pane):
     The Checks tab has every check; nothing here calls a provider."""
 
     rows: tuple[HomeRow, ...] = ()
-    # The deploy preview reads the plan, as the Triggers tab's own Deploy or repair does.
+    # The deploy preview reads the plan, as the Triggers tab's own Deploy button does.
     FULL_ONLY = (FIX_BUTTONS[DEPLOY],)
 
     def compose(self) -> ComposeResult:
@@ -183,7 +179,7 @@ class HomePane(Pane):
     def show_fix(self) -> None:
         """The one button that opens the headline's fix, labelled for it; none while no row
         is a problem. On the quick State a problem it already knows (a missing key) has its
-        button at once; Deploy or repair stays disabled until the full State (FULL_ONLY)."""
+        button at once; Deploy… stays disabled until the full State (FULL_ONLY)."""
         step = fix(list(self.rows))
         for action, id_ in FIX_BUTTONS.items():
             button = self.query_one(f"#{id_}", Button)
@@ -239,7 +235,7 @@ class HomePane(Pane):
 
     @on(Button.Pressed, "#home-deploy")
     async def _fix_deploy(self) -> None:
-        """The Triggers tab's deploy preview, as its own Deploy or repair button opens it."""
+        """The Triggers tab's deploy preview, as its own Deploy button opens it."""
         step = fix(list(self.rows))
         if step is None or step.action != DEPLOY:
             return

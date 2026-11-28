@@ -62,13 +62,13 @@ def disclosure(settings: Settings) -> list[str]:
     path = history.history_path()
     if not settings.history:
         return [f"Usage history is off (PROMPT_HISTORY=false); nothing is recorded. File: {path}"]
+    off = settings_service.history_off(legacy=bool(settings_service.legacy_env()))
     return [
         "Usage history is on (PROMPT_HISTORY=true, the default): metadata only (when a trigger "
         "ran, which trigger, profile, provider and model, the outcome, latency, tokens and the "
         "cost the provider reported), never your draft, clipboard, rewrite, persona or keys.",
         f"It stays on this device, in {path}, for {settings.history_retention_days} days.",
-        "Switch it off: `promptmend config set PROMPT_HISTORY false` (or "
-        "PROMPT_HISTORY=false in your .env); `promptmend history reset` deletes the records.",
+        f"Switch it off: {off}; `promptmend history reset` deletes the records.",
     ]
 
 

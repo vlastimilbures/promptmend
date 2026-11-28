@@ -363,8 +363,8 @@ which is why only your settings and the provider's reply fill those columns, nev
   every record (the same metadata, nothing more), `promptmend history prune [--older-than DAYS]`
   deletes older records now, and `promptmend history reset` deletes them all. Uninstalling does
   not delete the history.
-- **Off:** `promptmend config set PROMPT_HISTORY false` (or `PROMPT_HISTORY=false` in your
-  `.env`), then `promptmend history reset` to
+- **Off:** `promptmend config set PROMPT_HISTORY false` (with `PROMPTMEND_ENV` set, add
+  `PROMPT_HISTORY=false` to the `.env` it names instead), then `promptmend history reset` to
   delete what is there. `setup` and `stats` say that the history is on, what it stores and
   where. Nothing is recorded either when the settings fail to load, since whether you turned
   it off is then unknown.

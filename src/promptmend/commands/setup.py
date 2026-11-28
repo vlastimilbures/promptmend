@@ -229,7 +229,7 @@ def setup(
         None,
         "--deploy/--no-deploy",
         help="--non-interactive: write the match files, or skip the step (default: a "
-        "preview). On a terminal: focus Install (still a press), or leave the step out",
+        "preview). On a terminal: focus Deploy (still a press), or leave the step out",
         show_default=False,
     ),
     espanso_dir: str | None = typer.Option(

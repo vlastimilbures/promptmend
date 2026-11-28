@@ -173,7 +173,7 @@ def test_wizard_walks_every_step_and_saves(
         assert _marked(app, "#setup-outputs") == ["paste"]
         await _pick(app, pilot, "#setup-outputs", "clipboard")
         assert wizard.at == "espanso"
-        assert "not installed yet" in _text(app, "#setup-files")
+        assert "not deployed yet" in _text(app, "#setup-files")
         await press(app, pilot, "#setup-deploy")
         assert sorted(p.name for p in (espanso.root / "match").iterdir()) == [
             "prompts-core.yml",
@@ -197,7 +197,7 @@ def test_wizard_walks_every_step_and_saves(
         assert "✓ Profile: general" in summary
         assert "✓ Output: clipboard" in summary
         assert "OPENROUTER_API_KEY" not in summary
-        assert "✓ Match files: installed" in summary
+        assert "✓ Match files: deployed" in summary
         assert "✓ Test: passed" in summary
         _agrees(app)
         assert set(_rail(app).values()) == {"✓", "▶"}
@@ -950,7 +950,7 @@ def test_wizard_rail_marks_failed_skipped_and_not_reached(saved: Path, espanso: 
         assert (rail["Profile"], rail["Output"], rail["Test"]) == ("▶", "", "")
         wizard.go("test")
         await settle(pilot)
-        assert _rail(app)["Espanso"] == "✗"  # passed without installing
+        assert _rail(app)["Espanso"] == "✗"  # passed without deploying
         # Repainted when the facts change, not only on a move: here the plan read again.
         assert wizard.plan is not None
         steps = [dataclasses.replace(s, state=deploy.IN_SYNC) for s in wizard.plan.steps]
@@ -1118,7 +1118,7 @@ def test_wizard_done_follows_a_plan_read_that_fails_while_it_is_open(
         await press(app, pilot, "#setup-deploy")
         wizard.go("done")
         await settle(pilot)
-        assert "✓ Match files: installed in " in _text(app, "#setup-summary")
+        assert "✓ Match files: deployed to " in _text(app, "#setup-summary")
         assert _rail(app)["Espanso"] == "✓"
         _agrees(app)
 
