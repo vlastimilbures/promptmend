@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
+from conftest import resolved_settings
 
-from promptmend.config import Settings
 from promptmend.factory import make_provider
 from promptmend.prompt_builder import PERSONA_TOKEN, render
 from promptmend.providers import base
@@ -51,7 +51,7 @@ def _openrouter(
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-" + "t" * 12)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
-    return make_provider("openrouter", Settings(), observer=records.append)
+    return make_provider("openrouter", resolved_settings(), observer=records.append)
 
 
 # --- Per-provider mapping. ------------------------------------------------------------------
@@ -153,7 +153,7 @@ def test_lmstudio_local_mapping(fake_http: FakeHttp) -> None:
     fake_http.reply(
         _openai_body(model="qwen3-8b", usage={"prompt_tokens": 40, "completion_tokens": 9})
     )
-    provider = make_provider("lmstudio", Settings(), observer=records.append)
+    provider = make_provider("lmstudio", resolved_settings(), observer=records.append)
     assert provider.generate("draft", "sys") == "ok"
     (record,) = records
     assert record.provider == "lmstudio"
@@ -172,7 +172,7 @@ def test_lmstudio_remote_cost_is_unknown(
     monkeypatch.setenv("LMSTUDIO_BASE_URL", "https://lm.example.com/v1")
     records: list[AttemptUsage] = []
     fake_http.reply(_openai_body(usage={"prompt_tokens": 4, "cost": 0.5}))
-    make_provider("lmstudio", Settings(), observer=records.append).generate("draft", "sys")
+    make_provider("lmstudio", resolved_settings(), observer=records.append).generate("draft", "sys")
     (record,) = records
     assert (record.endpoint, record.cost_state, record.charged_amount) == (
         "remote",
@@ -200,7 +200,9 @@ def test_anthropic_mapping(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch)
             },
         }
     )
-    make_provider("anthropic", Settings(), observer=records.append).generate("draft", "sys")
+    make_provider("anthropic", resolved_settings(), observer=records.append).generate(
+        "draft", "sys"
+    )
     (record,) = records
     assert record.provider == "anthropic"
     assert (record.input_uncached, record.cache_read, record.cache_write, record.output) == (
@@ -233,7 +235,7 @@ def test_openai_mapping(fake_http: FakeHttp, monkeypatch: pytest.MonkeyPatch) ->
             },
         )
     )
-    provider = make_provider("openai", Settings(), observer=records.append)
+    provider = make_provider("openai", resolved_settings(), observer=records.append)
     assert provider.generate("draft", "sys") == "rewritten"
     (record,) = records
     assert record == AttemptUsage(
@@ -271,7 +273,7 @@ _OLLAMA_BODY = {
 def test_ollama_local_mapping(fake_http: FakeHttp) -> None:
     records: list[AttemptUsage] = []
     fake_http.reply(_OLLAMA_BODY)
-    make_provider("ollama", Settings(), observer=records.append).generate("draft", "sys")
+    make_provider("ollama", resolved_settings(), observer=records.append).generate("draft", "sys")
     (record,) = records
     assert (record.provider, record.endpoint, record.cost_state) == (
         "ollama",
@@ -291,7 +293,7 @@ def test_ollama_cloud_model_cost_is_unknown(
     monkeypatch.setenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
     records: list[AttemptUsage] = []
     fake_http.reply(_OLLAMA_BODY)
-    make_provider("ollama", Settings(), observer=records.append).generate("draft", "sys")
+    make_provider("ollama", resolved_settings(), observer=records.append).generate("draft", "sys")
     (record,) = records
     assert (record.endpoint, record.cost_state) == ("loopback", "unknown")
 
@@ -563,7 +565,7 @@ def test_records_hold_no_sensitive_text(
     system = render(f"Rules. {PERSONA_TOKEN}", persona)
     assert persona in system
     records: list[AttemptUsage] = []
-    provider = make_provider("openrouter", Settings(), observer=records.append)
+    provider = make_provider("openrouter", resolved_settings(), observer=records.append)
     fake_http.queue(
         {"status_code": 503, "json_data": {"error": {"message": error}}},
         {"json_data": _openai_body(response, usage={"prompt_tokens": 3, "cost": 0.1})},

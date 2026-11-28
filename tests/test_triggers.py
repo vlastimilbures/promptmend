@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 
 import pytest
 import yaml
+from conftest import resolved_settings
 from typer.testing import CliRunner
 
 from promptmend import smoke
@@ -113,7 +114,7 @@ def test_every_improve_trigger_is_expected() -> None:
 def test_trigger_request(stub_provider: StubProvider, trigger: str) -> None:
     provider, profile, tier = EXPECTED[trigger]
     name, cfg, prompt = _replay(stub_provider, trigger)
-    base = Settings()
+    base = resolved_settings()
     assert name == provider
     assert _profile(prompt) == profile
     if tier == "pro":
@@ -135,7 +136,7 @@ def test_pro_provider_moves_ip_only(
 ) -> None:
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", pro_provider)
     monkeypatch.setenv("PROMPT_PRO_PROFILE", "general")
-    base = Settings()
+    base = resolved_settings()
     name, cfg, prompt = _replay(stub_provider, "-ip-")
     spec = PROVIDERS[pro_provider]
     assert (name, spec.model(cfg), cfg.timeout) == (pro_provider, spec.model(base), 45.0)
@@ -152,7 +153,7 @@ def test_ip_ignores_prompt_provider(
 ) -> None:
     monkeypatch.setenv("PROMPT_PROVIDER", configured)
     monkeypatch.delenv("PROMPT_PRO_PROVIDER", raising=False)
-    base = Settings()
+    base = resolved_settings()
     name, cfg, _ = _replay(stub_provider, "-ip-")
     assert name == "openrouter"
     assert (cfg.openrouter_model, cfg.openrouter_provider) == (
@@ -194,7 +195,10 @@ def test_if_profile_follows_model(stub_provider: StubProvider, model: str, profi
     slug, _, endpoint = model.partition("@")
     assert _profile(prompt) == profile
     if model == "default":
-        slug, endpoint = Settings().openrouter_pro_model, Settings().openrouter_pro_provider
+        slug, endpoint = (
+            resolved_settings().openrouter_pro_model,
+            resolved_settings().openrouter_pro_provider,
+        )
     assert cfg.openrouter_model == slug
     assert cfg.openrouter_provider == ("" if endpoint == "auto" else endpoint)
 
@@ -437,7 +441,9 @@ def _provider(trigger: str) -> str:
     if "--provider" in args:
         return args[args.index("--provider") + 1]
     # -ip- names none, so it runs on PROMPT_PRO_PROVIDER (OpenRouter as shipped).
-    return Settings().provider_for(args[args.index("--tier") + 1] if "--tier" in args else "")
+    return resolved_settings().provider_for(
+        args[args.index("--tier") + 1] if "--tier" in args else ""
+    )
 
 
 def _timed_run(

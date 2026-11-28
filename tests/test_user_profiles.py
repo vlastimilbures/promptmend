@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from conftest import resolved_settings
 from typer.testing import CliRunner, Result
 
 from promptmend import assets, prompt_builder
 from promptmend.cli import app
-from promptmend.config import Settings
 from promptmend.prompt_builder import (
     PROFILES,
     UserProfile,
@@ -203,13 +203,13 @@ def test_user_profiles_report() -> None:
 
 # PROMPT_PROFILE_OVERRIDES is parsed strictly: built-in names only, comma-separated.
 def test_profile_overrides_setting(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert Settings().profile_overrides == ()
+    assert resolved_settings().profile_overrides == ()
     monkeypatch.setenv("PROMPT_PROFILE_OVERRIDES", " default , general,default,")
-    assert Settings().profile_overrides == ("default", "general")
+    assert resolved_settings().profile_overrides == ("default", "general")
     for bad in ("regulation", "default-pro", "default;general"):
         monkeypatch.setenv("PROMPT_PROFILE_OVERRIDES", bad)
         with pytest.raises(ValueError, match="PROMPT_PROFILE_OVERRIDES must be empty or a comma"):
-            Settings()
+            resolved_settings()
 
 
 # A bad value reaches Espanso as a marker, like every other setting.

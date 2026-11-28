@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import resolved_settings
 
 import promptmend
 from promptmend import assets, config, deploy, doctor, update_check
@@ -391,7 +392,7 @@ def test_pro_provider_warns_about_an_older_deployed_ip(
 ) -> None:
     found = _older_ip(tmp_path)
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", "anthropic")
-    settings = config.Settings()
+    settings = resolved_settings()
     assert doctor.stale_pro_pins(found, settings) == {"-ip-": "openrouter"}
     check = doctor._pro_provider_check(settings, found, True)
     assert check.status == "warn"
@@ -412,13 +413,13 @@ def test_pro_provider_warns_about_an_older_deployed_ip(
     # Not deployed yet, the default, or the current file: nothing to warn about.
     assert doctor._pro_provider_check(settings, found, False).status == "ok"
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openrouter")
-    assert doctor._pro_provider_check(config.Settings(), found, True).status == "ok"
+    assert doctor._pro_provider_check(resolved_settings(), found, True).status == "ok"
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
     current = assets.triggers()
-    check = doctor._pro_provider_check(config.Settings(), current, True)
+    check = doctor._pro_provider_check(resolved_settings(), current, True)
     assert (check.status, check.message) == ("ok", "the pro tier runs on openai")
     inactive = [dataclasses.replace(t, active=False) for t in found]
-    assert doctor.stale_pro_pins(inactive, config.Settings()) == {}
+    assert doctor.stale_pro_pins(inactive, resolved_settings()) == {}
 
 
 # The -i- and -ip- blocks of prompts-llm.yml as v0.20.0 shipped them: a `type: shell` var whose
@@ -458,7 +459,7 @@ def test_shell_form_triggers_are_read(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
     monkeypatch.setenv("PROMPT_PROVIDER", "ollama")
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
-    settings = config.Settings()
+    settings = resolved_settings()
     assert doctor.stale_pro_pins(found, settings) == {"-ip-": "openrouter"}
     keys = doctor._keys_check(ConfigLayers.resolve(strict=False), settings, found, True)
     assert keys.data["triggers"] == {"OPENROUTER_API_KEY": ["-i-", "-ip-"]}
@@ -478,7 +479,7 @@ def test_shell_form_parse_is_linear(unit: str) -> None:
 def test_stale_pro_pins_ignore_unknown_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
     odd = [assets.Trigger("-ip-", "prompts-llm.yml", True, "improve", "sk-secret", None, "pro")]
-    assert doctor.stale_pro_pins(odd, config.Settings()) == {}
+    assert doctor.stale_pro_pins(odd, resolved_settings()) == {}
 
 
 # The fallback espanso check, when the check itself raises, still names the folder read.
@@ -498,7 +499,7 @@ def test_espanso_check_failure_keeps_the_folder(
 def test_pro_provider_names_a_hand_written_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROMPT_PRO_PROVIDER", "openai")
     edited = [assets.Trigger("-ip-", "prompts-llm.yml", True, "improve", "anthropic", None, "pro")]
-    check = doctor._pro_provider_check(config.Settings(), edited, True)
+    check = doctor._pro_provider_check(resolved_settings(), edited, True)
     assert check.status == "warn"
     assert check.message.startswith("the deployed -ip- names anthropic itself, so ")
 
@@ -1315,7 +1316,7 @@ def test_sqlite_check(
         "health",
         lambda self: _health(sqlite_version=version, journal_mode=journal),
     )
-    sqlite = doctor._history_checks(Settings())[1]
+    sqlite = doctor._history_checks(resolved_settings())[1]
     assert (sqlite.status, sqlite.data["wal_reset_bug"]) == (status, bug)
     assert sqlite.data["journal_mode"] == journal
     assert words in sqlite.message
@@ -1342,7 +1343,7 @@ def test_clipboard_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_persona_check_without_a_persona() -> None:
-    check = doctor._persona_check(Settings())
+    check = doctor._persona_check(resolved_settings())
     assert (check.status, check.message) == ("ok", "PROMPT_PERSONA is not set")
     assert check.data == {"set": False, "local_only": False, "findings": []}
 
@@ -1429,7 +1430,7 @@ def test_profiles_check(monkeypatch: pytest.MonkeyPatch) -> None:
     folder = config.user_config_dir() / "profiles"
     folder.mkdir(parents=True)
     (folder / "general.md").write_text("x", "utf-8")
-    check = doctor._profiles_check(Settings())
+    check = doctor._profiles_check(resolved_settings())
     hint = (
         "Your general.md replaces the built-in only once PROMPT_PROFILE_OVERRIDES lists it: "
         "`promptmend config set PROMPT_PROFILE_OVERRIDES general`."

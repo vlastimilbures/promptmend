@@ -279,12 +279,14 @@ def parse_setting(name: str, parse: Callable[[str], Any], raw: str) -> Any:
 def _env(
     name: str, default: str, parse: Callable[[str], Any] = str, *, secret: bool = False
 ) -> Any:
-    """A dataclass field read from env var `name` when Settings() is instantiated (no .env:
-    Settings.load() builds from ConfigLayers instead). A ``secret`` stays out of repr(), so
-    a traceback or test failure cannot print it."""
+    """A dataclass field for the setting `name` (its env var), defaulting to ``default``
+    parsed: bare Settings() is the built-in defaults and never reads the environment or a
+    file (#409). The real settings come from Settings.load() (ConfigLayers), which reads
+    this metadata. A ``secret`` stays out of repr(), so a traceback or test failure cannot
+    print it."""
 
     def read() -> Any:
-        return parse_setting(name, parse, os.getenv(name, default))
+        return parse_setting(name, parse, default)
 
     metadata = {"env": name, "default": default, "parse": parse, "secret": secret}
     return field(default_factory=read, repr=not secret, metadata=metadata)
@@ -616,7 +618,8 @@ class Preset:
 
 @dataclass(frozen=True)
 class Settings:
-    """Runtime settings resolved at instantiation, not import time."""
+    """Runtime settings, resolved by Settings.load(); bare Settings() is the built-in
+    defaults, whatever the environment holds."""
 
     provider: str = _env("PROMPT_PROVIDER", "openrouter")
     profile: str = _env("PROMPT_PROFILE", "default")

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from conftest import resolved_settings
 from rich.cells import cell_len
 from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, Static
@@ -3217,7 +3218,7 @@ def test_checks_test_call_works_on_the_quick_state(
         await settle(pilot)
 
     drive(scenario, settled=False, loader=blocked)
-    assert called == [config.Settings().provider]
+    assert called == [resolved_settings().provider]
 
 
 # --- Profiles -----------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import pyperclip
 import pytest
+from conftest import resolved_settings
 from typer.testing import CliRunner
 
 import promptmend.pipeline as pipeline
@@ -972,7 +973,7 @@ def test_bare_pro_call_runs_openrouter_pro(
     result = improve("--tier", "pro", "--source", "argument", "--text", "draft")
     assert (result.exit_code, result.stdout) == (0, "ok")
     (call,) = fake_http.calls
-    cfg = Settings()
+    cfg = resolved_settings()
     assert call["url"].startswith(cfg.openrouter_base_url)
     body = call["json"]
     assert body["model"] == cfg.openrouter_pro_model
@@ -994,7 +995,7 @@ def test_pro_tier_runs_on_the_pro_provider(
     result = improve("--tier", "pro", "--source", "argument", "--text", "draft")
     assert (result.exit_code, result.stdout) == (0, "ok")
     (call,) = fake_http.calls
-    cfg = Settings()
+    cfg = resolved_settings()
     spec = PROVIDERS[provider]
     assert call["url"].startswith(spec.url(cfg))
     body = call["json"]

@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 import pytest
+from conftest import resolved_settings
 from test_redaction import MUST_DETECT, MUST_PASS
 
 from promptmend import doctor, redaction, settings_checks
@@ -162,7 +163,7 @@ def test_vn_id_rules_unchanged() -> None:
 # exactly what the single pattern did, over the redaction tests' drafts and every label word
 # in every case and position; vietnam_id_* kept their patterns unchanged.
 def test_default_packs_flag_labels_as_before() -> None:
-    assert Settings().gate_packs == GATE_PACKS
+    assert resolved_settings().gate_packs == GATE_PACKS
     differ = [t for t in _CORPUS if _old_label(t) != ("confidential_label" in scan(t))]
     assert differ == []
     # The corpus holds both outcomes, and labels only the vn pack's rule matches.
@@ -264,7 +265,7 @@ def test_persona_findings_use_packs() -> None:
 # doctor's gate_packs check and `config validate` note a pack that is off (an empty value,
 # or an empty ${VAR} it expanded from) as information; every pack on is ok.
 def test_doctor_notes_a_pack_that_is_off() -> None:
-    on = doctor._gate_packs_check(Settings())
+    on = doctor._gate_packs_check(resolved_settings())
     assert (on.status, on.data) == (doctor.OK, {"packs": ["vn"], "off": []})
     off = doctor._gate_packs_check(Settings(gate_packs=()))
     assert (off.status, off.data) == (doctor.INFO, {"packs": [], "off": ["vn"]})
@@ -272,7 +273,7 @@ def test_doctor_notes_a_pack_that_is_off() -> None:
         "gate pack vn is off (PROMPT_GATE_PACKS): the gate does not flag Vietnamese national "
         "ID numbers and confidentiality labels"
     )
-    assert settings_checks.gate_packs_note(Settings()) is None
+    assert settings_checks.gate_packs_note(resolved_settings()) is None
 
 
 @pytest.mark.parametrize("packs", ["", "vn"])
