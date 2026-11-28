@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import subprocess
@@ -10,10 +11,14 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import pyperclip
 import pytest
+import typer
 from conftest import resolved_settings
+from typer._click import Context
+from typer.core import TyperGroup
 from typer.testing import CliRunner
 
 import promptmend.pipeline as pipeline
+import promptmend.trigger as trigger
 from promptmend import config, factory
 from promptmend.cli import app
 from promptmend.config import Settings
@@ -35,6 +40,46 @@ def improve(*args: str, input: str | None = None) -> Result:
 
 def _no_clipboard(*args: Any) -> None:
     raise pyperclip.PyperclipException("no clipboard mechanism")
+
+
+# cli.improve() hands every option it receives, unchanged, to run_improve() in one frozen
+# ImproveOptions; a field added on one side and not the other fails here. --fail-on-marker
+# (the watchdog's) and --trigger-id (the recorder's) are the only options it keeps.
+def test_improve_passes_every_option_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[trigger.ImproveOptions] = []
+
+    def fake_run(watch: object, rec: object, ran: object, options: trigger.ImproveOptions) -> None:
+        captured.append(options)
+
+    # Patched, so nothing is read, sent or copied, whatever --source, --output or --copy say.
+    monkeypatch.setattr(trigger, "run_improve", fake_run)
+    given = {
+        "provider": "provider-x",
+        "profile": "profile-x",
+        "model": "model-x",
+        "tier": "tier-x",
+        "effort": "effort-x",
+        "max_tokens": "max-tokens-x",
+        "timeout": "timeout-x",
+        "source": "source-x",
+        "text": "text-x",
+        "output": "output-x",
+    }
+    args = [f"--{name.replace('_', '-')}={value}" for name, value in given.items()]
+    result = improve(*args, "--copy", "--allow-flagged", "--trigger-id", "i")
+    assert result.exit_code == 0, result.output
+    (options,) = captured
+    assert dataclasses.asdict(options) == {**given, "copy": True, "allow_flagged": True}
+
+    group = typer.main.get_command(app)
+    assert isinstance(group, TyperGroup)
+    command = group.get_command(Context(group), "improve")
+    assert command is not None
+    params = {param.name for param in command.params}
+    fields = {f.name for f in dataclasses.fields(trigger.ImproveOptions)}
+    assert fields == params - {"fail_on_marker", "trigger_id"}
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        options.provider = "other"  # type: ignore[misc]
 
 
 # read_input reads from the requested source, and rejects unknown sources.
@@ -103,6 +148,20 @@ def test_empty_clipboard_says_to_copy_the_draft(
         "[promptmend: The clipboard has no text: copy your draft, then type the trigger again]"
     )
     assert result.exit_code == 0
+    assert stub_provider.calls == []
+
+
+# Without --source the run chooses the clipboard itself (no pipe on stdin), and the wording
+# follows the source it chose, not the option it was given (none).
+def test_empty_clipboard_chosen_by_default_says_to_copy_the_draft(
+    monkeypatch: pytest.MonkeyPatch, stub_provider: StubProvider
+) -> None:
+    monkeypatch.setattr(pipeline, "_stdin_is_piped", lambda: False)
+    monkeypatch.setattr(pyperclip, "paste", lambda: "")
+    result = improve("--provider", "ollama")
+    assert result.stdout == (
+        "[promptmend: The clipboard has no text: copy your draft, then type the trigger again]"
+    )
     assert stub_provider.calls == []
 
 

@@ -217,10 +217,7 @@ def improve(
     ran = pipeline.Rewrite()
     watch = trigger.Watchdog(rec, ran, fail_on_marker=fail_on_marker)
     try:
-        trigger.run_improve(
-            watch,
-            rec,
-            ran,
+        options = trigger.ImproveOptions(
             provider=provider,
             profile=profile,
             model=model,
@@ -234,6 +231,7 @@ def improve(
             copy=copy,
             allow_flagged=allow_flagged,
         )
+        trigger.run_improve(watch, rec, ran, options)
     finally:
         watch.cancel()
 
