@@ -14,7 +14,7 @@ import pytest
 import truststore
 from conftest import FakeHttp
 
-from promptmend import config, config_files, update_check
+from promptmend import config_files, paths, update_check
 from promptmend.config import Settings
 from promptmend.update_check import AVAILABLE, LATEST, OFF, UNKNOWN, UpdateStatus, check
 
@@ -308,7 +308,7 @@ def test_a_broken_settings_file_asks_nothing(
     pypi: FakeHttp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("PROMPTMEND_ENV")
-    saved = config.settings_file()
+    saved = paths.settings_file()
     saved.parent.mkdir(parents=True)
     saved.write_text("PROMPT_UPDATE_CHECK = [not toml", "utf-8")
     assert update_check.check_configured(NOW) == UpdateStatus(UNKNOWN)
@@ -322,7 +322,7 @@ def test_another_bad_setting_still_asks(pypi: FakeHttp, monkeypatch: pytest.Monk
 
 
 def test_the_cache_is_in_the_data_folder() -> None:
-    assert update_check.cache_path() == config.user_data_dir() / "update-check.json"
+    assert update_check.cache_path() == paths.user_data_dir() / "update-check.json"
 
 
 def test_an_unknown_installed_version_is_unknown(

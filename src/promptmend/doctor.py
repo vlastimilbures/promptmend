@@ -33,6 +33,8 @@ from . import (
     factory,
     installed_version,
     local_probe,
+    parsers,
+    paths,
     tls,
     update_check,
 )
@@ -322,7 +324,7 @@ def _cli_check() -> Check:
 
 
 def _install_check(launcher: deploy.Launcher | None, error: str | None) -> Check:
-    editable = (config._PROJECT_ROOT / "pyproject.toml").is_file()
+    editable = (paths._PROJECT_ROOT / "pyproject.toml").is_file()
     channel = launcher.channel if launcher else ("editable" if editable else "unknown")
     data = {
         "channel": channel,
@@ -375,13 +377,13 @@ def _shadow_hint(environ: Mapping[str, str], found: Path, launcher: Path) -> str
 
 
 def _config_check(layers: ConfigLayers, strict_error: str | None) -> Check:
-    legacy = config.env_file_override()
+    legacy = paths.env_file_override()
     files = [
         layer.source.removeprefix("file:")
         for layer in layers.layers
         if layer.source.startswith("file:")
     ]
-    saved = config.settings_file()
+    saved = paths.settings_file()
     if legacy:
         mode = "legacy"
     elif config_files.is_file(saved):
@@ -422,7 +424,7 @@ def stale_pro_pins(deployed: list[assets.Trigger], settings: config.Settings) ->
     PROMPT_PRO_PROVIDER is set away from its default to another one: the setting does not
     reach that trigger until a deploy writes the new file. -if- names OpenRouter as shipped,
     so it never counts."""
-    if settings.pro_provider == config.DEFAULT_PRO_PROVIDER:
+    if settings.pro_provider == parsers.DEFAULT_PRO_PROVIDER:
         return {}
     shipped = {t.trigger: t for t in assets.triggers()}
     stale = {}
@@ -537,7 +539,7 @@ def _local_servers_check(
     asked = {
         provider: spec.url(settings).rstrip("/") + (spec.probe_path or "")
         for provider, spec in wanted.items()
-        if config.is_valid_url(spec.url(settings)) and not _refused(layers, spec.url_setting)
+        if parsers.is_valid_url(spec.url(settings)) and not _refused(layers, spec.url_setting)
     }
     replies = _probe_all(asked)
     for provider, spec in wanted.items():
@@ -627,7 +629,7 @@ def _set_where(source: str) -> str | None:
     if source == config.ENV_SOURCE:
         return "in the environment"
     path = source.removeprefix("file:")
-    if path != source and path != str(config.settings_file()):
+    if path != source and path != str(paths.settings_file()):
         return f"in {path}"
     return None
 
@@ -943,8 +945,8 @@ def _folders_check() -> Check:
     """The user folders. ``legacy`` and ``conflicts`` stay, always empty, for doctor --json
     schema_version 1 (#275): the folders' old names are not looked for."""
     data = {
-        "config_dir": str(config.user_config_dir()),
-        "data_dir": str(config.user_data_dir()),
+        "config_dir": str(paths.user_config_dir()),
+        "data_dir": str(paths.user_data_dir()),
         "legacy": [],
         "conflicts": [],
     }

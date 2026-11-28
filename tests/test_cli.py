@@ -19,7 +19,7 @@ from typer.testing import CliRunner
 
 import promptmend.pipeline as pipeline
 import promptmend.trigger as trigger
-from promptmend import config, factory
+from promptmend import factory, paths
 from promptmend.cli import app
 from promptmend.config import Settings
 from promptmend.pipeline import read_input
@@ -1155,8 +1155,8 @@ def test_temperature_is_per_provider(monkeypatch: pytest.MonkeyPatch, fake_http:
 # A saved ANTHROPIC_TEMPERATURE (config.toml) is sent as is.
 def test_saved_anthropic_temperature(monkeypatch: pytest.MonkeyPatch, fake_http: FakeHttp) -> None:
     monkeypatch.delenv("PROMPTMEND_ENV")
-    config.settings_file().parent.mkdir(parents=True)
-    config.settings_file().write_text("config_version = 1\nANTHROPIC_TEMPERATURE = 0.5\n", "utf-8")
+    paths.settings_file().parent.mkdir(parents=True)
+    paths.settings_file().write_text("config_version = 1\nANTHROPIC_TEMPERATURE = 0.5\n", "utf-8")
     assert _cloud_body(monkeypatch, fake_http, "anthropic")["temperature"] == 0.5
 
 

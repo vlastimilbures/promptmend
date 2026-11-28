@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-from promptmend import config, config_files, config_store, winacl
+from promptmend import config, config_files, config_store, paths, winacl
 from promptmend.cli import app
 from promptmend.config import ConfigLayers, Settings, env_names, secret_names
 from promptmend.config_files import FileSecretStore, SecretStoreError
@@ -45,7 +45,7 @@ ANTHROPIC_VALUE = "-".join(["sk", "ant", "api03", "c0ffee" * 10])
 def saved_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Leave legacy mode (PROMPTMEND_ENV unset); returns the per-test user config dir."""
     monkeypatch.delenv("PROMPTMEND_ENV")
-    directory = config.user_config_dir(os.environ)
+    directory = paths.user_config_dir(os.environ)
     assert tmp_path in directory.parents
     directory.mkdir(parents=True)
     return directory
@@ -141,7 +141,7 @@ def test_no_dotenv_is_read_outside_legacy_mode(
 
 # Legacy mode: the PROMPTMEND_ENV file alone, exactly as before.
 def test_legacy_mode_ignores_saved_files(tmp_path: Path) -> None:
-    directory = config.user_config_dir(os.environ)
+    directory = paths.user_config_dir(os.environ)
     _write(directory / "config.toml", 'OLLAMA_MODEL = "saved"\n')
     FileSecretStore(directory / "secrets.toml").set("OPENROUTER_API_KEY", OPENROUTER_VALUE)
     _write(tmp_path / ".env", "OLLAMA_MODEL=legacy\n")

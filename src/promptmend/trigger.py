@@ -28,8 +28,9 @@ from typing import Protocol
 import typer
 
 from . import pipeline, recorder
-from .config import CLIPBOARD, Settings, check_provider_options, loading_limit
+from .config import Settings, check_provider_options, loading_limit
 from .factory import PROVIDER_NAMES, timeout_hint
+from .parsers import CLIPBOARD
 from .providers.base import split_stop_note, timed_out_message
 from .providers.registry import PROVIDERS
 from .sanitize import clean

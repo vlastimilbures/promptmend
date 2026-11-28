@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import httpx
 import pytest
 
-from promptmend import config
+from promptmend import config, env_file
 from promptmend.config import Settings, env_names
 from promptmend.providers import base
 
@@ -67,12 +67,12 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The home the config dir would derive from, and the editable-install root, are per-test
     # temp dirs too: a test that unsets PROMPTMEND_ENV can never read or write the developer's
     # real files (config.toml, secrets.toml, the folders), nor have repair mode report the
-    # checkout's .env (config.unread_env_files) or doctor call the install editable.
+    # checkout's .env (paths.unread_env_files) or doctor call the install editable.
     for name in ("HOME", "USERPROFILE"):
         monkeypatch.setenv(name, str(tmp_path / "home"))
-    from promptmend import config
+    from promptmend import paths
 
-    monkeypatch.setattr(config, "_PROJECT_ROOT", tmp_path / "project")
+    monkeypatch.setattr(paths, "_PROJECT_ROOT", tmp_path / "project")
     # Never probe the developer's real clipboard: a concealed item there would fail tests.
     import promptmend.pipeline as pipeline
 
@@ -375,10 +375,10 @@ def read_env_file(path: Path) -> dict[str, str] | None:
     """KEY=VALUE pairs of a .env file, as the settings loader parses them, or None when it is
     missing or unreadable."""
     try:
-        raw_text = config._env_text(path.read_bytes())
+        raw_text = env_file._env_text(path.read_bytes())
     except (OSError, UnicodeDecodeError):
         return None
-    return config._parse_env_text(raw_text)[0]
+    return env_file._parse_env_text(raw_text)[0]
 
 
 @pytest.fixture

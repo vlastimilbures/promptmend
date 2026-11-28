@@ -15,7 +15,7 @@ import pytest
 from conftest import resolved_settings
 
 import promptmend
-from promptmend import assets, config, deploy, doctor, timing, update_check
+from promptmend import assets, deploy, doctor, paths, timing, update_check
 from promptmend.config import ConfigLayers, Settings
 from promptmend.history import Health
 
@@ -267,7 +267,7 @@ def test_config_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PROMPTMEND_ENV")
     assert _config().data["mode"] == "defaults"
     assert _config().status == "ok"
-    env = config.user_config_dir() / ".env"
+    env = paths.user_config_dir() / ".env"
     env.parent.mkdir(parents=True)
     env.write_text("PROMPT_PROFILE=general\n", "utf-8")
     # A .env no release reads any more (#275) is a finding, with config.toml or without.
@@ -275,7 +275,7 @@ def test_config_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert (check.data["mode"], check.status) == ("defaults", "warn")
     assert check.data["findings"][0]["source"] == f"file:{env}"
     assert "no longer read" in check.data["findings"][0]["message"]
-    config.settings_file().write_text("config_version = 1\n", "utf-8")
+    paths.settings_file().write_text("config_version = 1\n", "utf-8")
     check = _config()
     assert (check.data["mode"], check.status) == ("saved", "warn")
     env.unlink()
@@ -704,8 +704,8 @@ def test_localhost_note_says_where_to_change_it(
         f"set OLLAMA_BASE_URL to http://127.0.0.1:11434 in {legacy.expanduser()}"
     )
     monkeypatch.delenv("PROMPTMEND_ENV")
-    config.settings_file().parent.mkdir(parents=True, exist_ok=True)
-    config.settings_file().write_text(
+    paths.settings_file().parent.mkdir(parents=True, exist_ok=True)
+    paths.settings_file().write_text(
         'config_version = 1\nOLLAMA_BASE_URL = "http://localhost:11434"\n', "utf-8"
     )
     assert message().endswith(
@@ -732,7 +732,7 @@ def test_localhost_note_quotes_no_odd_url(url: str) -> None:
 
 
 def test_localhost_note_quotes_the_default_shape(monkeypatch: pytest.MonkeyPatch) -> None:
-    toml = f"file:{config.settings_file()}"
+    toml = f"file:{paths.settings_file()}"
     ollama = doctor._localhost_note("OLLAMA_BASE_URL", "http://localhost", ["-il-"], toml)
     assert ollama.endswith(
         "set OLLAMA_BASE_URL to http://127.0.0.1 "
@@ -938,7 +938,7 @@ def test_run_compares_with_a_live_entry_not_an_orphan(
 
 
 def test_run_with_a_damaged_manifest(espanso: Path, no_clipboard: None) -> None:
-    path = config.user_data_dir() / deploy.MANIFEST_NAME
+    path = paths.user_data_dir() / deploy.MANIFEST_NAME
     path.parent.mkdir(parents=True)
     path.write_text("{not json", "utf-8")
     report = doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner())
@@ -1105,8 +1105,8 @@ def test_no_match_files_with_a_config_toml_says_so(
     espanso: Path, no_clipboard: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("PROMPTMEND_ENV")
-    config.settings_file().parent.mkdir(parents=True, exist_ok=True)
-    config.settings_file().write_text("config_version = 1\n", "utf-8")
+    paths.settings_file().parent.mkdir(parents=True, exist_ok=True)
+    paths.settings_file().write_text("config_version = 1\n", "utf-8")
     found = doctor.verdict(doctor.run(espanso_dir=espanso, launcher=LAUNCHER, runner=_runner()))
     assert found.setup
     assert found.line.endswith(": no match files are deployed yet. Next: `promptmend setup`")
@@ -1394,7 +1394,7 @@ def test_persona_check_only_when_a_profile_sends_it() -> None:
     )
     pro = Settings(persona=f"Mail {address}", profile="general", pro_profile="default")
     assert doctor._persona_check(pro).status == "warn"
-    folder = config.user_config_dir() / "profiles"
+    folder = paths.user_config_dir() / "profiles"
     folder.mkdir(parents=True)
     (folder / "mine.md").write_text("Rewrite it. {{PERSONA_RULE}}", "utf-8")
     (folder / "plain.md").write_text("Rewrite it.", "utf-8")
@@ -1427,7 +1427,7 @@ def test_persona_check_in_the_report(
 
 def test_profiles_check(monkeypatch: pytest.MonkeyPatch) -> None:
     assert doctor._profiles_check(Settings(profile="nosuch")).status == "fail"
-    folder = config.user_config_dir() / "profiles"
+    folder = paths.user_config_dir() / "profiles"
     folder.mkdir(parents=True)
     (folder / "general.md").write_text("x", "utf-8")
     check = doctor._profiles_check(resolved_settings())

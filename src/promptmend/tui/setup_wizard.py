@@ -40,7 +40,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option, OptionDoesNotExist
 
-from .. import config, deploy, setup_flow, setup_guide, smoke
+from .. import config, deploy, paths, setup_flow, setup_guide, smoke
 from ..config import secret_names
 from . import teach
 from .base import error_message, plan_digest, result_text
@@ -533,7 +533,7 @@ class SetupScreen(Screen[None]):
             # Nothing can be saved (as headless setup's writable=False): say so and move on.
             if setup_flow.current_choice(name) != value:
                 self.app.notify(
-                    f"{name} not saved: {config.ENV_FILE_VAR} is set, so settings stay in "
+                    f"{name} not saved: {paths.ENV_FILE_VAR} is set, so settings stay in "
                     f"{legacy}; edit that file instead.",
                     severity="warning",
                     markup=False,

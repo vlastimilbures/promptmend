@@ -143,7 +143,7 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   `os.environ`, and takes only `env_names()` keys (a `.env` cannot set `HTTPS_PROXY` or
   anything else). Strict mode (the triggers, the Try tab) fails closed with a marker; repair
   mode (`strict=False`, the management commands) reports findings and falls back a layer,
-  and reports a `.env` earlier releases read (`config.unread_env_files()`, #275).
+  and reports a `.env` earlier releases read (`paths.unread_env_files()`, #275).
 - Legacy mode: with `PROMPTMEND_ENV` set (the conftest default) there is no `config.toml` and
   no secrets file, and `config set`/`secrets set` refuse.
 - What may be saved is decided once, in `settings_service.py` (`check_setting()`,
@@ -154,9 +154,10 @@ tree, every link and anchor, README's PyPI safety and each page's skeleton (`DOC
   `cli.py`'s lazy imports imports `promptmend.commands`, and `setup_flow`, `settings_service`,
   `settings_checks`, `doctor`, `timing` and `try_run` reach neither Typer nor `cli`/`trigger`
   (`tests/test_layering.py`).
-- Adding a setting: a field and parser in `config.py`, a row in docs/configuration.md, a line
-  in `.env.example` and an entry in `tui/settings_model.SETTINGS`; `tests/test_docs.py` and
-  `tests/test_tui_settings_model.py` fail without the last three.
+- Adding a setting: a field in `config.py` (a new parser in `parsers.py`), a row in
+  docs/configuration.md, a line in `.env.example` and an entry in
+  `tui/settings_model.SETTINGS`; `tests/test_docs.py` and `tests/test_tui_settings_model.py`
+  fail without the last three.
 - File writes go through `config_files.write_atomic()` (mode 600 / owner-only DACL, no
   plaintext fallback).
 

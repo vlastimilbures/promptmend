@@ -452,6 +452,9 @@ promptmend/
 │   ├── setup_guide.py            what setup says at each step (wizard and text flow), no Textual
 │   ├── setup_flow.py             what setup decides and writes, shared by the wizard and text flow
 │   ├── config.py                 Settings from the environment, config.toml or a named .env
+│   ├── paths.py                  the user config and data folders, PROMPTMEND_ENV, the checkout
+│   ├── env_file.py               reads the .env PROMPTMEND_ENV names (legacy mode)
+│   ├── parsers.py                the settings' value parsers: text in, a typed value or ValueError
 │   ├── config_files.py           reads config.toml/secrets.toml; atomic, private writes
 │   ├── winacl.py                 Windows only: the user-only DACL and its check (ctypes)
 │   ├── config_store.py           saves settings and secrets

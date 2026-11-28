@@ -14,9 +14,9 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Static
 
 from promptmend import (
-    config,
     config_store,
     deploy,
+    paths,
     prompt_builder,
     settings_service,
     setup_guide,
@@ -54,7 +54,7 @@ def espanso(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRunner:
 @pytest.fixture
 def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("PROMPTMEND_ENV")
-    return config.user_config_dir()
+    return paths.user_config_dir()
 
 
 @pytest.fixture
@@ -400,7 +400,7 @@ def test_wizard_names_the_deprecated_provider_and_saves_it_not(
         assert wizard.at == "use"
 
     drive(scenario, setup=_options(espanso, provider="ollama", use="local"))
-    assert not config.settings_file().exists()
+    assert not paths.settings_file().exists()
 
 
 def _row_visible(app: ManageApp, step: str, selector: str) -> bool:
@@ -634,7 +634,7 @@ def test_wizard_unchanged_choice_writes_nothing(saved: Path, espanso: FakeRunner
         assert _wizard(app).at == "espanso"
 
     app = drive(scenario, setup=_options(espanso))
-    assert not config.settings_file().exists()
+    assert not paths.settings_file().exists()
     assert app.session == []
 
 

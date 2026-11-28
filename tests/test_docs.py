@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 import pytest
 from bench_module import bench
 
-from promptmend.config import ENV_FILE_VAR, env_names
+from promptmend.config import env_names
+from promptmend.paths import ENV_FILE_VAR
 
 if TYPE_CHECKING:
     from typer._click import Command, Context

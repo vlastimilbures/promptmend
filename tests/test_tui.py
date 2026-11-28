@@ -24,7 +24,16 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.worker import WorkerCancelled
 
-from promptmend import config, config_store, deploy, history, settings_service, smoke, update_check
+from promptmend import (
+    config,
+    config_store,
+    deploy,
+    history,
+    paths,
+    settings_service,
+    smoke,
+    update_check,
+)
 from promptmend.factory import PROVIDER_NAMES
 from promptmend.history import HistoryStore
 from promptmend.prompt_builder import PROFILES
@@ -97,7 +106,7 @@ def espanso(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRunner:
 def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
     """Saved mode: config.toml and the secrets file are read and written (per-test dirs)."""
     monkeypatch.delenv("PROMPTMEND_ENV")
-    return config.user_config_dir()
+    return paths.user_config_dir()
 
 
 async def settle(pilot: Pilot[int]) -> None:

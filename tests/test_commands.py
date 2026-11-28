@@ -30,6 +30,7 @@ from promptmend import (
     deploy,
     doctor,
     history,
+    paths,
     settings_service,
     setup_guide,
     smoke,
@@ -79,7 +80,7 @@ def saved(monkeypatch: pytest.MonkeyPatch) -> Path:
     """Saved mode: no PROMPTMEND_ENV, so config.toml and the secrets file are read (in
     conftest's per-test config dir)."""
     monkeypatch.delenv("PROMPTMEND_ENV")
-    return config.user_config_dir()
+    return paths.user_config_dir()
 
 
 @pytest.fixture
@@ -264,7 +265,7 @@ def test_config_set_refuses_in_legacy_mode(tmp_path: Path) -> None:
     result = _run("config", "set", "PROMPT_PROFILE", "general")
     assert result.exit_code == 1
     assert "PROMPTMEND_ENV is set" in result.stderr
-    assert not config.settings_file().exists()
+    assert not paths.settings_file().exists()
 
 
 # A .env in the user config folder is no longer read (#275), so saving config.toml cannot
@@ -553,7 +554,7 @@ def _break(kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         )
         return
     monkeypatch.delenv("PROMPTMEND_ENV")
-    directory = config.user_config_dir()
+    directory = paths.user_config_dir()
     directory.mkdir(parents=True)
     name = "config.toml" if kind == "toml" else "secrets.toml"
     (directory / name).write_text("this = = not toml\n[[\n", "utf-8")
@@ -1342,7 +1343,7 @@ def test_history_last_shows_the_settings_findings_as_stats_does(
 
 
 def test_profiles_list(monkeypatch: pytest.MonkeyPatch) -> None:
-    folder = config.user_config_dir() / "profiles"
+    folder = paths.user_config_dir() / "profiles"
     folder.mkdir(parents=True)
     (folder / "mine.md").write_text("mine", "utf-8")
     (folder / "general.md").write_text("x", "utf-8")
@@ -1572,7 +1573,7 @@ def test_setup_in_legacy_mode_writes_no_settings(
     result = _setup(espanso, "--non-interactive")
     assert result.exit_code == 0, result.output
     assert "PROMPTMEND_ENV is set" in result.stdout
-    assert not config.settings_file().exists()
+    assert not paths.settings_file().exists()
 
 
 @pytest.mark.parametrize("option", ["--provider", "--use", "--output"])
@@ -2093,7 +2094,7 @@ def test_setup_in_legacy_mode_saves_neither_new_choice(
     )
     # Not needed once it is set, which it is not yet.
     assert "No key needed once PROMPT_LOCAL_ONLY=true is set: " in result.stdout
-    assert not config.settings_file().exists()
+    assert not paths.settings_file().exists()
     settings = settings_service.load_layers()[1]
     assert (settings.local_only, settings.output) == (False, "paste")
     # The test still follows the answer.
