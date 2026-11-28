@@ -37,6 +37,7 @@ from typing import IO, TYPE_CHECKING, Any, Literal
 
 from . import installed_version
 from .config import MAX_RETENTION_DAYS, user_config_dir, user_data_dir
+from .providers import usage
 from .redaction import compile_extra, is_bare_token, scan
 
 if TYPE_CHECKING:
@@ -233,19 +234,8 @@ _OPERATION_ID = re.compile(r"[0-9a-f]{32}")
 _TIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 # A drop file of _count_dropped(): a random id and the positive number of writes it counts.
 _DROP_NAME = re.compile(re.escape(LOST_NAME) + r"\.[0-9a-f]{32}\.([1-9][0-9]{0,9})\.drop")
-# The error kinds providers/base.py records (see AttemptUsage); tests/test_history.py checks
-# that the two lists match.
-ERROR_KINDS = (
-    "timeout",
-    "non_2xx",
-    "invalid_json",
-    "body_error",
-    "refused",
-    "transport",
-    "invalid_url",
-    "invalid_header",
-    "unexpected",
-)
+# The error kinds an attempt can record (AttemptUsage.error_kind), defined with it.
+ERROR_KINDS = usage.ERROR_KINDS
 
 
 class HistoryError(Exception):

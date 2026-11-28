@@ -5,7 +5,6 @@ import errno
 import io
 import json
 import os
-import re
 import sqlite3
 import stat
 import subprocess
@@ -373,12 +372,6 @@ def test_a_negative_zero_is_stored_as_zero(store: HistoryStore) -> None:
     assert store.record(_op(), [_attempt(charged_amount=Decimal("-0.000"))])
     row = _rows(store, "attempts")[0]
     assert (row["charged_amount"], row["cost_state"]) == ("0.000", "reported")
-
-
-def test_error_kinds_match_what_post_json_records() -> None:
-    base = (SRC / "promptmend" / "providers" / "base.py").read_text("utf-8")
-    recorded = set(re.findall(r'error_kind(?: or)? = .*?"([a-z_0-9]+)"', base))
-    assert recorded == set(history.ERROR_KINDS)
 
 
 # -- privacy -------------------------------------------------------------------------------
