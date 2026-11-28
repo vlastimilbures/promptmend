@@ -22,12 +22,6 @@ All notable changes to this project are documented here. The format follows
   `first`, `setup`, `line`); `schema_version` stays 1 and the exit codes are unchanged.
 - Homebrew: `brew install` ends with the formula's caveats (#402): start Espanso, then run
   `promptmend setup`.
-- `promptmend improve --fail-on-marker`, for scripts (#407): the run exits 1 when it ends in
-  a failure marker (a bad setting, a blocked or failed call, an empty or concealed draft, the
-  time limit) instead of a rewrite. Stdout and stderr are the same as without it, and a
-  rewrite still exits 0, a `sent despite` note in front of it included. Without the flag,
-  `improve` exits 0 as before; no Espanso match passes it, since Espanso fails the expansion
-  on a nonzero exit.
 - `promptmend improve --fail-on-marker`, for scripts (#407): the run exits 1 whenever it
   prints a failure marker (a bad setting, a blocked or failed call, an empty or concealed
   draft, the time limit), and also when a copy failed or stalled (`--copy`, or `clipboard`
