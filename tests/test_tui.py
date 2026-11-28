@@ -1380,9 +1380,10 @@ def _quit_shown(app: ManageApp, width: int) -> bool:
 
 
 # At 70 columns (#394), every tab label lies whole inside the screen and the footer still
-# shows Quit on every tab, the Settings list focused (Edit, Toggle, Reset, Filter added)
-# included. About and High contrast are off the footer and still work. Pilot, not a
-# snapshot, so Windows checks it too.
+# shows Quit on every tab, each opened from Home's focused rows (#395): Home with its list
+# focused and the Settings list focused (Edit, Toggle, Reset, Filter added) included. About
+# and High contrast are off the footer and still work. Pilot, not a snapshot, so Windows
+# checks it too.
 def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
     from textual.widgets._footer import FooterKey
     from textual.widgets._tabbed_content import ContentTab
@@ -1396,7 +1397,14 @@ def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
         seen["inside"] = [t.region.x >= 0 and t.region.right <= width for t in tabs]
         seen["narrow"] = app.main.has_class("-narrow")
         quit_by_tab = {}
+        home_list = []
         for n, tab in enumerate(TABS, start=1):
+            # Each tab opened from Home's rows, which have the focus there (#395).
+            await pilot.press("1")
+            await settle(pilot)
+            focused = app.focused
+            home_list.append(focused is not None and focused.id == "home-rows")
+            quit_by_tab[f"home list, before {tab}"] = _quit_shown(app, width)
             await pilot.press(str(n))
             await settle(pilot)
             if tab == "settings":
@@ -1408,6 +1416,7 @@ def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
                 await pilot.press("t")
             quit_by_tab[tab] = _quit_shown(app, width)
         seen["quit"] = quit_by_tab
+        seen["home list"] = home_list
         # In the draft a letter is typed, not a key: the footer shows only Leave (Escape).
         app.main.query_one("#try-draft").focus()
         await settle(pilot)
@@ -1424,7 +1433,10 @@ def test_every_tab_and_quit_fit_70_columns(espanso: FakeRunner) -> None:
     drive(scenario, size=(width, 24))
     assert seen.pop("labels") == [label for label, _ in TABS.values()]
     assert seen.pop("inside") == [True] * len(TABS)
-    assert seen.pop("quit") == dict.fromkeys(TABS, True)
+    assert seen.pop("quit") == {
+        key: True for tab in TABS for key in (f"home list, before {tab}", tab)
+    }
+    assert seen.pop("home list") == [True] * len(TABS)
     assert seen.pop("draft footer") == [("Leave", True)]
     assert seen == {
         "narrow": True,
