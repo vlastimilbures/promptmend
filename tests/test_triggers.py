@@ -474,8 +474,8 @@ def test_used_the_limit_matches_the_watchdog(startup: float, load: float) -> Non
     from promptmend.pipeline import Rewrite
     from promptmend.trigger import Watchdog
 
-    clock = FakeClock()  # its timers never fire on their own
-    watch = Watchdog(recorder.Recorder("improve", "i"), Rewrite(), clock=clock, timers=clock.start)
+    clock = FakeClock()  # its alarm never wakes on its own
+    watch = Watchdog(recorder.Recorder("improve", "i"), Rewrite(), clock=clock, alarms=clock.alarm)
     now = clock()
     watch._started, watch._load_started = now - startup - load, now - load
     marker = watch.arm(Settings(timeout=LIMIT), "openrouter")

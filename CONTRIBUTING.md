@@ -386,8 +386,11 @@ What a user and a script can rely on is in
 [docs/commands.md, "The time limit"](docs/commands.md#the-time-limit); this is how
 `trigger.Watchdog` (its docstring has the full state machine) keeps it.
 
-- The watchdog is a timer thread that steps in at the limit plus 1.5 seconds
-  (`WATCHDOG_MARGIN` minus `_WATCHDOG_HISTORY`). It closes the run's usage observer, so no
+- The watchdog is one thread, started before the settings load, that sleeps until a deadline
+  the run can move (the settings' limit replaces the provisional one) and decides what is due
+  each time it wakes. It steps in at the limit plus 1.5 seconds (`WATCHDOG_MARGIN` minus
+  `_WATCHDOG_HISTORY`); a run printing its own output then is left alone, and the thread
+  sleeps on to the limit plus 2 seconds. Stepping in, it closes the run's usage observer, so no
   request starts from then on, not even a retry; it writes the usage history for up to 0.4
   seconds, then prints its marker straight to file descriptor 1 and ends the process.
 - The provider's own timeout (`providers/base.py`) words the same marker, but counts from its
