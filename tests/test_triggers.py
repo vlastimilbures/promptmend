@@ -6,7 +6,9 @@ profile. Then runs each trigger's args as a real process, as Espanso does (#18).
 from __future__ import annotations
 
 import contextlib
+import io
 import itertools
+import json
 import math
 import os
 import re
@@ -529,3 +531,58 @@ def test_trigger_processes_against_a_slow_stub() -> None:
             else:
                 assert re.fullmatch(_used_the_limit(LIMIT), out), (trigger, out)
                 assert late[trigger].requests == 0, trigger
+
+
+# --- The default source as a process (#407) ----------------------------------------------------
+
+# The child refuses the clipboard (and skips the concealed-item probe) before the CLI loads,
+# so a run that read it would print a clipboard marker instead of the reply.
+_NO_CLIPBOARD = """
+import sys
+
+from promptmend import entry
+
+entry.quiet_trigger(sys.argv[1:])
+import pyperclip
+
+import promptmend.pipeline as pipeline
+
+
+def refuse(*args):
+    raise pyperclip.PyperclipException("this test never touches the clipboard")
+
+
+pyperclip.paste = pyperclip.copy = refuse
+pipeline.is_concealed = lambda: None
+sys.argv = ["promptmend", *sys.argv[1:]]
+entry.main()
+"""
+
+
+# A draft piped to `improve` with no --source is what reaches the provider, on every OS (a
+# pipe is never a terminal): the stub's reply comes back, exit 0, empty stderr.
+def test_piped_draft_without_source_as_a_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    bodies: list[bytes] = []
+    do_post = smoke._Handler.do_POST
+
+    def recording(handler: Any) -> None:
+        data = handler.rfile.read(int(handler.headers.get("Content-Length") or 0))
+        bodies.append(data)
+        handler.rfile = io.BytesIO(data)
+        do_post(handler)
+
+    monkeypatch.setattr(smoke._Handler, "do_POST", recording)
+    argv = [sys.executable, "-c", _NO_CLIPBOARD, "improve", "--provider", "ollama"]
+    with smoke.stub_server() as stub:
+        proc = subprocess.run(
+            [*argv, "--trigger-id", "il"],
+            input=b"the piped draft",
+            env=_process_env(stub.port),
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    assert (proc.returncode, proc.stderr) == (0, b"")
+    assert proc.stdout.decode("utf-8") == smoke.REPLY
+    (body,) = bodies
+    assert "the piped draft" in json.dumps(json.loads(body))

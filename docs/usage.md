@@ -113,6 +113,12 @@ To rewrite text in place, select it, copy it (Cmd+C / Ctrl+C) and type `-i-`. As
 editor, the first character you type replaces the selection, and Espanso then replaces the
 trigger with the rewrite.
 
+Run from a terminal or a script instead, `promptmend improve` without `--source` rewrites a
+draft piped to it (`echo "draft" | promptmend improve`) and reads the clipboard only when
+stdin is a terminal (on Windows a null stdin, `< NUL`, counts as one). A script can pass `--fail-on-marker` to get exit code 1 when the run
+ends in a `[promptmend: …]` failure marker; see the
+[scripting contract](commands.md#scripting-contract).
+
 ## While it runs
 
 A rewrite takes a few seconds on `-i-` and longer on `-ip-` (measured times are in the
@@ -277,6 +283,12 @@ such as `my-prompts.yml`:
    path followed by arguments, so the trigger pastes `[Espanso]: An error occurred during
    rendering`. A trigger you copied from a file deployed by 0.20.0 or earlier (#18) has that shell
    shape; rewrite it this way.
+5. Keep `"--source", "clipboard"` in an `improve` call, the safe form on every system.
+   Without `--source`, `improve` reads stdin whenever it is not a terminal. Under a null
+   stdin (`< /dev/null`, `< NUL`) it reads that empty stdin on macOS and Linux, and pastes
+   `[promptmend: Input is empty]`, but reads the clipboard on Windows, where a null stdin
+   counts as a terminal. Never add `--fail-on-marker`: its exit code 1 makes Espanso fail
+   the expansion instead of pasting the marker.
 
 `promptmend espanso deploy` and `detach` handle only the files they deployed
 (`prompts-core.yml`, `prompts-llm.yml`, `prompts-template.yml`), so they never change yours;

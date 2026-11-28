@@ -301,7 +301,7 @@ def test_clipboard_read_failure(
         raise pyperclip.PyperclipException("no clipboard")
 
     monkeypatch.setattr(pyperclip, "paste", broken)
-    _run(["improve", "--provider", "ollama"])
+    _run(["improve", "--provider", "ollama", "--source", "clipboard"])
     assert _outcome(history_rows) == "clipboard_failed"
 
 
@@ -312,7 +312,7 @@ def test_concealed_refused_outcome(
 
     monkeypatch.setattr(pipeline, "is_concealed", lambda: True)
     monkeypatch.setattr(pyperclip, "copy", lambda text: None)
-    _run(["improve", "--provider", "ollama"])
+    _run(["improve", "--provider", "ollama", "--source", "clipboard"])
     assert _outcome(history_rows) == "concealed_refused"
     assert not stub_provider.calls
 

@@ -176,8 +176,14 @@ def improve(
     ),
     max_tokens: str | None = typer.Option(None, help=f"Output cap for this call, or {KEEP}"),
     timeout: str | None = typer.Option(None, help=f"Request timeout in seconds, or {KEEP}"),
-    source: str = typer.Option("clipboard", help="clipboard, stdin, or argument"),
-    text: str | None = typer.Option(None, help="Input when source is argument"),
+    source: str | None = typer.Option(
+        None,
+        help="clipboard, stdin, or argument; default: argument with --text, else stdin when "
+        "it is piped, else clipboard",
+    ),
+    text: str | None = typer.Option(
+        None, help="The draft: with --source argument, or alone (then --source is argument)"
+    ),
     output: str | None = typer.Option(
         None,
         "--output",
@@ -195,12 +201,18 @@ def improve(
         help="Send this draft once despite labels, IDs, emails or IBANs the gate flagged "
         "(never keys, cards or passwords); the output says so",
     ),
+    fail_on_marker: bool = typer.Option(
+        False,
+        "--fail-on-marker",
+        help="For scripts: exit 1 when a failure marker is printed, a failed copy's included "
+        "(stdout unchanged); never in an Espanso match",
+    ),
     trigger_id: str | None = _TRIGGER_ID,
 ) -> None:
     """Improve a draft prompt. Errors are printed inline so Espanso shows them."""
     rec = recorder.Recorder("improve", trigger_id)
     ran = pipeline.Rewrite()
-    watch = trigger.Watchdog(rec, ran)
+    watch = trigger.Watchdog(rec, ran, fail_on_marker=fail_on_marker)
     try:
         trigger.run_improve(
             watch,

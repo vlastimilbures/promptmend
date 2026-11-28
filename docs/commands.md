@@ -22,7 +22,7 @@ The same CLI the triggers call works on its own, which is handy for trying profi
 models:
 
 ```bash
-echo "summarise the Q3 incident log for the ops team" | promptmend improve --source stdin
+echo "summarise the Q3 incident log for the ops team" | promptmend improve
 promptmend improve --provider ollama --profile general --source clipboard
 promptmend improve --model openai/gpt-6-luna@openai --source argument --text "your draft"
 promptmend improve --tier pro --source clipboard   # the reasoning model behind -ip-
@@ -37,11 +37,12 @@ promptmend improve --tier pro --source clipboard   # the reasoning model behind 
 | `--effort` | `OPENROUTER_REASONING_EFFORT` (`OPENROUTER_PRO_REASONING_EFFORT` with `--tier pro`) or `OPENAI_REASONING_EFFORT` | OpenRouter and OpenAI only: `none`, `minimal`, `low`, `medium`, `high` |
 | `--max-tokens` | `OPENROUTER_MAX_TOKENS` (`OPENROUTER_PRO_MAX_TOKENS`, if set, with `--tier pro`), `ANTHROPIC_MAX_TOKENS` or `OPENAI_MAX_TOKENS`; no cap for Ollama and LM Studio | Output cap for this call (Ollama: `num_predict`) |
 | `--timeout` | `PROMPT_TIMEOUT_SECONDS` (`PROMPT_PRO_TIMEOUT_SECONDS` with `--tier pro`) | Time limit in seconds for this call, retry included |
-| `--source` | `clipboard` | `clipboard`, `stdin` or `argument` |
-| `--text` | — | The draft, with `--source argument` |
+| `--source` | `argument` with `--text`; else `stdin` when stdin is a pipe or a file; else `clipboard` | `clipboard`, `stdin` or `argument` |
+| `--text` | — | The draft, with `--source argument` (or no `--source`) |
 | `--output` | `PROMPT_OUTPUT` (`paste`) | `paste` prints the rewrite; `clipboard` copies it and prints only markers (see [clipboard output](usage.md#output-paste-or-clipboard)) |
 | `--copy` | off | With `paste` output, also copy the result to the clipboard (no effect with `clipboard`); if the copy fails, the result is still printed after the error marker |
 | `--allow-flagged` | off | Send this one draft despite soft findings of the gate (what `-iok-` passes; see [overriding a block](privacy.md#overriding-a-block)) |
+| `--fail-on-marker` | off | For scripts: exit 1 when the run ends in a failure marker instead of a rewrite; the output is the same (see [Scripting contract](#scripting-contract)) |
 
 `--tier pro` with Ollama or LM Studio, and `--effort` (other than `default`) with any
 provider but OpenRouter and OpenAI, are refused with a `[promptmend: …]` marker, and no call
@@ -53,15 +54,32 @@ is made: no other provider has a pro tier, or a reasoning-effort control.
 Espanso something to paste:
 
 - Output is UTF-8 with no trailing newline.
-- Every failure is printed as one `[promptmend: …]` marker, with exit code 0.
+- Every failure is printed as one `[promptmend: …]` marker, with exit code 0 (1 with
+  `--fail-on-marker`).
+- Without `--source`, a draft piped or redirected to stdin is read; from a terminal, the
+  clipboard. An empty pipe gives `[promptmend: Input is empty]` and sends nothing; one left
+  open ends at the time limit with `[promptmend: stdin was not closed within …s, so nothing
+  was sent: …]`, even when a draft arrived before. On Windows a
+  null stdin (`< NUL`) counts as a terminal and reads the clipboard. A script should pass
+  `--source` explicitly.
 - Drafts over 50,000 characters are refused.
 - If the model stops at its output limit, the partial rewrite is printed with
   `[promptmend: the reply hit the model's output limit and is cut off]` at the end.
 
-For scripts, the exit code says nothing: `improve` exits 0 whether or not it rewrote. A run
-failed when its whole output is one `[promptmend: …]` marker. A rewrite starts with a marker
-only after `--allow-flagged` (`[promptmend: sent despite: …]`) and ends with one only when it
-is cut off. This prefix is stable. With `clipboard` output, a successful run prints nothing,
+For scripts, the exit code says nothing by default: `improve` exits 0 whether or not it
+rewrote. Pass `--fail-on-marker` to exit 1 whenever a failure marker is printed: a bad
+setting, a blocked or failed call, an empty draft, a timeout, and also a copy that failed or
+stalled (`--copy`, or `clipboard` output, whose deliverable is the clipboard), even though
+the rewrite is then printed after that marker. Only the `sent despite` note and the
+output-limit note are not failures: a rewrite with them still exits 0. Stdout and stderr stay
+exactly as without the flag. No Espanso match passes it, since Espanso fails the expansion on
+a nonzero exit.
+
+Without the flag, a run failed when its whole output is one `[promptmend: …]` marker. A
+rewrite starts with a marker only after `--allow-flagged` (`[promptmend: sent despite: …]`)
+or a failed or stalled copy (`--copy` or `clipboard` output: `[promptmend: Clipboard
+unavailable: …; the rewrite is pasted instead]`, `[promptmend: the clipboard did not answer
+in time, …; it is pasted instead]`), and ends with one only when it is cut off. This prefix is stable. With `clipboard` output, a successful run prints nothing,
 or only those markers, and the rewrite is on the clipboard.
 
 ## persona
@@ -168,7 +186,10 @@ ordinary exit codes.
 | 3 | An answer was needed but stdin is not a terminal, or `ui` or `setup` (without `--non-interactive`) ran without a terminal |
 | 4 | `doctor` or `config validate` found a problem |
 
-`improve` and `persona` always exit 0 (see [Scripting contract](#scripting-contract)).
+`improve` and `persona` exit 0 (see [Scripting contract](#scripting-contract)); only
+`improve --fail-on-marker` exits 1, when the run printed a failure marker. A usage error (an
+unknown option, or a value given to a flag, such as `--fail-on-marker=1`) exits 2 with
+nothing on stdout and stderr.
 
 ## See also
 
