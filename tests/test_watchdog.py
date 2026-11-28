@@ -1625,6 +1625,20 @@ def test_trickling_server() -> None:
     _assert_marker(proc, seconds)
 
 
+# The limit comes from the settings, not from --timeout: the provisional limit (the default,
+# 30 s) is armed first and arm() moves the real alarm's time earlier, on its own thread.
+def test_trickling_server_with_the_limit_from_the_settings() -> None:
+    argv = [arg for arg in _ARGS if arg not in ("--timeout", str(LIMIT))]
+    assert "--timeout" not in argv
+    with smoke.stub_server(trickle=0.2) as stub:
+        env = {**smoke.stub_env(stub.port, os.environ), "PROMPT_TIMEOUT_SECONDS": str(LIMIT)}
+        proc, seconds = _run([*_ENTRY, *argv], env)
+    assert (proc.returncode, proc.stderr) == (0, b"")
+    expected = timed_out_message("OpenRouter", LIMIT, SETTING_HINT)
+    assert proc.stdout.decode("utf-8") == f"[promptmend: {expected}]"
+    assert seconds <= LIMIT + trigger.WATCHDOG_MARGIN + SLACK
+
+
 # A name lookup that never returns (simulated in the child: nothing here resolves a name).
 _BLOCKED_LOOKUP = """
 import socket
