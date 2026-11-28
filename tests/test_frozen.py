@@ -445,6 +445,26 @@ def test_time_and_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert "warm, median of 1" in text
 
 
+# Without --runs, `time` runs doctor --timing's default number of warm runs (5): there is one
+# definition, timing.WARM_RUNS, and smoke.time_trigger() has no default of its own.
+def test_time_defaults_to_doctors_warm_runs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asked: list[int] = []
+
+    def timed(launcher: list[str], runs: int) -> list[float]:
+        asked.append(runs)
+        return [0.5] * (1 + runs)
+
+    monkeypatch.setattr(bw, "time_trigger", timed)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    bw.main(["time", "promptmend"])
+    assert asked == [5]
+    assert "warm, median of 5" in capsys.readouterr().out
+    with pytest.raises(TypeError):
+        smoke.time_trigger(["promptmend"])  # type: ignore[call-arg]
+
+
 def test_a_failed_trigger_run_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
     code = "import sys; print('partial'); print('boom', file=sys.stderr); sys.exit(3)"
     with pytest.raises(RuntimeError, match="the trigger failed: exit code 3") as caught:

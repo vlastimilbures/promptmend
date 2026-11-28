@@ -32,6 +32,7 @@ from ..commands import common
 from ..config import TIERS, ConfigLayers, Settings, check_provider_options, model_setting
 from ..factory import PROVIDER_NAMES
 from ..prompt_builder import ADDED, PROFILES
+from ..providers.registry import PROVIDERS
 from . import teach
 from .base import Pane, button_row
 from .modals import ConfirmModal
@@ -220,7 +221,7 @@ class TryPane(Pane):
         PROMPT_PROFILE. Whichever applied is shown as Model and Base URL are
         (common.shown_value(): a key-like value withheld, a control character as its repr)."""
         model = model_setting(provider, tier)
-        url = f"{provider.upper()}_BASE_URL"
+        url = PROVIDERS[provider].url_setting
         shown_profile = profile
         if not shown_profile:
             # The setting cfg's profile came from: PROMPT_PROFILE's value unless for_call()

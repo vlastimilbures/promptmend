@@ -228,11 +228,12 @@ def has_pro_tier(provider: str) -> bool:
 def model_setting(provider: str, tier: str) -> str:
     """The setting that names the model a call on ``provider`` and ``tier`` runs
     (Settings.tier_preset()): OPENROUTER_PRO_MODEL on OpenRouter's pro tier, else the
-    provider's own model setting (Anthropic's and OpenAI's pro tier keep theirs)."""
-    spec = PROVIDERS.get(provider)
-    if tier == "pro" and spec is not None and spec.router:
+    provider's own model setting (Anthropic's and OpenAI's pro tier keep theirs).
+    ``provider`` is a name in PROVIDERS."""
+    spec = PROVIDERS[provider]
+    if tier == "pro" and spec.router:
         return "OPENROUTER_PRO_MODEL"
-    return f"{provider.upper()}_MODEL"
+    return spec.model_setting
 
 
 def _listed(labels: list[str]) -> str:

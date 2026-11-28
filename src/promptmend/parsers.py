@@ -76,7 +76,7 @@ def _builtin_profiles(raw: str) -> tuple[str, ...]:
     names = tuple(dict.fromkeys(name.strip() for name in raw.split(",") if name.strip()))
     if not names:
         return ()
-    from .prompt_builder import PROFILES  # deferred: prompt_builder imports this module
+    from .prompt_builder import PROFILES  # deferred: only a profile list needs the names
 
     if any(name not in PROFILES for name in names):
         raise ValueError(f"empty or a comma-separated list of {', '.join(PROFILES)}")

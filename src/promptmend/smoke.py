@@ -46,9 +46,8 @@ TIMEOUT = 60
 INPUT_TOKENS = 42
 OUTPUT_TOKENS = 7
 
-# The trigger timed by default, and how many warm runs follow the cold one.
+# The trigger timed by default. The default number of warm runs is timing.WARM_RUNS.
 TRIGGER = "-i-"
-WARM_RUNS = 5  # timing.WARM_RUNS, kept equal by tests/test_frozen.py
 # time_trigger()'s limit per run (the local `scripts/build_windows.py time`, on a cold Windows
 # machine).
 TRIGGER_TIMEOUT = 120
@@ -329,10 +328,10 @@ def trigger_args(trigger: str = TRIGGER) -> list[str]:
     raise LookupError(f"no script var runs the CLI for {trigger}")
 
 
-def time_trigger(launcher: Sequence[str], runs: int = WARM_RUNS) -> list[float]:
+def time_trigger(launcher: Sequence[str], runs: int) -> list[float]:
     """Seconds per run of the trigger through ``launcher`` against the stub, the first one
-    cold. Raises if a run fails as Espanso would see it (exit code, stderr, output), with the
-    tail of what it printed, for CI's log."""
+    cold and ``runs`` warm ones after it. Raises if a run fails as Espanso would see it (exit
+    code, stderr, output), with the tail of what it printed, for CI's log."""
     args = trigger_args()
     expect = expect_output(REPLY)
     last: list[bytes] = [b"", b""]

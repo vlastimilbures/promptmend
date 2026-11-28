@@ -18,7 +18,9 @@ from .doctor import CHECK_IDS, Report
 from .providers.registry import PROVIDERS
 
 # `doctor --timing --runs N`: the warm runs after each cold one; WARM_RUNS is the default,
-# equal to smoke.WARM_RUNS (tests/test_frozen.py), which commands/doctor.py does not import.
+# and `scripts/build_windows.py time`'s. It is defined here and not in smoke: the interface's
+# Home loads commands/doctor.py, and so this module, before its first paint, which must not
+# load smoke or http.server (tests/test_ui_startup.py).
 RUNS_RANGE = (1, 50)
 WARM_RUNS = 5
 TIMED_OK, TIMED_FAILED, TIMED_SKIPPED = "ok", "failed", "skipped"

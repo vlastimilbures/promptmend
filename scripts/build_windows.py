@@ -12,7 +12,8 @@ what PyInstaller built. The zip is named for the pyproject version.
 `time` runs the `-i-` trigger's real args (the draft as an argument) with the given launcher
 against the setup check's local stub, a cold first run and then warm ones, and prints the
 times; on GitHub Actions it also writes them to the job summary. It calls no real provider.
-The timing itself lives in promptmend.smoke, which `promptmend doctor --timing` uses too.
+The timing itself lives in promptmend.smoke, which `promptmend doctor --timing` uses too;
+the default number of warm runs is that command's (promptmend.timing.WARM_RUNS).
 """
 
 from __future__ import annotations
@@ -25,7 +26,8 @@ import tomllib
 import zipfile
 from pathlib import Path
 
-from promptmend.smoke import WARM_RUNS, summary, time_trigger
+from promptmend.smoke import summary, time_trigger
+from promptmend.timing import WARM_RUNS
 
 REPO = Path(__file__).resolve().parents[1]
 SPEC = REPO / "packaging" / "windows" / "promptmend.spec"
