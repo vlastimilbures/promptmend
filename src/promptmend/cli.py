@@ -2,8 +2,9 @@
 persona trigger commands, and the lazy mounting of the management commands (commands/, the
 interface) so a trigger never loads them. The trigger run itself is in trigger.py (emit(),
 the watchdog, run_improve()); the rewrite's domain steps are in pipeline.py, the sanitiser in
-sanitize.py. persona's placeholder and _persona_alone() stay here with the command:
-they are persona's whole logic, and doctor and scripts/check_wheel.py read the placeholder.
+sanitize.py. _persona_alone() stays here with the persona command: it is persona's whole
+logic. Its placeholder is prompt_builder.PERSONA_PLACEHOLDER, which timing.py and
+scripts/check_wheel.py read there too, never from this module.
 
 entry.main() runs the app (the console script, and `python -m promptmend.entry`, which
 entry.self_command() starts); this module is not a `-m` entry."""

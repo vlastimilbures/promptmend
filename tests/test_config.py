@@ -268,15 +268,33 @@ def test_provider_options() -> None:
         config.check_provider_options("anthropic", "standard", "low")
 
 
-# The setting that names the model a call runs: OPENROUTER_PRO_MODEL only on OpenRouter's pro
-# tier; Anthropic's and OpenAI's pro tier keep their own model.
-def test_model_setting() -> None:
-    assert config.model_setting("openrouter", "pro") == "OPENROUTER_PRO_MODEL"
-    assert config.model_setting("openrouter", "standard") == "OPENROUTER_MODEL"
-    assert config.model_setting("openai", "pro") == "OPENAI_MODEL"
-    assert config.model_setting("anthropic", "pro") == "ANTHROPIC_MODEL"
-    assert config.model_setting("ollama", "pro") == "OLLAMA_MODEL"
+# The setting that names the model a call runs, for every provider and tier:
+# OPENROUTER_PRO_MODEL only on OpenRouter's pro tier; Anthropic's and OpenAI's pro tier keep
+# their own model, and a provider without a pro tier names its own model on either tier.
+_MODEL_SETTINGS = {
+    ("ollama", "standard"): "OLLAMA_MODEL",
+    ("ollama", "pro"): "OLLAMA_MODEL",
+    ("lmstudio", "standard"): "LMSTUDIO_MODEL",
+    ("lmstudio", "pro"): "LMSTUDIO_MODEL",
+    ("openrouter", "standard"): "OPENROUTER_MODEL",
+    ("openrouter", "pro"): "OPENROUTER_PRO_MODEL",
+    ("anthropic", "standard"): "ANTHROPIC_MODEL",
+    ("anthropic", "pro"): "ANTHROPIC_MODEL",
+    ("openai", "standard"): "OPENAI_MODEL",
+    ("openai", "pro"): "OPENAI_MODEL",
+}
+
+
+def test_model_settings_cover_the_registry() -> None:
+    assert set(_MODEL_SETTINGS) == {(p, t) for p in PROVIDERS for t in config.TIERS}
     assert parsers.PRO_PROVIDERS == ("openrouter", "anthropic", "openai")
+
+
+@pytest.mark.parametrize(("provider", "tier"), sorted(_MODEL_SETTINGS))
+def test_model_setting(provider: str, tier: str) -> None:
+    name = config.model_setting(provider, tier)
+    assert name == _MODEL_SETTINGS[provider, tier]
+    assert name in env_names()
 
 
 # --max-tokens is kept for the local providers too, which have no cap setting of their own.

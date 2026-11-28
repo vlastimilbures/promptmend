@@ -1626,10 +1626,12 @@ def test_timing_against_the_real_cli() -> None:
     assert all(r.cold and r.warm for r in timed.runs)
 
 
-def test_doctor_and_smoke_agree_on_the_default_runs() -> None:
-    from promptmend import smoke
-
-    assert timing.WARM_RUNS == smoke.WARM_RUNS
+# One default for the warm runs, timing.WARM_RUNS: the 5 docs/commands.md and CONTRIBUTING.md
+# name. The command's own default is pinned by
+# tests/test_commands.py::test_doctor_timing_json_is_additive, and `scripts/build_windows.py
+# time`'s by tests/test_frozen.py::test_time_defaults_to_doctors_warm_runs.
+def test_timing_defaults_to_five_warm_runs() -> None:
+    assert timing.timing(_report(None), {}, timer=FakeTimer()).warm_runs == 5
 
 
 def test_timing_without_a_launcher_check_times_the_interpreter_only() -> None:
